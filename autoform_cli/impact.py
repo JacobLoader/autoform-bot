@@ -339,7 +339,12 @@ def _source_modules(library: LeanLibrary, snapshot: IndexedSourceSnapshot) -> di
             raise SkeletonError(
                 [f"lean_lib {library.name}: source tree exceeds {_MAX_SOURCE_DEPTH} directory levels"]
             )
-        module = ".".join(relative.with_suffix("").parts)
+        # Quote a dotted or numeric component so the name parses back as the
+        # one string component Lean builds from this path.
+        module = ".".join(
+            f"«{part}»" if "." in part or (part.isascii() and part.isdigit()) else part
+            for part in relative.with_suffix("").parts
+        )
         if not module:
             continue
         found.setdefault(module, path)
@@ -402,10 +407,16 @@ def _validated_module_evidence(
     if missing:
         raise SkeletonError([f"the impact probe omitted required project modules: {missing}"])
 
-    expected_paths = _module_source_paths(libraries, snapshot, strict=True)
+    # Lean prints `H.«2_1»` for the source module `H.2_1`, so names meet by
+    # component rather than by spelling.
+    expected_paths = {
+        _module_parts(module): relative
+        for module, relative in _module_source_paths(libraries, snapshot, strict=True).items()
+    }
     expected_artifacts = _module_artifact_paths(libraries, expected_paths)
     for module, record in evidence.items():
-        relative = expected_paths.get(module)
+        parts = _module_parts(module)
+        relative = expected_paths.get(parts)
         if relative is None:
             raise SkeletonError(
                 [f"the impact probe loaded {module} without a captured root-project source"]
@@ -418,7 +429,7 @@ def _validated_module_evidence(
                     f"expected captured root source {expected}"
                 ]
             )
-        expected_artifact = expected_artifacts[module]
+        expected_artifact = expected_artifacts[parts]
         if Path(record.olean_path) != expected_artifact:
             raise SkeletonError(
                 [
@@ -429,15 +440,22 @@ def _validated_module_evidence(
     return evidence
 
 
+def _module_parts(module: str) -> tuple[str, ...]:
+    """The components of a module name, however each one is spelled."""
+
+    return tuple(part for part, _quoted in _lean_name_parts(module))
+
+
 def _module_artifact_paths(
-    libraries: Sequence[LeanLibrary], source_paths: Mapping[str, str]
-) -> dict[str, Path]:
+    libraries: Sequence[LeanLibrary], source_paths: Mapping[tuple[str, ...], str]
+) -> dict[tuple[str, ...], Path]:
     """Return the one root-package artifact path permitted for each module."""
 
     artifact_dir = _root_artifact_dir(libraries)
+    # Not with_suffix, which would cut the dotted stem of `«a.b»`.
     return {
-        module: artifact_dir.joinpath(*module.split(".")).with_suffix(".olean").resolve()
-        for module in source_paths
+        parts: artifact_dir.joinpath(*parts[:-1], parts[-1] + ".olean").resolve()
+        for parts in source_paths
     }
 
 

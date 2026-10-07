@@ -1576,6 +1576,50 @@ def test_cli_reports_import_impact_without_refusing_the_edit(tmp_path: Path, mon
     assert re.fullmatch(r"[0-9a-f]{64}", report["module_graph_revision"])
 
 
+@pytest.mark.parametrize("quote_every_component", [False, True])
+def test_cli_import_impact_matches_module_names_by_component(
+    tmp_path: Path, monkeypatch, capsys, quote_every_component: bool
+) -> None:
+    # Lean prints H/2_1.lean as `H.«2_1»` and H/α.lean as `H.α`, while the
+    # inventory keys them `H.2_1` and `H.α`. Names meet by component whichever
+    # side quotes one, so a probe that quotes `«α»` matches too, and the dotted
+    # stem of H/a.b.lean keeps its whole artifact name.
+    lean_root = tmp_path / "lean"
+    (lean_root / "H").mkdir(parents=True)
+    (lean_root / "lakefile.toml").write_text('name = "H"\n\n[[lean_lib]]\nname = "H"\n', encoding="utf-8")
+    (lean_root / "H.lean").write_text("", encoding="utf-8")
+    artifacts = lean_root.resolve() / ".lake/build/lib/lean"
+    modules = []
+    for stem in ("2_1", "my-lemmas", "a.b", "α", "1"):
+        source = lean_root / "H" / f"{stem}.lean"
+        source.write_text("", encoding="utf-8")
+        name = f"H.{stem}" if stem == "α" and not quote_every_component else f"H.«{stem}»"
+        modules.append(ModuleEvidence(name, str(source.resolve()), (), str(artifacts / "H" / f"{stem}.olean")))
+    modules.append(
+        ModuleEvidence(
+            "H",
+            str((lean_root / "H.lean").resolve()),
+            tuple(item.module for item in modules),
+            str(artifacts / "H.olean"),
+        )
+    )
+    calls = _stub_probe(monkeypatch, [_payload("H.stem", module="H.«a.b»")], modules=tuple(modules))
+    project = tmp_path / "project"
+    _write_article(project, "README.md", title="Chapter", metadata=["article_id: af_0000000000000000000000c0"])
+    _write_article(project, "stem.md", metadata=["declaration: definition", "statement: formalized", "lean: H.stem"])
+
+    code = cli.main(
+        ["work", "import-impact", "chapter/stem", "H.«a.b»", str(project), "--lean-root", str(lean_root), "--json"]
+    )
+
+    output = capsys.readouterr()
+    assert code == 0, output.err
+    assert json.loads(output.out)["affected_modules"] == ["H", "H.«a.b»"]
+    # The probe counts the dotted and numeric stems as the modules Lean builds.
+    assert 'Name.str (Name.str (Name.anonymous) "H") "a.b"' in calls[0]["probe"]
+    assert 'Name.str (Name.str (Name.anonymous) "H") "1"' in calls[0]["probe"]
+
+
 def test_cli_import_impact_rejects_an_unknown_module(tmp_path: Path, monkeypatch, capsys) -> None:
     project = _blueprint_project(tmp_path, "Demo")
     lean_root = _stub_lean_root(tmp_path)
@@ -2419,6 +2463,35 @@ def test_import_impact_refuses_a_glob_module_the_inventory_lacks(tmp_path: Path,
     output = capsys.readouterr()
     assert code == 0, output.err
     assert json.loads(output.out)["affected_modules"] == ["Demo", "Demo.Base"]
+
+
+@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+def test_import_impact_reads_modules_whose_names_need_quotes(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "lean"
+    (root / "H").mkdir(parents=True)
+    shutil.copy(_SKELETON_FIXTURE / "lean-toolchain", root / "lean-toolchain")
+    (root / "lakefile.toml").write_text(
+        'name = "H"\nversion = "0.1.0"\ndefaultTargets = ["H"]\n\n[[lean_lib]]\nname = "H"\n', encoding="utf-8"
+    )
+    stems = ("2_1", "my-lemmas", "a.b", "α", "1")
+    (root / "H.lean").write_text("".join(f"import H.«{stem}»\n" for stem in stems), encoding="utf-8")
+    for index, stem in enumerate(stems):
+        (root / "H" / f"{stem}.lean").write_text(f"def H.v{index} : Nat := {index}\n", encoding="utf-8")
+    build = subprocess.run(["lake", "build"], cwd=root, capture_output=True, text=True, timeout=600, check=False)
+    assert build.returncode == 0, build.stdout + build.stderr
+    project = tmp_path / "roadmap"
+    _write_article(project, "README.md", title="Chapter", metadata=["article_id: af_0000000000000000000000c0"])
+    _write_article(project, "stem.md", metadata=["declaration: definition", "statement: formalized", "lean: H.v2"])
+
+    code = cli.main(
+        ["work", "import-impact", "chapter/stem", "H.«a.b»", str(project), "--lean-root", str(root), "--json"]
+    )
+
+    output = capsys.readouterr()
+    assert code == 0, output.err
+    report = json.loads(output.out)
+    assert report["affected_modules"] == ["H", "H.«a.b»"]
+    assert [article["id"] for article in report["affected_articles"]] == ["chapter/stem"]
 
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
