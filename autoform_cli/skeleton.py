@@ -68,6 +68,9 @@ _CORE_MODULE_ROOTS = ("Init", "Lean", "Std", "Lake")
 _SHADOWED_CORE_MODULE = re.compile(
     r"object file '[^']*' of module ((?:" + "|".join(_CORE_MODULE_ROOTS) + r")(?:\.\S+)?) does not exist"
 )
+#: The impact probe's refusal of a loaded or glob-built module the source
+#: inventory lacks; the project is built, so the refusal gets no `lake build` hint.
+_UNCAPTURED_ROOT_MODULE = re.compile(r"the impact probe (?:loaded|found) root-package module .*")
 
 DEFAULT_PROBE_TIMEOUT = 600.0
 #: The Lake freshness check hashes every imported input, which on a Mathlib
@@ -1514,6 +1517,9 @@ def run_probe(
                     f"rename that library's modules\n{detail}"
                 ]
             )
+        uncaptured = _UNCAPTURED_ROOT_MODULE.search(detail)
+        if uncaptured:
+            raise SkeletonError([uncaptured.group()])
         raise SkeletonError([f"the {label} failed; is the project built with `lake build`?\n{detail}"])
     return output or result.stdout
 

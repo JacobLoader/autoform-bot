@@ -130,6 +130,17 @@ run_cmd do
     -- evidence is a closed graph over every loaded project module.
     if {emit_module_evidence} then
       let sourceSearchPath ← getSrcSearchPath
+      let artifactDir := (← IO.FS.realPath {artifact_dir}).components
+      -- Lake builds every module an `M.*` or `M.+` glob finds by this same walk
+      -- of the live tree, imported or not, so a module the inventory missed
+      -- would silently take its articles out of the scope.
+      for (dir, base, glob) in ([{glob_directories}] : List (System.FilePath × Name × String)) do
+        if (← dir.isDir) then
+          Lean.forEachModuleInDir dir fun sub => do
+            unless projectModules.contains (base ++ sub) do
+              throwError m!"the impact probe found root-package module {{base ++ sub}} under glob {{glob}}, \
+                but the captured source inventory has no such module: it skips nested Git checkouts, \
+                ignored directories such as `build`, and symlinked directories"
       for module in moduleNames do
         if isLocalModule module then
           let some moduleIdx := env.getModuleIdx? module | continue
@@ -148,6 +159,15 @@ run_cmd do
             ("source_path", Json.str sourcePath.toString),
             ("olean_path", Json.str oleanPath.toString),
             ("direct_local_imports", AutoformImpact.namesJson directImports)]
+        else
+          -- A root-package module the inventory missed would get no record,
+          -- silently cutting every import edge through it.
+          let oleanPath ← IO.FS.realPath (← findOLean module)
+          if oleanPath.components.take artifactDir.length == artifactDir then
+            throwError m!"the impact probe loaded root-package module {{module}} from {{oleanPath}}, \
+              but the captured source inventory has no such module: it skips nested Git checkouts, \
+              ignored directories such as `build`, and symlinked directories, and names a module \
+              exactly as its file is spelled, including case"
     for (c, info) in env.constants do
       let some module := moduleOf c | continue
       if isLocalModule module then

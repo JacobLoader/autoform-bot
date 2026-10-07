@@ -434,15 +434,34 @@ def _module_artifact_paths(
 ) -> dict[str, Path]:
     """Return the one root-package artifact path permitted for each module."""
 
+    artifact_dir = _root_artifact_dir(libraries)
+    return {
+        module: artifact_dir.joinpath(*module.split(".")).with_suffix(".olean").resolve()
+        for module in source_paths
+    }
+
+
+def _root_artifact_dir(libraries: Sequence[LeanLibrary]) -> Path:
+    """Return the one Lean artifact directory the root libraries build into."""
+
     artifact_dirs = {library.artifact_dir for library in libraries}
     if None in artifact_dirs or len(artifact_dirs) != 1:
         raise SkeletonError(["cannot identify one root-package Lean artifact directory"])
     artifact_dir = next(iter(artifact_dirs))
     assert artifact_dir is not None
-    return {
-        module: artifact_dir.joinpath(*module.split(".")).with_suffix(".olean").resolve()
-        for module in source_paths
-    }
+    return artifact_dir
+
+
+def _glob_directories(libraries: Sequence[LeanLibrary]) -> list[tuple[Path, str, str]]:
+    """The directory each ``M.*`` or ``M.+`` glob walks, with ``M`` and the glob."""
+
+    directories: list[tuple[Path, str, str]] = []
+    for library in libraries:
+        for glob in library.globs:
+            base, mode = _glob(glob, library)
+            if mode:
+                directories.append((library.src_dir.joinpath(*base.split(".")), base, glob))
+    return directories
 
 
 def _glob(glob: str, library: LeanLibrary) -> tuple[str, str]:
@@ -469,9 +488,17 @@ def render_impact_probe(
     *,
     imports: Iterable[str],
     project_modules: Iterable[str],
-    include_module_evidence: bool = False,
+    artifact_dir: Path | None = None,
+    glob_directories: Iterable[tuple[Path, str, str]] = (),
 ) -> str:
-    """Render the Lean program that records every project-local constant."""
+    """Render the Lean program that records every project-local constant.
+
+    Given ``artifact_dir``, the root package's Lean artifact directory, the
+    probe also emits module evidence and refuses a root-package module
+    outside ``project_modules``: a loaded one whose OLean lies under
+    ``artifact_dir``, or one found by walking a ``glob_directories`` entry,
+    the directory of an ``M.*`` or ``M.+`` glob with ``M`` and the glob.
+    """
 
     modules = sorted(set(imports))
     if not modules:
@@ -480,7 +507,13 @@ def render_impact_probe(
         imports="\n".join(f"import {module}" for module in modules),
         marker=IMPACT_MARKER,
         module_marker=IMPACT_MODULE_MARKER,
-        emit_module_evidence="true" if include_module_evidence else "false",
+        emit_module_evidence="false" if artifact_dir is None else "true",
+        artifact_dir=json.dumps(str(artifact_dir or ""), ensure_ascii=False),
+        glob_directories=", ".join(
+            f"(System.FilePath.mk {json.dumps(str(directory), ensure_ascii=False)}, {_lean_name(base)}, "
+            f"{json.dumps(glob, ensure_ascii=False)})"
+            for directory, base, glob in glob_directories
+        ),
         output_env=skeleton.PROBE_OUTPUT_ENV,
         output_limit=skeleton.DEFAULT_PROBE_OUTPUT_LIMIT,
         project_modules=", ".join(_lean_name(name) for name in sorted(set(project_modules))),
@@ -1284,7 +1317,8 @@ def _load_impact_evidence(
             render_impact_probe(
                 imports=imports,
                 project_modules=local_modules,
-                include_module_evidence=require_modules,
+                artifact_dir=_root_artifact_dir(libraries) if require_modules else None,
+                glob_directories=_glob_directories(libraries) if require_modules else (),
             ),
             root,
             timeout=skeleton.DEFAULT_PROBE_TIMEOUT if timeout is None else timeout,

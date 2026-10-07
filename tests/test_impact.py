@@ -1078,16 +1078,28 @@ def test_rendered_probe_imports_modules_and_names_exact_local_modules() -> None:
     assert "env.header.moduleData[moduleIdx.toNat]!.imports" in source
     assert "findOLean module" in source
     assert "if false then" in source
-    assert "if true then" in render_impact_probe(
+    assert "([] : List (System.FilePath × Name × String))" in source
+    # The root artifact directory turns module evidence on, with the walk of
+    # each `M.*` or `M.+` glob's directory.
+    evidence = render_impact_probe(
         imports=["Demo"],
         project_modules=["Demo"],
-        include_module_evidence=True,
+        artifact_dir=Path("/lean/.lake/build/lib/lean"),
+        glob_directories=[(Path("/lean/Demo"), "Demo", "Demo.*")],
     )
+    assert "if true then" in evidence
+    assert 'IO.FS.realPath "/lean/.lake/build/lib/lean"' in evidence
+    assert '[(System.FilePath.mk "/lean/Demo", Name.str (Name.anonymous) "Demo", "Demo.*")]' in evidence
     with pytest.raises(SkeletonError, match="no imports"):
         render_impact_probe(imports=[], project_modules=["Demo"])
 
 
 _SHADOWED_STD = "object file '/deps/Std/Data.olean' of module Std.Data does not exist"
+#: The impact probe's two refusals of a root-package module the inventory lacks.
+_UNCAPTURED = (
+    "the impact probe loaded root-package module Demo.X from /lean/Demo/X.olean, but the inventory lacks it",
+    "the impact probe found root-package module Demo.build.X under glob Demo.*, but the inventory lacks it",
+)
 
 
 @pytest.mark.parametrize(
@@ -1099,6 +1111,8 @@ _SHADOWED_STD = "object file '/deps/Std/Data.olean' of module Std.Data does not 
             "the {label} cannot load toolchain module Std.Data: a dependency library probably provides modules "
             "under `Std`, which hides the toolchain's own `Std`; rename that library's modules\n" + _SHADOWED_STD,
         ),
+        # The project is built, so these refusals come alone, without the rebuild hint.
+        *((f"Probe.lean:131:0: error: {refusal}\nnext line", refusal) for refusal in _UNCAPTURED),
     ],
 )
 def test_probe_failures_name_the_impact_probe(
@@ -1625,6 +1639,32 @@ def test_cli_import_impact_binds_modules_to_captured_root_sources(
     assert code == 2
     assert output.out == ""
     assert message in output.err
+
+
+def test_cli_import_impact_has_the_probe_walk_each_glob_directory(tmp_path: Path, monkeypatch, capsys) -> None:
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _stub_lean_root(tmp_path)
+    (lean_root / "lakefile.toml").write_text(
+        'name = "Demo"\n\n[[lean_lib]]\nname = "Demo"\nglobs = ["Demo", "Demo.Sub.+"]\n', encoding="utf-8"
+    )
+    _sources(lean_root, "Demo.Sub.A")
+    calls = _stub_probe(
+        monkeypatch,
+        modules=tuple(
+            ModuleEvidence(module, str(lean_root.resolve() / path))
+            for module, path in (("Demo", "Demo.lean"), ("Demo.Sub.A", "Demo/Sub/A.lean"))
+        ),
+    )
+
+    code = cli.main(["work", "import-impact", _BASE_ID, "Demo", str(project), "--lean-root", str(lean_root)])
+
+    output = capsys.readouterr()
+    assert code == 0, output.err
+    # Only the `M.+` glob reaches into a directory, which the probe walks for
+    # modules the inventory lacks.
+    directory = json.dumps(str(lean_root.resolve() / "Demo" / "Sub"))
+    walk = f'(System.FilePath.mk {directory}, Name.str (Name.str (Name.anonymous) "Demo") "Sub", "Demo.Sub.+")'
+    assert f"([{walk}] : List" in str(calls[0]["probe"])
 
 
 def test_cli_import_impact_reports_an_empty_loaded_module_without_false_locality(
@@ -2253,6 +2293,132 @@ def test_import_impact_rejects_a_dependency_artifact_shadowing_a_root_source(
     assert "project module Clash loaded artifact" in output.err
     assert "dep/.lake/build/lib/lean/Clash.olean" in output.err
     assert "expected root artifact" in output.err
+
+
+@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+def test_import_impact_refuses_a_root_module_outside_the_captured_inventory(
+    tmp_path: Path, capsys
+) -> None:
+    dependency = tmp_path / "dep"
+    root = tmp_path / "root"
+    dependency.mkdir()
+    (root / "Demo" / "Mid").mkdir(parents=True)
+    for project in (dependency, root):
+        shutil.copy(_SKELETON_FIXTURE / "lean-toolchain", project / "lean-toolchain")
+    (dependency / "lakefile.toml").write_text(
+        'name = "Dep"\nversion = "0.1.0"\ndefaultTargets = ["Dep"]\n\n[[lean_lib]]\nname = "Dep"\n',
+        encoding="utf-8",
+    )
+    (dependency / "Dep.lean").write_text("def Dep.seed : Nat := 1\n", encoding="utf-8")
+    (root / "lakefile.toml").write_text(
+        'name = "Demo"\nversion = "0.1.0"\ndefaultTargets = ["Demo"]\n\n'
+        '[[require]]\nname = "Dep"\npath = "../dep"\n\n'
+        '[[lean_lib]]\nname = "Demo"\n',
+        encoding="utf-8",
+    )
+    for name, text in (
+        ("Demo.lean", "import Demo.Top\n"),
+        ("Demo/Top.lean", "import Demo.Mid.X\n\ntheorem Demo.Top.t : Demo.Mid.x = 1 := rfl\n"),
+        ("Demo/Mid/X.lean", "import Demo.Base\n\ndef Demo.Mid.x : Nat := Demo.Base.b\n"),
+        ("Demo/Base.lean", "import Dep\n\ndef Demo.Base.b : Nat := Dep.seed\n"),
+    ):
+        (root / name).write_text(text, encoding="utf-8")
+    for command in (("lake", "update"), ("lake", "build")):
+        completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=600, check=False)
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+    # A gitlink file makes Demo/Mid a nested checkout, which the source
+    # inventory skips although Lake still builds it into the root package.
+    gitlink = root / "Demo" / "Mid" / ".git"
+    gitlink.write_text("gitdir: ../../.git/modules/Mid\n", encoding="utf-8")
+    project = tmp_path / "roadmap"
+    _write_article(project, "README.md", title="Chapter", metadata=["article_id: af_0000000000000000000000c0"])
+    for name, declaration, lean in (("base.md", "definition", "Demo.Base.b"), ("top.md", "theorem", "Demo.Top.t")):
+        _write_article(
+            project, name, metadata=[f"declaration: {declaration}", "statement: formalized", f"lean: {lean}"]
+        )
+    command = ["work", "import-impact", "chapter/base", "Demo.Base", str(project), "--lean-root", str(root), "--json"]
+
+    code = cli.main(command)
+
+    output = capsys.readouterr()
+    assert code == 2
+    assert output.out == ""
+    # The project is built, so the refusal comes without the rebuild hint.
+    assert output.err.startswith("error: the impact probe loaded root-package module Demo.Mid.X from ")
+    assert "but the captured source inventory has no such module" in output.err
+
+    # The same OLeans pass once the inventory captures Demo/Mid: the
+    # dependency's and Lean's own modules lie outside the root artifacts.
+    gitlink.unlink()
+    code = cli.main(command)
+
+    output = capsys.readouterr()
+    assert code == 0, output.err
+    assert json.loads(output.out)["affected_modules"] == ["Demo", "Demo.Base", "Demo.Mid.X", "Demo.Top"]
+
+
+@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+def test_import_impact_refuses_a_glob_module_the_inventory_lacks(tmp_path: Path, capsys) -> None:
+    root = tmp_path / "lean"
+    (root / "Demo" / "docs").mkdir(parents=True)
+    shutil.copy(_SKELETON_FIXTURE / "lean-toolchain", root / "lean-toolchain")
+    (root / "lakefile.toml").write_text(
+        'name = "Demo"\nversion = "0.1.0"\ndefaultTargets = ["Demo"]\n\n'
+        '[[lean_lib]]\nname = "Demo"\nglobs = ["Demo.*"]\n',
+        encoding="utf-8",
+    )
+    vendor = tmp_path / "vendor" / "Sym"
+    vendor.mkdir(parents=True)
+    (root / "Demo" / "Sym").symlink_to(vendor, target_is_directory=True)
+    for name, text in (
+        ("Demo.lean", "import Demo.Base\n"),
+        ("Demo/Base.lean", "def Demo.Base.b : Nat := 1\n"),
+        # Nothing imports these, and the inventory skips each one: a `build`
+        # directory, a symlinked directory, and a nested checkout.
+        ("Demo/build/X.lean", "import Demo.Base\n\ndef Demo.build.x : Nat := Demo.Base.b\n"),
+        ("Demo/Sym/Y.lean", "import Demo.Base\n\ndef Demo.Sym.y : Nat := Demo.Base.b\n"),
+        ("Demo/Mid/X.lean", "import Demo.Base\n\ndef Demo.Mid.x : Nat := Demo.Base.b\n"),
+        ("Demo/Mid/.git", "gitdir: ../../.git/modules/Mid\n"),
+        # A nested checkout without Lean files gives the glob nothing to build.
+        ("Demo/docs/.git", "gitdir: ../../.git/modules/docs\n"),
+        ("Demo/docs/README.md", "Notes.\n"),
+    ):
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text, encoding="utf-8")
+    build = subprocess.run(["lake", "build"], cwd=root, capture_output=True, text=True, timeout=600, check=False)
+    assert build.returncode == 0, build.stdout + build.stderr
+    skipped = {"build": "Demo.build.X", "Sym": "Demo.Sym.Y", "Mid": "Demo.Mid.X"}
+    for module in skipped.values():
+        assert (root / ".lake/build/lib/lean" / Path(*module.split("."))).with_suffix(".olean").is_file()
+    aside = tmp_path / "aside"
+    aside.mkdir()
+    for name in skipped:
+        (root / "Demo" / name).rename(aside / name)
+    project = tmp_path / "roadmap"
+    _write_article(project, "README.md", title="Chapter", metadata=["article_id: af_0000000000000000000000c0"])
+    base = ["declaration: definition", "statement: formalized", "lean: Demo.Base.b"]
+    _write_article(project, "base.md", metadata=base)
+    command = ["work", "import-impact", "chapter/base", "Demo.Base", str(project), "--lean-root", str(root), "--json"]
+
+    # The probe imports every glob module in the inventory, so one the
+    # inventory lacks and nothing imports is never loaded; only the probe's
+    # walk of the glob directory, the same walk Lake makes, finds it.
+    for name, module in skipped.items():
+        (aside / name).rename(root / "Demo" / name)
+        code = cli.main(command)
+        (root / "Demo" / name).rename(aside / name)
+
+        output = capsys.readouterr()
+        assert code == 2, output.out
+        assert output.out == ""
+        assert output.err.startswith(f"error: the impact probe found root-package module {module} under glob Demo.*, ")
+        assert "but the captured source inventory has no such module" in output.err
+
+    code = cli.main(command)
+
+    output = capsys.readouterr()
+    assert code == 0, output.err
+    assert json.loads(output.out)["affected_modules"] == ["Demo", "Demo.Base"]
 
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
