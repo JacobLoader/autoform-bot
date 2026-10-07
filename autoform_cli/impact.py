@@ -361,7 +361,7 @@ def _module_source_paths(
     *,
     strict: bool = False,
 ) -> dict[str, str]:
-    """Map modules to source paths, optionally requiring a bijection."""
+    """Map modules to source paths; ``strict`` keeps selected modules only and requires a bijection."""
 
     paths: dict[str, str] = {}
     modules_by_path: dict[str, str] = {}
@@ -370,6 +370,11 @@ def _module_source_paths(
             relative = path.as_posix()
             if not strict:
                 paths.setdefault(module, relative)
+                continue
+            # Lake builds only modules a library selects, so a file under a
+            # nested srcDir is one module although the outer srcDir holds it,
+            # and a file no library selects claims no module.
+            if not _selects(library, module):
                 continue
             existing_path = paths.get(module)
             if existing_path is not None and existing_path != relative:
@@ -480,6 +485,18 @@ def _glob_directories(libraries: Sequence[LeanLibrary]) -> list[tuple[Path, str,
             if mode:
                 directories.append((library.src_dir.joinpath(*base.split(".")), base, glob))
     return directories
+
+
+def _selects(library: LeanLibrary, module: str) -> bool:
+    """Whether ``library`` holds ``module``, as Lake's ``LeanLib.isLocalModule`` decides."""
+
+    if any(module == root or module.startswith(f"{root}.") for root in library.roots):
+        return True
+    for glob in library.globs:
+        base, mode = _glob(glob, library)
+        if (module == base and mode != "+") or (mode and module.startswith(f"{base}.")):
+            return True
+    return False
 
 
 def _glob(glob: str, library: LeanLibrary) -> tuple[str, str]:

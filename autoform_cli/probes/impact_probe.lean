@@ -144,9 +144,13 @@ run_cmd do
       for module in moduleNames do
         if isLocalModule module then
           let some moduleIdx := env.getModuleIdx? module | continue
-          let some sourcePath ← sourceSearchPath.findWithExt "lean" module |
+          -- Not `findWithExt`, which takes the first entry with a directory
+          -- named like the module's root: srcDir "." then answers for module
+          -- `Tests` of a later srcDir whenever a `Tests` directory sits beside
+          -- the lakefile, or, on a case-insensitive file system, a `tests` one.
+          let some sourceDir ← sourceSearchPath.findM? fun dir => (modToFilePath dir module "lean").pathExists |
             throwError m!"project module {{module}} has no source path"
-          let sourcePath ← IO.FS.realPath sourcePath
+          let sourcePath ← IO.FS.realPath (modToFilePath sourceDir module "lean")
           let oleanPath ← IO.FS.realPath (← findOLean module)
           let directImports := env.header.moduleData[moduleIdx.toNat]!.imports.foldl
             (fun imports imported =>

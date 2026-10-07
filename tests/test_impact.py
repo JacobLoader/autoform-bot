@@ -1228,6 +1228,7 @@ def test_project_modules_follow_lake_globs(tmp_path: Path) -> None:
     [
         ("same-module", "project module Shared maps to more than one source"),
         ("same-source", "maps to more than one module: Sub.Shared, Shared"),
+        ("same-source-glob", "maps to more than one module: Sub.Shared, Shared"),
     ],
 )
 def test_project_modules_refuse_ambiguous_module_source_claims(
@@ -1243,7 +1244,10 @@ def test_project_modules_refuse_ambiguous_module_source_claims(
     else:
         root = _sources(tmp_path, "Sub.Shared")
         configured = (
-            _library(root, roots=("Sub.Shared",)),
+            # Selected by its root, or by a glob outside the library's roots.
+            _library(root, roots=("Sub.Shared",))
+            if libraries == "same-source"
+            else _library(root, "Sub.Shared", roots=("Other",)),
             _library(root / "Sub", roots=("Shared",)),
         )
 
@@ -1251,6 +1255,54 @@ def test_project_modules_refuse_ambiguous_module_source_claims(
     project_modules(configured, snapshot)
     with pytest.raises(SkeletonError, match=message):
         project_modules(configured, snapshot, strict_module_ownership=True)
+
+
+def test_project_modules_accept_a_library_nested_in_another_srcdir(tmp_path: Path) -> None:
+    # Demo's srcDir also holds extra/Extra.lean and a stray extra/Demo.lean.
+    # Demo selects neither `extra.Extra` nor `extra.Demo`, and Extra does not
+    # select `Demo`, so each file is at most one selected module.
+    root = _sources(tmp_path, "Demo", "extra.Extra", "extra.Demo")
+    configured = (
+        _library(root, roots=("Demo",)),
+        _library(root / "extra", roots=("Extra",)),
+    )
+
+    snapshot = snapshot_project_sources(tmp_path)
+    assert project_modules(configured, snapshot, strict_module_ownership=True) == (
+        ("Demo", "Extra"),
+        ("Demo", "Extra", "extra.Demo", "extra.Extra"),
+    )
+
+
+def test_project_modules_match_library_roots_by_whole_components(tmp_path: Path) -> None:
+    # Root `Demo` selects `Demo.X` but not `DemoTests.DemoTests`, so
+    # DemoTests/DemoTests.lean is only the root module of DemoTests.
+    root = _sources(tmp_path, "Demo", "DemoTests.DemoTests")
+    configured = (
+        _library(root, roots=("Demo",)),
+        _library(root / "DemoTests", roots=("DemoTests",)),
+    )
+
+    snapshot = snapshot_project_sources(tmp_path)
+    assert project_modules(configured, snapshot, strict_module_ownership=True) == (
+        ("Demo", "DemoTests"),
+        ("Demo", "DemoTests", "DemoTests.DemoTests"),
+    )
+
+
+def test_project_modules_accept_the_same_stray_file_in_sibling_srcdirs(tmp_path: Path) -> None:
+    # No library selects `Scratch`, so Lake builds neither copy and the two
+    # files do not compete for one module.
+    configured = (
+        _library(_sources(tmp_path / "aa", "Demo", "Scratch"), roots=("Demo",)),
+        _library(_sources(tmp_path / "bb", "Tools", "Scratch"), roots=("Tools",)),
+    )
+
+    snapshot = snapshot_project_sources(tmp_path)
+    assert project_modules(configured, snapshot, strict_module_ownership=True) == (
+        ("Demo", "Tools"),
+        ("Demo", "Scratch", "Tools"),
+    )
 
 
 def test_project_modules_select_from_captured_files_not_empty_directory_metadata(tmp_path: Path) -> None:
@@ -2492,6 +2544,47 @@ def test_import_impact_reads_modules_whose_names_need_quotes(tmp_path: Path, cap
     report = json.loads(output.out)
     assert report["affected_modules"] == ["H", "H.«a.b»"]
     assert [article["id"] for article in report["affected_articles"]] == ["chapter/stem"]
+
+
+@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+def test_import_impact_reads_a_library_nested_in_another_srcdir(tmp_path: Path, capsys) -> None:
+    # Tests lives in srcDir "tst" below Demo's srcDir ".", which comes first on
+    # the source search path, and a `Tests` directory without Lean files sits
+    # beside the lakefile. The first entry with a directory named like the
+    # module's root holds no Tests.lean, on any file system; on a
+    # case-insensitive one, a srcDir named "tests" alone does the same.
+    root = tmp_path / "lean"
+    root.mkdir()
+    shutil.copy(_SKELETON_FIXTURE / "lean-toolchain", root / "lean-toolchain")
+    (root / "lakefile.toml").write_text(
+        'name = "Demo"\nversion = "0.1.0"\ndefaultTargets = ["Demo", "Tests"]\n\n'
+        '[[lean_lib]]\nname = "Demo"\n\n[[lean_lib]]\nname = "Tests"\nsrcDir = "tst"\n',
+        encoding="utf-8",
+    )
+    for name, text in (
+        ("Demo.lean", "import Demo.Basic\n"),
+        ("Demo/Basic.lean", "def Demo.Basic.b : Nat := 1\n"),
+        ("tst/Tests.lean", "import Demo.Basic\n\ndef Tests.t : Nat := Demo.Basic.b\n"),
+        ("Tests/README.md", "Test notes.\n"),
+    ):
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text, encoding="utf-8")
+    build = subprocess.run(["lake", "build"], cwd=root, capture_output=True, text=True, timeout=600, check=False)
+    assert build.returncode == 0, build.stdout + build.stderr
+    project = tmp_path / "roadmap"
+    _write_article(project, "README.md", title="Chapter", metadata=["article_id: af_0000000000000000000000c0"])
+    for name, lean in (("b.md", "Demo.Basic.b"), ("t.md", "Tests.t")):
+        _write_article(project, name, metadata=["declaration: definition", "statement: formalized", f"lean: {lean}"])
+
+    code = cli.main(
+        ["work", "import-impact", "chapter/b", "Demo.Basic", str(project), "--lean-root", str(root), "--json"]
+    )
+
+    output = capsys.readouterr()
+    assert code == 0, output.err
+    report = json.loads(output.out)
+    assert report["affected_modules"] == ["Demo", "Demo.Basic", "Tests"]
+    assert report["affected_claim_targets"] == ["chapter/t"]
 
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
