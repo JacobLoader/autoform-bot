@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import errno
 import hashlib
 import json
@@ -2038,6 +2039,111 @@ def test_publish_refuses_a_cross_filesystem_stage_before_commit(
 
     assert stage.is_dir()
     assert not destination.exists()
+
+
+def test_a_first_install_the_kernel_refuses_is_not_an_uncertain_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _project(tmp_path)
+    output = tmp_path / "out"
+    original = render_module._rename_noreplace
+
+    def another_tool_creates_the_output_first(*args) -> None:
+        output.mkdir()
+        (output / "theirs.txt").write_text("other tool\n", encoding="utf-8")
+        original(*args)
+
+    monkeypatch.setattr(
+        render_module, "_rename_noreplace", another_tool_creates_the_output_first
+    )
+    with pytest.raises(PublicationError) as error:
+        render_site(project / "blueprint", output, lean_root=project)
+
+    assert not isinstance(error.value, render_module._PublicationRecoveryError)
+    assert "output directory changed during publication; output was not changed" in str(
+        error.value
+    )
+    assert [path.name for path in output.iterdir()] == ["theirs.txt"]
+    assert not list(tmp_path.glob(".autoform-publication-*"))
+
+
+@pytest.mark.parametrize(
+    ("error_number", "message"),
+    [
+        (errno.EBUSY, "mount point or in use"),
+        (errno.EXDEV, "not on its parent's filesystem"),
+        (errno.EPERM, "the filesystem refused the publication commit"),
+    ],
+)
+def test_an_exchange_the_kernel_refuses_keeps_the_site_and_no_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_number: int,
+    message: str,
+) -> None:
+    project = _project(tmp_path)
+    output = tmp_path / "out"
+    render_site(project / "blueprint", output, lean_root=project)
+    before = {
+        path.relative_to(output).as_posix(): path.read_bytes()
+        for path in output.rglob("*")
+        if path.is_file()
+    }
+    original = render_module._rename_implementation
+
+    def refuse_exchange(*, exchange: bool):
+        function, flag = original(exchange=exchange)
+        if not exchange:
+            return function, flag
+
+        def refused(*_args) -> int:
+            ctypes.set_errno(error_number)
+            return -1
+
+        return refused, flag
+
+    monkeypatch.setattr(render_module, "_rename_implementation", refuse_exchange)
+    monkeypatch.setattr(render_module, "_probe_publication_filesystem", lambda *_: None)
+    with pytest.raises(PublicationError, match=message) as error:
+        render_site(project / "blueprint", output, lean_root=project)
+
+    assert not isinstance(error.value, render_module._PublicationRecoveryError)
+    assert "previous site was preserved" in str(error.value)
+    assert {
+        path.relative_to(output).as_posix(): path.read_bytes()
+        for path in output.rglob("*")
+        if path.is_file()
+    } == before
+    assert not list(tmp_path.glob(".autoform-publication-*"))
+
+
+def test_an_ambiguous_exchange_error_still_retains_the_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _project(tmp_path)
+    output = tmp_path / "out"
+    render_site(project / "blueprint", output, lean_root=project)
+    original = render_module._rename_implementation
+
+    def fail_exchange_with_eio(*, exchange: bool):
+        function, flag = original(exchange=exchange)
+        if not exchange:
+            return function, flag
+
+        def failed(*_args) -> int:
+            ctypes.set_errno(errno.EIO)
+            return -1
+
+        return failed, flag
+
+    monkeypatch.setattr(render_module, "_rename_implementation", fail_exchange_with_eio)
+    monkeypatch.setattr(render_module, "_probe_publication_filesystem", lambda *_: None)
+    with pytest.raises(render_module._PublicationRecoveryError, match="commit began"):
+        render_site(project / "blueprint", output, lean_root=project)
+
+    assert len(list(tmp_path.glob(".autoform-publication-*"))) == 1
 
 
 def test_workspace_descriptor_cleanup_does_not_mask_the_original_error(

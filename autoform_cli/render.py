@@ -3059,21 +3059,21 @@ def _publish_staged_site(
             )
 
         commit_state.attempted = True
-        if expected.kind == "absent":
-            _rename_noreplace(
+        commit = _rename_noreplace if expected.kind == "absent" else _rename_exchange
+        try:
+            commit(
                 stage_parent_descriptor,
                 stage.name,
                 parent_descriptor,
                 destination.name,
             )
+        except _CommitRefused:
+            # Nothing moved, so the stage is still ours to clean up.
+            commit_state.attempted = False
+            raise
+        if expected.kind == "absent":
             _publication_commit_checkpoint("after-install")
         else:
-            _rename_exchange(
-                stage_parent_descriptor,
-                stage.name,
-                parent_descriptor,
-                destination.name,
-            )
             _publication_commit_checkpoint("after-exchange")
             displaced = _inspect_destination_at(
                 stage_parent_descriptor,
@@ -3138,10 +3138,8 @@ def _rename_noreplace(
     if result == 0:
         return
     error = ctypes.get_errno()
-    if error in {errno.EEXIST, errno.ENOTEMPTY}:
-        raise PublicationError(
-            ["output directory changed during publication; previous site was preserved"]
-        )
+    if error in _REFUSED_RENAME_ERRORS:
+        raise _refused_commit(error, unchanged="output was not changed")
     raise OSError(error, os.strerror(error), target)
 
 
@@ -3158,7 +3156,55 @@ def _rename_exchange(
     )
     if result != 0:
         error = ctypes.get_errno()
+        if error in _REFUSED_RENAME_ERRORS:
+            raise _refused_commit(error, unchanged="previous site was preserved")
         raise OSError(error, os.strerror(error), target)
+
+
+# A rename that fails changes neither name. These errors are the kernel refusing
+# the request; EIO and anything unexpected stay uncertain.
+_REFUSED_RENAME_ERRORS = frozenset(
+    {
+        errno.EACCES,
+        errno.EBUSY,
+        errno.EDQUOT,
+        errno.EEXIST,
+        errno.EINVAL,
+        errno.EISDIR,
+        errno.ELOOP,
+        errno.EMLINK,
+        errno.ENAMETOOLONG,
+        errno.ENOENT,
+        errno.ENOSPC,
+        errno.ENOSYS,
+        errno.ENOTDIR,
+        errno.ENOTEMPTY,
+        errno.ENOTSUP,
+        errno.EOPNOTSUPP,
+        errno.EPERM,
+        errno.EROFS,
+        errno.EXDEV,
+    }
+)
+
+
+class _CommitRefused(PublicationError):
+    """The filesystem refused the commit rename, so nothing was published."""
+
+
+def _refused_commit(error: int, *, unchanged: str) -> _CommitRefused:
+    if error in {errno.EEXIST, errno.ENOTEMPTY, errno.ENOENT}:
+        reason = "output directory changed during publication"
+    elif error == errno.EBUSY:
+        reason = "output directory is a mount point or in use, so it cannot be replaced"
+    elif error == errno.EXDEV:
+        reason = (
+            "output directory is not on its parent's filesystem (a mount point or "
+            "an overlay lower layer), so it cannot be replaced"
+        )
+    else:
+        reason = f"the filesystem refused the publication commit: {os.strerror(error)}"
+    return _CommitRefused([f"{reason}; {unchanged}"])
 
 
 def _rename_implementation(*, exchange: bool):
