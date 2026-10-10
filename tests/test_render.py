@@ -2326,8 +2326,55 @@ def test_concurrent_renders_publish_one_generation_without_leaking_stages(
     assert sum(isinstance(outcome, render_module.RenderReport) for outcome in outcomes) == 1
     failures = [outcome for outcome in outcomes if isinstance(outcome, PublicationError)]
     assert len(failures) == 1
-    assert "another publication is committing" in str(failures[0])
+    assert "output directory changed during publication" in str(failures[0])
     assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["complete"]
+    assert not list(tmp_path.glob(f"{render_module._PUBLICATION_STAGE_PREFIX}*"))
+
+
+def test_renders_into_sibling_outputs_wait_for_each_other_instead_of_failing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projects = [_project(tmp_path / name) for name in ("a", "b")]
+    outputs = [tmp_path / "public" / name for name in ("a", "b")]
+    barrier = threading.Barrier(2)
+    original = render_module._publish_staged_site
+
+    def publish_together(*args, **kwargs):
+        barrier.wait(timeout=10)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(render_module, "_publish_staged_site", publish_together)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(render_site, project / "blueprint", output, lean_root=project)
+            for project, output in zip(projects, outputs)
+        ]
+        outcomes = [future.result() for future in futures]
+
+    assert all(isinstance(outcome, render_module.RenderReport) for outcome in outcomes)
+    for output in outputs:
+        manifest = json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))
+        assert manifest["complete"]
+    assert not list((tmp_path / "public").glob(f"{render_module._PUBLICATION_STAGE_PREFIX}*"))
+
+
+def test_a_commit_lock_held_past_the_deadline_names_the_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fcntl
+
+    project = _project(tmp_path)
+    output = tmp_path / "out"
+    monkeypatch.setattr(render_module, "_PUBLICATION_LOCK_WAIT_SECONDS", 0.2)
+    holder = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        with pytest.raises(PublicationError, match="kept the output parent .* locked"):
+            render_site(project / "blueprint", output, lean_root=project)
+    finally:
+        os.close(holder)
+
+    assert not output.exists()
     assert not list(tmp_path.glob(f"{render_module._PUBLICATION_STAGE_PREFIX}*"))
 
 

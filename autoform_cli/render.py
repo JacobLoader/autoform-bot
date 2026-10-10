@@ -18,6 +18,7 @@ import os
 import re
 import secrets
 import stat
+import time
 import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -1705,15 +1706,11 @@ def _probe_publication_filesystem(
     """
 
     assert fcntl is not None
+    # Lock the private workspace, not the shared output parent: the probe only
+    # needs to know flock works on this filesystem, and must not contend with
+    # other renders.
     try:
-        fcntl.flock(
-            output_parent.descriptor,
-            fcntl.LOCK_SH | fcntl.LOCK_NB,
-        )
-    except BlockingIOError as error:
-        raise PublicationError(
-            ["another publication is committing in the output directory; retry"]
-        ) from error
+        fcntl.flock(workspace_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as error:
         raise PublicationError(
             ["transactional publication locking is unavailable on this filesystem"]
@@ -1883,7 +1880,7 @@ def _probe_publication_filesystem(
             except BaseException as error:
                 cleanup_error = error
         try:
-            fcntl.flock(output_parent.descriptor, fcntl.LOCK_UN)
+            fcntl.flock(workspace_descriptor, fcntl.LOCK_UN)
         except BaseException as error:
             cleanup_error = cleanup_error or error
 
@@ -3004,12 +3001,7 @@ def _publish_staged_site(
                     f"{_workspace_recovery_location(stage.parent, output_parent)}"
                 ]
             )
-        try:
-            fcntl.flock(parent_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as error:
-            raise PublicationError(
-                ["another publication is committing in the output directory; retry"]
-            ) from error
+        _lock_output_parent(parent_descriptor, destination.parent, expected)
 
         current = _inspect_destination_at(
             parent_descriptor,
@@ -3138,6 +3130,9 @@ def _publish_staged_site(
         os.fsync(stage_parent_descriptor)
         os.fsync(parent_descriptor)
         _require_output_parent(output_parent, "after publication commit")
+        # Cleanup only touches the private workspace; another render's commit
+        # will see the new generation and refuse its stale expectation.
+        fcntl.flock(parent_descriptor, fcntl.LOCK_UN)
     except BaseException as publication_error:
         if commit_state.attempted:
             raise _PublicationRecoveryError(
@@ -3149,6 +3144,36 @@ def _publish_staged_site(
             ) from publication_error
         raise
     commit_state.verified = True
+
+
+_PUBLICATION_LOCK_WAIT_SECONDS = 30.0
+_PUBLICATION_LOCK_POLL_SECONDS = 0.05
+
+
+def _lock_output_parent(
+    descriptor: int, parent: Path, expected: _DestinationState
+) -> None:
+    """Serialize commits in one output parent, waiting for another commit to end."""
+
+    deadline = time.monotonic() + _PUBLICATION_LOCK_WAIT_SECONDS
+    while True:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError as error:
+            if time.monotonic() >= deadline:
+                unchanged = (
+                    "output was not changed"
+                    if expected.kind == "absent"
+                    else "previous site was preserved"
+                )
+                raise PublicationError(
+                    [
+                        f"another process kept the output parent {parent} locked for "
+                        f"{_PUBLICATION_LOCK_WAIT_SECONDS:g} seconds; {unchanged}; retry"
+                    ]
+                ) from error
+        time.sleep(_PUBLICATION_LOCK_POLL_SECONDS)
 
 
 def _rename_noreplace(
