@@ -3863,6 +3863,31 @@ def test_cleanup_indexes_each_inventory_record_once(
     assert not any(root.iterdir())
 
 
+def test_a_render_rereads_each_published_file_a_bounded_number_of_times(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _project(tmp_path)
+    output = tmp_path / "out"
+    original = render_module._read_regular_file_at
+    reads = 0
+
+    def count(parent_descriptor, name, display_path, **kwargs):
+        nonlocal reads
+        if name == "top.md":
+            reads += 1
+        return original(parent_descriptor, name, display_path, **kwargs)
+
+    monkeypatch.setattr(render_module, "_read_regular_file_at", count)
+    render_site(project / "blueprint", output, lean_root=project)
+    first_install, reads = reads, 0
+    render_site(project / "blueprint", output, lean_root=project)
+
+    # Each read is a full SHA-256 pass; these bounds catch new redundant passes.
+    assert first_install <= 7
+    assert reads <= 16
+
+
 def test_stage_directory_symlink_substitution_never_receives_plan_bytes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

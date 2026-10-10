@@ -1324,8 +1324,6 @@ def _inspect_destination_at(
                 max_bytes=_PUBLICATION_MANIFEST_MAX_BYTES,
             )
             != manifest_bytes
-            or _publication_inventory_descriptor(descriptor)
-            != (actual_directories, actual_files)
         ):
             raise PublicationError(["publication output changed while it was inspected"])
         current = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
@@ -2985,22 +2983,6 @@ def _publish_staged_site(
                     f"{_workspace_recovery_location(stage.parent, output_parent)}"
                 ]
             )
-        if (
-            _inspect_destination_at(stage_parent_descriptor, stage.name, stage)
-            != staged
-            or _publication_inventory_at(
-                stage_parent_descriptor,
-                stage.name,
-                staged.identity,
-            )
-            != staged_inventory
-        ):
-            raise _PublicationRecoveryError(
-                [
-                    "publication stage changed; workspace retained "
-                    f"{_workspace_recovery_location(stage.parent, output_parent)}"
-                ]
-            )
         _lock_output_parent(parent_descriptor, destination.parent, expected)
 
         current = _inspect_destination_at(
@@ -3030,23 +3012,6 @@ def _publish_staged_site(
                 raise PublicationError(
                     ["output directory changed during publication; previous site was preserved"]
                 )
-
-        if (
-            _inspect_destination_at(stage_parent_descriptor, stage.name, stage)
-            != staged
-            or _publication_inventory_at(
-                stage_parent_descriptor,
-                stage.name,
-                staged.identity,
-            )
-            != staged_inventory
-        ):
-            raise _PublicationRecoveryError(
-                [
-                    "publication stage changed; workspace retained "
-                    f"{_workspace_recovery_location(stage.parent, output_parent)}"
-                ]
-            )
 
         input_guard()
         _require_output_parent(output_parent, "at the publication commit boundary")
