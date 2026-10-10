@@ -1519,9 +1519,9 @@ def test_post_commit_verification_failure_retains_previous_site_for_recovery(
     destination_inspections = 0
     exchanges = 0
 
-    def substitute_final_state(parent_descriptor, name, display_path):
+    def substitute_final_state(parent_descriptor, name, display_path, **kwargs):
         nonlocal destination_inspections
-        state = original_inspect(parent_descriptor, name, display_path)
+        state = original_inspect(parent_descriptor, name, display_path, **kwargs)
         if display_path == output:
             destination_inspections += 1
             if destination_inspections == 4:
