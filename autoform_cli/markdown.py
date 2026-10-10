@@ -479,10 +479,11 @@ class ArticleSection:
 class ArticleParts:
     """An article body split at its published H2 headings.
 
-    ``statement`` is everything between the frontmatter and the first H2, with
-    the H1 title line removed. It is the author's Markdown, untouched apart from
-    surrounding blank lines, so a caller that publishes it publishes what was
-    written and indentation keeps its meaning.
+    ``statement`` is everything no H2 section holds: the text between the
+    frontmatter and the first H2, and the text under an H1 title written below
+    an H2, with the title line removed. It is the author's Markdown, untouched
+    apart from surrounding blank lines, so a caller that publishes it publishes
+    what was written and indentation keeps its meaning.
     """
 
     statement: str

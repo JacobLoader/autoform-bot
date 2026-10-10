@@ -58,7 +58,9 @@ State the intended result and proof sketch here.
 ```
 
 An article's statement is its body from the end of the frontmatter to the first
-`##` heading, without the H1 line. A deeper heading does not end it, and neither
+`##` heading, without the H1 line. The article's first H1 (its title), if
+written below a `##` section, ends that section and resumes the statement; a
+later H1 stays in its section. No heading deeper than `##` ends it, and neither
 does a `##` line inside a fenced code block or an HTML comment. `autoform audit`
 and the published theorem box both read that span. A fence closes only on a
 bare fence line; one that never closes is plain text on the page and hides no
