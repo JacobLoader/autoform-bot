@@ -696,6 +696,7 @@ def _render_in_bound_output_parent(
             output_parent.descriptor,
             destination.name,
             destination,
+            allow_os_metadata=True,
         )
         if expected_destination.kind != "absent":
             assert expected_destination.identity is not None
@@ -707,6 +708,7 @@ def _render_in_bound_output_parent(
             _require_destination_inventory(
                 expected_destination_inventory,
                 expected_destination,
+                allow_os_metadata=True,
             )
 
         lean_exclusions = (destination, workspace)
@@ -1194,8 +1196,22 @@ def _inspect_destination(destination: Path) -> _DestinationState:
         os.close(parent_descriptor)
 
 
+def _is_os_metadata(relative: str) -> bool:
+    """Finder writes ``.DS_Store`` into any folder a user browses.
+
+    A publication never contains one, so it cannot be mistaken for authored
+    output. A live generation may carry it; it leaves with that generation.
+    """
+
+    return PurePosixPath(relative).name == ".DS_Store"
+
+
 def _inspect_destination_at(
-    parent_descriptor: int, name: str, display_path: Path
+    parent_descriptor: int,
+    name: str,
+    display_path: Path,
+    *,
+    allow_os_metadata: bool = False,
 ) -> _DestinationState:
     try:
         metadata = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
@@ -1278,13 +1294,18 @@ def _inspect_destination_at(
         ):
             raise PublicationError(["publication manifest has invalid source revisions"])
         actual_directories, actual_files = _publication_inventory_descriptor(descriptor)
+        owned_files = tuple(
+            item
+            for item in actual_files
+            if not (allow_os_metadata and _is_os_metadata(item[0]))
+        )
         if actual_directories != expected_directories:
             raise PublicationError(
                 ["refusing to overwrite an output directory with untracked or missing directories"]
             )
-        if tuple(path for path, _ in actual_files) != tuple(path for path, _ in expected_files):
+        if tuple(path for path, _ in owned_files) != tuple(path for path, _ in expected_files):
             expected_paths = {path for path, _ in expected_files}
-            actual_paths = {path for path, _ in actual_files}
+            actual_paths = {path for path, _ in owned_files}
             difference = sorted(expected_paths ^ actual_paths)
             raise PublicationError(
                 [
@@ -1292,7 +1313,7 @@ def _inspect_destination_at(
                     + ", ".join(difference)
                 ]
             )
-        if actual_files != expected_files:
+        if owned_files != expected_files:
             raise PublicationError(["refusing to overwrite a modified Autoform publication"])
         if (
             _read_regular_file_at(
@@ -2356,12 +2377,15 @@ def _rename_stable_signature(metadata: os.stat_result) -> tuple[int, ...]:
 def _require_destination_inventory(
     inventory: _CleanupInventory,
     state: _DestinationState,
+    *,
+    allow_os_metadata: bool = False,
 ) -> None:
     directories = tuple(path for path, _identity in inventory.directories)
     files = tuple(
         (path, digest)
         for path, _identity, digest in inventory.files
         if path != PUBLICATION_MANIFEST
+        and not (allow_os_metadata and _is_os_metadata(path))
     )
     manifests = tuple(
         digest
@@ -2964,6 +2988,7 @@ def _publish_staged_site(
             parent_descriptor,
             destination.name,
             destination,
+            allow_os_metadata=True,
         )
         if current != expected:
             raise PublicationError(
@@ -3011,6 +3036,7 @@ def _publish_staged_site(
             parent_descriptor,
             destination.name,
             destination,
+            allow_os_metadata=True,
         ) != expected:
             raise PublicationError(
                 ["publication inputs changed at the commit boundary"]
@@ -3053,6 +3079,7 @@ def _publish_staged_site(
                 stage_parent_descriptor,
                 stage.name,
                 stage,
+                allow_os_metadata=True,
             )
             if displaced != expected or (
                 expected.identity is not None

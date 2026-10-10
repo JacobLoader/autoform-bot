@@ -997,6 +997,25 @@ def test_render_replaces_only_an_exact_owned_publication(tmp_path: Path) -> None
     assert stale.read_text(encoding="utf-8") == "old generated output\n"
 
 
+def test_finder_metadata_does_not_block_replacing_an_owned_publication(
+    tmp_path: Path,
+) -> None:
+    project = _project(tmp_path)
+    output = tmp_path / "out"
+    render_site(project / "blueprint", output, lean_root=project)
+    finder_files = [output / ".DS_Store", output / "roadmap" / ".DS_Store"]
+    for path in finder_files:
+        path.write_bytes(b"\x00\x00\x00\x01Bud1")
+
+    render_site(project / "blueprint", output, lean_root=project)
+
+    assert not any(path.exists() for path in finder_files)
+    assert ".DS_Store" not in json.loads(
+        (output / PUBLICATION_MANIFEST).read_text(encoding="utf-8")
+    )["files"]
+    assert not list(tmp_path.glob(".autoform-publication-*"))
+
+
 def test_render_rejects_a_v2_publication_without_a_lean_revision(tmp_path: Path) -> None:
     project = _project(tmp_path)
     output = tmp_path / "out"
