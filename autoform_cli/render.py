@@ -101,6 +101,14 @@ _PUBLICATION_CAPTURE_LIMITS = TreeCaptureLimits(
     max_file_bytes=_PUBLICATION_MAX_FILE_BYTES,
     max_total_bytes=_PUBLICATION_MAX_TOTAL_BYTES,
 )
+# The Lean walk lists every name under the Lean root, including untracked trees
+# such as venv/ or node_modules/ that hold no Lean source, so it bounds depth and
+# captured bytes but not the entry count, as `autoform check` does.
+_LEAN_CAPTURE_LIMITS = TreeCaptureLimits(
+    max_depth=_PUBLICATION_MAX_DEPTH,
+    max_file_bytes=_PUBLICATION_MAX_FILE_BYTES,
+    max_total_bytes=_PUBLICATION_MAX_TOTAL_BYTES,
+)
 #: Derived views this command rewrites; stale copies must not leak into the site.
 _GENERATED_FILES = frozenset(
     {
@@ -2755,7 +2763,7 @@ def _open_lean_sources(
         return open_project_sources(
             root,
             exclude_roots=exclude_roots,
-            limits=_PUBLICATION_CAPTURE_LIMITS,
+            limits=_LEAN_CAPTURE_LIMITS,
             opaque_markers=(
                 OpaqueDirectoryMarker(
                     PUBLICATION_MANIFEST,

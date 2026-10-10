@@ -3407,9 +3407,8 @@ def test_lean_capture_enforces_file_limit(
     project = _project(tmp_path)
     monkeypatch.setattr(
         render_module,
-        "_PUBLICATION_CAPTURE_LIMITS",
+        "_LEAN_CAPTURE_LIMITS",
         TreeCaptureLimits(
-            max_entries=10_000,
             max_depth=128,
             max_file_bytes=8,
             max_total_bytes=1024,
@@ -3420,6 +3419,28 @@ def test_lean_capture_enforces_file_limit(
         render_site(project / "blueprint", tmp_path / "out", lean_root=project)
 
     assert not (tmp_path / "out").exists()
+
+
+def test_untracked_trees_in_the_lean_root_do_not_spend_the_publication_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _project(tmp_path)
+    environment = project / "venv" / "lib"
+    environment.mkdir(parents=True)
+    for index in range(50):
+        (environment / f"module{index}.py").write_text("", encoding="utf-8")
+    # A non-dot venv/ or node_modules/ can hold far more than the publication's
+    # entry cap; only the published tree is bounded by it.
+    monkeypatch.setattr(
+        render_module,
+        "_PUBLICATION_CAPTURE_LIMITS",
+        TreeCaptureLimits(max_entries=20, max_depth=128),
+    )
+
+    report = render_site(project / "blueprint", tmp_path / "out", lean_root=project)
+
+    assert report.linked == 2
 
 
 def test_manifest_read_is_bounded(
