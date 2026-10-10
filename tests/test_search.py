@@ -166,7 +166,7 @@ def test_punctuation_around_a_query_word_does_not_hide_an_article(tmp_path: Path
     assert search_blueprint(project, "affine ...").terms == ("affine", "...")
 
 
-def test_a_title_is_matched_as_the_page_shows_it(tmp_path: Path) -> None:
+def test_a_title_is_matched_without_its_markup(tmp_path: Path) -> None:
     project = _project(tmp_path)
     _article(project, "convexity/README.md", title="Convex *analysis* at caf&eacute;")
     _article(

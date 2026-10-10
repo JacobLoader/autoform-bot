@@ -71,6 +71,13 @@ page can also pair an unclosed backtick fence line with a later backtick run in
 the same paragraph and show the text between them as inline code; a link there
 is not a link on the page but is still read as a dependency.
 
+An HTML comment that never closes, even one opened by a `<!--` in inline code
+or an indented code block, hides every heading and dependency link after it:
+the graph loses those edges, and the part of the article the comment opens in
+keeps the rest, so one opened in the statement puts the later sections,
+dependency list included, in the theorem box. Nothing reports the comment
+itself.
+
 `## Depends on` lists what the article needs in order to be *stated*;
 `## Proof depends on` lists what only its *proof* needs. Both are graph edges.
 Links anywhere else are ordinary navigation or citations. Dependencies resolve
@@ -873,9 +880,11 @@ A formalizable article must state its result in prose a reader sees. At most
 one of three findings reports a statement that does not, checked in this order:
 
 - `missing-statement-text`: the statement has no prose outside code blocks, HTML
-  comments, and headings.
+  comments, and lines that hold only a heading written with `#` marks, such as
+  `### Setting`.
 - `empty-statement-text`: the published prose has no letter or digit, as with a
-  hidden element, a horizontal rule, an image, or a link with no text.
+  hidden element, a horizontal rule, an image, a link with no text, or a heading
+  that is underlined, quoted, or in a list item.
 - `placeholder-statement-text`: every word is one of `pending`, `placeholder`,
   `todo`, `tbd`, `unknown`, or the statement opens with one of them followed by
   a colon or a dash, as in `TODO: state it`. A single hyphen or en dash counts
@@ -926,7 +935,7 @@ last component of the path ID);
 `statement_text`; `ancestors` (titles of containing articles below the roadmap
 root); `qualified_names` (the path ID and Lean names in full, which is where a
 namespace alone matches). A title is
-matched as the page shows it, without its Markdown markup. The statement is
+matched without its Markdown markup. The statement is
 matched as the site publishes it, without headings, code blocks, diagrams,
 comments, and elements carrying `hidden`; inline code and mathematics count,
 and published mathematics is delimited `\(...\)`, so search for a formula's
@@ -936,7 +945,9 @@ matches `roadmap`, `unambiguous` does not match `non-ambiguous`, and one
 absent term means no hit, so query with a few distinctive words or one exact
 Lean name, and retry with fewer words before treating a result as new.
 A symbol such as `ℝ` folds to its plain letter, and a one-letter term matches
-nearly every article.
+nearly every article. A superscript or subscript digit folds to the digit while
+`^` and `_` stay, so `S^1` and `S¹`, or `H_0` and `H₀`, do not find each other;
+search for each spelling.
 
 Hits sort by the best field any term matched. Among hits with the same best
 field, those that contain every word as typed, in any field, come before those

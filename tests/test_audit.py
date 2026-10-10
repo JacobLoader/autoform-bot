@@ -829,6 +829,9 @@ def test_audit_reports_a_placeholder_statement(tmp_path: Path, prose: str) -> No
         "[ ](missing.md)",
         "![diagram](diagram.png)",
         "...",
+        "Setting\n=======",
+        "> ### Setting",
+        "- ### Setting",
     ],
 )
 def test_audit_reports_a_statement_that_shows_a_reader_nothing(tmp_path: Path, prose: str) -> None:

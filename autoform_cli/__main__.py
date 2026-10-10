@@ -212,7 +212,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     search.add_argument(
         "query",
         help="one quoted argument; every word, with filler such as 'of' dropped and common endings cut, "
-        "must occur in an article's title, Lean name, path, or statement; put -- before one starting with -",
+        "must occur in an article's title, Lean name, path, or statement, or in a containing article's title; "
+        "put -- before one starting with -",
     )
     search.add_argument("--lean-root", type=Path, help="resolve local Lean declaration targets")
     search.add_argument(
