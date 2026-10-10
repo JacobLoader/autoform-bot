@@ -2271,7 +2271,29 @@ def _remove_inventory_contents(
         if expected_file is None or _stat_signature(metadata) != expected_file[0]:
             raise OSError(errno.ESTALE, "workspace changed during cleanup")
         quarantine = f".autoform-cleanup-{secrets.token_hex(16)}"
-        _cleanup_rename_noreplace(descriptor, name, quarantine)
+        try:
+            _cleanup_rename_noreplace(descriptor, name, quarantine)
+        except OSError as error:
+            if error.errno not in _MISSING_RENAME_FLAG_ERRORS:
+                raise
+            # NFS, 9p and sshfs reject every rename flag. The capability probe
+            # refuses them before anything is staged, so this only removes the
+            # workspace marker. Verify it in place and unlink it.
+            data = _read_regular_file_at(
+                descriptor,
+                name,
+                Path(relative),
+                max_bytes=_PUBLICATION_MAX_FILE_BYTES,
+                ignore_close_errors=True,
+            )
+            current = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            if (
+                _stat_signature(current) != expected_file[0]
+                or hashlib.sha256(data).hexdigest() != expected_file[1]
+            ):
+                raise OSError(errno.ESTALE, "workspace changed during cleanup") from error
+            os.unlink(name, dir_fd=descriptor)
+            continue
         try:
             claimed = os.stat(
                 quarantine,
@@ -2345,6 +2367,11 @@ def _index_cleanup_inventory(inventory: _CleanupInventory) -> _CleanupIndex:
         files,
         {parent: tuple(sorted(names)) for parent, names in children.items()},
     )
+
+
+_MISSING_RENAME_FLAG_ERRORS = frozenset(
+    {errno.EINVAL, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP}
+)
 
 
 def _cleanup_rename_noreplace(descriptor: int, source: str, target: str) -> None:

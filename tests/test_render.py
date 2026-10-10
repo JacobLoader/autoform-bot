@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ctypes
 import errno
 import hashlib
 import json
@@ -2098,7 +2097,7 @@ def test_an_exchange_the_kernel_refuses_keeps_the_site_and_no_workspace(
             return function, flag
 
         def refused(*_args) -> int:
-            ctypes.set_errno(error_number)
+            render_module.ctypes.set_errno(error_number)
             return -1
 
         return refused, flag
@@ -2133,7 +2132,7 @@ def test_an_ambiguous_exchange_error_still_retains_the_workspace(
             return function, flag
 
         def failed(*_args) -> int:
-            ctypes.set_errno(errno.EIO)
+            render_module.ctypes.set_errno(errno.EIO)
             return -1
 
         return failed, flag
@@ -2226,9 +2225,23 @@ def test_unsupported_platform_fails_before_creating_a_stage(
     assert not list(tmp_path.glob(f"{render_module._PUBLICATION_STAGE_PREFIX}*"))
 
 
+@pytest.mark.parametrize(
+    ("missing", "error_number"),
+    [
+        # CIFS, exFAT: no-replace works, exchange does not.
+        ("exchange", errno.EOPNOTSUPP),
+        # NFS, 9p (WSL2 /mnt/c), sshfs: every rename flag is rejected, including
+        # the no-replace claim that workspace cleanup uses.
+        ("both", errno.EINVAL),
+        # macOS volumes without VOL_CAP_INT_RENAME_EXCL/SWAP.
+        ("both", errno.ENOTSUP),
+    ],
+)
 def test_unsupported_filesystem_fails_before_inspecting_or_changing_live_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    missing: str,
+    error_number: int,
 ) -> None:
     project = _project(tmp_path)
     output = tmp_path / "out"
@@ -2240,11 +2253,11 @@ def test_unsupported_filesystem_fails_before_inspecting_or_changing_live_output(
 
     def unsupported_exchange(*, exchange: bool):
         function, flag = original_implementation(exchange=exchange)
-        if not exchange:
+        if not exchange and missing == "exchange":
             return function, flag
 
         def fail(*_args) -> int:
-            render_module.ctypes.set_errno(errno.EOPNOTSUPP)
+            render_module.ctypes.set_errno(error_number)
             return -1
 
         return fail, flag
