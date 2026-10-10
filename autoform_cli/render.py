@@ -1606,7 +1606,7 @@ def _create_workspace(
 def _create_workspace_marker(
     workspace_descriptor: int,
 ) -> tuple[tuple[int, ...], str]:
-    """Create and durably bind the marker used to prune retained workspaces."""
+    """Create and durably bind the marker that keeps workspaces out of Lean capture."""
 
     descriptor: int | None = None
     created_identity: tuple[int, int] | None = None

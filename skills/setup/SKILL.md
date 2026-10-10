@@ -147,7 +147,7 @@ here rather than in CI. The exact invocations, including how to resolve
 do not restate them here.
 
 `render` writes a derived tree; the vault stays the source of truth. Ignore
-`site-src/`, `site/`, and `blueprint/dependencies.md`.
+`site-src/`, `site/`, `.autoform-publication-*/`, and `blueprint/dependencies.md`.
 
 Publication is opt-in because files under `blueprint/` become public site
 content, together with derived progress, graph pages, and a path-free

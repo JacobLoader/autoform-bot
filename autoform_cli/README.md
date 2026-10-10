@@ -1171,3 +1171,7 @@ success is returned. Other post-verification cleanup refusals leave the
 published site in place and return the retained workspace as a warning. A process
 exit immediately after exchange likewise leaves the complete previous generation
 under that workspace while the complete replacement occupies the output path.
+The workspace is a hidden `.autoform-publication-*` directory beside the output
+(the repository root for `--output site-src`). A render killed by a signal
+leaves it behind without a message; later renders do not remove it. It may hold
+the only copy of the previous generation, so inspect it before removing it.

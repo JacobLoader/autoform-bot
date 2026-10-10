@@ -470,7 +470,7 @@ def test_scaffold_merges_autoform_rules_into_lake_gitignore(tmp_path: Path) -> N
 
     merged = (tmp_path / ".gitignore").read_bytes()
     assert merged.startswith(lake_ignore)
-    for rule in (b".lake/", b"site/", b"site-src/", b"*.log"):
+    for rule in (b".lake/", b"site/", b"site-src/", b".autoform-publication-*/", b"*.log"):
         assert merged.splitlines().count(rule) == 1
     assert ".gitignore" in result.written
     assert ".gitignore" not in result.skipped
