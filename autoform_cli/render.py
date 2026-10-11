@@ -630,7 +630,10 @@ def _render_bound_site(
         output_parent = _open_or_create_output_parent(destination.parent)
     except OSError as error:
         raise PublicationError(
-            ["could not create and bind the output parent safely"]
+            [
+                f"could not create and bind the output parent {destination.parent} "
+                f"safely: {error.strerror or error}"
+            ]
         ) from error
     try:
         return _render_in_bound_output_parent(
@@ -1439,6 +1442,9 @@ def _open_directory_path(path: Path) -> int:
     return descriptor
 
 
+_SEARCH_ONLY_FLAG = getattr(os, "O_SEARCH", 0) or getattr(os, "O_PATH", 0)
+
+
 def _open_or_create_output_parent(path: Path) -> RetainedDirectory:
     """Retain an output-parent chain and durably create missing components."""
 
@@ -1464,7 +1470,8 @@ def _open_or_create_output_parent(path: Path) -> RetainedDirectory:
             raise OSError(errno.ESTALE, "output-parent anchor changed")
         identities.append((opened.st_dev, opened.st_ino))
 
-        for part in absolute.parts[1:]:
+        parts = absolute.parts[1:]
+        for index, part in enumerate(parts):
             parent_descriptor = descriptor
             created = False
             try:
@@ -1487,7 +1494,19 @@ def _open_or_create_output_parent(path: Path) -> RetainedDirectory:
                 )
             if not stat.S_ISDIR(expected.st_mode):
                 raise OSError(errno.ENOTDIR, "output-parent component is not a directory")
-            child = os.open(part, flags, dir_fd=parent_descriptor)
+            try:
+                child = os.open(part, flags, dir_fd=parent_descriptor)
+            except PermissionError:
+                # An ancestor may grant search but not read (a 0711 /home).
+                # Only the output parent itself must be listed, locked and
+                # synced.
+                if not _SEARCH_ONLY_FLAG or created or index == len(parts) - 1:
+                    raise
+                child = os.open(
+                    part,
+                    _SEARCH_ONLY_FLAG | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=parent_descriptor,
+                )
             descriptors.append(child)
             opened = os.fstat(child)
             named = os.stat(

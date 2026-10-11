@@ -3443,6 +3443,27 @@ def test_untracked_trees_in_the_lean_root_do_not_spend_the_publication_budget(
     assert report.linked == 2
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="root ignores directory read permission",
+)
+def test_render_accepts_an_ancestor_that_grants_search_but_not_read(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    project = _project(home / "alice")
+    output = project / "site-src"
+    home.chmod(0o311)
+    try:
+        render_site(project / "blueprint", output, lean_root=project)
+        render_site(project / "blueprint", output, lean_root=project)
+    finally:
+        home.chmod(0o755)
+
+    assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["complete"]
+    assert not list(project.glob(f"{render_module._PUBLICATION_STAGE_PREFIX}*"))
+
+
 def test_manifest_read_is_bounded(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
