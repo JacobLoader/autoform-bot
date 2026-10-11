@@ -109,16 +109,28 @@ def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path
     assert "Write notes only in the claimed article's `blueprint/.implementation-notes/<article_id>.md`" in formalize
     assert "one file per claimed article avoids cross-worker merge hotspots" in formalize
     assert "Delete the file once the article is proved" in formalize
+    assert "Delete every note the audit reports as `stale-implementation-note`" in formalize
+    assert "even though it belongs to another article" in formalize
+    assert "The exceptions are deleting stale implementation notes" in formalize
+    assert "delete every note the audit now reports as stale" in formalize
+    assert '"stale-implementation-note"' in read("autoform_cli/audit.py")
     assert "never a secret or machine-local path" in formalize
     assert "Never link the hidden note from an article" in formalize
     assert "Articles hold only frontmatter and informal mathematics" in roadmap
     assert "`blueprint/.implementation-notes/<article_id>.md`" in roadmap
     assert "Delete it when the article is proved or marked `mathlib: true`" in roadmap
-    assert "delete a container's note when every formalizable descendant is proved" in roadmap
+    assert (
+        "delete a container's note when every formalizable descendant is proved and there is at least one"
+        in roadmap
+    )
     assert "an orphaned note blocks every command that loads the graph" in roadmap
     assert "Versioned implementation notes live outside the mathematical roadmap" in reference
+    assert "delete it once every formalizable descendant is proved and there is at least one" in reference
     assert "Record what happened in the revision commit and report" in reference
-    assert "Use an article's implementation note only while that article remains unproved" in reference
+    assert (
+        "Use an implementation note only until [its deletion rule](#articles-and-containment) applies"
+        in reference
+    )
     assert "Markdown under `blueprint/roadmap/` is the authored roadmap" in guidance
     assert "files under `blueprint/.implementation-notes/`" in guidance
     for text in (formalize, roadmap, reference):

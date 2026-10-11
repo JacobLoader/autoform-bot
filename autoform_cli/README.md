@@ -83,10 +83,11 @@ durable ID survives article moves, and article claims keep independent workers
 from editing the same note. Every command that loads the graph, including
 `autoform check`, rejects malformed, empty, symlinked, or orphaned notes; assign
 the article ID before creating its note. Delete the file once its article is
-proved; for a container, delete it once every formalizable descendant is proved.
-The directory is hidden, so current and older renderers omit it from the site
-and publication hash without requiring an `AUTOFORM_REF` migration; `autoform
-audit` reports a note left behind after that point.
+proved; for a container, delete it once every formalizable descendant is proved
+and there is at least one. The directory is hidden, so current and older
+renderers omit it from the site and publication hash without requiring an
+`AUTOFORM_REF` migration; `autoform audit` reports a note left behind after
+that point.
 
 ## Assertions and derived status
 
@@ -1091,7 +1092,8 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
      `lean:`, `statement`, and `proof`, which works only when nothing else
      uses it. When neither applies, the revision is blocked: release the claims
      and report it. Record what happened in the revision commit and report. Use
-     an article's implementation note only while that article remains unproved.
+     an implementation note only until [its deletion
+     rule](#articles-and-containment) applies.
 
    An unused statement dependency, which rules out the contained route, is
    re-reviewed under the revised meaning, X' on the expand route and X's new

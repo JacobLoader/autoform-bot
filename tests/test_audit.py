@@ -190,6 +190,21 @@ def test_container_note_is_stale_when_its_formalizable_subtree_is_proved(
     assert ("stale-implementation-note" in codes) is stale
 
 
+def test_container_note_without_formalizable_descendants_is_not_stale(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    container_id = "af_0123456789abcdef01234567"
+    _article(blueprint, "chapter/README.md", article_id=container_id)
+    _article(blueprint, "chapter/overview.md", article_id="af_89abcdef0123456701234567")
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{container_id}.md").write_text("chapter plan\n", encoding="utf-8")
+
+    codes = {finding.code for finding in audit_blueprint(blueprint).findings}
+
+    assert "stale-implementation-note" not in codes
+
+
 def test_container_note_audit_handles_deep_containment_iteratively(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

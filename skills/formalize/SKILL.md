@@ -63,8 +63,9 @@ Read the complete article, its `blueprint/.implementation-notes/<article_id>.md`
 when present, cited sources, dependency articles, and existing Lean target.
 Preserve the exact mathematical statement. Work only on the selected phase: do
 not modify another article or its Lean declarations, or weaken a public
-statement. The one exception is revising a declaration other articles' Lean
-uses: start from `autoform work impact` and make only the edits the
+statement. The exceptions are deleting stale implementation notes, as described
+below, and revising a declaration other articles' Lean uses: start from
+`autoform work impact` and make only the edits the
 [revision contract](../../autoform_cli/README.md#revision-contract) requires,
 under the claims it requires. A work item flagged `revision`, whose article
 records `statement: retracted`, is such a revision; restating it replaces
@@ -133,12 +134,16 @@ Run `autoform check <PROJECT>/blueprint --lean-root <PROJECT>` and `autoform
 audit <PROJECT>/blueprint --lean-root <PROJECT>`. Resolve every finding this
 work introduced on the claimed article, except `lean-target-deprecated` for a
 superseded declaration that an expand, migrate, contract revision keeps in the
-revised article's `lean:` until it is deleted; report unrelated pre-existing
-findings instead of fixing them.
+revised article's `lean:` until it is deleted. Delete every note the audit
+reports as `stale-implementation-note`, including a container's note that this
+proof completed or that an earlier commit left behind, even though it belongs
+to another article; the audit fails until they are all gone. Report other
+pre-existing findings instead of fixing them.
 
 Commit the verified result in its worktree, renew the claim, and rebase onto or
-merge the current shared branch. On the result, run the default `lake build`,
-confirm that dependency readiness is unchanged, and confirm that the claimed
+merge the current shared branch. On the result, run the default `lake build`
+and `autoform audit`, delete every note the audit now reports as stale, confirm
+that dependency readiness is unchanged, and confirm that the claimed
 article differs from its starting `article_revision` only by this worker's
 edits; if integration changed the candidate, repeat the review, check, and
 audit. For a revision, also re-run `autoform work impact` on the rebuilt result;
