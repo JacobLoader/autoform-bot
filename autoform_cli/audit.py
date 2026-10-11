@@ -20,6 +20,7 @@ from .graph import Graph, GraphValidationError, Node, load_graph
 from .lean import (
     _DECLARATION,
     Declaration,
+    IndexedSourceSnapshot,
     SourceIndex,
     _without_lean_comments,
     declaration_names,
@@ -153,11 +154,19 @@ def audit_graph(
     graph: Graph,
     *,
     lean_root: str | Path | None = None,
+    lean_snapshot: IndexedSourceSnapshot | None = None,
     coverage: CoverageSummary | None = None,
     coverage_findings: list[AuditFinding] | None = None,
 ) -> AuditResult:
-    """Audit an already loaded graph without modifying it or its source files."""
+    """Audit an already loaded graph without modifying it or its source files.
 
+    Lean targets are checked against a fresh capture of *lean_root*, or
+    against *lean_snapshot* when the caller already holds a capture; pass at
+    most one.
+    """
+
+    if lean_root is not None and lean_snapshot is not None:
+        raise TypeError("pass lean_root or lean_snapshot, not both")
     findings: list[AuditFinding] = []
     derived = status.derive(graph)
     contained: dict[str, list[str]] = {}
@@ -253,6 +262,8 @@ def audit_graph(
     findings.extend(coverage_findings)
     if lean_root is not None:
         findings.extend(_lean_findings(graph, lean_root))
+    elif lean_snapshot is not None:
+        findings.extend(_lean_target_findings(graph, lean_snapshot))
     return _result(findings, coverage=coverage)
 
 
@@ -385,7 +396,6 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
             )
         ]
 
-    findings: list[AuditFinding] = []
     try:
         snapshot = snapshot_project_sources(root)
     except OSError as error:
@@ -396,6 +406,11 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
                 index_failure_message(error),
             )
         ]
+    return _lean_target_findings(graph, snapshot)
+
+
+def _lean_target_findings(graph: Graph, snapshot: IndexedSourceSnapshot) -> list[AuditFinding]:
+    findings: list[AuditFinding] = []
     index = snapshot.index
     spans = _source_spans(index)
     sizes: dict[str, int] = {}

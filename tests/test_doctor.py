@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
+from autoform_cli import _tree_snapshot as tree_snapshot_module
+from autoform_cli import lean as lean_module
 from autoform_cli.doctor import diagnose_project
-from autoform_cli.lean import LeanSourceError
 
 
 def _article(
@@ -191,34 +193,113 @@ def test_a_deprecated_lean_target_fails_the_lean_targets_check(tmp_path: Path) -
     assert _checks(result)["audit"][0]
 
 
-def test_unreadable_lean_sources_are_a_lean_target_failure(
+_LEAN_METADATA = (
+    "declaration: theorem",
+    "statement: formalized",
+    "proof: formalized",
+    "lean: Project.result",
+)
+_FIFO_REASON = "unsafe Lean source Project/F.lean: named pipe is not a regular file or directory"
+
+
+def _lean_root(tmp_path: Path) -> Path:
+    lean_root = tmp_path / "lean"
+    (lean_root / "Project").mkdir(parents=True)
+    (lean_root / "Project" / "Basic.lean").write_text("theorem Project.result : True := trivial\n", encoding="utf-8")
+    return lean_root
+
+
+def test_lean_sources_that_keep_changing_fail_only_the_lean_targets_check(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    project = _clean_project(
-        tmp_path,
-        metadata=(
-            "declaration: theorem",
-            "statement: formalized",
-            "proof: formalized",
-            "lean: Project.result",
-        ),
+    project = _clean_project(tmp_path, metadata=_LEAN_METADATA)
+    lean_root = _lean_root(tmp_path)
+    source = lean_root / "Project" / "Basic.lean"
+    original = tree_snapshot_module._tree_snapshot_checkpoint
+    edits = 0
+
+    def edit_during_every_attempt(event: str, relative: str) -> None:
+        nonlocal edits
+        original(event, relative)
+        if event == "before-final-verification":
+            edits += 1
+            # Each edit also changes the size, so coarse timestamps cannot hide it.
+            source.write_text(f"theorem Project.result : True := trivial{' ' * edits}\n", encoding="utf-8")
+
+    monkeypatch.setattr(tree_snapshot_module, "_tree_snapshot_checkpoint", edit_during_every_attempt)
+    monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
+
+    result = diagnose_project(project, lean_root=lean_root)
+
+    assert edits == lean_module._SNAPSHOT_ATTEMPTS
+    assert not result.clean
+    checks = _checks(result)
+    assert checks["runtime"][0]
+    assert checks["graph"][0]
+    assert checks["references"][0]
+    assert checks["audit"] == (True, "roadmap audit passed")
+    assert checks["lean targets"] == (
+        False,
+        "Lean sources could not be indexed: Lean sources kept changing while they were indexed",
     )
-    lean_root = tmp_path / "lean"
-    lean_root.mkdir()
-    (lean_root / "Project.lean").write_text("theorem Project.result : True := trivial\n", encoding="utf-8")
+    assert str(tmp_path) not in result.to_json()
 
-    def changed_after_projection(_root):
-        raise LeanSourceError("Lean sources kept changing while they were indexed")
 
-    monkeypatch.setattr("autoform_cli.audit.snapshot_project_sources", changed_after_projection)
+def test_an_unindexable_lean_source_fails_only_the_lean_targets_check(tmp_path: Path) -> None:
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("named pipes are unavailable")
+    project = _clean_project(tmp_path, metadata=_LEAN_METADATA)
+    lean_root = _lean_root(tmp_path)
+    os.mkfifo(lean_root / "Project" / "F.lean")
 
     result = diagnose_project(project, lean_root=lean_root)
 
     assert not result.clean
-    assert _checks(result)["runtime"][0]
-    assert _checks(result)["audit"] == (True, "roadmap audit passed")
-    assert _checks(result)["lean targets"] == (False, "1 finding(s): unreadable-lean-sources")
+    checks = _checks(result)
+    assert checks["runtime"][0]
+    assert checks["graph"][0]
+    assert checks["references"] == (
+        True,
+        "all parents, typed dependencies, and dispatchable leaves are consistent",
+    )
+    assert checks["audit"] == (True, "roadmap audit passed")
+    assert checks["lean targets"] == (False, f"Lean sources could not be indexed: {_FIFO_REASON}")
     assert str(tmp_path) not in result.to_json()
+
+
+def test_a_lean_capture_failure_is_reported_when_the_runtime_projection_fails(tmp_path: Path) -> None:
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("named pipes are unavailable")
+    project = _clean_project(tmp_path, metadata=(*_LEAN_METADATA, "mathlib_file: ../Outside.lean"))
+    lean_root = _lean_root(tmp_path)
+    os.mkfifo(lean_root / "Project" / "F.lean")
+
+    result = diagnose_project(project, lean_root=lean_root)
+
+    checks = _checks(result)
+    assert checks["runtime"] == (False, "result: mathlib file must be a portable relative path")
+    assert checks["audit"] == (False, "not checked because runtime projection failed")
+    assert checks["lean targets"] == (False, f"Lean sources could not be indexed: {_FIFO_REASON}")
+
+
+def test_doctor_captures_the_lean_sources_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project = _clean_project(tmp_path, metadata=_LEAN_METADATA)
+    lean_root = _lean_root(tmp_path)
+    original = tree_snapshot_module._tree_snapshot_checkpoint
+    captures = 0
+
+    def count_captures(event: str, relative: str) -> None:
+        nonlocal captures
+        original(event, relative)
+        if event == "before-final-verification":
+            captures += 1
+
+    monkeypatch.setattr(tree_snapshot_module, "_tree_snapshot_checkpoint", count_captures)
+
+    result = diagnose_project(project, lean_root=lean_root)
+
+    assert result.clean
+    assert captures == 1
 
 
 def test_runtime_projection_failure_is_reported_without_traceback(tmp_path: Path) -> None:

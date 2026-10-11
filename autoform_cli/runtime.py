@@ -14,7 +14,7 @@ from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote, urlsplit
 
 from .graph import Graph, load_graph, roadmap_symlink_issues
-from .lean import declaration_names, index_failure_message, index_project
+from .lean import SourceIndex, declaration_names, index_failure_message, index_project
 from .status import derive, is_definition
 
 RUNTIME_SCHEMA = "autoform-runtime/v3"
@@ -245,9 +245,16 @@ def build_runtime_graph(
     *,
     project_root: str | Path,
     lean_root: str | Path | None = None,
+    lean_index: SourceIndex | None = None,
 ) -> RuntimeGraph:
-    """Copy an already validated canonical graph into the runtime contract."""
+    """Copy an already validated canonical graph into the runtime contract.
 
+    Lean targets are located in a fresh capture of *lean_root*, or in
+    *lean_index* when the caller already holds a capture; pass at most one.
+    """
+
+    if lean_root is not None and lean_index is not None:
+        raise TypeError("pass lean_root or lean_index, not both")
     project = Path(project_root).expanduser().resolve()
     blueprint = graph.blueprint_dir.resolve()
     issues: list[str] = []
@@ -313,7 +320,6 @@ def build_runtime_graph(
         raise RuntimeProjectionError(issues)
 
     statuses = derive(graph)
-    lean_index = None
     if lean_root is not None:
         root = Path(lean_root).expanduser().resolve()
         if not root.is_dir():

@@ -15,6 +15,7 @@ from pathlib import Path, PureWindowsPath
 
 from .audit import AuditFinding, audit_graph
 from .graph import GraphValidationError, load_graph
+from .lean import IndexedSourceSnapshot, index_failure_message, snapshot_project_sources
 from .runtime import (
     RUNTIME_AUTHORITY,
     RUNTIME_SCHEMA,
@@ -31,7 +32,6 @@ _LEAN_FINDING_CODES = frozenset(
         "lean-target-deprecated",
         "lean-target-kind-mismatch",
         "lean-target-not-found",
-        "unreadable-lean-sources",
     }
 )
 _CHECK_NAMES = ("blueprint", "runtime", "graph", "references", "audit", "lean targets")
@@ -105,12 +105,21 @@ def diagnose_project(
         checks.append(DoctorCheck("graph", False, reason))
         return _blocked_result(checks, "graph validation failed", lean_root=lean_root)
 
+    # One capture serves the runtime projection and the audit, so both judge
+    # the same sources; when it fails, only the lean targets check says so.
     resolved_lean_root, lean_root_valid = _resolve_lean_root(lean_root)
+    lean_snapshot: IndexedSourceSnapshot | None = None
+    lean_failure: DoctorCheck | None = None
+    if resolved_lean_root is not None:
+        try:
+            lean_snapshot = snapshot_project_sources(resolved_lean_root)
+        except OSError as error:
+            lean_failure = DoctorCheck("lean targets", False, index_failure_message(error))
     try:
         runtime = build_runtime_graph(
             graph,
             project_root=paths.project_root,
-            lean_root=resolved_lean_root,
+            lean_index=lean_snapshot.index if lean_snapshot is not None else None,
         )
     except RuntimeProjectionError as error:
         checks.append(DoctorCheck("runtime", False, _issues(error.issues)))
@@ -125,7 +134,7 @@ def diagnose_project(
 
     if runtime is None:
         checks.append(DoctorCheck("graph", False, "not summarized because runtime projection failed"))
-        return _blocked_result(checks, "runtime projection failed", lean_root=lean_root)
+        return _blocked_result(checks, "runtime projection failed", lean_root=lean_root, lean_check=lean_failure)
 
     checks.append(
         DoctorCheck(
@@ -146,7 +155,7 @@ def diagnose_project(
         )
     )
 
-    audit = audit_graph(graph, lean_root=resolved_lean_root)
+    audit = audit_graph(graph, lean_snapshot=lean_snapshot)
     lean_findings = tuple(finding for finding in audit.findings if finding.code in _LEAN_FINDING_CODES)
     if lean_root is not None and not lean_root_valid:
         lean_findings = (
@@ -157,6 +166,8 @@ def diagnose_project(
     checks.append(_finding_check("audit", roadmap_findings, "roadmap audit passed"))
     if lean_root is None:
         checks.append(DoctorCheck("lean targets", True, "not checked; no Lean root supplied"))
+    elif lean_failure is not None:
+        checks.append(lean_failure)
     else:
         checks.append(_finding_check("lean targets", lean_findings, "all asserted local Lean targets resolve"))
     return _result(checks)
@@ -167,10 +178,11 @@ def _blocked_result(
     reason: str,
     *,
     lean_root: str | Path | None,
+    lean_check: DoctorCheck | None = None,
 ) -> DoctorResult:
     for name in _CHECK_NAMES[len(checks) : -1]:
         checks.append(DoctorCheck(name, False, f"not checked because {reason}"))
-    checks.append(_blocked_lean_check(reason, lean_root))
+    checks.append(lean_check or _blocked_lean_check(reason, lean_root))
     return _result(checks)
 
 

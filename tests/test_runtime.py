@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
 
 from autoform_cli.graph import Graph, Node, load_graph
-from autoform_cli.lean import LeanSourceError
+from autoform_cli.lean import LeanSourceError, index_project
 from autoform_cli.runtime import (
     RUNTIME_AUTHORITY,
     RUNTIME_SCHEMA,
@@ -156,6 +157,33 @@ def test_exposes_provenance_mathlib_and_optional_lean_locations(tmp_path: Path) 
     assert result.mathlib
     assert result.mathlib_declarations == ("Mathlib.Result", "Mathlib.ResultAux")
     assert result.mathlib_file == "Mathlib/Result.lean"
+
+
+def test_lean_targets_can_come_from_a_capture_the_caller_holds(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    (lean_root / "Project.lean").write_text(
+        "def Project.base : Nat := 1\n"
+        "theorem Project.result : True := trivial\n",
+        encoding="utf-8",
+    )
+    graph = load_graph(project / "blueprint")
+    from_root = build_runtime_graph(graph, project_root=project, lean_root=lean_root)
+    index = index_project(lean_root)
+    shutil.rmtree(lean_root)
+
+    from_index = build_runtime_graph(graph, project_root=project, lean_index=index)
+
+    assert from_index == from_root
+    result = from_index.get("chapter/section/result")
+    assert result is not None
+    assert [(target.declaration, target.source_file) for target in result.lean_targets] == [
+        ("Project.result", "Project.lean"),
+        ("Project.result_aux", None),
+    ]
+    with pytest.raises(TypeError):
+        build_runtime_graph(graph, project_root=project, lean_root=tmp_path, lean_index=index)
 
 
 def test_serialization_is_deterministic_relative_and_deeply_immutable(tmp_path: Path) -> None:

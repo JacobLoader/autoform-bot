@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
 
 import autoform_cli.audit as audit_module
-from autoform_cli.audit import audit_blueprint
+from autoform_cli.audit import audit_blueprint, audit_graph
 from autoform_cli.graph import load_graph
-from autoform_cli.lean import LeanSourceError
+from autoform_cli.lean import LeanSourceError, snapshot_project_sources
 
 
 def _ensure_chapter(blueprint: Path, relative: str) -> None:
@@ -246,6 +247,35 @@ def test_audit_validates_lean_targets_only_when_root_is_supplied(tmp_path: Path)
     assert with_lean["roadmap/wrong-kind.md"] == [
         ("lean-target-kind-mismatch", "Lean target kind def does not match declaration intent theorem")
     ]
+
+
+def test_audit_checks_a_capture_the_caller_holds_like_its_lean_root(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    _article(blueprint, "missing.md", declaration="theorem", statement="formalized", lean="Project.missing")
+    _article(blueprint, "wrong-kind.md", declaration="theorem", statement="formalized", lean="Project.value")
+    _article(blueprint, "old.md", declaration="theorem", statement="formalized", lean="Project.old")
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    (lean_root / "Value.lean").write_text(
+        "def Project.value : Nat := 1\n\n@[deprecated Project.value] theorem Project.old : True := trivial\n",
+        encoding="utf-8",
+    )
+    graph = load_graph(blueprint)
+    from_root = audit_graph(graph, lean_root=lean_root)
+    snapshot = snapshot_project_sources(lean_root)
+    shutil.rmtree(lean_root)
+
+    from_snapshot = audit_graph(graph, lean_snapshot=snapshot)
+
+    assert from_snapshot == from_root
+    assert sorted((finding.article_path, finding.code) for finding in from_snapshot.findings) == [
+        ("roadmap/missing.md", "lean-target-not-found"),
+        ("roadmap/old.md", "lean-target-deprecated"),
+        ("roadmap/wrong-kind.md", "lean-target-kind-mismatch"),
+    ]
+    with pytest.raises(TypeError):
+        audit_graph(graph, lean_root=tmp_path, lean_snapshot=snapshot)
 
 
 def test_audit_reports_lean_targets_declared_deprecated(tmp_path: Path) -> None:
