@@ -1490,6 +1490,17 @@ _NATIVE_DEP_LEAN = """unsafe def Dep.evilImpl (_ : Unit) : Bool :=
 def Dep.evil : Bool := Dep.evilSpec ()
 """
 
+_MUTUAL_DEP_LEAN = """axiom MDep.Bad : Type
+
+mutual
+inductive MDep.A0 : Type where
+  | mk : MDep.Bad → MDep.B0 → MDep.A0
+  | base : MDep.A0
+inductive MDep.B0 : Type where
+  | mk : MDep.A0 → MDep.B0
+end
+"""
+
 # A declaration whose proof names a constant that no module declares.
 _DANGLING_LEAN = """import Lean.Elab.Command
 
@@ -1526,6 +1537,15 @@ def hostile_projects(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tupl
             "core-named",
             {"Lean/Hack.lean": _INITIALIZER_LEAN + "theorem Lean.Hack.cheat : 2 + 2 = 5 := sorry\n"},
             'name = "Fixture"\nroots = ["Lean.Hack"]\n',
+        ),
+        (
+            # A dependency that declares an axiom and a mutual inductive using it.
+            "mutual-axiom",
+            {"Fixture.lean": "import MDep\ntheorem Fixture.t0 : ∀ _ : MDep.B0, True := fun _ => trivial\n",
+             "mdep/lean-toolchain": "leanprover/lean4:v4.32.2\n",
+             "mdep/lakefile.toml": 'name = "mdep"\ndefaultTargets = ["MDep"]\n\n[[lean_lib]]\nname = "MDep"\n',
+             "mdep/MDep.lean": _MUTUAL_DEP_LEAN},
+            'name = "Fixture"\n\n[[require]]\nname = "mdep"\npath = "mdep"\n',
         ),
         ("dangling", {"Fixture.lean": _DANGLING_LEAN}, 'name = "Fixture"\n'),
         (
@@ -1670,6 +1690,19 @@ def test_both_probes_refuse_a_theorem_in_place_of_an_axiom(
         ) in output
         assert "kernel trust clean" not in output
         assert not (project[0] / "marker").exists()
+
+
+def test_both_probes_find_an_axiom_a_dependency_reaches_through_a_mutual_inductive(
+    helper: ModuleType, hostile_projects: dict[str, tuple[Path, Path]]
+) -> None:
+    # On v4.32.2 `collectAxioms` reads the axiom tables the modules store, and
+    # `MDep`'s leaves `MDep.Bad` out of `MDep.B0`'s, so the probe on main passed this.
+    for audited, summary in _both_probes(helper, hostile_projects["mutual-axiom"], [_article("t0", ["Fixture.t0"])]):
+        output = audited.stdout + audited.stderr
+        assert audited.returncode != 0, output
+        assert "Fixture.t0 depends on unexpected axiom MDep.Bad" in output
+        assert summary in output
+        assert "kernel trust clean" not in output
 
 
 def test_both_probes_fail_closed_on_a_constant_no_module_declares(
