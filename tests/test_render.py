@@ -1457,16 +1457,27 @@ def test_partial_stage_write_failure_removes_the_inventoried_workspace(
 ) -> None:
     project = _project(tmp_path)
     original_write = render_module.os.write
+    original_checkpoint = render_module._publication_plan_checkpoint
+    staged_files = 0
     failed = False
+
+    def count_staged_files(event: str, relative: str) -> None:
+        nonlocal staged_files
+        if event == "after-file-open":
+            staged_files += 1
+        original_checkpoint(event, relative)
 
     def fail_after_partial_write(descriptor: int, data) -> int:
         nonlocal failed
-        if not failed and data:
+        # Fail in the second staged file, so the stage already holds one
+        # complete file and one partial file, not just the workspace marker.
+        if not failed and staged_files >= 2 and data:
             failed = True
             original_write(descriptor, data[:1])
             raise OSError(errno.ENOSPC, "injected full filesystem")
         return original_write(descriptor, data)
 
+    monkeypatch.setattr(render_module, "_publication_plan_checkpoint", count_staged_files)
     monkeypatch.setattr(render_module.os, "write", fail_after_partial_write)
 
     with pytest.raises(OSError, match="full filesystem"):
@@ -1959,17 +1970,25 @@ def test_render_fsyncs_staged_files_and_directories(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     original = os.fsync
-    synced_modes: list[int] = []
+    synced: set[tuple[int, int]] = set()
 
     def record(descriptor: int) -> None:
-        synced_modes.append(os.fstat(descriptor).st_mode)
+        metadata = os.fstat(descriptor)
+        synced.add((metadata.st_dev, metadata.st_ino))
         original(descriptor)
 
     monkeypatch.setattr(render_module.os, "fsync", record)
     _render(tmp_path)
 
-    assert any(stat.S_ISREG(mode) for mode in synced_modes)
-    assert any(stat.S_ISDIR(mode) for mode in synced_modes)
+    output = tmp_path / "out"
+    published = [output, *output.rglob("*")]
+    assert len(published) > 2
+    unsynced = [
+        path.relative_to(output).as_posix()
+        for path in published
+        if (path.stat().st_dev, path.stat().st_ino) not in synced
+    ]
+    assert unsynced == []
 
 
 def test_render_fsyncs_every_new_output_parent_component(
@@ -2472,6 +2491,76 @@ def test_render_refuses_to_overwrite_an_unowned_directory(tmp_path: Path) -> Non
         render_site(project / "blueprint", output, lean_root=project)
 
     assert sentinel.read_text(encoding="utf-8") == "user data\n"
+
+
+def test_render_installs_into_an_existing_empty_directory(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    output = tmp_path / "out"
+    output.mkdir()
+
+    render_site(project / "blueprint", output, lean_root=project)
+
+    assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["complete"]
+    assert not list(tmp_path.glob(f"{render_module._PUBLICATION_STAGE_PREFIX}*"))
+
+
+def test_render_never_replaces_a_legacy_v1_publication(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / PUBLICATION_MANIFEST).write_text(
+        json.dumps({"complete": True, "schema": "autoform-publication/v1"}, indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    (output / "README.md").write_text("# Older site\n", encoding="utf-8")
+    before = {
+        path.relative_to(output).as_posix(): path.read_bytes()
+        for path in output.rglob("*")
+        if path.is_file()
+    }
+
+    with pytest.raises(PublicationError, match="legacy publication"):
+        render_site(project / "blueprint", output, lean_root=project)
+
+    assert {
+        path.relative_to(output).as_posix(): path.read_bytes()
+        for path in output.rglob("*")
+        if path.is_file()
+    } == before
+    assert not list(tmp_path.glob(f"{render_module._PUBLICATION_STAGE_PREFIX}*"))
+
+
+@pytest.mark.parametrize("replace", [False, True], ids=["install", "replace"])
+def test_a_render_that_loses_the_race_refuses_under_the_commit_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    replace: bool,
+) -> None:
+    project = _project(tmp_path)
+    output = tmp_path / "out"
+    if replace:
+        render_site(project / "blueprint", output, lean_root=project)
+    original = render_module._sync_tree_descriptor
+    winner: tuple[int, int] | None = None
+
+    def another_render_commits_first(descriptor: int) -> None:
+        nonlocal winner
+        original(descriptor)
+        if winner is None:
+            winner = (0, 0)
+            render_site(project / "blueprint", output, lean_root=project)
+            metadata = output.stat()
+            winner = (metadata.st_dev, metadata.st_ino)
+
+    monkeypatch.setattr(render_module, "_sync_tree_descriptor", another_render_commits_first)
+    with pytest.raises(PublicationError, match="output directory changed during publication") as error:
+        render_site(project / "blueprint", output, lean_root=project)
+
+    assert not isinstance(error.value, render_module._PublicationRecoveryError)
+    assert (output.stat().st_dev, output.stat().st_ino) == winner
+    assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["complete"]
+    assert not list(tmp_path.glob(f"{render_module._PUBLICATION_STAGE_PREFIX}*"))
 
 
 def test_render_refuses_an_output_symlink(tmp_path: Path) -> None:
