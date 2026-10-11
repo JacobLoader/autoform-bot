@@ -66,7 +66,7 @@ _HEADING_ID = re.compile(r"<h[1-6][^>]*\bid=\"([^\"]*)\"", re.IGNORECASE)
 EXTERNAL_SCHEMES = frozenset({"http", "https"})
 
 HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
-FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+FENCE = re.compile(r"^ {0,3}(`{3,}(?=[^`]*$)|~{3,})")
 INLINE_CODE = re.compile(r"(`+).*?\1")
 HTML_COMMENT = re.compile(r"<!--.*?(?:-->|$)", re.DOTALL)
 
@@ -656,26 +656,27 @@ def local_target_issue(
 def mask_fences_and_comments(lines: list[str]) -> list[str]:
     """Return ``lines`` with fenced blocks and HTML comments blanked.
 
-    This is how the graph, the audit and the page agree on which headings and
-    links an article has. The site draws a fence without a closing line as
-    plain text, with the headings and links after it in view, so such a fence
-    hides nothing here.
+    This is how the graph and the audit agree on which headings and links an
+    article has. A fence without a closing line is read as plain text, so it
+    hides nothing here. A one-article page draws it the same way, but a chapter
+    page can pair it with a later article's fence, so the audit reports it as
+    ``unclosed-code-fence``.
     """
 
     return _mask_fences_and_comments(lines, set(), unclosed_fence_is_text=True)
 
 
-def unclosed_fence_lines(lines: list[str]) -> tuple[int, ...]:
-    """Return the one-based source lines of fences that never close."""
+def first_unclosed_fence(lines: list[str]) -> int | None:
+    """Return the index of the first fence line that never closes, if any."""
 
     unclosed: set[int] = set()
     _mask_fences_and_comments(
         lines,
         set(),
         unclosed_fence_is_text=True,
-        unclosed_fence_lines=unclosed,
+        unclosed_openers=unclosed,
     )
-    return tuple(line + 1 for line in sorted(unclosed))
+    return min(unclosed, default=None)
 
 
 def _mask_fences_and_comments(
@@ -683,7 +684,7 @@ def _mask_fences_and_comments(
     hidden: set[int],
     *,
     unclosed_fence_is_text: bool = False,
-    unclosed_fence_lines: set[int] | None = None,
+    unclosed_openers: set[int] | None = None,
 ) -> list[str]:
     masked: list[str] = []
     fence: tuple[str, int] | None = None
@@ -699,8 +700,8 @@ def _mask_fences_and_comments(
         if index == len(lines):
             # Read on from the fence's first line as text.
             unclosed[fence[0]] = fence[1]
-            if unclosed_fence_lines is not None:
-                unclosed_fence_lines.add(opened[0])
+            if unclosed_openers is not None:
+                unclosed_openers.add(opened[0])
             index, in_comment = opened
             del masked[index:]
             hidden.difference_update(range(index, len(lines)))
@@ -828,6 +829,6 @@ __all__ = [
     "rendered_visible_text",
     "site_converter",
     "strip_line_comments",
-    "unclosed_fence_lines",
+    "first_unclosed_fence",
     "visible_prose",
 ]

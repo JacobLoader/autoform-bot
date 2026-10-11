@@ -462,6 +462,12 @@ def test_a_fence_that_never_closes_hides_no_heading() -> None:
     assert parts.sections == (ArticleSection("Depends on", "## Depends on", "- [Base](base.md)"),)
 
 
+def test_inline_code_starting_with_three_backticks_is_not_a_fence() -> None:
+    lines = ["```x``` is inline code here.", "## Shown"]
+
+    assert mask_fences_and_comments(lines) == lines
+
+
 def test_a_fence_that_never_closes_is_text_only_from_its_own_first_line() -> None:
     lines = ["```", "hidden <!--", "```", "shown", "~~~py", "<!-- a comment", "## Hidden by the comment"]
 

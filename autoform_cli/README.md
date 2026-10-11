@@ -64,8 +64,8 @@ and the published theorem box both read that span. A fence closes only on a
 bare fence line. A fence that never closes is read as plain text when its
 article is inspected alone, so it hides no heading or dependency link there,
 but on a chapter page it can pair with a later article's closing fence and hide
-everything between them. The audit reports `unclosed-code-fence` before that
-can corrupt the chapter. A later bare fence line of the same character and at
+everything between them. The audit reports a fence with no closing line as
+`unclosed-code-fence`. A later bare fence line of the same character and at
 least the opener's length closes it here, though the page asks for the opener's
 exact length and indent, so close each fence with its own line. The page can
 also pair an unclosed backtick fence line with a later backtick run in the same
@@ -824,9 +824,10 @@ that may be regenerated at any time.
 ## Audit contract
 
 `autoform audit` reports structured findings at blueprint-relative paths. It
-checks that formalizable articles are declaration-sized leaves with statement
-text (prose in the statement, outside code blocks, HTML comments, and headings)
-and an explicit dependency section, that asserted Mathlib facts are
+checks that no article leaves a code fence open, that formalizable articles are
+declaration-sized leaves with statement text (prose in the statement, outside
+code blocks, HTML comments, and headings) and an explicit dependency section,
+that asserted Mathlib facts are
 internally consistent, and that cited work resolves to local source
 material without escaping the blueprint. Coverage files are checked for broken
 links and explicitly declared gaps. With `--lean-root`, local declaration names
