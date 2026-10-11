@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import unquote
 
 import pytest
 
@@ -370,6 +372,49 @@ def test_the_home_page_project_explorer_survives_named_chapters(tmp_path: Path) 
     assert not any("scope:" in link for link in links)
     for link in links:
         assert (out / f"{link}.md").is_file(), f"home page links to a missing page: {link}"
+
+
+def _published_pages(out: Path) -> set[Path]:
+    """Where MkDocs, with ``use_directory_urls: false``, publishes each page."""
+    return {
+        page.with_name("index.html") if page.stem in {"README", "index"} else page.with_suffix(".html")
+        for page in out.rglob("*.md")
+    }
+
+
+def test_every_explorer_breadcrumb_reaches_a_published_page(tmp_path: Path) -> None:
+    """MkDocs publishes ``README.md`` as ``index.html``.
+
+    Breadcrumbs travel in the JSON payload, which MkDocs never rewrites, so
+    the Book crumb that named ``README.html`` was dead on every explorer page.
+    """
+    project = _project(tmp_path)
+    groups = project / "blueprint/roadmap/algebra/groups"
+    groups.mkdir(parents=True)
+    (groups.parent / "README.md").write_text("# Algebra\n\n- [Groups](groups/README.md)\n", encoding="utf-8")
+    (groups / "README.md").write_text("# Groups\n\n- [Lemma](lemma.md)\n", encoding="utf-8")
+    (groups / "lemma.md").write_text("---\ndeclaration: lemma\n---\n\n# Lemma\n\nA lemma.\n", encoding="utf-8")
+    out = tmp_path / "out"
+
+    render_site(project / "blueprint", out, lean_root=project)
+
+    payloads = [out / "dependencies.json", *(out / "dependencies").rglob("*.json")]
+    payloads.remove(out / "dependencies/index.json")
+    assert out / "dependencies/scopes/algebra/groups.json" in payloads
+    crumbs = [
+        (payload, crumb["label"], crumb["url"])
+        for payload in payloads
+        for crumb in json.loads(payload.read_text(encoding="utf-8"))["view"]["breadcrumbs"]
+        if crumb["url"] is not None
+    ]
+    assert sum(label == "Book" for _payload, label, _url in crumbs) == len(payloads)
+    published = _published_pages(out)
+    dead = [
+        (payload.relative_to(out).as_posix(), label, url)
+        for payload, label, url in crumbs
+        if Path(os.path.normpath(payload.parent / unquote(url.partition("#")[0]))) not in published
+    ]
+    assert dead == []
 
 
 def test_a_chapter_places_statements_in_the_authored_narrative(tmp_path: Path) -> None:

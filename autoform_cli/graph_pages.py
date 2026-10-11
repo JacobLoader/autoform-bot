@@ -379,6 +379,10 @@ def _markdown_link(target: Path, page: Path) -> str:
 
 
 def _published_link(target: Path, page: Path) -> str:
+    # MkDocs publishes README.md as index.html. It rewrites the links it
+    # parses, but never these, which reach the explorer as JSON.
+    if target.name == "README.md":
+        target = target.with_name("index.md")
     return mermaid.relative_link(target, page, ".html")
 
 
