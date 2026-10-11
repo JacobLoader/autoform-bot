@@ -1058,11 +1058,11 @@ def scaffold_project(
     # from the commit named by the workflows.
     templates = _read_templates(_TEMPLATES)
     _require_complete_templates(templates)
-    source, pinned_ref = (given_source, "") if given_source else _checkout_pin(templates)
     # A ref identifies a commit in one repository. Naming a different source
     # while inheriting this checkout's HEAD produces `git+other.git@our-sha`,
     # which does not resolve there, so an explicit source carries its own ref
     # or none at all.
+    source, pinned_ref = (given_source, "") if given_source else _checkout_pin(templates)
     ref = given_ref or pinned_ref
     # CI installs Autoform from a Git ref. Where Autoform lives is a fixed fact
     # worth defaulting; which commit is not, and a guessed one publishes a
