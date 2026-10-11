@@ -1182,7 +1182,7 @@ class _TreeChanged(Exception):
 
 
 class _PermissionDenied(Exception):
-    """An entry selected for capture could not be opened or listed."""
+    """An entry selected for capture could not be opened, listed, or searched."""
 
     def __init__(self, relative: str) -> None:
         super().__init__(relative)
@@ -1293,6 +1293,36 @@ def _stable_entry_identity(signature: tuple[int, ...]) -> tuple[int, int, int]:
     return signature[0], signature[1], stat.S_IFMT(signature[2])
 
 
+def _lookup(descriptor: int, name: str, relative: str) -> os.stat_result:
+    """Look up *name* in the directory *relative* held open by *descriptor*.
+
+    A lookup needs only search permission on that directory, so a refusal
+    names the directory, not the entry.
+    """
+
+    try:
+        return os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+    except PermissionError as error:
+        raise _PermissionDenied(relative or ".") from error
+
+
+def _access_denied(descriptor: int, name: str, relative: str) -> _PermissionDenied:
+    """Name what refused an open or readlink of *name* in *relative*.
+
+    Either the directory denies search permission or the entry denies access.
+    Repeating only the lookup tells which: if that is refused too, the
+    directory is at fault.
+    """
+
+    try:
+        _lookup(descriptor, name, relative)
+    except _PermissionDenied as denied:
+        return denied
+    except OSError:
+        pass
+    return _PermissionDenied(f"{relative}/{name}" if relative else name)
+
+
 def _opaque_marker(
     descriptor: int,
     relative: str,
@@ -1316,7 +1346,7 @@ def _opaque_marker(
         if len(matches) != 1:
             continue
         name = matches[0]
-        metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+        metadata = _lookup(descriptor, name, relative)
         identity = _stat_signature(metadata)
         if marker.presence_only:
             return (
@@ -1327,16 +1357,13 @@ def _opaque_marker(
         if not stat.S_ISREG(metadata.st_mode):
             continue
         max_bytes = budget.file_read_limit(metadata.st_size, marker.max_bytes)
-        try:
-            data = _read_file(
-                descriptor,
-                name,
-                identity,
-                max_bytes=max_bytes,
-            )
-        except PermissionError as error:
-            marker_path = f"{relative}/{name}" if relative else name
-            raise _PermissionDenied(marker_path) from error
+        data = _read_file(
+            descriptor,
+            name,
+            identity,
+            relative=relative,
+            max_bytes=max_bytes,
+        )
         if len(data) <= marker.max_bytes and marker.recognizes(data):
             budget.add_file_bytes(len(data))
             return (
@@ -1401,7 +1428,7 @@ def _scan_directory(
     _tree_snapshot_checkpoint("after-directory-list", relative)
     for name in names:
         child_relative = f"{relative}/{name}" if relative else name
-        metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+        metadata = _lookup(descriptor, name, relative)
         child_identity = _stat_signature(metadata)
         relative_path = PurePosixPath(child_relative)
         if stat.S_ISDIR(metadata.st_mode):
@@ -1415,7 +1442,7 @@ def _scan_directory(
                 try:
                     child_descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=descriptor)
                 except PermissionError as error:
-                    raise _PermissionDenied(child_relative) from error
+                    raise _access_denied(descriptor, name, relative) from error
                 opened = os.fstat(child_descriptor)
                 opened_identity = _stat_signature(opened)
                 if _stable_entry_identity(opened_identity) != _stable_entry_identity(
@@ -1438,9 +1465,7 @@ def _scan_directory(
                     selection=selection,
                     budget=budget,
                 )
-                final_identity = _stat_signature(
-                    os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-                )
+                final_identity = _stat_signature(_lookup(descriptor, name, relative))
                 if _stable_entry_identity(final_identity) != _stable_entry_identity(
                     opened_identity
                 ):
@@ -1474,22 +1499,21 @@ def _scan_directory(
                 metadata.st_size,
                 selection.byte_limit(relative_path),
             )
-            try:
-                data = _read_file(
-                    descriptor,
-                    name,
-                    child_identity,
-                    max_bytes=max_bytes,
-                )
-            except PermissionError as error:
-                raise _PermissionDenied(child_relative) from error
+            data = _read_file(
+                descriptor,
+                name,
+                child_identity,
+                relative=relative,
+                max_bytes=max_bytes,
+            )
             budget.add_file_bytes(len(data))
             files.append((child_relative, data))
         elif stat.S_ISLNK(metadata.st_mode):
-            target = os.readlink(name, dir_fd=descriptor)
-            if _stat_signature(
-                os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-            ) != child_identity:
+            try:
+                target = os.readlink(name, dir_fd=descriptor)
+            except PermissionError as error:
+                raise _access_denied(descriptor, name, relative) from error
+            if _stat_signature(_lookup(descriptor, name, relative)) != child_identity:
                 raise _TreeChanged
             symlinks.append((child_relative, target))
         else:
@@ -1513,25 +1537,31 @@ def _read_file(
     name: str,
     expected: tuple[int, ...],
     *,
+    relative: str,
     max_bytes: int | None = None,
 ) -> bytes:
+    """Read the regular file *name* in the directory *relative*."""
+
     descriptor: int | None = None
     try:
-        descriptor = os.open(name, _FILE_FLAGS, dir_fd=parent_descriptor)
+        try:
+            descriptor = os.open(name, _FILE_FLAGS, dir_fd=parent_descriptor)
+        except PermissionError as error:
+            raise _access_denied(parent_descriptor, name, relative) from error
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode) or _stat_signature(opened) != expected:
             raise _TreeChanged
         stream = os.fdopen(descriptor, "rb", buffering=0, closefd=False)
         try:
             data = stream.read() if max_bytes is None else _read_prefix(stream, max_bytes + 1)
+        except PermissionError as error:
+            # Reading through the open descriptor checks only the file.
+            raise _PermissionDenied(f"{relative}/{name}" if relative else name) from error
         finally:
             stream.close()
         if (
             _stat_signature(os.fstat(descriptor)) != expected
-            or _stat_signature(
-                os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
-            )
-            != expected
+            or _stat_signature(_lookup(parent_descriptor, name, relative)) != expected
         ):
             raise _TreeChanged
         return data
@@ -1571,7 +1601,7 @@ def _verify_snapshot(
         relative: str,
         marker: _OpaqueMarkerRecord,
     ) -> None:
-        metadata = os.stat(marker.name, dir_fd=descriptor, follow_symlinks=False)
+        metadata = _lookup(descriptor, marker.name, relative)
         observed = _stat_signature(metadata)
         if marker.data is None:
             if _entry_kind(observed[2]) != _entry_kind(marker.identity[2]):
@@ -1584,6 +1614,7 @@ def _verify_snapshot(
                     descriptor,
                     marker.name,
                     marker.identity,
+                    relative=relative,
                     max_bytes=marker.max_bytes,
                 )
                 != marker.data
@@ -1623,7 +1654,7 @@ def _verify_snapshot(
             raise _TreeChanged
         for name in names:
             child_relative = f"{relative}/{name}" if relative else name
-            metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            metadata = _lookup(descriptor, name, relative)
             directory = expected_directories.get(child_relative)
             if directory is None:
                 entry = expected_entries.get(child_relative)
@@ -1645,16 +1676,17 @@ def _verify_snapshot(
                 raise _TreeChanged
             child_descriptor: int | None = None
             try:
-                child_descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=descriptor)
+                try:
+                    child_descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=descriptor)
+                except PermissionError as error:
+                    raise _access_denied(descriptor, name, relative) from error
                 opened_identity = _stat_signature(os.fstat(child_descriptor))
                 if _stable_entry_identity(opened_identity) != _stable_entry_identity(
                     directory.identity
                 ):
                     raise _TreeChanged
                 verify_directory(child_descriptor, child_relative)
-                final_identity = _stat_signature(
-                    os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-                )
+                final_identity = _stat_signature(_lookup(descriptor, name, relative))
                 if _stable_entry_identity(final_identity) != _stable_entry_identity(
                     directory.identity
                 ):
