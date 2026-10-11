@@ -912,6 +912,37 @@ def test_non_utf8_response_is_a_protocol_error(runtime_dir, monkeypatch):
         client.request("repl.run", {"project_dir": "/lean", "code": "#check Nat"})
 
 
+def test_response_timeout_is_never_retried(runtime_dir, monkeypatch):
+    from servers import lean_client
+
+    class TimeoutSocket:
+        def settimeout(self, timeout):
+            pass
+
+        def connect(self, path):
+            pass
+
+        def sendall(self, payload):
+            pass
+
+        def recv(self, size):
+            raise socket.timeout
+
+        def close(self):
+            pass
+
+    client = LeanRuntimeClient(socket_path=runtime_dir / "fake.sock")
+    monkeypatch.setattr(lean_client.socket, "socket", lambda *args: TimeoutSocket())
+    monkeypatch.setattr(
+        client,
+        "ensure_running",
+        lambda: pytest.fail("an ambiguously dispatched request must not be retried"),
+    )
+
+    with pytest.raises(LeanRuntimeError, match="timed out waiting for Lean runtime response"):
+        client.request("repl.run", {"project_dir": "/lean", "code": "#check Nat"})
+
+
 @pytest.mark.parametrize(
     ("name", "value", "match"),
     [
