@@ -260,6 +260,7 @@ class RenderReport:
     nodes: int = 0
     linked: int = 0
     unresolved: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 class PublicationError(ValueError):
@@ -343,16 +344,14 @@ def _render_captured_site(
         )
     if coverage is None:
         raise PublicationError(["coverage contract could not be loaded"])
-    coverage_role_issues = validate_coverage_roles(graph, coverage)
-    if coverage_role_issues:
-        raise PublicationError(
-            [
-                f"coverage contract line {issue.line}: {issue.reason}"
-                if issue.line
-                else f"coverage contract: {issue.reason}"
-                for issue in coverage_role_issues
-            ]
-        )
+    # Coverage-role issues are audit findings. A valid contract still
+    # publishes with them, as it does with MAPPED rows.
+    coverage_warnings = [
+        f"coverage contract line {issue.line}: {issue.reason}"
+        if issue.line
+        else f"coverage contract: {issue.reason}"
+        for issue in validate_coverage_roles(graph, coverage)
+    ]
     statuses = status.derive(graph)
     # The repository root, not the vault's parent. A blueprint nested at
     # <repo>/docs/blueprint would otherwise be described as <repo>/blueprint,
@@ -395,7 +394,7 @@ def _render_captured_site(
         source_capture=capture_mode,
     )
 
-    report = RenderReport(output_dir=destination)
+    report = RenderReport(output_dir=destination, warnings=coverage_warnings)
     node_paths = {node.path.resolve(): node for node in graph.nodes.values()}
     # Nodes are published as environments on their milestone page, the way a
     # blueprint chapter carries many statements in sequence. Each keeps an

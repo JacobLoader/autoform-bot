@@ -152,3 +152,35 @@ def test_audit_cli_reports_stable_json_and_failure(tmp_path: Path, capsys) -> No
             }
         ],
     }
+
+
+def test_coverage_role_mismatch_warns_in_render_and_fails_audit(tmp_path: Path, capsys) -> None:
+    """Role mismatches are audit findings while a blueprint migrates.
+
+    Render publishes them as warnings, the way it publishes ``MAPPED`` rows;
+    only an invalid contract stops it. A drafted leaf that declares nothing
+    yet is enough to trip the role check under a ``DECOMPOSED`` row.
+    """
+    blueprint = tmp_path / "blueprint"
+    (blueprint / "roadmap").mkdir(parents=True)
+    (blueprint / "coverage").mkdir()
+    (blueprint / "roadmap" / "lemma.md").write_text(
+        "# Lemma\n\nA drafted lemma that declares nothing yet.\n",
+        encoding="utf-8",
+    )
+    (blueprint / "coverage" / "README.md").write_text(
+        "# Coverage\n\n"
+        "| Area | Coverage | Evidence |\n"
+        "| --- | --- | --- |\n"
+        "| Section 1 | DECOMPOSED | [Lemma](../roadmap/lemma.md) |\n",
+        encoding="utf-8",
+    )
+
+    assert main(["check", str(blueprint)]) == 0
+    capsys.readouterr()
+    assert main(["render", str(blueprint), "--output", str(tmp_path / "site")]) == 0
+    rendered = capsys.readouterr().out
+    assert "warning: coverage contract line 5: coverage area 'Section 1' is DECOMPOSED" in rendered
+    assert (tmp_path / "site" / "publication.json").is_file()
+    assert main(["audit", str(blueprint)]) == 1
+    assert "error: coverage/README.md: coverage-role-mismatch:" in capsys.readouterr().out

@@ -431,9 +431,10 @@ hides nothing at all. So is evidence that is nothing but `TODO`, `TBD`, `pending
 `DECOMPOSED` evidence must contain at least one complete inline link to an
 existing roadmap article. Every linked roadmap scope must contain the role the
 row claims: a module inventory for `INVENTORIED`, or a declaration-bearing leaf
-for `DECOMPOSED`. Every local link it offers must resolve, fragments included,
-under the same rules the audit applies. A link missing its closing parenthesis
-does not render and does not count.
+for `DECOMPOSED`; audit reports a row that does not, and `render` warns. Every
+local link it offers must resolve, fragments included, under the same rules the
+audit applies. A link missing its closing parenthesis does not render and does
+not count.
 
 Fragment checking uses the renderer rather than predicting it. Anchors come from
 running Python-Markdown with the extensions the generated `mkdocs.yml` enables
@@ -480,10 +481,11 @@ Markdown remains readable, but emitted audit and publication coverage uses
 and counts key. The shared-explorer publication manifest uses
 `autoform-publication/v2`, as described below. Until migrated, a catalog-only
 `DECOMPOSED` row
-remains syntactically accepted but audit reports `coverage-role-mismatch`; a
-catalog not reached by any `INVENTORIED` evidence also reports
-`unclassified-inventory`. Target-completion percentages may change because
-catalog records are no longer included in their denominator.
+remains syntactically accepted: `render` warns and still publishes, while audit
+reports `coverage-role-mismatch`. A catalog not reached by any `INVENTORIED`
+evidence is treated the same way and reported as `unclassified-inventory`.
+Target-completion percentages may change because catalog records are no longer
+included in their denominator.
 
 Publication and audit are deliberately different gates. The generated
 `blueprint-pages.yml` runs `check` and `render`; it does not run `audit`. An
@@ -491,8 +493,10 @@ invalid coverage contract fails `render` before any output is written, but a
 valid contract with `MAPPED` rows publishes normally even though `audit` reports
 each one as a `declared-coverage-gap`. That is intended: a roadmap is published
 while it is still being decomposed, and the published `coverage.complete: false`
-is how a reader sees that. Run `autoform audit` in CI when you want mapped rows
-to block a merge.
+is how a reader sees that. Coverage-role findings take the same path: `render`
+prints each one as a warning and publishes, and `audit` reports it. Run
+`autoform audit` in CI when you want mapped rows or role findings to block a
+merge.
 
 Extract what a reader must trust for each formalized statement:
 
