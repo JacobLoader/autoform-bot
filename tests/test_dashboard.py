@@ -279,6 +279,7 @@ def test_live_overlay_refuses_portable_freshness_capture(
 
     assert state["claims"] == []
     assert "could not be captured safely" in str(state["error"])
+    assert "safe directory traversal is unavailable" in str(state["error"])
 
 
 def test_publication_bound_live_state_serializes_snapshot_and_claim_reads(

@@ -710,7 +710,6 @@ def _render_in_bound_output_parent(
     workspace_marker: tuple[tuple[int, ...], str] | None = None
     workspace_descriptor: int | None = None
     remove_workspace = True
-    publication_succeeded = False
     commit_state = _PublicationCommitState()
     report: RenderReport | None = None
     stage_identity: tuple[int, int] | None = None
@@ -892,7 +891,6 @@ def _render_in_bound_output_parent(
             workspace_descriptor=workspace_descriptor,
         )
         report.output_dir = destination
-        publication_succeeded = True
         return report
     except _PublicationRecoveryError:
         remove_workspace = False
@@ -1000,17 +998,13 @@ def _render_in_bound_output_parent(
                 )
                 if commit_state.verified and report is not None:
                     report.warnings.append(issue)
-                elif publication_succeeded:
-                    raise PublicationError([issue])
-                elif active_failure is not None:
-                    raise PublicationError(
-                        [
-                            f"publication failed: {active_failure}; {issue}; "
-                            "workspace was retained"
-                        ]
-                    ) from active_failure
                 else:
-                    raise PublicationError([issue])
+                    # An unverified commit only reaches cleanup through a
+                    # failure; str(KeyboardInterrupt()) is empty.
+                    cause = str(active_failure) or type(active_failure).__name__
+                    raise PublicationError(
+                        [f"publication failed: {cause}; {issue}; workspace was retained"]
+                    ) from active_failure
         finally:
             if stage_descriptor is not None:
                 try:
@@ -1224,18 +1218,6 @@ def _build_publication_plan(
         lean_source_revision=lean_source_revision,
     )
     return plan.freeze(), report
-
-
-def _inspect_destination(destination: Path) -> _DestinationState:
-    """Return the exact safe generation at *destination*, or fail closed."""
-    try:
-        parent_descriptor = _open_directory_path(destination.parent)
-    except OSError as error:
-        raise PublicationError(["could not inspect the output directory safely"]) from error
-    try:
-        return _inspect_destination_at(parent_descriptor, destination.name, destination)
-    finally:
-        os.close(parent_descriptor)
 
 
 def _is_os_metadata(relative: str) -> bool:
@@ -1603,6 +1585,14 @@ def _create_workspace(
             os.mkdir(name, mode=0o700, dir_fd=parent_descriptor)
         except FileExistsError:
             continue
+        except OSError as error:
+            raise PublicationError(
+                [
+                    f"could not create a publication workspace in {parent}: "
+                    f"{error.strerror or error}; render needs write access to the "
+                    "output directory's parent"
+                ]
+            ) from error
         identity: tuple[int, int] | None = None
         marker: tuple[tuple[int, ...], str] | None = None
         descriptor: int | None = None
@@ -3532,9 +3522,11 @@ def capture_publication_source(
                 revision=_source_revision(captured),
             )
     except PublicationError as error:
-        raise OSError("blueprint source revision is not publishable") from error
+        raise OSError(f"blueprint source revision is not publishable: {error}") from error
     except (OSError, RuntimeError, TreeSnapshotError, ValueError) as error:
-        raise OSError("blueprint source revision could not be captured safely") from error
+        raise OSError(
+            f"blueprint source revision could not be captured safely: {error}"
+        ) from error
 
 
 def publication_source_revision(blueprint_dir: str | Path) -> str:

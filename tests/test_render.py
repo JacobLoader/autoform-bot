@@ -2493,6 +2493,40 @@ def test_render_refuses_to_overwrite_an_unowned_directory(tmp_path: Path) -> Non
     assert sentinel.read_text(encoding="utf-8") == "user data\n"
 
 
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="root ignores directory write permission",
+)
+def test_an_unwritable_output_parent_is_reported_not_a_traceback(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    parent = tmp_path / "readonly"
+    output = parent / "out"
+    output.mkdir(parents=True)
+    parent.chmod(0o555)
+    try:
+        with pytest.raises(PublicationError, match="needs write access to the output"):
+            render_site(project / "blueprint", output, lean_root=project)
+    finally:
+        parent.chmod(0o755)
+
+    assert not any(output.iterdir())
+
+
+def test_an_interrupt_with_a_refused_cleanup_names_the_interrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _project(tmp_path)
+
+    def interrupt(*_args, **_kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(render_module, "_materialize_publication_plan", interrupt)
+    monkeypatch.setattr(render_module, "_remove_owned_workspace", lambda *_a, **_k: False)
+
+    with pytest.raises(PublicationError, match="publication failed: KeyboardInterrupt;"):
+        render_site(project / "blueprint", tmp_path / "out", lean_root=project)
+
+
 def test_render_installs_into_an_existing_empty_directory(tmp_path: Path) -> None:
     project = _project(tmp_path)
     output = tmp_path / "out"
