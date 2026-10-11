@@ -407,6 +407,19 @@ def _unused_mathlib(requirements: _Requirements) -> str | None:
     )
 
 
+# Unused here; the library locator (#204) imports it.
+def _trim_elan_whitespace(value: str) -> str:
+    """Mirror Rust's Unicode whitespace trim without Python's extra C0 separators."""
+
+    start = 0
+    while start < len(value) and value[start] in _ELAN_WHITESPACE:
+        start += 1
+    end = len(value)
+    while end > start and value[end - 1] in _ELAN_WHITESPACE:
+        end -= 1
+    return value[start:end]
+
+
 def _inspect_toolchain(snapshot: _DecisionSnapshot, diagnostics: list[ProjectDiagnostic]) -> str | None:
     if snapshot.file("lean-toolchain").state == "missing":
         diagnostics.append(ProjectDiagnostic("error", "missing-lean-toolchain", "The project has no lean-toolchain."))

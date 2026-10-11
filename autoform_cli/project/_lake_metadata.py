@@ -324,6 +324,16 @@ def _json_default(mapping: dict[str, object], key: str, default, expected: type)
     return value
 
 
+# Unused here; the library locator (#204) imports it.
+def _json_optional(mapping: dict[str, object], key: str, expected: type):
+    value = mapping.get(key)
+    if value is None:
+        return None
+    if type(value) is not expected:
+        raise ValueError(key)
+    return value
+
+
 def _manifest_layout(version: object) -> str | None:
     """Lake reads versions from 0.5.0 through any 1.x; versions before 0.7 are legacy."""
 
