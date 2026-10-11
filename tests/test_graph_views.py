@@ -6,6 +6,7 @@ import pytest
 
 from autoform_cli import graph_views
 from autoform_cli.graph import Graph, Node
+from autoform_cli.graph_pages import _selected_statuses
 from autoform_cli.graph_views import chapter_view, focus_view, focus_views, full_view, project_view, scope_view
 from autoform_cli.status import derive
 
@@ -117,6 +118,48 @@ def test_checked_catalog_has_a_neutral_inventory_presentation_status(tmp_path: P
     assert inventory.catalog == "module"
     assert inventory.status_counts == (("inventory_checked", 1),)
     assert inventory.status_key == "planned"
+
+
+def test_status_rings_count_only_leaves_that_declare_something(tmp_path: Path) -> None:
+    """Rings agree with the legend beside them.
+
+    A prose leaf is not a formalization target, and an unverified catalog is
+    inventory, not work in its target state, so neither colours a ring.
+    """
+    roadmap = tmp_path / "blueprint/roadmap"
+
+    def node(node_id: str, parent: str | None, **kwargs) -> Node:
+        return Node(node_id, node_id.title(), roadmap / f"{node_id}.md", (), parent=parent, **kwargs)
+
+    graph = Graph(
+        tmp_path / "blueprint",
+        {
+            "roadmap": node("roadmap", None),
+            "mixed": node("mixed", "roadmap"),
+            "mixed/result": node("mixed/result", "mixed", declaration="theorem"),
+            "mixed/note": node("mixed/note", "mixed"),
+            "mixed/catalog": node("mixed/catalog", "mixed", catalog="module", statement_formalized=True),
+            "prose": node("prose", "roadmap"),
+            "prose/essay": node("prose/essay", "prose"),
+        },
+    )
+    statuses = derive(graph)
+    assert statuses["mixed/note"].key == "can_state"
+    assert statuses["mixed/catalog"].key == "can_prove"
+
+    project = project_view(graph, statuses)
+    scopes = {view_node.id: view_node for view_node in project.nodes}
+    assert scopes["scope:mixed"].status_counts == (("can_state", 1),)
+    assert scopes["scope:mixed"].status_key == "can_state"
+    assert scopes["scope:prose"].status_counts == ()
+    assert scopes["scope:prose"].status_key == "planned"
+    legend = _selected_statuses(graph, statuses, project)
+    assert {node_id: status.key for node_id, status in legend.items()} == {"mixed/result": "can_state"}
+
+    complete = {view_node.id: view_node for view_node in full_view(graph, statuses).nodes}
+    assert complete["mixed"].status_counts == (("can_state", 1),)
+    assert complete["prose"].status_counts == ()
+    assert complete["prose"].status_key == "planned"
 
 
 def test_chapter_view_keeps_external_relations_as_boundaries(tmp_path: Path) -> None:

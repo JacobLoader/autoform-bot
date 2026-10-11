@@ -591,13 +591,21 @@ def _status_counts(
     node_ids: Iterable[str],
     statuses: dict[str, NodeStatus],
 ) -> tuple[tuple[str, int], ...]:
+    """Count formalization targets by state, and checked inventories apart.
+
+    Only leaves that declare something are targets, as in the legend and the
+    landing-page figures, so a prose or note leaf colours no ring. A catalog
+    counts only as a checked inventory, never under its target state.
+    """
     counts = {state.key: 0 for state in STATES}
     inventories = 0
     for node_id in node_ids:
+        node = graph.nodes[node_id]
         node_status = statuses[node_id]
-        if graph.nodes[node_id].catalog == "module" and node_status.fully_proved:
-            inventories += 1
-        else:
+        if node.catalog == "module":
+            if node_status.fully_proved:
+                inventories += 1
+        elif node.formalizable:
             counts[node_status.key] += 1
     state_counts = tuple(
         (state.key, counts[state.key]) for state in STATES if counts[state.key]
