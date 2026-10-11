@@ -704,8 +704,17 @@ its Lake freshness check may refresh build hash sidecars. `SELECTOR` identifies
 the working article and `MODULE` the module whose effective header would change.
 Lean supplies the loaded module graph; Autoform binds every node to its captured
 root source and configured root-package artifact so dependencies cannot shadow it.
-`affected_modules` is complete over the root libraries' loaded Lake roots/globs,
-not dormant source files outside that build boundary.
+The command refuses a loaded root-package module whose source the captured
+inventory lacks, and a module an `M.*` or `M.+` glob finds that the inventory
+lacks, which Lake builds even when nothing imports it; the inventory skips
+nested Git checkouts, ignored directories such as `build`, and symlinked
+directories. `affected_modules` is therefore complete over the root libraries'
+loaded Lake roots/globs, not dormant source files outside that build boundary.
+It holds `MODULE` and every loaded module that imports it, directly or
+transitively, which covers what an added import can affect. Removing an import
+can also drop modules from the build: roots and single-module globs bring in
+only what they import, transitively, so a module only the removed import
+reached is no longer built. The report does not list such modules.
 
 JSON uses `autoform-module-import-impact/v1` and binds the graph with
 `module_graph_revision`; `module_scope` is `loaded-root-library-graph`.

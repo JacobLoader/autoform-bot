@@ -756,7 +756,7 @@ class ImpactReport:
 
 @dataclass(frozen=True, slots=True)
 class ModuleImportImpactReport:
-    """Conservative loaded-build scope of changing one project module's imports."""
+    """Reverse-import scope of changing one project module's imports."""
 
     source_revision: str
     lean_source_revision: str
@@ -1000,11 +1000,14 @@ def compute_module_import_impact(
     source_revision: str,
     lean_source_revision: str = "",
 ) -> ModuleImportImpactReport:
-    """Return the conservative local scope of changing ``module`` imports.
+    """Return the reverse-import scope of changing ``module`` imports.
 
     Imports change the environment of the edited module and every project
-    module that imports it, transitively.  This reports that scope; it never
-    refuses the edit merely because the scope is larger than one article.
+    module that imports it, transitively, which covers what an added import
+    can affect.  Removing an import can also drop modules from the build,
+    transitively, when only imports bring them in, as under a library's
+    roots; this scope does not list them.  It never refuses the edit merely
+    because the scope is larger than one article.
     """
 
     if module not in modules:
@@ -1444,7 +1447,7 @@ def module_import_impact(
     lean_root: str | Path,
     timeout: float | None = None,
 ) -> ModuleImportImpactReport:
-    """Report, without blocking it, the conservative scope of an import edit."""
+    """Report, without blocking it, the reverse-import scope of an import edit."""
 
     evidence = _load_impact_evidence(
         project_or_blueprint,
@@ -1553,6 +1556,8 @@ def format_module_import_impact(report: ModuleImportImpactReport) -> list[str]:
         f"Module scope: {MODULE_IMPORT_SCOPE}",
         f"Module claim target: {report.module_claim_target} (key {report.module_claim_key})",
         "Affected project modules: " + ", ".join(report.affected_modules),
+        "Removing an import can also drop modules that only imports bring into the build; "
+        "this reverse-import scope does not list them.",
     ]
     if not report.selected_affected:
         lines.append(

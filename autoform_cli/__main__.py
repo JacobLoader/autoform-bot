@@ -214,7 +214,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     work_import_impact = work_subparsers.add_parser(
         "import-impact",
-        help="report the conservative claim and review scope of editing a Lean module's imports",
+        help="report the claim and review scope of editing a Lean module's imports: what an added import can "
+        "affect, not the modules a removed import can drop from the build",
     )
     work_import_impact.add_argument("selector", help="path-derived node id or durable article_id")
     work_import_impact.add_argument("module", help="project module whose imports may change")

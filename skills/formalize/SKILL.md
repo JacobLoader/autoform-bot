@@ -57,7 +57,9 @@ it during a long build, and release it as soon as the build ends.
 Lean imports are allowed; do not pre-block a proof because it needs one. Before
 an effective module header or import change, run `autoform work import-impact`
 as documented in the CLI reference. Capture baseline skeleton evidence for its
-currently built, named affected articles. Compare its claim keys with the JSON
+currently built, named affected articles. The report covers added imports, so
+when an edit removes an import, also baseline the articles of modules only that
+import kept in the build. Compare the report's claim keys with the JSON
 from `autoform claim list --worker-id WORKER`: another owner's live affected
 claim is a conflict, and malformed evidence is unverifiable. Then atomically
 acquire the required article and module `claim_targets`; an already-held
