@@ -233,7 +233,7 @@ def test_container_note_audit_handles_deep_containment_iteratively(
     monkeypatch.setattr(
         audit_module,
         "_read_article",
-        lambda _path: audit_module._ArticleShape(True, True),
+        lambda _path: audit_module._ArticleShape("A precise mathematical statement.", True),
     )
 
     result = audit_graph(graph, coverage_findings=[])
