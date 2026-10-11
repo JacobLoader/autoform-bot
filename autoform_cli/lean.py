@@ -1031,19 +1031,26 @@ def verify_repository_snapshot(
     files: Iterable[tuple[Path, bytes]],
     *,
     required_directories: Iterable[Path] = (),
+    reasons: list[str] | None = None,
 ) -> str | None:
     """Return the immutable commit containing every captured regular file.
 
     Git repository selectors, replacement refs, alternate object directories,
     and command-scoped configuration are stripped by the shared Git runner.
     The caller therefore attests the named repository and ordinary commit
-    graph, rather than an ambient process override.
+    graph, rather than an ambient process override. When *reasons* is given,
+    the first reason verification failed is appended to it, naming paths
+    relative to the repository only.
     """
+
+    def refuse(reason: str) -> None:
+        if reasons is not None:
+            reasons.append(reason)
 
     try:
         repository_root = Path(root).expanduser().resolve()
     except (OSError, RuntimeError, ValueError):
-        return None
+        return refuse("the repository root could not be resolved")
     commit = _git(
         repository_root,
         "rev-parse",
@@ -1057,14 +1064,22 @@ def verify_repository_snapshot(
         or algorithm not in {"sha1", "sha256"}
         or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit) is None
     ):
-        return None
+        return refuse(f"{requested_ref!r} does not name a commit in a local Git repository")
+    prefix = _git(repository_root, "rev-parse", "--show-prefix")
+    if prefix:
+        # Paths below are relative to this root, but trees list paths from the
+        # top level, so no captured file could ever match.
+        return refuse(
+            f"the Lean root is the subdirectory {prefix.rstrip('/')} of its Git "
+            "repository; links need the repository top level"
+        )
 
     captured: dict[str, bytes] = {}
     for path, data in files:
         try:
             relative = path.relative_to(repository_root)
         except ValueError:
-            return None
+            return refuse("a captured file or directory is outside the repository")
         relative_text = relative.as_posix()
         if (
             not relative_text
@@ -1073,17 +1088,17 @@ def verify_repository_snapshot(
             or relative.is_absolute()
             or ".." in relative.parts
         ):
-            return None
+            return refuse("a captured path cannot be named in a Git tree")
         previous = captured.setdefault(relative_text, data)
         if previous != data:
-            return None
+            return refuse(f"two captured files claim {relative_text}")
 
     directories: set[str] = set()
     for path in required_directories:
         try:
             relative = path.relative_to(repository_root)
         except ValueError:
-            return None
+            return refuse("a captured file or directory is outside the repository")
         relative_text = relative.as_posix()
         if (
             not relative_text
@@ -1092,7 +1107,7 @@ def verify_repository_snapshot(
             or relative.is_absolute()
             or ".." in relative.parts
         ):
-            return None
+            return refuse("a captured path cannot be named in a Git tree")
         directories.add(relative_text)
 
     entries = _git_tree_entries(
@@ -1101,7 +1116,7 @@ def verify_repository_snapshot(
         tuple(sorted(captured)),
     )
     if entries is None:
-        return None
+        return refuse("the commit's tree could not be read")
     for path, data in captured.items():
         entry = entries.get(path)
         if (
@@ -1109,13 +1124,13 @@ def verify_repository_snapshot(
             or entry[0] not in {"100644", "100755"}
             or entry[1] != "blob"
         ):
-            return None
+            return refuse(f"{path} is not a file in commit {commit[:12]}")
         framed = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
         if (
             hashlib.new(algorithm, framed).hexdigest() != entry[2]
             and _git_clean_blob_id(repository_root, path, data) != entry[2]
         ):
-            return None
+            return refuse(f"{path} differs from commit {commit[:12]}")
     directory_entries = _git_tree_entries(
         repository_root,
         commit,
@@ -1126,7 +1141,7 @@ def verify_repository_snapshot(
         directory_entries.get(path, (None, None, None))[:2] != ("040000", "tree")
         for path in directories
     ):
-        return None
+        return refuse(f"a required directory is not in commit {commit[:12]}")
     return commit
 
 

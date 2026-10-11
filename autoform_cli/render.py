@@ -766,12 +766,14 @@ def _render_in_bound_output_parent(
         repository_coordinates_requested = bool(
             resolved_repository_url and requested_ref
         )
+        link_failures: list[str] = []
         resolved_ref = (
             _verified_repository_ref(
                 repo_root,
                 requested_ref,
                 blueprint=captured_blueprint,
                 lean_snapshot=lean_snapshot,
+                reasons=link_failures,
             )
             if resolved_repository_url and requested_ref
             else None
@@ -783,6 +785,7 @@ def _render_in_bound_output_parent(
         if not coordinates_stable:
             resolved_repository_url = None
             resolved_ref = None
+            link_failures.insert(0, "the repository URL or ref changed while rendering")
         repository_links_omitted = bool(
             not coordinates_stable
             or (repository_coordinates_requested and resolved_ref is None)
@@ -825,6 +828,7 @@ def _render_in_bound_output_parent(
             report.warnings.append(
                 "repository links were omitted because the captured blueprint "
                 "and Lean inputs do not match one verified local Git commit"
+                + (f": {link_failures[0]}" if link_failures else "")
             )
         stage = workspace / "site"
         stage_descriptor, stage_identity = _create_stage_directory(
@@ -2888,6 +2892,7 @@ def _verified_repository_ref(
     *,
     blueprint: _CapturedBlueprint,
     lean_snapshot: IndexedSourceSnapshot,
+    reasons: list[str] | None = None,
 ) -> str | None:
     """Return an immutable commit only when it contains the captured inputs.
 
@@ -2914,6 +2919,7 @@ def _verified_repository_ref(
         requested_ref,
         files,
         required_directories=required_directories,
+        reasons=reasons,
     )
 
 

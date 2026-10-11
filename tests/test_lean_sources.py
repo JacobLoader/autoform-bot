@@ -2799,6 +2799,31 @@ def test_snapshot_attestation_accepts_a_clean_checkout_with_eol_conversion(
     ) is None
 
 
+def test_snapshot_attestation_names_why_it_failed(tmp_path: Path) -> None:
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    source = lean_root / "A.lean"
+    source.write_text("def tracked : Nat := 0\n")
+    commit = _init_git_repository(tmp_path)
+    reasons: list[str] = []
+
+    assert verify_repository_snapshot(
+        lean_root, commit, ((source, source.read_bytes()),), reasons=reasons
+    ) is None
+    assert reasons == [
+        "the Lean root is the subdirectory lean of its Git repository; "
+        "links need the repository top level"
+    ]
+
+    untracked = tmp_path / "Scratch.lean"
+    untracked.write_text("def scratch : Nat := 0\n")
+    reasons.clear()
+    assert verify_repository_snapshot(
+        tmp_path, commit, ((untracked, untracked.read_bytes()),), reasons=reasons
+    ) is None
+    assert reasons == [f"Scratch.lean is not a file in commit {commit[:12]}"]
+
+
 def test_snapshot_attestation_ignores_inherited_git_redirects(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

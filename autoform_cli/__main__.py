@@ -283,7 +283,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     render.add_argument("-o", "--output", default="site-src", help="output directory")
     render.add_argument("--lean-root", type=Path, help="Lean project to link code from")
     render.add_argument("--repository-url", help="project URL, e.g. https://github.com/owner/repo")
-    render.add_argument("--ref", help="commit or branch the code links should pin")
+    render.add_argument(
+        "--ref",
+        help="commit or branch to link; links appear only if its local commit "
+        "holds the exact rendered inputs",
+    )
     render.add_argument(
         "--require-declarations",
         action="store_true",

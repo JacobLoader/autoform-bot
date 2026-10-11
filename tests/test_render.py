@@ -2785,7 +2785,8 @@ def test_dirty_lean_snapshot_does_not_borrow_the_clean_commit_ref(
     assert manifest["git_ref"] is None
     assert report.warnings == [
         "repository links were omitted because the captured blueprint and Lean "
-        "inputs do not match one verified local Git commit"
+        "inputs do not match one verified local Git commit: "
+        f"Project/Basic.lean differs from commit {commit[:12]}"
     ]
 
 
