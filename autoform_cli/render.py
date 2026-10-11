@@ -97,6 +97,13 @@ _LOCAL_ONLY_NAMES = frozenset(
     }
 )
 
+
+def _is_generated_path(relative: Path) -> bool:
+    """Generated views occupy only the publication root."""
+
+    return len(relative.parts) == 1 and relative.name in _GENERATED_FILES
+
+
 #: How a ``declaration:`` value is announced in the statement box.
 DECLARATION_LABELS = {
     "abbrev": "Abbreviation",
@@ -426,7 +433,7 @@ def _render_captured_site(
         relative = source.relative_to(blueprint)
         if _SKIPPED_DIRECTORIES.intersection(relative.parts) or _is_hidden(relative):
             continue
-        if relative.name in _GENERATED_FILES:
+        if _is_generated_path(relative):
             continue
         # Source notes leave the site entirely once readers can reach them in
         # the repository, so the book has one reference surface rather than two.
@@ -626,7 +633,7 @@ def _publication_path_selected(relative) -> bool:
         return True
     return not (
         _is_hidden(path)
-        or path.name in _GENERATED_FILES
+        or _is_generated_path(path)
     )
 
 
@@ -1124,7 +1131,7 @@ def _render_structure_page(
     def keep(relative: Path) -> bool:
         if _SKIPPED_DIRECTORIES.intersection(relative.parts) or _is_hidden(relative):
             return False
-        if relative.name in _GENERATED_FILES:
+        if _is_generated_path(relative):
             return False
         return not (sources_base is not None and relative.parts[:1] == (SOURCES_DIR,))
 

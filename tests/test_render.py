@@ -848,6 +848,43 @@ def test_stale_generated_files_are_not_republished(tmp_path: Path) -> None:
     assert not (tmp_path / "out/progress.md").exists()
 
 
+def test_a_nested_article_named_like_a_generated_view_is_published(tmp_path: Path) -> None:
+    """Generated views occupy only the publication root.
+
+    Matching their names at any depth dropped an authored chapter's
+    ``progress.md`` from the captured blueprint, so a dependency on it failed
+    to resolve during render although ``check`` accepted the live tree.
+    """
+    project = _project(tmp_path)
+    chapter = project / "blueprint/roadmap/ch"
+    chapter.mkdir()
+    (chapter / "README.md").write_text(
+        "# Chapter\n\n- [Progress](progress.md)\n- [Uses](uses.md)\n- [Structure](structure.md)\n",
+        encoding="utf-8",
+    )
+    (chapter / "progress.md").write_text(
+        "---\ndeclaration: def\n---\n\n# Progress\n\nA definition named like a generated page.\n",
+        encoding="utf-8",
+    )
+    (chapter / "uses.md").write_text(
+        "---\ndeclaration: theorem\n---\n\n# Uses\n\nA result.\n\n## Depends on\n\n- [Progress](progress.md)\n",
+        encoding="utf-8",
+    )
+    (chapter / "structure.md").write_text("# Structure\n\nProse named like a generated page.\n", encoding="utf-8")
+
+    report = render_site(project / "blueprint", tmp_path / "out", lean_root=project)
+
+    out = tmp_path / "out"
+    assert report.nodes == 4
+    search_index = json.loads((out / "dependencies/index.json").read_text(encoding="utf-8"))
+    assert {"ch/progress", "ch/structure"} <= {node["id"] for node in search_index["nodes"]}
+    assert 'id="progress"' in (out / "roadmap/ch/README.md").read_text(encoding="utf-8")
+    assert "Prose named like a generated page." in (out / "roadmap/ch/structure.md").read_text(encoding="utf-8")
+    vault_structure = (out / "structure.md").read_text(encoding="utf-8")
+    assert 'data-autoform-node-id="ch/progress"' in vault_structure
+    assert 'data-autoform-node-id="ch/structure"' in vault_structure
+
+
 def test_authored_mermaid_survives_while_generated_graph_pages_use_the_explorer(
     tmp_path: Path,
 ) -> None:
