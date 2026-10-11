@@ -1,4 +1,14 @@
-"""Capture one immutable directory-tree generation for internal consumers."""
+"""Capture a directory tree for internal consumers.
+
+With descriptor capture, only the root descriptor is retained: each descended
+directory is reopened by name through its parent when it is walked and again
+when it is verified, and is rechecked by ``(dev, ino, file type)`` and its full
+list of names, while captured files are rechecked by their full ``stat``
+signature. A capture is therefore not one atomic generation: a rename that
+leaves each directory's names as they were when that directory was checked is
+not detected, so coordinated moves across directories between those checks can
+yield a set of entries that no single state had.
+"""
 
 from __future__ import annotations
 
@@ -74,7 +84,7 @@ _WINDOWS_DEVICE_NAMES = frozenset(
 
 
 class TreeSnapshotError(ValueError):
-    """A directory tree could not be captured as one stable generation."""
+    """A directory tree could not be captured, or changed while it was captured."""
 
 
 class TreeChangedError(TreeSnapshotError):
@@ -1031,7 +1041,7 @@ class BoundDirectoryTree:
             raise TreeChangedError("directory tree changed while it was in use") from error
 
     def capture(self, *, selection: TreeSelection | None = None) -> TreeSnapshot:
-        """Capture one stable tree through the retained directory generation."""
+        """Capture the tree below the retained root and recheck what it walked."""
 
         with self._lock:
             return self._capture_locked(selection)
@@ -1095,7 +1105,7 @@ def bind_directory_tree(
     selection: TreeSelection = ALL_ENTRIES,
     require_descriptor: bool = False,
 ) -> Iterator[BoundDirectoryTree]:
-    """Retain *root* while callers capture and verify its content generation."""
+    """Retain *root* while callers capture and verify the tree below it."""
 
     bound = BoundDirectoryTree(
         root,
@@ -1178,7 +1188,7 @@ def capture_directory_descriptor(
 
 
 class _TreeChanged(Exception):
-    """The retained directory did not remain one stable generation."""
+    """An entry changed while the tree was walked or rechecked."""
 
 
 class _PermissionDenied(Exception):

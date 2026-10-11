@@ -201,8 +201,8 @@ def project_modules(
     A library's ``globs`` select its modules as Lake's ``Glob`` does: ``M`` is
     one module, ``M.*`` the module and its submodules, ``M.+`` its strict
     submodules. A library without globs builds its roots. Both selection and
-    locality come from the snapshot's exact source-file generation rather than
-    a second walk of the live tree.
+    locality come from the snapshot's captured source files rather than a
+    second walk of the live tree.
     """
 
     modules: set[str] = set()

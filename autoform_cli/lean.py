@@ -101,7 +101,7 @@ class SourceIndex:
 
 @dataclass(frozen=True, slots=True)
 class IndexedSourceSnapshot:
-    """One source generation used for both declaration links and its digest."""
+    """One capture's sources, used for both declaration links and their digest."""
 
     index: SourceIndex
     revision: str
@@ -111,7 +111,7 @@ class IndexedSourceSnapshot:
 
 @dataclass(slots=True)
 class BoundProjectSources:
-    """A retained Lean source root whose captures cannot change path generation."""
+    """A retained Lean source root; a capture fails if its path no longer names that directory."""
 
     root: Path
     tree: BoundDirectoryTree
@@ -239,7 +239,12 @@ def snapshot_project_sources(
     """Read each Lean source once and derive its index and revision together.
 
     A bind or capture that races a concurrent edit is retried a bounded number
-    of times.
+    of times. Indexing stops with :class:`LeanSourceError` when an entry it must
+    read cannot be read safely: an unreadable ``.lean`` file, a folder that
+    cannot be listed or searched, an unreadable ``manifest.json`` below the
+    root, or a ``.lean`` symbolic link (other than an editor lock link) or
+    special file, with ``.lean`` and ``manifest.json`` matched in any letter
+    case. Entries in ignored or excluded folders are never read.
     """
 
     exclusions = tuple(exclude_roots)
@@ -355,7 +360,7 @@ def bind_project_source_snapshot(
     exclude_roots: Iterable[str | Path] = (),
     limits: TreeCaptureLimits = TreeCaptureLimits(),
 ) -> Iterator[tuple[BoundProjectSources, IndexedSourceSnapshot]]:
-    """Retain and yield one initially stable source generation.
+    """Retain the Lean root and yield its first capture that passed the recheck.
 
     Initial bind or capture races get the same bounded retry and sanitized
     failure as :func:`snapshot_project_sources`; the successful binding stays

@@ -696,10 +696,10 @@ it, owns it; missing dependency paths are counted the same way. Project
 locality is an exact inventory of regular repository source modules, never a
 namespace-prefix guess.
 
-The command snapshots and rereads the roadmap around the probe. It retains one
-bound Lean source generation, derives module inventory and locations from that
-generation's captured bytes, then recaptures through the same binding and
-refuses any content or source-identity change. JSON uses `autoform-impact/v1`
+The command snapshots and rereads the roadmap around the probe. It binds the
+Lean root, derives module inventory and locations from one capture's bytes,
+then recaptures through the same binding and refuses any content or
+source-identity change. JSON uses `autoform-impact/v1`
 and binds its answer to the Markdown `source_revision`, the repository
 `lean_source_revision`, and a `build_revision` hash of the normalized Lean
 records. The probe imports project modules, so run it only in a trusted checkout
@@ -820,6 +820,35 @@ locations and source revisions come from the same retained capture. Recognized
 skeleton packet/passages directories are identified by their bounded managed
 manifest before descendants are read; publication-output policy remains with
 the publication feature rather than this source layer.
+
+Only the Lean root's descriptor is retained: a capture opens each descendant
+folder by name through its parent, and a final check reopens each one the same
+way. The capture is refused if a folder's device, inode, or file type or its
+full list of names differs between these checks, or if a captured file's
+metadata changed. Even with descriptors, a capture is not one atomic
+filesystem generation: a rename that leaves each folder's names as they were
+when that folder was checked is not detected, so coordinated moves across
+folders between those checks can yield a set of sources that no single state
+had.
+
+Lean indexing reads the whole Lean root or nothing. It stops with an error,
+rather than indexing what it could, when an entry it must read cannot be read
+safely: a `.lean` file that cannot be read, a folder that cannot be listed or
+searched, a `manifest.json` below the root that cannot be read (it is read to
+recognize skeleton output folders), or a `.lean` entry that is a symbolic link
+or a special file (editor lock links named `.#*.lean` are skipped). The `.lean`
+suffix and the `manifest.json` name are matched in any letter case, so `Y.LEAN`
+is read and indexed as a `.lean` file and `Manifest.JSON` as a `manifest.json`.
+These stops apply in every folder the walk enters, not only Lean package
+folders, so an unreadable folder of unrelated files inside the Lean root stops
+indexing too; other files are never read, so their permissions do not matter.
+For `render` without `--lean-root`, the Lean root is the blueprint's parent
+folder. Errors report paths only relative to the Lean root. To clear one, fix
+the permissions, or move the entry out of the Lean root or into a folder the
+walk skips: `.direnv`, `.git`, `.lake`, `.obsidian`, `.trash`, `.venv`, and
+`lake-packages` in any letter case, `build` exactly, a folder below the root
+that contains a `.git` entry (in any letter case), or a recognized skeleton
+output folder. There is no command-line option to exclude other folders.
 
 Automatically detected Git permalinks are emitted only for captured files whose
 bytes equal the blob at the stable detected commit. Dirty, untracked, missing,

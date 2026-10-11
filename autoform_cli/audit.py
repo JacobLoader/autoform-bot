@@ -449,7 +449,7 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
 def _captured_source_lines(
     source_files: tuple[tuple[Path, bytes], ...],
 ) -> dict[Path, list[str] | None]:
-    """Decode the already captured source generation for lexical checks."""
+    """Decode the already captured source bytes for lexical checks."""
 
     sources: dict[Path, list[str] | None] = {}
     for path, data in source_files:
