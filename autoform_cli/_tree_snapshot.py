@@ -1253,6 +1253,10 @@ def capture_directory_descriptor(
         )
     except (_PermissionDenied, _TreeChanged, OSError, RecursionError) as error:
         raise _capture_failure(error) from error
+    finally:
+        # scan holds itself through its closure. Breaking that cycle lets
+        # reference counting free the captured bytes along with the snapshot.
+        scan = None  # type: ignore[assignment]
     return TreeSnapshot(
         root_identity=(root.st_dev, root.st_ino),
         directories=tuple(sorted(record.relative for record in directories)),
