@@ -265,6 +265,45 @@ def test_a_named_pipe_as_the_git_file_is_refused_by_name_without_blocking(tmp_pa
     assert _refusal_without_blocking(library) == "its Git metadata file .git is not a regular file"
 
 
+@pytest.mark.parametrize("name", ["lean-toolchain", "lake-manifest.json", "lakefile.lean", "lakefile.toml"])
+def test_a_pin_file_that_is_a_symbolic_link_is_refused_by_name(tmp_path: Path, name: str) -> None:
+    library = make_library(tmp_path)
+    target = tmp_path / "elsewhere"
+    path = library.root / name
+    target.write_bytes(path.read_bytes() if path.exists() else b"-- not a package file\n")
+    path.unlink(missing_ok=True)
+    path.symlink_to(target)
+
+    assert _refusal(library) == f"its {name} is a symbolic link"
+
+
+@pytest.mark.parametrize("name", ["lean-toolchain", "lake-manifest.json", "lakefile.lean", "lakefile.toml"])
+def test_a_pin_file_that_is_a_directory_is_refused_by_name(tmp_path: Path, name: str) -> None:
+    library = make_library(tmp_path)
+    path = library.root / name
+    path.unlink(missing_ok=True)
+    path.mkdir()
+
+    assert _refusal(library) == f"its {name} is not a regular file"
+
+
+def test_two_oversized_lakefiles_are_refused_and_not_given_one_tree_digest(tmp_path: Path) -> None:
+    reasons = []
+    for index, filler in enumerate(("a", "b")):
+        library = make_library(tmp_path / str(index))
+        (library.root / "lakefile.lean").write_text(filler * (2 * 1024 * 1024), encoding="utf-8")
+        reasons.append(_refusal(library))
+
+    assert reasons == ["its lakefile.lean cannot be read (it is over 1 MiB or unreadable)"] * 2
+
+
+def test_a_missing_pin_file_is_still_only_absent(tmp_path: Path) -> None:
+    library = make_library(tmp_path)
+
+    assert not (library.root / "lakefile.lean").exists()
+    assert _load(library).revision == REV
+
+
 def test_a_long_toolchain_in_the_index_is_cut_in_the_refusal(tmp_path: Path) -> None:
     library = make_library(tmp_path)
     header = replace(library.index.header, lean_toolchain="leanprover/lean4:" + "v" * 5000)

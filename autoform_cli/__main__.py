@@ -23,6 +23,8 @@ from .dashboard import publication_bound_live_state, serve_dashboard
 from .graph import GraphValidationError, load_graph
 from .impact import ImpactError, format_impact, revision_impact
 from .lean import build_linker, declaration_names, index_failure_message
+from .library.generate import GenerateError, check_index, generate_index, write_index
+from .library.index import INDEX_FILE
 from .library.listing import list_libraries
 from .library.locate import LibraryError, WorkspaceError
 from .library.search import LibraryResult, library_argument, search_with_libraries
@@ -260,6 +262,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     library_list.add_argument("target", type=Path, help="Lean project root, where lake-manifest.json is")
     library_list.add_argument("--json", action="store_true", help="write stable machine-readable output")
+    library_index = library_subparsers.add_parser(
+        "index", help="write the index a Lean library publishes, from its current build"
+    )
+    library_index.add_argument("target", type=Path, help="the library's package root; it must be built")
+    library_index.add_argument(
+        "--lib",
+        action="append",
+        default=[],
+        dest="libraries",
+        metavar="NAME",
+        help="index this lean_lib (repeatable); default: every lean_lib of the package",
+    )
+    library_index.add_argument(
+        "--check", action="store_true", help="write nothing; exit 1 when the index at the root is not current"
+    )
+    library_index.add_argument(
+        "--timeout", type=_positive_seconds, default=None, metavar="SECONDS", help="time limit for the Lean probe"
+    )
 
     claim = subparsers.add_parser("claim", help="coordinate temporary node ownership through Git refs")
     claim_subparsers = claim.add_subparsers(dest="claim_command", required=True)
@@ -403,7 +423,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "search":
         return _search(args)
     if args.command == "library":
-        return _library_list(args)
+        return _library_index(args) if args.library_command == "index" else _library_list(args)
     if args.command == "claim":
         return _claim(args)
     if args.command == "migrate":
@@ -852,6 +872,67 @@ def _one_line(text: str) -> str:
 
     text = " ".join(text.split())
     return text if len(text) <= 200 else text[:197].rstrip() + "..."
+
+
+def _library_index(args: argparse.Namespace) -> int:
+    options = {"libraries": tuple(args.libraries), "timeout": args.timeout}
+    try:
+        if args.check:
+            reasons = check_index(args.target, **options)
+            for reason in reasons:
+                print(f"stale: {_human_text(reason)}", file=sys.stderr)
+            if not reasons:
+                print(f"{INDEX_FILE} is current.")
+            return 1 if reasons else 0
+        generated = generate_index(args.target, **options)
+        write_index(args.target, generated)
+    except GenerateError as error:
+        print(f"error: {_human_text(error)}", file=sys.stderr)
+        return 2
+    except OSError as error:
+        # Every write is reported by `write_index`; what is left is a file of the package that cannot be read.
+        what = error.filename if error.filename is not None else args.target
+        print(f"error: {_human_text(f'{what} cannot be read: {error.strerror or error}')}", file=sys.stderr)
+        return 2
+    except ValueError as error:
+        print(f"error: {_human_text(f'the package root cannot be used: {error}')}", file=sys.stderr)
+        return 2
+    index = generated.index
+    wanted = sum(declaration.status == "wanted" for declaration in index.declarations)
+    twice = f", {len(generated.shared)} declared in more than one module" if generated.shared else ""
+    print(
+        f"Wrote {INDEX_FILE}: {_count(len(index.modules), 'module')}, "
+        f"{_count(len(index.declarations), 'declaration')} ({wanted} wanted{twice})."
+    )
+    # Flush first: stdout is block-buffered when piped, and the warnings explain the count.
+    sys.stdout.flush()
+    for shared in generated.shared:
+        print(
+            _human_text(
+                f"warning: {shared.name} is declared in {shared.module} and also in {', '.join(shared.others)}; "
+                f"it is indexed once, under {shared.module}"
+            ),
+            file=sys.stderr,
+        )
+    for shared in generated.shared_left_out:
+        print(
+            _human_text(
+                f"warning: {shared.name} is left out: its declaration in {shared.module} depends on sorry or "
+                f"another axiom; {', '.join(shared.others)} {'declares' if len(shared.others) == 1 else 'declare'} it too"
+            ),
+            file=sys.stderr,
+        )
+    if generated.left_out:
+        verb = "depends" if generated.left_out == 1 else "depend"
+        print(
+            f"Left out {_count(generated.left_out, 'declaration')} that {verb} on sorry or another axiom.",
+            file=sys.stderr,
+        )
+    return 0
+
+
+def _count(number: int, noun: str) -> str:
+    return f"{number} {noun}" if number == 1 else f"{number} {noun}s"
 
 
 def _library_list(args: argparse.Namespace) -> int:

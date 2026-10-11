@@ -20,6 +20,7 @@ from .index import (
     INDEX_FILE,
     MAX_INDEX_BYTES,
     TREE_FILES,
+    IndexDependency,
     LibraryIndex,
     LibraryIndexError,
     covers,
@@ -32,6 +33,7 @@ from .locate import (
     HeadError,
     LakeWorkspace,
     LibraryError,
+    PinError,
     WorkspaceError,
     checkout_paths,
     find_package,
@@ -64,6 +66,63 @@ class VerifiedLibrary:
     revision: str
     index: LibraryIndex
     differences: tuple[Difference, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CheckoutPins:
+    """What a package root pins: the files the tree digest covers, decoded once."""
+
+    lean_toolchain: str | None
+    #: The direct dependencies, in name order.
+    dependencies: tuple[IndexDependency, ...]
+    #: The tree files that exist, as ``tree_digest`` takes them.
+    files: tuple[tuple[str, bytes], ...]
+    #: The package's own name, from its manifest.
+    package: str | None
+
+
+def checkout_pins(root: Path) -> CheckoutPins:
+    """Read the pins of the package at ``root``; ``WorkspaceError`` when its manifest cannot be used."""
+
+    for relative in TREE_FILES:
+        _require_plain_file(root, relative)
+    pins = _snapshot._capture_decision_snapshot(root)
+    for relative in TREE_FILES:
+        # Only a file that is not there is absent; one that cannot be read must not leave the digest.
+        if pins.file(relative).state not in ("missing", "regular"):
+            raise PinError(f"its {relative} cannot be read (it is over 1 MiB or unreadable)")
+    decoded = locked_packages(pins, _MANIFEST)
+    payload, packages = decoded if decoded is not None else ({}, ())
+    name = payload.get("name")
+    return CheckoutPins(
+        lean_toolchain=toolchain(pins),
+        dependencies=tuple(
+            IndexDependency(item.name, item.type, item.rev)
+            for item in sorted(packages, key=lambda item: item.name)
+            if not item.inherited
+        ),
+        files=tuple(
+            (relative, pins.file(relative).content)
+            for relative in TREE_FILES
+            if pins.file(relative).state == "regular" and pins.file(relative).content is not None
+        ),
+        package=name if type(name) is str and name else None,
+    )
+
+
+def _require_plain_file(root: Path, relative: str) -> None:
+    """Refuse a pin file that is a link or not a regular file; the checkout is not trusted to link elsewhere."""
+
+    try:
+        mode = os.lstat(root / relative).st_mode
+    except FileNotFoundError:
+        return
+    except OSError:
+        raise PinError(f"its {relative} cannot be read (it is over 1 MiB or unreadable)") from None
+    if stat.S_ISLNK(mode):
+        raise PinError(f"its {relative} is a symbolic link")
+    if not stat.S_ISREG(mode):
+        raise PinError(f"its {relative} is not a regular file")
 
 
 def load_library(workspace: LakeWorkspace, library: str, index_path: Path | None = None) -> VerifiedLibrary:
@@ -103,19 +162,16 @@ def _load_library(workspace: LakeWorkspace, library: str, index_path: Path | Non
     except LibraryIndexError as error:
         raise refuse(f"its index is not usable: {error}") from None
 
-    pins = _snapshot._capture_decision_snapshot(root)
-    pinned = toolchain(pins)
-    if pinned != index.header.lean_toolchain:
-        generated, pins_to = shorten(index.header.lean_toolchain), shorten(pinned or "nothing")
-        raise refuse(f"its index was generated for {generated}, but the checkout pins {pins_to}")
     try:
-        decoded = locked_packages(pins, _MANIFEST)
+        pins = checkout_pins(root)
+    except PinError as error:
+        raise refuse(str(error)) from None
     except WorkspaceError:
         raise refuse(f"its {_MANIFEST} is not a Lake manifest Autoform reads") from None
-    direct = sorted(
-        (item.name, item.type, item.rev) for item in (decoded[1] if decoded is not None else ()) if not item.inherited
-    )
-    if direct != [(item.name, item.type, item.rev) for item in index.header.dependencies]:
+    if pins.lean_toolchain != index.header.lean_toolchain:
+        generated, pins_to = shorten(index.header.lean_toolchain), shorten(pins.lean_toolchain or "nothing")
+        raise refuse(f"its index was generated for {generated}, but the checkout pins {pins_to}")
+    if pins.dependencies != index.header.dependencies:
         raise refuse(f"its index does not list the dependencies its {_MANIFEST} locks")
 
     found = _sources(root, index.header.source_dirs, refuse)
@@ -138,12 +194,7 @@ def _load_library(workspace: LakeWorkspace, library: str, index_path: Path | Non
         "source files differ from its index",
         refuse,
     )
-    files = [
-        (relative, pins.file(relative).content)
-        for relative in TREE_FILES
-        if pins.file(relative).state == "regular" and pins.file(relative).content is not None
-    ]
-    if tree_digest(((module.name, module.sha256) for module in index.modules), files) != index.header.tree:
+    if tree_digest(((module.name, module.sha256) for module in index.modules), pins.files) != index.header.tree:
         raise refuse("its index does not match its sources and pins as a whole; it was merged or edited, not generated")
     return VerifiedLibrary(name, head.lower(), index, _differences(workspace, index))
 
@@ -237,4 +288,4 @@ def _differences(workspace: LakeWorkspace, index: LibraryIndex) -> tuple[Differe
     return tuple(differences)
 
 
-__all__ = ["Difference", "VerifiedLibrary", "load_library"]
+__all__ = ["CheckoutPins", "Difference", "VerifiedLibrary", "checkout_pins", "load_library"]

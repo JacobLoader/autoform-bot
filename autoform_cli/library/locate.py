@@ -41,6 +41,10 @@ class WorkspaceError(ValueError):
     """The project's own Lake files cannot tell where its packages are."""
 
 
+class PinError(WorkspaceError):
+    """A pin file of a package is a link, is not a regular file, or cannot be read."""
+
+
 class LibraryError(ValueError):
     """One named library cannot be searched; the message says which and why."""
 
@@ -323,6 +327,7 @@ __all__ = [
     "LakeWorkspace",
     "LibraryError",
     "LockedPackage",
+    "PinError",
     "WorkspaceError",
     "checkout_paths",
     "find_package",
