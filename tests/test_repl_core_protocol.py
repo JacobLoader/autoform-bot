@@ -1119,7 +1119,9 @@ def test_default_header_parser_selects_lean_from_the_lake_toolchain():
     command = repl_core.LeanReplConfig().header_deps_command
 
     assert command[:3] == ["lake", "env", sys.executable]
-    assert "LEAN_SYSROOT" in command[-1]
+    assert "LEAN_SYSROOT" in command[-2]
+    assert command[-1] == repl_core.LEAN_HEADER_PARSER
+    assert os.path.isfile(command[-1])
 
 
 def test_header_parser_launcher_ignores_a_path_shadow(tmp_path):
@@ -1132,6 +1134,7 @@ def test_header_parser_launcher_ignores_a_path_shadow(tmp_path):
         path.write_text(
             f"#!{sys.executable}\n"
             "import sys\n"
+            f"assert sys.argv[1:] == ['--run', {repl_core.LEAN_HEADER_PARSER!r}]\n"
             "sys.stdin.read()\n"
             f"sys.stdout.write({_deps_json(module)!r})\n"
         )
@@ -1144,7 +1147,10 @@ def test_header_parser_launcher_ignores_a_path_shadow(tmp_path):
         "PATH": f"{shadow_bin}{os.pathsep}{os.environ.get('PATH', '')}",
     }
 
-    modules = _header_modules([sys.executable, "-c", repl_core.LEAN_HEADER_LAUNCHER], env=env)
+    modules = _header_modules(
+        [sys.executable, "-c", repl_core.LEAN_HEADER_LAUNCHER, repl_core.LEAN_HEADER_PARSER],
+        env=env,
+    )
 
     assert modules == ["Mathlib"]
 
@@ -1213,7 +1219,15 @@ def test_disposable_call_rejects_what_lean_reports_before_starting(
     assert repl.is_clean()
 
 
-def test_disposable_call_checks_submitted_header_before_warmup_prefix(monkeypatch):
+@pytest.mark.parametrize(
+    "code",
+    [
+        "/- note -/ import Unsafe\n#check Nat",
+        "/- /---/ -/\nimport Unsafe\n-- -/\n#check Nat\n",
+        "/- a --/\n/- x /--/ -/\nimport Unsafe\n-- -/\n#check Nat\n",
+    ],
+)
+def test_disposable_call_checks_submitted_header_before_warmup_prefix(monkeypatch, code):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(
             allowed_imports=frozenset({"Mathlib"}),
@@ -1228,68 +1242,9 @@ def test_disposable_call_checks_submitted_header_before_warmup_prefix(monkeypatc
 
     monkeypatch.setattr(repl, "_check_header", check_header)
 
-    repl.run_disposable("/- note -/ import Unsafe\n#check Nat")
+    repl.run_disposable(code)
 
-    assert checked == ["/- note -/ import Unsafe\n#check Nat"]
-
-
-@pytest.mark.parametrize(
-    "code",
-    [
-        (
-            "prelude -- ordinary comment\n"
-            "import Init /- a --/\n"
-            "import Lean\n"
-            "-- -/\n"
-            "#check Lean.Name"
-        ),
-    ],
-)
-def test_disposable_call_refuses_the_legacy_deps_json_comment_bypass(
-    monkeypatch, code
-):
-    repl = repl_core.LeanRepl(
-        repl_core.LeanReplConfig(
-            allowed_imports=frozenset({"Init"}),
-            warmup_imports=frozenset(),
-        )
-    )
-
-    def check_header(code, deadline):
-        modules = ("Init",) if "--/" in code else ("Init", "Lean")
-        return repl_core._LeanHeaderAnalysis(modules, True)
-
-    monkeypatch.setattr(repl, "_check_header", check_header)
-    monkeypatch.setattr(
-        repl,
-        "start",
-        lambda *args, **kwargs: pytest.fail("ambiguous header must not start Lean"),
-    )
-
-    response = repl.run_disposable(code)
-
-    assert "lean --deps-json cannot validate safely" in response["repl_error"]
-    assert repl.is_clean()
-
-
-@pytest.mark.parametrize(
-    "code",
-    [
-        '#eval "--/"',
-        "--/ harmless line comment\n#check Nat",
-        "#check Nat\n/- body --/",
-    ],
-)
-def test_legacy_deps_json_normalizer_does_not_decide_lexical_context(code):
-    normalized = repl_core._normalize_legacy_deps_json_comment_closes(code)
-    assert normalized != code
-
-
-def test_legacy_deps_json_normalizer_rewrites_long_runs_linearly():
-    assert repl_core._normalize_legacy_deps_json_comment_closes("--/" * 10_000) == (
-        "-/" * 10_000
-    )
-    assert repl_core._normalize_legacy_deps_json_comment_closes("---/") == "---/"
+    assert checked == [code]
 
 
 def test_disposable_call_refuses_non_posix_before_spawning_header_parser(monkeypatch):

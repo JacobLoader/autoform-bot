@@ -25,6 +25,7 @@ from servers.lean_runtime import (
     ProjectResourceCache,
     ProjectResourceBusyError,
 )
+from servers.repl.core import LEAN_HEADER_LAUNCHER, LEAN_HEADER_PARSER
 
 
 def make_lake_project(tmp_path, name: str):
@@ -1679,7 +1680,14 @@ def test_absolute_lake_command_is_reused_for_header_validation(monkeypatch):
 
     config = LeanRuntimeConfig.from_environment()
 
-    assert config.repl_header_command[:2] == ("/opt/lean/bin/lake", "env")
+    assert config.repl_header_command == (
+        "/opt/lean/bin/lake",
+        "env",
+        sys.executable,
+        "-c",
+        LEAN_HEADER_LAUNCHER,
+        LEAN_HEADER_PARSER,
+    )
 
 
 def test_wrapped_repl_command_requires_an_explicit_header_command(monkeypatch):

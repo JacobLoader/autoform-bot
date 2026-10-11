@@ -60,10 +60,13 @@ def test_fixture_exposes_escaped_module_traversal_without_policy_validation():
         (("REPL",), "/- note -/ import Init.Data\n#check Nat", "Disallowed imports: Init"),
         ((), "import NotAllowlisted.Mod\n", "Disallowed imports: NotAllowlisted"),
         ((), "import «REPL\n", "Rejected Lean header"),
+        ((), "/- a --/\nimport REPL.Frontend\n-- -/\n#check Nat", None),
+        ((), "/- a --/\nimport Unsafe\n-- -/\n#check Nat", "Disallowed imports: Unsafe"),
+        ((), "/- /---/ -/\nimport Unsafe\n-- -/\n#check Nat\n", "Disallowed imports: Unsafe"),
         (
             (),
-            "/- a --/\nimport REPL.Frontend\n-- -/\n#check Nat",
-            "cannot validate safely",
+            "/- a --/\n/- x /--/ -/\nimport Unsafe\n-- -/\n#check Nat\n",
+            "Disallowed imports: Unsafe",
         ),
         (
             (),
@@ -72,8 +75,9 @@ def test_fixture_exposes_escaped_module_traversal_without_policy_validation():
             "import Lean\n"
             "-- -/\n"
             "#check Lean.Name",
-            "cannot validate safely",
+            "Disallowed imports: Lean",
         ),
+        ((), "module\nimport allMathlib\n", "Disallowed imports: allMathlib"),
         (
             (),
             "import Mathlib.«..».Secret\n#check escapedTraversalMarker",

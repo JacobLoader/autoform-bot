@@ -13,9 +13,10 @@ runtime for the current AutoformBot installation, Unix user, and compute node.
 That runtime owns one REPL admission pool and LSP session per active Lean
 project. LSP sessions stay warm; each public REPL call gets a fresh child and
 no process-owned environment or proof-state handle survives the response.
-Before that child starts, the selected Lake toolchain's `lean --deps-json`
-parser validates the submitted header and its complete import set; a rejected
-or unrecognized parser response fails closed. Allowlisted imports require
+Before that child starts, the selected Lake toolchain runs Lean's own header
+parser, which the REPL also uses, on the submitted source. Every import it
+reports is validated, and a rejected or
+unrecognized parser response fails closed. Allowlisted imports require
 plain, nonempty canonical module components; names that remain quoted or
 path-like after Lean parsing are refused instead of being reduced to a
 misleading allowlisted root. Execution names the
@@ -50,7 +51,9 @@ by `AUTOFORM_REPL_TOTAL_WORKERS`, `AUTOFORM_REPL_WORKERS_PER_PROJECT`,
 process to start the runtime supplies those settings until it is stopped.
 `LEAN_REPL_CMD` selects the disposable child command. An absolute `lake`
 executable is reused for header validation; a container or other wrapper must
-also set `LEAN_REPL_HEADER_CMD` to the matching toolchain-owned parser command.
+also set `LEAN_REPL_HEADER_CMD` to a command that runs
+`servers/repl/parse_header.lean` with the matching toolchain's `lean --run`,
+passing the source on standard input.
 `AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` bounds project admission, the tool
 operation, and a safety margin. Failed cleanup transfers to a retained
 background reaper and may continue past that response budget rather than

@@ -46,7 +46,7 @@ from servers.lsp.server import (
     LeanLspSession,
     format_lsp_diagnostics,
 )
-from servers.repl.core import LEAN_HEADER_LAUNCHER, format_repl_response
+from servers.repl.core import LEAN_HEADER_LAUNCHER, LEAN_HEADER_PARSER, format_repl_response
 from servers.repl.pool import (
     DEFAULT_RAM_FRACTION,
     LeanReplPool,
@@ -198,6 +198,7 @@ class LeanRuntimeConfig:
                 sys.executable,
                 "-c",
                 LEAN_HEADER_LAUNCHER,
+                LEAN_HEADER_PARSER,
             )
         else:
             raise ValueError(

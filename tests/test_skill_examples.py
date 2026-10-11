@@ -173,7 +173,7 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
 
     assert "each public REPL call gets a fresh child" in servers
     assert "no process-owned environment or proof-state handle survives" in servers
-    assert "toolchain's `lean --deps-json`" in servers
+    assert "toolchain runs Lean's own header" in servers
     assert "unrecognized parser response fails closed" in servers
     assert "names that remain quoted or\npath-like after Lean parsing are refused" in servers
     assert "package-qualified `@repl/repl` target" in servers

@@ -10,7 +10,6 @@ import errno
 import json
 import os
 import random
-import re
 import select
 import signal
 import subprocess
@@ -36,11 +35,12 @@ _VALID_DIAGNOSTIC_SEVERITIES = frozenset({"trace", "info", "warning", "error"})
 _STDERR_TAIL_BYTES = 200
 _PUBLIC_DIAGNOSTIC_FIELDS = frozenset({"severity", "data", "pos", "endPos"})
 _PUBLIC_SORRY_FIELDS = frozenset({"goal", "pos", "endPos"})
-_LEGACY_DEPS_JSON_SUSPECT_CLOSE = re.compile(r"(?<!-)(?:--)+/")
+# Runs Lean's own header parser, which the REPL uses, on the source on stdin.
+LEAN_HEADER_PARSER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "parse_header.lean")
 LEAN_HEADER_LAUNCHER = (
-    "import os; "
+    "import os, sys; "
     "lean = os.path.join(os.environ['LEAN_SYSROOT'], 'bin', 'lean'); "
-    "os.execv(lean, [lean, '--deps-json', '/dev/stdin'])"
+    "os.execv(lean, [lean, '--run', sys.argv[1]])"
 )
 
 
@@ -428,7 +428,7 @@ class _LeanHeaderAnalysis:
 
 
 def _decode_header_analysis(stdout: bytes) -> _LeanHeaderAnalysis:
-    """Decode the strict schemas emitted by Lean's fast import parser."""
+    """Decode the ``lean --deps-json`` schemas printed by the header parser."""
     try:
         payload = _decode_repl_json(stdout)
         if not isinstance(payload, dict) or set(payload) != {"imports"}:
@@ -508,30 +508,11 @@ def _decode_header_analysis(stdout: bytes) -> _LeanHeaderAnalysis:
             ),
         )
     except (ReplProtocolError, TypeError, KeyError, json.JSONDecodeError):
-        raise ValueError("unrecognized output from lean --deps-json") from None
+        raise ValueError("unrecognized output from the Lean header parser") from None
     except ValueError as error:
         if str(error):
             raise
-        raise ValueError("unrecognized output from lean --deps-json") from None
-
-
-def _normalize_legacy_deps_json_comment_closes(code: str) -> str:
-    """Normalize suspect closes for a differential Lean 4.30--4.32 parse.
-
-    Those releases skip one character too many when an even run of dashes
-    precedes ``/`` inside a block comment. Removing one dash globally is
-    intentionally context-free: callers compare Lean's authoritative header
-    facts for both byte strings and reject only when they differ. Strings,
-    line comments, body text, and quoted identifiers therefore need no Python
-    lexer or duplicated Lean grammar.
-    """
-
-    if _LEGACY_DEPS_JSON_SUSPECT_CLOSE.search(code) is None:
-        return code
-    return _LEGACY_DEPS_JSON_SUSPECT_CLOSE.sub(
-        lambda match: match.group(0)[1:],
-        code,
-    )
+        raise ValueError("unrecognized output from the Lean header parser") from None
 
 
 def _split_imports_and_body(code: str) -> tuple[list[str], str, int]:
@@ -582,7 +563,9 @@ class LeanReplConfig:
 
     repl_command: list[str] = field(default_factory=lambda: ["lake", "exe", "@repl/repl"])
     header_deps_command: list[str] = field(
-        default_factory=lambda: ["lake", "env", sys.executable, "-c", LEAN_HEADER_LAUNCHER]
+        default_factory=lambda: [
+            "lake", "env", sys.executable, "-c", LEAN_HEADER_LAUNCHER, LEAN_HEADER_PARSER
+        ]
     )
 
     # stdout is capped per response. stderr has no protocol framing, so its
@@ -1043,14 +1026,6 @@ class LeanRepl:
                 if needs_header_analysis:
                     try:
                         header = self._check_header(code, deadline)
-                        normalized = _normalize_legacy_deps_json_comment_closes(code)
-                        if normalized != code:
-                            normalized_header = self._check_header(normalized, deadline)
-                            if normalized_header != header:
-                                raise ValueError(
-                                    "Lean header contains a block-comment close "
-                                    "spelling that lean --deps-json cannot validate safely"
-                                )
                     except ValueError as error:
                         result = {"repl_error": f"Rejected Lean header: {error}"}
                     else:
