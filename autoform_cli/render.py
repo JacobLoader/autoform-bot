@@ -1470,14 +1470,21 @@ def _render_hero(
     figures = [
         ("Scoped roadmap", f"{share}%", f"{done} of {total} {target_label} complete", False),
         ("Ready now", str(actionable), "unblocked, waiting for an author", False),
-        (
-            "Module inventories",
-            str(inventory_count),
-            "existing Lean modules checked",
-            True,
-        ),
-        ("Chapters", str(len(graph_views.group_nodes(graph))), "top-level milestones", False),
     ]
+    # The figure counts every catalog, checked or not; a project without
+    # catalogs has no inventory to report.
+    if inventory_count:
+        figures.append(
+            (
+                "Module inventories",
+                str(inventory_count),
+                "existing Lean modules inventoried",
+                True,
+            )
+        )
+    figures.append(
+        ("Chapters", str(len(graph_views.group_nodes(graph))), "top-level milestones", False)
+    )
     stats = "".join(
         f'<div class="bp-figure{" bp-figure-neutral" if neutral else ""}">'
         f'<div class="bp-figure-value">{value}</div>'

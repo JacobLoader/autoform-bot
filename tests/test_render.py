@@ -721,6 +721,42 @@ def test_partial_module_catalog_is_not_reported_as_dispatchable_work(tmp_path: P
     ) in overview
 
 
+def test_the_module_inventory_figure_counts_inventories_and_hides_at_zero(tmp_path: Path) -> None:
+    """The figure counts every catalog, checked or not, so it says inventoried.
+
+    A project without catalogs has nothing to report there, and a 0 beside the
+    targets would read as missing work.
+    """
+    project = _project(tmp_path)
+    render_site(project / "blueprint", tmp_path / "plain", lean_root=project)
+    assert "Module inventories" not in (tmp_path / "plain/README.md").read_text(encoding="utf-8")
+
+    sources = project / "blueprint/sources"
+    sources.mkdir()
+    (sources / "catalog.md").write_text("# Project.Base declarations\n", encoding="utf-8")
+    (project / "blueprint/roadmap/catalog.md").write_text(
+        "---\ncatalog: module\nlean: Project.Base\nstatement: formalized\n---\n\n"
+        "# Existing module\n\nA module inventory that is not yet checked.\n\n"
+        "## Sources\n\n- [Declaration ledger](../sources/catalog.md)\n",
+        encoding="utf-8",
+    )
+    coverage = project / "blueprint/coverage/README.md"
+    coverage.write_text(
+        coverage.read_text(encoding="utf-8")
+        + "| Existing module | INVENTORIED | [Catalog](../roadmap/catalog.md) |\n",
+        encoding="utf-8",
+    )
+    render_site(project / "blueprint", tmp_path / "inventoried", lean_root=project)
+
+    overview = (tmp_path / "inventoried/README.md").read_text(encoding="utf-8")
+    assert (
+        '<div class="bp-figure-value">1</div>'
+        '<div class="bp-figure-label">Module inventories</div>'
+        '<div class="bp-figure-note">existing Lean modules inventoried</div>'
+    ) in overview
+    assert "existing Lean modules checked" not in overview
+
+
 def test_the_landing_page_is_the_hero_and_project_explorer_and_nothing_else(
     tmp_path: Path,
 ) -> None:
