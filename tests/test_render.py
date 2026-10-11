@@ -2561,6 +2561,32 @@ def test_an_interrupt_with_a_refused_cleanup_names_the_interrupt(
         render_site(project / "blueprint", tmp_path / "out", lean_root=project)
 
 
+def test_metadata_only_changes_during_a_render_do_not_fail_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _project(tmp_path)
+    output = tmp_path / "out"
+    render_site(project / "blueprint", output, lean_root=project)
+    original = render_module._sync_tree_descriptor
+
+    def touch_ctime(descriptor: int) -> None:
+        original(descriptor)
+        # Rewriting a file's own times moves only its ctime, as an
+        # extended-attribute write by a sync client does.
+        staged = os.stat("README.md", dir_fd=descriptor)
+        os.utime(
+            "README.md", ns=(staged.st_atime_ns, staged.st_mtime_ns), dir_fd=descriptor
+        )
+        live = (output / "README.md").stat()
+        os.utime(output / "README.md", ns=(live.st_atime_ns, live.st_mtime_ns))
+
+    monkeypatch.setattr(render_module, "_sync_tree_descriptor", touch_ctime)
+    report = render_site(project / "blueprint", output, lean_root=project)
+
+    assert report.warnings == []
+    assert not list(tmp_path.glob(f"{render_module._PUBLICATION_STAGE_PREFIX}*"))
+
+
 def test_render_installs_into_an_existing_empty_directory(tmp_path: Path) -> None:
     project = _project(tmp_path)
     output = tmp_path / "out"

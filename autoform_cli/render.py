@@ -1381,6 +1381,9 @@ def _descriptor_identity(descriptor: int) -> tuple[int, int]:
 
 
 def _stat_signature(metadata: os.stat_result) -> tuple[int, ...]:
+    # No ctime: a sync or backup agent writing an extended attribute, or our own
+    # cleanup rename, changes it without changing content. The comparisons that
+    # guard content also compare a digest.
     return (
         metadata.st_dev,
         metadata.st_ino,
@@ -1388,7 +1391,6 @@ def _stat_signature(metadata: os.stat_result) -> tuple[int, ...]:
         metadata.st_nlink,
         metadata.st_size,
         metadata.st_mtime_ns,
-        metadata.st_ctime_ns,
     )
 
 
@@ -2360,8 +2362,8 @@ def _remove_inventory_contents(
                 follow_symlinks=False,
             )
             if (
-                _rename_stable_signature(claimed) != expected_file[0][:-1]
-                or _rename_stable_signature(final) != expected_file[0][:-1]
+                _stat_signature(claimed) != expected_file[0]
+                or _stat_signature(final) != expected_file[0]
                 or hashlib.sha256(data).hexdigest() != expected_file[1]
             ):
                 raise OSError(errno.ESTALE, "workspace changed during cleanup")
@@ -2435,17 +2437,6 @@ def _cleanup_rename_noreplace(descriptor: int, source: str, target: str) -> None
     if result != 0:
         error = ctypes.get_errno()
         raise OSError(error, os.strerror(error), target)
-
-
-def _rename_stable_signature(metadata: os.stat_result) -> tuple[int, ...]:
-    return (
-        metadata.st_dev,
-        metadata.st_ino,
-        metadata.st_mode,
-        metadata.st_nlink,
-        metadata.st_size,
-        metadata.st_mtime_ns,
-    )
 
 
 def _require_destination_inventory(
