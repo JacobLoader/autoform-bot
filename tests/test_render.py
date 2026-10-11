@@ -2587,6 +2587,24 @@ def test_metadata_only_changes_during_a_render_do_not_fail_it(
     assert not list(tmp_path.glob(f"{render_module._PUBLICATION_STAGE_PREFIX}*"))
 
 
+def test_published_modes_follow_the_umask(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    output = tmp_path / "out"
+    previous = os.umask(0o027)
+    try:
+        render_site(project / "blueprint", output, lean_root=project)
+    finally:
+        os.umask(previous)
+
+    published = [output, *output.rglob("*")]
+    assert {stat.S_IMODE(path.stat().st_mode) for path in published if path.is_dir()} == {
+        0o750
+    }
+    assert {stat.S_IMODE(path.stat().st_mode) for path in published if path.is_file()} == {
+        0o640
+    }
+
+
 def test_render_installs_into_an_existing_empty_directory(tmp_path: Path) -> None:
     project = _project(tmp_path)
     output = tmp_path / "out"

@@ -1955,7 +1955,9 @@ def _create_stage_directory(workspace_descriptor: int) -> tuple[int, tuple[int, 
     created_identity: tuple[int, int] | None = None
     descriptor: int | None = None
     try:
-        os.mkdir("site", mode=0o700, dir_fd=workspace_descriptor)
+        # The umask decides the published modes, as plain writes did on main;
+        # the 0700 workspace keeps the stage private until the commit.
+        os.mkdir("site", mode=0o777, dir_fd=workspace_descriptor)
         metadata = os.stat("site", dir_fd=workspace_descriptor, follow_symlinks=False)
         created_identity = metadata.st_dev, metadata.st_ino
         descriptor = os.open(
@@ -2661,7 +2663,6 @@ def _materialize_publication_plan(
         assert isinstance(files, dict)
         files[relative.name] = data
 
-    os.fchmod(stage_descriptor, 0o755)
 
     def write_node(descriptor: int, node: dict[str, object], prefix: str) -> None:
         directories = node["directories"]
@@ -2670,7 +2671,7 @@ def _materialize_publication_plan(
         assert isinstance(files, dict)
         for name in sorted(directories):
             relative = f"{prefix}/{name}" if prefix else name
-            os.mkdir(name, mode=0o755, dir_fd=descriptor)
+            os.mkdir(name, mode=0o777, dir_fd=descriptor)
             metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
             child = os.open(
                 name,
@@ -2680,7 +2681,6 @@ def _materialize_publication_plan(
             try:
                 if _descriptor_identity(child) != (metadata.st_dev, metadata.st_ino):
                     raise PublicationError(["publication stage changed during materialization"])
-                os.fchmod(child, 0o755)
                 _publication_plan_checkpoint("after-directory-open", relative)
                 child_node = directories[name]
                 assert isinstance(child_node, dict)
@@ -2697,7 +2697,7 @@ def _materialize_publication_plan(
                 | os.O_CLOEXEC
                 | os.O_NOFOLLOW
                 | os.O_NONBLOCK,
-                0o644,
+                0o666,
                 dir_fd=descriptor,
             )
             try:
@@ -2713,7 +2713,6 @@ def _materialize_publication_plan(
                     if written <= 0:
                         raise OSError(errno.EIO, "publication stage write made no progress")
                     view = view[written:]
-                os.fchmod(file_descriptor, 0o644)
                 if os.fstat(file_descriptor).st_size != len(data):
                     raise OSError(errno.EIO, "publication stage write was incomplete")
             finally:
@@ -2952,7 +2951,6 @@ def _sync_tree_descriptor(root_descriptor: int) -> None:
     """Sync a staged generation without resolving its pathname."""
 
     budget = _InventoryBudget()
-    os.fchmod(root_descriptor, 0o755)
 
     def visit(descriptor: int, prefix: str, depth: int) -> None:
         names = _bounded_directory_names(
