@@ -201,8 +201,15 @@ def validate_coverage_roles(
             )
 
         if entry.disposition == "INVENTORIED":
-            for scope in role_scopes:
-                inventoried.update(scope)
+            # Classify everything the row reaches. The role walk stops at
+            # leaves, which would leave a catalog that contains articles
+            # unclassified; audit reports that one as catalog-container.
+            pending = list(targets)
+            while pending:
+                node_id = pending.pop()
+                if node_id not in inventoried:
+                    inventoried.add(node_id)
+                    pending.extend(contained.get(node_id, ()))
 
     unclassified = catalog_nodes - inventoried
     if unclassified:

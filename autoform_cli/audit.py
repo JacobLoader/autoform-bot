@@ -13,7 +13,6 @@ import statistics
 from bisect import bisect_right
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
 
 from . import status
 from .coverage import CoverageSummary, load_coverage, validate_coverage_roles
@@ -211,28 +210,6 @@ def audit_graph(
                 )
             )
 
-        if node.catalog and not _has_catalog_ledger(graph, node):
-            findings.append(
-                AuditFinding(
-                    article_path,
-                    "catalog-without-ledger",
-                    "module catalog has no local declaration ledger under blueprint/sources",
-                )
-            )
-
-        if (
-            node.catalog
-            and (node.statement_formalized or node.proof_formalized)
-            and not declaration_names(node.lean or "")
-        ):
-            findings.append(
-                AuditFinding(
-                    article_path,
-                    "catalog-without-lean-targets",
-                    "formalized module catalog has no exact compiled names in lean frontmatter",
-                )
-            )
-
         repository_subject_index = (
             node.id == "roadmap"
             and node.parent is None
@@ -287,24 +264,6 @@ def audit_graph(
     if lean_root is not None:
         findings.extend(_lean_findings(graph, lean_root))
     return _result(findings, coverage=coverage)
-
-
-def _has_catalog_ledger(graph: Graph, node: Node) -> bool:
-    """Whether a catalog links a repository-local declaration ledger."""
-
-    sources = (graph.blueprint_dir / "sources").resolve()
-    for target in node.sources:
-        split = urlsplit(target)
-        if split.scheme or split.netloc or split.query or not split.path:
-            continue
-        try:
-            candidate = (node.path.parent / unquote(split.path)).resolve()
-            candidate.relative_to(sources)
-        except (OSError, ValueError):
-            continue
-        if candidate.is_file():
-            return True
-    return False
 
 
 @dataclass(frozen=True, slots=True)

@@ -256,6 +256,39 @@ def test_audit_surfaces_invalid_module_catalog_evidence(
     assert any("must link a declaration ledger" in reason for reason in reasons)
 
 
+def test_audit_reports_a_catalog_container_once(tmp_path: Path) -> None:
+    """A catalog that contains articles is reported as such, and only as such.
+
+    The walk that checks a row's role stops at leaves, so a catalog container
+    was also called unclassified inventory although the row reached it, here
+    once directly and once through a containing chapter.
+    """
+    blueprint = tmp_path / "blueprint"
+    _coverage(
+        blueprint,
+        "| Area | Coverage | Evidence |\n"
+        "| --- | --- | --- |\n"
+        "| Existing modules | INVENTORIED | [Modules](../roadmap/modules/README.md) |\n"
+        "| Library | INVENTORIED | [Library](../roadmap/library/README.md) |",
+    )
+    ledger = blueprint / "sources" / "ledger.md"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text("# Module declarations\n", encoding="utf-8")
+    _article(blueprint, "modules/README.md", catalog="module", sources=("../../sources/ledger.md",))
+    _article(blueprint, "modules/basic.md", catalog="module", sources=("../../sources/ledger.md",))
+    _article(blueprint, "library/README.md", depends=False)
+    _article(blueprint, "library/extra/README.md", catalog="module", sources=("../../../sources/ledger.md",))
+    _article(blueprint, "library/extra/more.md", catalog="module", sources=("../../../sources/ledger.md",))
+
+    findings = _finding_map(blueprint)
+
+    reason = "catalog article has contained articles; a module catalog must be a leaf"
+    assert findings == {
+        "roadmap/library/extra/README.md": [("catalog-container", reason)],
+        "roadmap/modules/README.md": [("catalog-container", reason)],
+    }
+
+
 def test_audit_validates_local_source_links_without_network_access(tmp_path: Path, monkeypatch) -> None:
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)

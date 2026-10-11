@@ -118,9 +118,10 @@ while remaining a readable catalog page, but stays outside the mathematical
 `Scoped roadmap` completion percentage.
 
 `check --lean-root` and `audit --lean-root` resolve every compiled name the
-catalog lists and audit validates the local ledger link. They cannot prove that
-the list omitted no newly added public declaration; completeness remains an
-authored assertion pending repository-inventory reconciliation.
+catalog lists, and every command that loads the blueprint validates the local
+ledger link. They cannot prove that the list omitted no newly added public
+declaration; completeness remains an authored assertion pending
+repository-inventory reconciliation.
 
 ## Assertions and derived status
 
