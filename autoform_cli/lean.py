@@ -472,18 +472,26 @@ def _lean_snapshot_includes(
     if _lean_path_is_excluded(relative, excluded):
         return False
     if stat.S_ISLNK(mode):
-        return (
-            relative.suffix.casefold() == ".lean"
-            and not relative.name.startswith(".#")
-        )
+        return _has_lean_suffix(relative) and not relative.name.startswith(".#")
     return (
         stat.S_ISDIR(mode)
-        or relative.suffix.casefold() == ".lean"
+        or _has_lean_suffix(relative)
         or (
             len(relative.parts) > 1
             and _is_managed_output_manifest_name(relative.name)
         )
     )
+
+
+def _has_lean_suffix(relative: PurePosixPath) -> bool:
+    """Whether *relative* names a Lean source by its exact ``.lean`` suffix.
+
+    Lake's module globs, the skeleton extractor and the Lean servers accept
+    only this spelling, so ``A.LEAN`` and ``A.Lean`` are not Lean sources on
+    any host, even where a case-insensitive volume would let ``import A``
+    open them.
+    """
+    return relative.suffix == ".lean"
 
 
 def _lean_path_is_excluded(
@@ -562,7 +570,7 @@ def _indexed_source_snapshot(
     tolerated_links = frozenset(
         relative
         for relative, _target in snapshot.symlinks
-        if PurePosixPath(relative).suffix.casefold() == ".lean"
+        if _has_lean_suffix(PurePosixPath(relative))
         and not in_ignored_root(relative)
         and PurePosixPath(relative).name.startswith(".#")
     )
@@ -570,7 +578,7 @@ def _indexed_source_snapshot(
         (relative, reason)
         for relative, reason in snapshot.unsupported_entries()
         if not in_ignored_root(relative)
-        and PurePosixPath(relative).suffix.casefold() == ".lean"
+        and _has_lean_suffix(PurePosixPath(relative))
         and relative not in tolerated_links
     ]
     if unsupported:
@@ -583,7 +591,7 @@ def _indexed_source_snapshot(
     digest = hashlib.sha256(b"autoform-lean-source-index/v1\0")
     for relative_text, data in snapshot.files:
         relative = PurePosixPath(relative_text)
-        if relative.suffix.casefold() != ".lean" or _lean_path_is_excluded(
+        if not _has_lean_suffix(relative) or _lean_path_is_excluded(
             relative,
             excluded,
         ):
@@ -623,7 +631,7 @@ def _lean_generation_revision(
 
     def retained_entry(relative_text: str) -> bool:
         relative = PurePosixPath(relative_text)
-        return relative.suffix.casefold() == ".lean" and not _path_is_within_roots(
+        return _has_lean_suffix(relative) and not _path_is_within_roots(
             relative,
             ignored_roots,
         )

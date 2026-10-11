@@ -813,8 +813,11 @@ absent from the sources, as `leanblueprint checkdecls` does for LaTeX
 blueprints. It validates structure and leaves mathematical correctness to the
 agent and the Lean kernel.
 
-Source-aware `--lean-root` inspection requires directory-descriptor traversal.
-Platforms without that capability, including Windows, fail closed instead of
+Source-aware `--lean-root` inspection reads the files whose names end in
+exactly `.lean`, as Lake's module globs do; `A.LEAN` and `A.Lean` are ignored
+on every host, including case-insensitive volumes where `import A` could open
+them. It requires directory-descriptor traversal. Platforms without that
+capability, including Windows, fail closed instead of
 treating repeated pathname reads as one filesystem generation. Declaration
 locations and source revisions come from the same retained capture. Recognized
 skeleton packet/passages directories are identified by their bounded managed

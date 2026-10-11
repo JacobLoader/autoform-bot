@@ -1413,6 +1413,45 @@ def test_lean_symlink_is_refused_whether_or_not_its_target_exists(tmp_path: Path
     assert str(tmp_path) not in str(caught.value)
 
 
+@pytest.mark.parametrize("kind", ["file", "unreadable", "symlink", "fifo"])
+def test_case_variants_of_the_lean_suffix_are_ignored(tmp_path: Path, kind: str) -> None:
+    _require_descriptor_capture()
+    if kind == "unreadable" and (os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0)):
+        pytest.skip("file permissions are not enforced")
+    _index(tmp_path, "def canonical : Nat := 0\n")
+    project = tmp_path / "Project"
+    clean = snapshot_project_sources(tmp_path)
+    variants = [project / name for name in ("Y.LEAN", "W.Lean")]
+    for variant in variants:
+        if kind in {"file", "unreadable"}:
+            variant.write_text(f"theorem variant{variant.stem} : True := trivial\n", encoding="utf-8")
+            if kind == "unreadable":
+                variant.chmod(0)
+        elif kind == "symlink":
+            try:
+                variant.symlink_to("Basic.lean")
+            except OSError:
+                pytest.skip("symlinks are unavailable")
+        else:
+            if not hasattr(os, "mkfifo"):
+                pytest.skip("named pipes are unavailable")
+            os.mkfifo(variant)
+
+    try:
+        if kind == "unreadable" and os.access(variants[0], os.R_OK):
+            pytest.skip("read permission is not enforced")
+        captured = snapshot_project_sources(tmp_path)
+    finally:
+        if kind == "unreadable":
+            for variant in variants:
+                variant.chmod(0o644)
+
+    assert set(captured.index.declarations) == {"canonical"}
+    assert captured.index.line_counts == {Path("Project/Basic.lean"): 1}
+    assert captured.revision == clean.revision
+    assert captured.generation_revision == clean.generation_revision
+
+
 def test_source_digest_preserves_surrogate_escaped_filename_bytes(tmp_path: Path) -> None:
     if os.name == "nt":
         pytest.skip("surrogate-escaped POSIX filenames are unavailable")
