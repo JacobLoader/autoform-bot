@@ -3087,34 +3087,51 @@ def test_nested_authored_page_named_like_generated_output_is_published(
 
 
 @pytest.mark.parametrize(
-    "alias",
+    ("alias", "generated"),
     (
-        "Dependencies.md",
-        "Dependencies.html",
-        "Graph.html",
-        "Progress.md",
-        "Structure.md",
-        "Publication.json",
+        ("Dependencies.md", "dependencies.md"),
+        ("Structure.md", "structure.md"),
+        ("Publication.json", "publication.json"),
+        ("Summary.md", "SUMMARY.md"),
+        ("Assets/figure.svg", "assets"),
+        ("Stylesheets/extra.css", "stylesheets"),
     ),
 )
 def test_root_case_alias_of_generated_output_is_rejected(
     tmp_path: Path,
     alias: str,
+    generated: str,
 ) -> None:
     project = _project(tmp_path)
     authored = project / "blueprint" / alias
+    authored.parent.mkdir(parents=True, exist_ok=True)
     authored.write_text("# Authored page\n", encoding="utf-8")
     output = tmp_path / "out"
 
     with pytest.raises(
         PublicationError,
-        match="noncanonical generated publication filename",
-    ):
+        match=f"differs only in case from the generated {re.escape(generated)}",
+    ) as error:
         render_site(project / "blueprint", output, lean_root=project)
 
+    assert len(error.value.issues) == 1
     assert authored.read_text(encoding="utf-8") == "# Authored page\n"
     assert not output.exists()
     assert not list(tmp_path.glob(f"{render_module._PUBLICATION_STAGE_PREFIX}*"))
+
+
+@pytest.mark.parametrize("name", ("Progress.md", "Graph.html", "Dependencies.html"))
+def test_root_names_render_no_longer_generates_are_published(
+    tmp_path: Path,
+    name: str,
+) -> None:
+    project = _project(tmp_path)
+    (project / "blueprint" / name).write_text("# Authored page\n", encoding="utf-8")
+    output = tmp_path / "out"
+
+    render_site(project / "blueprint", output, lean_root=project)
+
+    assert name in json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["files"]
 
 
 def test_output_must_have_an_ordinary_final_component(tmp_path: Path) -> None:

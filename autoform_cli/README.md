@@ -1154,7 +1154,11 @@ project, chapter, nested-scope, local, and full-graph scales. It never reads a
 `graph.json` or an operational queue. Hidden files are omitted, while symlinks,
 credentials, logs, provider state, and agent/task state inside the blueprint
 cause the render to fail rather than silently leak them. Source and output
-directories must be disjoint.
+directories must be disjoint. The site root holds the generated `SUMMARY.md`,
+`dependencies.md`, `structure.md`, `publication.json`, `assets/`,
+`dependencies/`, `javascripts/` and `stylesheets/`; a blueprint root entry that
+differs from one of these only in case is refused, because the two would collide
+on a case-insensitive filesystem.
 
 Every render writes `publication.json` with blueprint and Lean-source hashes,
 Git ref, article and dependency counts, complete file inventory, and available

@@ -141,14 +141,33 @@ def _is_generated_path(relative: PurePosixPath | Path) -> bool:
     return len(relative.parts) == 1 and relative.name in _GENERATED_FILES
 
 
-def _is_noncanonical_generated_path(relative: PurePosixPath | Path) -> bool:
-    """Recognize a portable alias without silently treating it as generated."""
+#: Root entries the renderer writes into every publication.
+_GENERATED_ROOT_ENTRIES = frozenset(
+    {
+        "SUMMARY.md",
+        "dependencies.md",
+        "structure.md",
+        PUBLICATION_MANIFEST,
+        "assets",
+        "dependencies",
+        "javascripts",
+        "stylesheets",
+    }
+)
 
-    return (
-        len(relative.parts) == 1
-        and relative.name not in _GENERATED_FILES
-        and relative.name.casefold() in _GENERATED_FILES
-    )
+
+def _generated_root_alias(relative: PurePosixPath | Path) -> str | None:
+    """The generated root entry an authored path differs from only in case.
+
+    The two would collide on a case-insensitive filesystem, so the authored
+    entry is refused on every platform rather than overwritten or merged.
+    """
+
+    first = relative.parts[0]
+    for generated in _GENERATED_ROOT_ENTRIES:
+        if first != generated and first.casefold() == generated.casefold():
+            return generated
+    return None
 
 
 def _publication_snapshot_descends(relative: PurePosixPath) -> bool:
@@ -3292,16 +3311,20 @@ def _validate_publication_snapshot(snapshot: TreeSnapshot) -> None:
         for relative, reason in snapshot.unsupported_entries()
         if relative not in symlinks
     }
+    aliased_roots: set[str] = set()
     for raw_relative in sorted(paths):
         relative = PurePosixPath(raw_relative)
         folded_parts = {part.casefold() for part in relative.parts}
         name = relative.name.casefold()
-        if _is_noncanonical_generated_path(relative):
-            issues.append(
-                "refusing noncanonical generated publication filename: "
-                f"{raw_relative}; use the exact generated spelling "
-                f"{relative.name.casefold()}"
-            )
+        generated = _generated_root_alias(relative)
+        if generated is not None:
+            if relative.parts[0] not in aliased_roots:
+                aliased_roots.add(relative.parts[0])
+                issues.append(
+                    f"refusing blueprint root entry {relative.parts[0]}: it differs "
+                    f"only in case from the generated {generated}, and the two would "
+                    "collide; rename it"
+                )
             continue
         if (
             folded_parts.intersection(_LOCAL_ONLY_NAMES)
