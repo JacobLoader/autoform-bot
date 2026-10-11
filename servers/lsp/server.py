@@ -544,7 +544,7 @@ class LeanLspSession:
 
         try:
             message = json.loads(bytes(body).decode("utf-8"))
-        except ValueError as error:
+        except (ValueError, RecursionError) as error:
             raise LspProtocolError("LSP emitted an invalid JSON body") from error
         if not isinstance(message, dict):
             raise LspProtocolError("LSP JSON-RPC message is not an object")

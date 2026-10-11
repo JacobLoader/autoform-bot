@@ -714,6 +714,20 @@ def test_lsp_json_integer_limit_is_reported_as_a_protocol_error():
         reader.close()
 
 
+def test_lsp_json_nesting_limit_is_reported_as_a_protocol_error(tmp_path: Path):
+    # 200,000 levels overrun the JSON decoder's recursion limit (about 10,000
+    # on Python 3.13, 1,000 on 3.10) in a body far under MAX_LSP_MESSAGE_BYTES.
+    # A pipe cannot buffer the whole frame, so the session reads it from a file.
+    body = b"[" * 200_000 + b"]" * 200_000
+    frame = tmp_path / "frame"
+    frame.write_bytes(f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body)
+    session = lsp.LeanLspSession(lsp.LspConfig())
+    with frame.open("rb", buffering=0) as reader:
+        session.process = SimpleNamespace(stdout=reader)
+        with pytest.raises(lsp.LspProtocolError, match="invalid JSON body"):
+            session._read_message(timeout=1)
+
+
 @pytest.mark.parametrize(
     "partial",
     [
