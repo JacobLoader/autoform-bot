@@ -23,6 +23,7 @@ from . import graph_pages, graph_views, mermaid, status
 from .coverage import COVERAGE_DISPOSITIONS, CoverageSummary, load_coverage
 from .graph import Graph, Node, load_graph
 from .lean import SourceLinker, build_linker, declaration_names, index_failure_message
+from .markdown import article_parts
 from .status import is_definition
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
@@ -1885,26 +1886,19 @@ def _split_body(text: str) -> tuple[str, str]:
 
     Only the statement belongs inside the theorem environment; ``## Sources``
     and friends are page material that sits after it, the way a blueprint sets
-    a statement apart from the prose around it.
+    a statement apart from the prose around it. The dependency sections are
+    dropped: the DAG is re-presented in the metadata line, so repeating the raw
+    link lists on the page would only duplicate it.
     """
-    body = _body_without_dependencies(text)
-    lines = body.splitlines()
-    fence: tuple[str, int] | None = None
-    for index, line in enumerate(lines):
-        fence_match = _FENCE.match(line)
-        if fence_match:
-            marker = fence_match.group(1)
-            if fence is None:
-                fence = (marker[0], len(marker))
-            elif marker[0] == fence[0] and len(marker) >= fence[1]:
-                fence = None
-            continue
-        if fence is None and _HEADING.match(line):
-            statement = "\n".join(lines[:index]).strip()
-            # Many statements now share one chapter page, so a node's own
-            # subheadings must not compete with the chapter's structure.
-            return statement, _demote_headings("\n".join(lines[index:]).strip())
-    return body.strip(), ""
+    parts = article_parts(text)
+    remainder = "\n\n".join(
+        f"{section.heading}\n\n{section.body}".rstrip()
+        for section in parts.sections
+        if section.title.casefold() not in _DEPENDENCY_SECTIONS
+    )
+    # Many statements now share one chapter page, so a node's own
+    # subheadings must not compete with the chapter's structure.
+    return _demote_headings(parts.statement), _demote_headings(remainder)
 
 
 def _demote_headings(text: str) -> str:
@@ -1916,58 +1910,6 @@ def _demote_headings(text: str) -> str:
         return f"{'#' * level} {heading.group(2)}"
 
     return _outside_fences(text, demote)
-
-
-def _body_without_dependencies(text: str) -> str:
-    """Drop the frontmatter, the H1, and the dependency sections.
-
-    The DAG is re-presented in the metadata line, so repeating the raw link
-    lists on the page would only duplicate it.
-    """
-    lines = text.splitlines()
-    start = 0
-    if lines and lines[0].strip() == "---":
-        for index in range(1, len(lines)):
-            if lines[index].strip() == "---":
-                start = index + 1
-                break
-
-    kept: list[str] = []
-    skipping = False
-    dropped_title = False
-    fence: tuple[str, int] | None = None
-
-    for line in lines[start:]:
-        fence_match = _FENCE.match(line)
-        if fence_match:
-            marker = fence_match.group(1)
-            if fence is None:
-                fence = (marker[0], len(marker))
-            elif marker[0] == fence[0] and len(marker) >= fence[1]:
-                fence = None
-            if not skipping:
-                kept.append(line)
-            continue
-        if fence is not None:
-            if not skipping:
-                kept.append(line)
-            continue
-
-        heading = _HEADING.match(line)
-        if heading:
-            level = len(heading.group(1))
-            name = heading.group(2).strip().casefold()
-            if level == 1 and not dropped_title:
-                dropped_title = True
-                skipping = False
-                continue
-            if level <= 2:
-                skipping = level == 2 and name in _DEPENDENCY_SECTIONS
-                if skipping:
-                    continue
-        if not skipping:
-            kept.append(line)
-    return "\n".join(kept).strip()
 
 
 def _stylesheet() -> str:

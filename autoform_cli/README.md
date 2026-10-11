@@ -57,6 +57,18 @@ State the intended result and proof sketch here.
 - [Chapter 2](../../sources/convexity.md#separation)
 ```
 
+An article's statement is its body from the end of the frontmatter to the first
+`##` heading, without the H1 line. A deeper heading does not end it, and neither
+does a `##` line inside a fenced code block or an HTML comment. `autoform audit`
+and the published theorem box both read that span. A fence closes only on a
+bare fence line; one that never closes is plain text on the page and hides no
+heading and no dependency link. A later bare fence line of the same character
+and at least the opener's length closes it here, though the page asks for the
+opener's exact length and indent, so close each fence with its own line. The
+page can also pair an unclosed backtick fence line with a later backtick run in
+the same paragraph and show the text between them as inline code; a link there
+is not a link on the page but is still read as a dependency.
+
 `## Depends on` lists what the article needs in order to be *stated*;
 `## Proof depends on` lists what only its *proof* needs. Both are graph edges.
 Links anywhere else are ordinary navigation or citations. Dependencies resolve
@@ -731,6 +743,19 @@ Imports are allowed regardless of reported breadth. Follow the
 [Formalize import workflow](../skills/formalize/SKILL.md#import-edits) for
 baseline evidence, conflict checks, claim lifecycle, and post-build review.
 
+Ask whether the blueprint already holds a result before adding an article or
+a Lean helper:
+
+```bash
+autoform search . "separating hyperplane" --lean-root .
+autoform search . "non-ambiguous" --lean-root . --json --limit 20
+autoform search blueprint "interlacing" --state proved --state fully_proved
+```
+
+`search` takes the project or blueprint directory, then one quoted query; both
+are required. A query that starts with `-` goes last, after `--`. It exits 0
+with or without hits. See the [search contract](#search-contract).
+
 Plan durable article identity metadata without changing the blueprint:
 
 ```bash
@@ -836,7 +861,8 @@ that may be regenerated at any time.
 
 `autoform audit` reports structured findings at blueprint-relative paths. It
 checks that formalizable articles are declaration-sized leaves with statement
-text and an explicit dependency section, that asserted Mathlib facts are
+text (prose in the statement, outside code blocks, HTML comments, and headings)
+and an explicit dependency section, that asserted Mathlib facts are
 internally consistent, and that cited work resolves to local source
 material without escaping the blueprint. Coverage files are checked for broken
 links and explicitly declared gaps. With `--lean-root`, local declaration names
@@ -877,6 +903,114 @@ rejected on that evidence.
 The audit API also accepts an already compiled graph. Formalize may use its
 findings while working the Markdown frontier, but the audit itself never
 enqueues work, stamps articles, or creates another graph artifact.
+
+### Statement text
+
+A formalizable article must state its result in prose a reader sees. At most
+one of three findings reports a statement that does not, checked in this order:
+
+- `missing-statement-text`: the statement has no prose outside code blocks, HTML
+  comments, and headings.
+- `empty-statement-text`: the published prose has no letter or digit, as with a
+  hidden element, a horizontal rule, an image, or a link with no text.
+- `placeholder-statement-text`: every word is one of `pending`, `placeholder`,
+  `todo`, `tbd`, `unknown`, or the statement opens with one of them followed by
+  a colon or a dash, as in `TODO: state it`. A single hyphen or en dash counts
+  only with a space after it, so `Unknown-variance` is a word.
+
+The prose is read as the site publishes it, without headings, code blocks, and
+diagrams; inline code and mathematics count. A status word that begins a
+sentence passes ("Pending Mathlib PR 1234 ..."), and so does a marker written
+without punctuation; both are left to review. A real statement that opens
+`Unknown: ...` or `Pending: ...` is reported and needs rewording, and so does
+one written in symbols alone, such as `⊥ ≠ ⊤.`, which has no letter or digit.
+A reference-style link is read
+without its definition when that sits in a later section. Coverage evidence is
+held to the same placeholder rule.
+
+## Search contract
+
+`autoform search` is a read-only projection of Markdown: it writes nothing,
+keeps no index, and starts no process. The query splits on whitespace into
+terms. Words that carry no meaning (`a`, `an`, `and`, `are`, `as`, `at`, `be`,
+`by`, `can`, `do`, `does`, `for`, `from`, `has`, `have`, `if`, `in`, `is`,
+`it`, `its`, `let`, `of`, `on`, `or`, `such`, `that`, `the`, `then`, `there`,
+`these`, `this`, `to`, `we`, `when`, `where`, `which`, `whose`, `with`) are
+dropped unless the query has no other word; `not`, `every`, and `exists` are
+kept. A term sheds surrounding sentence punctuation, quotation marks,
+backticks, `$`, emphasis marks that wrap it on both sides, and parentheses
+around it, in any combination, but keeps a parenthesis that closes one inside
+it, as in `f(x)`, and keeps square brackets. A word of letters only also sheds a
+final `ing`, `ed`, `es`, or `s`, with the `i` of `-ies` and a doubled last
+letter, when four letters remain and it does not end in `ss`, `us`, or `is`,
+and a final `y` after a consonant when five remain: `recovered`, `topologies`,
+and `topology` are searched as `recover`, `topolog`, and `topolog`. Only the
+query is shortened, so a form that does not begin with the shortened word
+finds nothing: `indices` does not find `index`, `mapping` `map`, `sets` `set`,
+`bodies` `body`, nor `define` `defining`. A name with a dot, underscore, or
+digit is searched exactly. `terms` in the JSON
+shows what was searched. An article is a hit
+when every term is a substring of one of its fields; terms may sit in
+different fields. Both sides are folded first: case,
+width, accents and other combining marks on letters, typographic dashes and
+quotes, and invisible characters do not matter. Fields, best
+first: `title`; `lean` (the last component of each `lean:` and
+`mathlib_declaration` name, and a term that is the whole name or its last
+components, as `Convex.separation` is of `Project.Convex.separation`, with or
+without `_root_.` and `«»`; a prime, `?`, or `!` ending a name is not compared,
+so `Project.foo` is also a `lean` match for `Project.foo'`); `node_id` (the
+last component of the path ID);
+`statement_text`; `ancestors` (titles of containing articles below the roadmap
+root); `qualified_names` (the path ID and Lean names in full, which is where a
+namespace alone matches). A title is
+matched as the page shows it, without its Markdown markup. The statement is
+matched as the site publishes it, without headings, code blocks, diagrams,
+comments, and elements carrying `hidden`; inline code and mathematics count,
+and published mathematics is delimited `\(...\)`, so search for a formula's
+content. Other frontmatter and the sections after the statement are not
+searched. There is no phrase search and no synonym or prefix handling: `map`
+matches `roadmap`, `unambiguous` does not match `non-ambiguous`, and one
+absent term means no hit, so query with a few distinctive words or one exact
+Lean name, and retry with fewer words before treating a result as new.
+A symbol such as `ℝ` folds to its plain letter, and a one-letter term matches
+nearly every article.
+
+Hits sort by the best field any term matched. Among hits with the same best
+field, those that contain every word as typed, in any field, come before those
+reached only through a shortened word; then by the weakest field any term
+needed, then more dependents first, then node ID.
+
+`--state` takes exact derived state keys, which `autoform search --help` lists
+(`proved` does not include `fully_proved`), and `--declaration` frontmatter
+`declaration` kinds, each repeatable; they apply before `total_matches` is
+counted and `--limit` (default 20) after. `--declaration def` also keeps
+`noncomputable def`, but not `definition`. A kind that no article in the
+blueprint declares is refused with exit code 2 and the kinds in use, rather
+than answered with no hits.
+
+`--json` writes `autoform-search/v1`: `schema`, `source_revision`,
+`open_statements`, `query`, `terms`, `filters` (`declaration` and `state`,
+each a list), `limit`, `total_matches`, and
+`hits`, with no timestamp and no path outside the project. A hit carries
+`node_id`, `article_id`, `article_path`, `article_revision`, `title`,
+`declaration`, `state`, `statement_text` (the authored Markdown),
+`lean_targets` (all of them), `mathlib`, `mathlib_declarations`,
+`mathlib_file`, `source_targets` (as the article writes them), `used_by`,
+`used_by_count`, `shared_title`, and `matched_fields`; `article_id`,
+`declaration`, and `mathlib_file` may be null. A Lean target has `declaration`,
+`source_file` (relative to `--lean-root`), and `line`; the last two are null
+without `--lean-root` or when the lexical scan does not find the name.
+`used_by` holds the first ten dependents by node ID, through statement or
+proof; `used_by_count` counts all. `shared_title` marks a title another article
+repeats and is advisory. `matched_fields` lists, best first and once each, the
+fields in which some term found its best match; it does not say which term.
+No hit is `"hits":[]` with exit 0. Human output shortens the statement, omits
+sources and dependent names, and is not a contract.
+
+Search rereads each article it matches against and refuses, with exit 2, bytes
+other than those the graph was built from, as it refuses a symlinked roadmap
+entry. Each call reads every such article and renders its statement, so its
+cost grows with the blueprint.
 
 ## Open statements
 
