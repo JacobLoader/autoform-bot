@@ -960,7 +960,12 @@ declares`. The walk takes a mutual inductive block as one node, so each type
 and constructor of the block gets the axioms of the whole block. It imports the
 toolchain's `Init` along with the build, so a build that declares a core name
 of its own, such as `propext`, fails to load with `environment already contains
-'propext'` instead of passing the axiom allowlist, which compares names. A root
+'propext'` instead of passing the axiom allowlist, which compares names. Lean
+does let a theorem stand in for another module's axiom of the same name and
+type, which the module system relies on, so a theorem restating an axiom such
+as `Lean.trustCompiler`, whose type is `True`, fails with `M declares a theorem
+N in place of the axiom K declares; rename one of them so the audit can run`. A
+root
 module whose first component names an entry of the toolchain's library, such as
 `Lean.Hack`, would load the toolchain's file in its place, so the audit refuses
 it with `root module M shares its first component R with the toolchain's

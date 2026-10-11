@@ -468,10 +468,34 @@ _IMPORT_BUILD = """  -- `lake env` puts the project's libraries ahead of the too
   searchPathRef.set (libDir :: projectEntries)
   -- Without extensions no `initialize` block of the build runs. `Init` comes
   -- along even when the build never imports it, so a build that declares a
-  -- core name of its own, such as `propext`, clashes with the toolchain's
-  -- and fails to load instead of passing the allowlist by name.
+  -- core name of its own, such as `propext`, clashes with the toolchain's on
+  -- import, repeats it exactly, or is refused below, instead of passing the
+  -- allowlist by name.
   let env ← importModules (#[({ module := `Init } : Import)] ++ targetModules.toArray.map ({ module := · }))
     {} (loadExts := false)
+  -- Lean keeps one of two same-named theorems, for the equation lemmas several
+  -- modules generate, and lets a theorem stand in for an axiom of the same
+  -- type, for the theorems the module system exports as axioms. A theorem
+  -- restating an axiom such as `Lean.trustCompiler`, whose type is `True`,
+  -- would take it out of the audit.
+  let moduleNames := env.header.moduleNames
+  let mut replaced : Std.HashMap Name Name := {}
+  let mut moduleIdx := 0
+  for data in env.header.moduleData do
+    for declName in data.constNames, info in data.constants do
+      if info matches .axiomInfo _ then
+        if let some (.thmInfo _) := env.find? declName then
+          replaced := replaced.insert declName moduleNames[moduleIdx]!
+    moduleIdx := moduleIdx + 1
+  unless replaced.isEmpty do
+    moduleIdx := 0
+    for data in env.header.moduleData do
+      for declName in data.constNames, info in data.constants do
+        if let some axiomModule := replaced.get? declName then
+          if info matches .thmInfo _ then
+            throwError "{moduleNames[moduleIdx]!} declares a theorem {declName} in place of the axiom {axiomModule} declares; rename one of them so the audit can run"
+      moduleIdx := moduleIdx + 1
+    throwError "a theorem of the build stands in for an axiom; rename it so the audit can run"
   let axiomCache ← IO.mkRef ({} : Std.HashMap Name (Array Name))
   let axiomsOf (declName : Name) : IO (Array Name) := do
     let (found, cache) := Id.run ((autoformAuditAxioms env declName).run (← axiomCache.get))

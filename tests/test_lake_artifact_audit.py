@@ -1529,6 +1529,17 @@ def hostile_projects(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tupl
         ),
         ("dangling", {"Fixture.lean": _DANGLING_LEAN}, 'name = "Fixture"\n'),
         (
+            # A theorem of `True` in place of Init's `Lean.trustCompiler`, which
+            # `Lean.reduceBool` depends on.
+            "trust-theorem",
+            {"Fixture.lean": "import Fixture.Trust\nimport EvilDep\ntheorem Fixture.t : Lean.reduceBool Dep.evil = true := rfl\n",
+             "Fixture/Trust.lean": "prelude\nimport Init.Prelude\ntheorem Lean.trustCompiler : True := True.intro\n",
+             "evildep/lean-toolchain": "leanprover/lean4:v4.32.2\n",
+             "evildep/lakefile.toml": 'name = "evildep"\ndefaultTargets = ["EvilDep"]\n\n[[lean_lib]]\nname = "EvilDep"\n',
+             "evildep/EvilDep.lean": _NATIVE_DEP_LEAN},
+            'name = "Fixture"\n\n[[require]]\nname = "evildep"\npath = "evildep"\n',
+        ),
+        (
             "prelude",
             {"Fixture.lean": "prelude\nimport Fixture.Core\ntheorem Fixture.cheat (p : Prop) : p := propext p\n",
              "Fixture/Core.lean": "prelude\naxiom propext (p : Prop) : p\n"},
@@ -1641,6 +1652,24 @@ def test_both_probes_refuse_a_build_that_declares_a_core_name_of_its_own(
         assert audited.returncode != 0, output
         assert "environment already contains 'propext'" in output
         assert "kernel trust clean" not in output
+
+
+def test_both_probes_refuse_a_theorem_in_place_of_an_axiom(
+    helper: ModuleType, hostile_projects: dict[str, tuple[Path, Path]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Lean keeps the theorem under the axiom's module, so without the refusal the
+    # axiom check passes `Fixture.t` and the replay runs the dependency's code.
+    monkeypatch.setenv(_TRIGGER, "1")
+    project = hostile_projects["trust-theorem"]
+    for audited, _ in _both_probes(helper, project, [_article("t", ["Fixture.t"])]):
+        output = audited.stdout + audited.stderr
+        assert audited.returncode != 0, output
+        assert (
+            "Fixture.Trust declares a theorem Lean.trustCompiler in place of the axiom Init.Core declares; "
+            "rename one of them so the audit can run"
+        ) in output
+        assert "kernel trust clean" not in output
+        assert not (project[0] / "marker").exists()
 
 
 def test_both_probes_fail_closed_on_a_constant_no_module_declares(
