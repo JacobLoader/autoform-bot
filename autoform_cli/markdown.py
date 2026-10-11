@@ -94,6 +94,14 @@ _NON_VISIBLE_TAGS = frozenset({"script", "style", "template", "noscript", "head"
 #: Runs of whitespace, which HTML collapses when it draws them.
 _WHITESPACE = re.compile(r"\s+")
 
+#: Words that name the absence of a decision.
+_PLACEHOLDER_WORDS = frozenset({"pending", "placeholder", "todo", "tbd", "unknown"})
+#: Punctuation that turns a leading placeholder into a marker, as in ``TODO:``.
+#: A single hyphen needs space after it, so ``Unknown-variance`` stays a word.
+_MARKER_PUNCTUATION = re.compile(r"^\s*(?:[:\u2014]|--|[-\u2013]\s)")
+#: Elements that label or illustrate prose without being prose.
+_NON_PROSE_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6", "pre"})
+
 
 @dataclass(frozen=True, slots=True)
 class Content:
@@ -219,7 +227,13 @@ def render_html(text: str) -> str:
 
     converter = _converter()
     converter.reset()
-    return converter.convert(text)
+    try:
+        return converter.convert(text)
+    except Exception:
+        # A conversion that fails midway leaves the converter unable to render
+        # the next document, and ``reset`` does not repair it.
+        _converter.cache_clear()
+        raise
 
 
 def render_tree(text: str) -> object | None:
@@ -257,6 +271,59 @@ def rendered_visible_text(value: str) -> str:
         # vouch for, so report no visible text rather than guess.
         return ""
     return _collapse("".join(_visible_parts(tree, hidden=False)))
+
+
+def visible_prose(value: str) -> str:
+    """Return the prose a reader sees once ``value`` is published.
+
+    Headings, code blocks and diagrams are left out: a heading names what
+    follows and a block of code illustrates it, but neither says it. Inline
+    code stays, because a sentence may name a declaration.
+    """
+
+    tree = render_tree(value)
+    if tree is None:
+        return ""
+    for element in tree.iter():
+        if _local_name(element) in _NON_PROSE_TAGS or "mermaid" in element.get("class", "").split():
+            element.set("hidden", "")
+    return _collapse("".join(_visible_parts(tree, hidden=False)))
+
+
+def has_substance(visible: str) -> bool:
+    """Whether anything a reader could act on survives emphasis and punctuation."""
+
+    return bool(re.search(r"\w", re.sub(r"[*_~\\]", "", visible)))
+
+
+def is_placeholder(visible: str) -> bool:
+    """Whether the text only announces that a decision is still outstanding.
+
+    Two shapes are rejected. Text whose every word is a placeholder, however
+    decorated -- ``TBD``, ``**TODO.**`` -- and text that opens with one used as
+    a marker, where punctuation separates it from the rest: ``TODO: choose a
+    milestone``.
+
+    A status word that merely begins a sentence is left alone, because it is
+    usually carrying real information: "Pending Mathlib PR 1234" and "Unknown
+    provenance, excluded by agreement" both name something a reader can check.
+    Rejecting those pushed authors toward vaguer wording to satisfy the checker.
+
+    The gap this leaves is a marker written without punctuation, as in "TODO
+    choose a milestone". That reads as prose to any rule cheap enough to trust,
+    so it is left to human review rather than guessed at.
+    """
+
+    stripped = re.sub(r"[*_~\\]", "", visible)
+    words = re.findall(r"\w+", stripped.casefold())
+    if not words:
+        return False
+    if all(word in _PLACEHOLDER_WORDS for word in words):
+        return True
+    if words[0] not in _PLACEHOLDER_WORDS:
+        return False
+    _, _, remainder = stripped.casefold().partition(words[0])
+    return _MARKER_PUNCTUATION.match(remainder) is not None
 
 
 def published_tables(text: str) -> list[PublishedTable]:
@@ -359,21 +426,29 @@ def _collapse(text: str) -> str:
 def _visible_parts(element: object, hidden: bool) -> list[str]:
     """Walk a parsed tree, collecting only the text a browser would draw."""
 
-    if not isinstance(element.tag, str):
-        # A comment or processing instruction. Its text is markup, not content,
-        # and a reader never sees it. Any tail text belongs to the parent, which
-        # collects it below.
-        return []
-    concealed = _conceals(element, hidden)
     parts: list[str] = []
-    if not concealed and element.text:
-        parts.append(element.text)
-    for child in element:
-        parts.extend(_visible_parts(child, concealed))
-        # Tail text sits in this element, not the child, so it is hidden only
-        # when this element is.
-        if not concealed and child.tail:
-            parts.append(child.tail)
+    # An explicit stack, so markup nested a thousand elements deep cannot
+    # exhaust the interpreter's own.
+    pending: list[tuple[object, bool]] = [(element, hidden)]
+    while pending:
+        item, inherited = pending.pop()
+        if isinstance(item, str):
+            parts.append(item)
+            continue
+        if not isinstance(item.tag, str):
+            # A comment or processing instruction. Its text is markup, not
+            # content, and a reader never sees it. Any tail text belongs to the
+            # parent, which queued it below.
+            continue
+        concealed = _conceals(item, inherited)
+        if not concealed and item.text:
+            parts.append(item.text)
+        for child in reversed(item):
+            # Tail text sits in this element, not the child, so it is hidden
+            # only when this element is.
+            if not concealed and child.tail:
+                pending.append((child.tail, False))
+            pending.append((child, concealed))
     return parts
 
 
@@ -386,6 +461,101 @@ def frontmatter_end(lines: list[str]) -> int:
         if lines[index].strip() == "---":
             return index + 1
     return len(lines)
+
+
+@dataclass(frozen=True, slots=True)
+class ArticleSection:
+    """One H2 section of an article."""
+
+    #: The heading's text with comments removed, as the graph loader reads it.
+    title: str
+    #: The heading line exactly as the author wrote it.
+    heading: str
+    #: The author's Markdown up to the next H2, without surrounding blank lines.
+    body: str
+
+
+@dataclass(frozen=True, slots=True)
+class ArticleParts:
+    """An article body split at its published H2 headings.
+
+    ``statement`` is everything between the frontmatter and the first H2, with
+    the H1 title line removed. It is the author's Markdown, untouched apart from
+    surrounding blank lines, so a caller that publishes it publishes what was
+    written and indentation keeps its meaning.
+    """
+
+    statement: str
+    sections: tuple[ArticleSection, ...]
+
+
+def article_parts(text: str) -> ArticleParts:
+    """Split an article into its statement and its H2 sections.
+
+    This is the one definition of where a statement ends, for the audit and
+    for the published page alike. A heading counts only where :func:`content`
+    leaves it visible, so ``## Proof`` inside a fenced block, an indented code
+    block, or an HTML comment ends nothing, and a heading below level two
+    belongs to whatever it sits in. A comment that never closes hides
+    every heading after it; the audit then reports the sections it cannot see.
+    """
+
+    lines = text.splitlines()
+    body = lines[frontmatter_end(lines) :]
+    # An indented code line needs no masking: four leading spaces already
+    # keep it from matching HEADING.
+    masked = mask_fences_and_comments(body)
+
+    title = next((index for index, line in enumerate(masked) if _heading_level(line) == 1), None)
+    starts = [index for index, line in enumerate(masked) if _heading_level(line) == 2]
+    breaks = sorted([*starts, *(() if title is None else (title,))])
+
+    # The statement is whatever no section holds: the text before the first
+    # heading and the text under the title. A title written below a section
+    # ends that section, so the statement beneath it is not lost into it.
+    statement = body[: breaks[0]] if breaks else body
+    sections: list[ArticleSection] = []
+    for start, stop in zip(breaks, [*breaks[1:], len(body)]):
+        if start == title:
+            statement = [*statement, *_open_comment(body[start]), *body[start + 1 : stop]]
+        else:
+            sections.append(
+                ArticleSection(
+                    title=HEADING.match(masked[start]).group(2).strip(),
+                    heading=body[start],
+                    body=_trim(body[start + 1 : stop]),
+                )
+            )
+    return ArticleParts(statement=_trim(statement), sections=tuple(sections))
+
+
+def _open_comment(title_line: str) -> list[str]:
+    """Return the comment a title line leaves open, so the statement keeps it.
+
+    The title line is dropped from the statement. A comment begun on it and
+    closed further down would otherwise lose its opener, and the text it hides
+    would read as prose.
+    """
+
+    if not strip_line_comments(title_line, False)[1]:
+        return []
+    return [title_line[title_line.rfind("<!--") :]]
+
+
+def _trim(lines: list[str]) -> str:
+    """Join ``lines`` without the blank ones at either end."""
+
+    start, end = 0, len(lines)
+    while start < end and not lines[start].strip():
+        start += 1
+    while end > start and not lines[end - 1].strip():
+        end -= 1
+    return "\n".join(lines[start:end])
+
+
+def _heading_level(line: str) -> int:
+    heading = HEADING.match(line)
+    return len(heading.group(1)) if heading else 0
 
 
 def site_converter() -> pymarkdown.Markdown:
@@ -483,11 +653,41 @@ def local_target_issue(
     return None
 
 
-def _mask_fences_and_comments(lines: list[str], hidden: set[int]) -> list[str]:
+def mask_fences_and_comments(lines: list[str]) -> list[str]:
+    """Return ``lines`` with fenced blocks and HTML comments blanked.
+
+    This is how the graph, the audit and the page agree on which headings and
+    links an article has. The site draws a fence without a closing line as
+    plain text, with the headings and links after it in view, so such a fence
+    hides nothing here.
+    """
+
+    return _mask_fences_and_comments(lines, set(), unclosed_fence_is_text=True)
+
+
+def _mask_fences_and_comments(
+    lines: list[str], hidden: set[int], *, unclosed_fence_is_text: bool = False
+) -> list[str]:
     masked: list[str] = []
     fence: tuple[str, int] | None = None
     in_comment = False
-    for index, raw in enumerate(lines):
+    # Where the open fence began and the comment state there, to go back to
+    # when the fence turns out to have no closing line.
+    opened: tuple[int, bool] = (0, False)
+    # Per fence character, the shortest opener known to find no closing line.
+    # A later one at least as long cannot close either.
+    unclosed: dict[str, int] = {}
+    index = 0
+    while index < len(lines) or (fence is not None and unclosed_fence_is_text):
+        if index == len(lines):
+            # Read on from the fence's first line as text.
+            unclosed[fence[0]] = fence[1]
+            index, in_comment = opened
+            del masked[index:]
+            hidden.difference_update(range(index, len(lines)))
+            fence = None
+            continue
+        raw = lines[index]
         if fence is not None:
             # A fence closes on the raw line: `<!--` inside a code block is
             # literal text, not the start of a comment. The closing delimiter
@@ -499,21 +699,25 @@ def _mask_fences_and_comments(lines: list[str], hidden: set[int]) -> list[str]:
                     fence = None
             hidden.add(index)
             masked.append("")
+            index += 1
             continue
         opened_in_comment = in_comment
         line, in_comment = strip_line_comments(raw, in_comment)
         match = FENCE.match(line)
-        if match is not None:
+        if match is not None and len(match.group(1)) < unclosed.get(match.group(1)[0], len(line) + 1):
             marker = match.group(1)
             fence = (marker[0], len(marker))
+            opened = (index, opened_in_comment)
             hidden.add(index)
             masked.append("")
+            index += 1
             continue
         # A line shows nothing either because the author left it empty or
         # because a comment covers it. Only the second belongs to a construct.
         if not line.strip() and (opened_in_comment or raw.strip()):
             hidden.add(index)
         masked.append(line)
+        index += 1
     return masked
 
 
@@ -584,19 +788,26 @@ __all__ = [
     "LINK",
     "SITE_EXTENSIONS",
     "SITE_EXTENSION_CONFIGS",
+    "ArticleParts",
+    "ArticleSection",
+    "article_parts",
     "Content",
     "content",
     "content_lines",
     "frontmatter_end",
+    "has_substance",
+    "is_placeholder",
     "link_targets",
     "local_target_issue",
     "markdown_anchors",
     "PublishedTable",
     "markdown_links",
+    "mask_fences_and_comments",
     "published_tables",
     "render_html",
     "render_tree",
     "rendered_visible_text",
     "site_converter",
     "strip_line_comments",
+    "visible_prose",
 ]

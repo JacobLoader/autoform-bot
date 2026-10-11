@@ -24,6 +24,7 @@ from autoform_cli.graph import load_graph
 from autoform_cli.scaffold import ScaffoldError, scaffold_project
 
 _EXPECTED = {
+    ".github/CODEOWNERS.autoform.example",
     ".github/autoform_audit.py",
     ".github/workflows/autoform-verify.yml",
     ".github/workflows/blueprint-pages.yml",
@@ -807,8 +808,6 @@ def test_no_ci_rather_than_a_guessed_pin(tmp_path: Path, monkeypatch: pytest.Mon
     `facebookresearch/autoform-bot@main`, a commit predating the CLI, and every
     project scaffolded that way got CI that died at the first step.
     """
-    from autoform_cli import scaffold as scaffold_module
-
     monkeypatch.setattr(scaffold_module, "plugin_pin", lambda _templates=None: ("", ""))
     result = scaffold_module.scaffold_project(tmp_path, title="Finite Flat")
 
@@ -816,11 +815,29 @@ def test_no_ci_rather_than_a_guessed_pin(tmp_path: Path, monkeypatch: pytest.Mon
     assert not (tmp_path / ".github/workflows/autoform-verify.yml").exists()
     assert not (tmp_path / ".github/workflows/blueprint-pages.yml").exists()
     assert not (tmp_path / ".github/autoform_audit.py").exists()
+    assert (tmp_path / ".github/CODEOWNERS.autoform.example").is_file()
     assert ".github/autoform_audit.py" in result.skipped
     assert ".github/workflows/autoform-verify.yml" in result.skipped
     # Everything a project needs to be authored still lands.
     assert (tmp_path / "blueprint/roadmap/README.md").is_file()
     assert (tmp_path / "mkdocs.yml").is_file()
+
+
+def test_unpinned_rerun_reports_the_inert_example_as_existing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoform_cli.__main__ import main
+
+    monkeypatch.setattr(scaffold_module, "plugin_pin", lambda _templates=None: ("", ""))
+    args = ["init", str(tmp_path), "--title", "Finite Flat"]
+    assert main(args) == 0
+    capsys.readouterr()
+
+    assert main(args) == 0
+    output = capsys.readouterr().out
+
+    assert "= .github/CODEOWNERS.autoform.example (exists, left alone)" in output
+    assert "= .github/autoform_audit.py (no Autoform ref to pin)" in output
 
 
 def test_a_ref_alone_restores_ci(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -830,8 +847,6 @@ def test_a_ref_alone_restores_ci(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     supplied too, following that instruction would still yield no CI, and the
     fail-closed behaviour would be indistinguishable from a broken flag.
     """
-    from autoform_cli import scaffold as scaffold_module
-
     monkeypatch.setattr(scaffold_module, "plugin_pin", lambda _templates=None: ("", ""))
     result = scaffold_module.scaffold_project(tmp_path, title="Finite Flat", autoform_ref="2" * 40)
 
@@ -839,6 +854,39 @@ def test_a_ref_alone_restores_ci(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     verify = (tmp_path / ".github/workflows/autoform-verify.yml").read_text(encoding="utf-8")
     assert f"AUTOFORM_SOURCE: {json.dumps(scaffold_module.DEFAULT_AUTOFORM_SOURCE)}" in verify
     assert f'AUTOFORM_REF: "{"2" * 40}"' in verify
+
+
+def test_codeowners_example_names_no_owner_until_a_maintainer_does(tmp_path: Path) -> None:
+    """The tool cannot know who maintains a project, so its example is inert."""
+    scaffold_project(
+        tmp_path,
+        title="Finite Flat",
+        autoform_source="https://example.test/autoform.git",
+        autoform_ref="1" * 40,
+    )
+    example = tmp_path / ".github/CODEOWNERS.autoform.example"
+    lines = example.read_text(encoding="utf-8").splitlines()
+
+    assert all(not line.strip() or line.startswith("#") for line in lines)
+    assert lines[-2:] == ["# /blueprint/roadmap/README.md @OWNER", "# /.github/ @OWNER"]
+    assert not (tmp_path / ".github/CODEOWNERS").exists()
+
+
+@pytest.mark.parametrize("existing", [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"])
+def test_codeowners_example_never_touches_active_rules(existing: str, tmp_path: Path) -> None:
+    (tmp_path / existing).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / existing).write_text("* @existing-owner\n", encoding="utf-8")
+
+    result = scaffold_project(
+        tmp_path,
+        title="Finite Flat",
+        autoform_source="https://example.test/autoform.git",
+        autoform_ref="1" * 40,
+        force=True,
+    )
+
+    assert ".github/CODEOWNERS.autoform.example" in result.written
+    assert (tmp_path / existing).read_text(encoding="utf-8") == "* @existing-owner\n"
 
 
 @pytest.mark.parametrize("ref", ["main", "0f018613", "v1.0.0", "2" * 39, ("2" * 39) + "Z"])
@@ -850,8 +898,6 @@ def test_a_mutable_ref_is_refused(ref: str, tmp_path: Path, monkeypatch: pytest.
     which is how projects got a build with no `autoform` command in the first
     place. The scaffold refuses instead of writing CI that rots.
     """
-    from autoform_cli import scaffold as scaffold_module
-
     monkeypatch.setattr(scaffold_module, "plugin_pin", lambda _templates=None: ("", ""))
     with pytest.raises(scaffold_module.ScaffoldError) as caught:
         scaffold_module.scaffold_project(tmp_path, title="Finite Flat", autoform_ref=ref)
@@ -864,8 +910,6 @@ def test_a_mutable_ref_is_refused(ref: str, tmp_path: Path, monkeypatch: pytest.
 def test_an_explicit_source_overrides_the_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from autoform_cli import scaffold as scaffold_module
-
     monkeypatch.setattr(scaffold_module, "plugin_pin", lambda _templates=None: ("", ""))
     scaffold_module.scaffold_project(
         tmp_path,
@@ -924,8 +968,6 @@ def test_an_unsafe_explicit_source_is_refused_without_persisting_it(
 def test_an_unsafe_plugin_pin_fails_closed_without_persisting_credentials(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from autoform_cli import scaffold as scaffold_module
-
     secret_source = "https://token:secret@example.test/autoform.git"
     monkeypatch.setattr(
         scaffold_module,
@@ -936,7 +978,8 @@ def test_an_unsafe_plugin_pin_fails_closed_without_persisting_credentials(
     result = scaffold_module.scaffold_project(tmp_path, title="Finite Flat")
 
     assert result.unpinned is True
-    assert not (tmp_path / ".github").exists()
+    assert (tmp_path / ".github/CODEOWNERS.autoform.example").is_file()
+    assert not (tmp_path / ".github/autoform_audit.py").exists()
     assert secret_source not in "\n".join(
         path.read_text(encoding="utf-8")
         for path in tmp_path.rglob("*")
@@ -945,8 +988,6 @@ def test_an_unsafe_plugin_pin_fails_closed_without_persisting_credentials(
 
 
 def test_plugin_pin_is_empty_outside_a_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
-    from autoform_cli import scaffold as scaffold_module
-
     monkeypatch.setattr(scaffold_module, "_git", lambda *args, **kwargs: None)
     monkeypatch.setattr(scaffold_module, "_marketplace_checkout", lambda: None)
     assert scaffold_module.plugin_pin() == ("", "")
@@ -1016,8 +1057,6 @@ def test_an_installed_plugin_pins_from_the_marketplace_checkout(
     is asked for a commit that nothing on their machine reports. That is a real
     provenance record, not the guess `plugin_pin` refuses to make.
     """
-    from autoform_cli import scaffold as scaffold_module
-
     _, _, head = _fake_plugin_install(tmp_path, monkeypatch)
 
     assert scaffold_module.plugin_pin() == (
@@ -1086,6 +1125,20 @@ def test_plugin_pin_prefers_canonical_upstream_over_a_containing_fork_origin(
     assert scaffold_module.plugin_pin() == (scaffold_module.DEFAULT_AUTOFORM_SOURCE, head)
 
 
+def test_plugin_pin_skips_a_remote_whose_url_is_not_utf8(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout = tmp_path / "checkout"
+    head = _autoform_checkout(checkout, "https://example.test/fork.git")
+    _git_output(checkout, "remote", "add", "upstream", scaffold_module.DEFAULT_AUTOFORM_SOURCE)
+    _git_output(checkout, "update-ref", "refs/remotes/upstream/main", head)
+    config = checkout / ".git" / "config"
+    config.write_bytes(config.read_bytes().replace(b"example.test/fork", b"example.test/\xff"))
+    _run_from(monkeypatch, checkout)
+
+    assert scaffold_module.plugin_pin() == (scaffold_module.DEFAULT_AUTOFORM_SOURCE, head)
+
+
 @pytest.mark.parametrize(
     "changed",
     [
@@ -1100,8 +1153,6 @@ def test_plugin_pin_prefers_canonical_upstream_over_a_containing_fork_origin(
 def test_plugin_pin_fails_closed_when_checkout_or_copy_bytes_do_not_match_head(
     changed: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from autoform_cli import scaffold as scaffold_module
-
     checkout, copied, _ = _fake_plugin_install(tmp_path, monkeypatch)
     selected = checkout if changed.startswith("checkout-") else copied
     if changed == "copy-executable-mode":
@@ -1167,8 +1218,6 @@ def test_direct_checkout_pin_ignores_unrelated_untracked_files(
 def test_plugin_pin_accepts_umask_permission_noise(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from autoform_cli import scaffold as scaffold_module
-
     checkout, copied, head = _fake_plugin_install(tmp_path, monkeypatch)
     for root in (checkout, copied):
         (root / "autoform_cli" / "scaffold.py").chmod(0o664)
@@ -1187,8 +1236,6 @@ def test_an_unrelated_marketplace_checkout_is_not_trusted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A location that is not Autoform would pin CI to somebody else's repo."""
-    from autoform_cli import scaffold as scaffold_module
-
     checkout, _, _ = _fake_plugin_install(tmp_path, monkeypatch)
     (checkout / "autoform_cli" / "scaffold.py").unlink()
 
@@ -1206,8 +1253,6 @@ def test_a_copy_inside_an_unrelated_repository_is_not_its_provenance(
     project, so its CI would be pinned to install the project instead of
     Autoform, at a sha that moves with every commit the author makes.
     """
-    from autoform_cli import scaffold as scaffold_module
-
     project = tmp_path / "their-project"
     _repository(project, "https://github.com/someone/their-project.git")
     installed = project / ".venv/lib/python3.12/site-packages"
@@ -1223,8 +1268,6 @@ def test_a_branch_in_the_marketplace_checkout_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Whatever the provenance says, only a full sha may reach the workflows."""
-    from autoform_cli import scaffold as scaffold_module
-
     checkout, _, _ = _fake_plugin_install(tmp_path, monkeypatch)
 
     def fake_git(*args: str, root: Path | None = None) -> str | None:
@@ -1243,8 +1286,6 @@ def test_a_symlinked_subdirectory_cannot_redirect_the_scaffold(tmp_path: Path) -
     `project/blueprint` pointing elsewhere sent the whole vault outside the
     project, and --force would have overwritten whatever it found there.
     """
-    from autoform_cli import scaffold as scaffold_module
-
     project = tmp_path / "project"
     outside = tmp_path / "outside"
     project.mkdir()
@@ -1260,8 +1301,6 @@ def test_a_symlinked_subdirectory_cannot_redirect_the_scaffold(tmp_path: Path) -
 
 def test_a_dangling_destination_symlink_cannot_redirect_the_scaffold(tmp_path: Path) -> None:
     """`Path.exists()` is false for a link whose outside target is absent."""
-    from autoform_cli import scaffold as scaffold_module
-
     project = tmp_path / "project"
     outside = tmp_path / "outside" / "mkdocs.yml"
     project.mkdir()
@@ -1275,8 +1314,6 @@ def test_a_dangling_destination_symlink_cannot_redirect_the_scaffold(tmp_path: P
 
 def test_a_title_with_a_colon_stays_one_yaml_key(tmp_path: Path) -> None:
     """`site_name: Algebra: Foundations` is a nested mapping, not a title."""
-    from autoform_cli import scaffold as scaffold_module
-
     scaffold_module.scaffold_project(tmp_path, title="Algebra: Foundations")
 
     config = (tmp_path / "mkdocs.yml").read_text(encoding="utf-8")
@@ -1284,8 +1321,6 @@ def test_a_title_with_a_colon_stays_one_yaml_key(tmp_path: Path) -> None:
 
 
 def test_a_quoted_title_is_escaped_not_just_wrapped(tmp_path: Path) -> None:
-    from autoform_cli import scaffold as scaffold_module
-
     scaffold_module.scaffold_project(tmp_path, title='The "Hard" Case')
 
     config = (tmp_path / "mkdocs.yml").read_text(encoding="utf-8")
@@ -1300,8 +1335,6 @@ def test_a_source_without_a_ref_does_not_borrow_this_checkouts_commit(
     Keeping the inferred ref while replacing the source emitted
     `git+other.git@our-sha`, which does not resolve in `other`.
     """
-    from autoform_cli import scaffold as scaffold_module
-
     monkeypatch.setattr(
         scaffold_module,
         "plugin_pin",
@@ -1316,8 +1349,6 @@ def test_a_source_without_a_ref_does_not_borrow_this_checkouts_commit(
 
 
 def test_a_source_with_its_own_ref_is_honoured(tmp_path: Path) -> None:
-    from autoform_cli import scaffold as scaffold_module
-
     scaffold_module.scaffold_project(
         tmp_path,
         title="Probe",

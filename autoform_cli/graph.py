@@ -18,11 +18,10 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .lean import declaration_names
+from .markdown import mask_fences_and_comments
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
-_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 _LINK = re.compile(r"(?<!!)\[[^\]]+\]\(\s*(<[^>]+>|[^)\s]+)(?:\s+[^)]*)?\)")
-_HTML_COMMENT = re.compile(r"<!--.*?(?:-->|$)", re.DOTALL)
 _INLINE_CODE = re.compile(r"(`+).*?\1")
 _MARKDOWN_LINK_TEXT = re.compile(r"!?\[([^\]]+)\]\([^)]*\)")
 _HTML_TAG = re.compile(r"<[^>]+>")
@@ -528,22 +527,11 @@ def _parse_node(node_id: str, path: Path, text: str) -> tuple[_ParsedNode | None
         _SOURCES_SECTION: [],
     }
     section: str | None = None
-    fence: tuple[str, int] | None = None
-    body = _HTML_COMMENT.sub("", "\n".join(lines[body_start:]))
 
-    for line in body.splitlines():
-        fence_match = _FENCE.match(line)
-        if fence_match:
-            marker = fence_match.group(1)
-            marker_kind = marker[0]
-            if fence is None:
-                fence = (marker_kind, len(marker))
-            elif marker_kind == fence[0] and len(marker) >= fence[1]:
-                fence = None
-            continue
-        if fence is not None:
-            continue
-
+    # Fences and comments are read as the page and the audit read them, so a
+    # section a reader sees never loses its links here.
+    body = mask_fences_and_comments(lines[body_start:])
+    for line in body:
         heading = _HEADING.match(line)
         if heading:
             level = len(heading.group(1))
@@ -582,22 +570,15 @@ def _parse_node(node_id: str, path: Path, text: str) -> tuple[_ParsedNode | None
     return parsed, []
 
 
-def _extract_summary(body: str, *, limit: int = 420) -> str | None:
-    """Return the first reader-facing prose paragraph from a roadmap article."""
+def _extract_summary(body: list[str], *, limit: int = 420) -> str | None:
+    """Return the first reader-facing prose paragraph from a roadmap article.
+
+    ``body`` is the article below its frontmatter with fences and comments
+    already masked, so the summary reads what the page shows.
+    """
     paragraph: list[str] = []
     excluded = False
-    fence: tuple[str, int] | None = None
-    for raw in body.splitlines():
-        fence_match = _FENCE.match(raw)
-        if fence_match:
-            marker = fence_match.group(1)
-            if fence is None:
-                fence = (marker[0], len(marker))
-            elif marker[0] == fence[0] and len(marker) >= fence[1]:
-                fence = None
-            continue
-        if fence is not None:
-            continue
+    for raw in body:
         heading = _HEADING.match(raw)
         if heading:
             if paragraph:

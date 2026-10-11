@@ -674,13 +674,17 @@ def _trusted_from_dict(item: object, *, root: str) -> TrustedDeclaration:
 def _report_entry(item: dict[str, object], name: str) -> TrustedDeclaration:
     """Read the fields every reported declaration has, with their source invariants."""
 
-    kind = _report_kind(item.get("kind"), name)
+    kind = item.get("kind")
+    if not isinstance(kind, str) or kind not in _DECLARATION_KINDS:
+        raise SkeletonError([f"invalid declaration kind for {name} in skeleton report"])
     semantic = _report_value(item.get("semantic"), f"semantic material for {name}")
     _validate_semantic_material(semantic, context=name, kind=kind)
     source = _report_value(item.get("source"), f"source for {name}", optional=True)
     if kind in {"theorem", "axiom"} and source is not None:
         raise SkeletonError([f"proof-bearing source is forbidden for {kind} {name}"])
-    withheld = _report_withheld(item.get("source_withheld"), source, name)
+    withheld = item.get("source_withheld")
+    if type(withheld) is not bool or (withheld and source is not None):
+        raise SkeletonError([f"invalid withheld source flag for {name} in skeleton report"])
     start = _report_value(item.get("start_line"), f"start line for {name}", int, optional=True)
     end = _report_value(item.get("end_line"), f"end line for {name}", int, optional=True)
     if (start is None) != (end is None) or (start is not None and end is not None and (start < 1 or end < start)):
@@ -712,24 +716,12 @@ def _report_value(value: object, context: str, kind: type = str, *, optional: bo
     return value
 
 
-def _report_withheld(value: object, source: str | None, name: str) -> bool:
-    if type(value) is not bool or (value and source is not None):
-        raise SkeletonError([f"invalid withheld source flag for {name} in skeleton report"])
-    return value
-
-
 def _report_string_tuple(value: object, context: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
         raise SkeletonError([f"invalid {context} in skeleton report"])
     if len(value) != len(set(value)):
         raise SkeletonError([f"duplicate {context} in skeleton report"])
     return tuple(value)
-
-
-def _report_kind(value: object, context: str) -> str:
-    if not isinstance(value, str) or value not in _DECLARATION_KINDS:
-        raise SkeletonError([f"invalid declaration kind for {context} in skeleton report"])
-    return value
 
 
 def _sha256_id(content: bytes) -> str:
@@ -1453,7 +1445,7 @@ def run_probe(
 
     lake = shutil.which("lake")
     if lake is None:
-        raise SkeletonError(["lake is not on PATH; a built Lean project is required to extract skeletons"])
+        raise SkeletonError([f"lake is not on PATH; {_probe_purpose(label)} requires a built Lean project"])
     if not (lean_root / "lake-manifest.json").is_file():
         raise SkeletonError(
             [f"lake-manifest.json is missing; run `lake build` before {_probe_purpose(label)}"]
@@ -2047,7 +2039,11 @@ def extract_skeletons(
         graph = load_graph(blueprint_dir)
     except GraphValidationError as exc:
         raise SkeletonError(exc.issues) from exc
-    root = Path(lean_root).expanduser().resolve()
+    try:
+        root = Path(lean_root).expanduser().resolve()
+    except RuntimeError as error:
+        # An unknown ~user, or before Python 3.13 a symbolic link loop.
+        raise SkeletonError([f"Lean root {lean_root} cannot be resolved: {error}"]) from error
     graph_snapshot = _graph_snapshot(graph)
     control_snapshot = _project_control_snapshot(root)
     libraries = lean_libraries(root)
