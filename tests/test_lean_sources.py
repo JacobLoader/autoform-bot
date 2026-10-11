@@ -2776,6 +2776,29 @@ def test_auto_linker_ignores_inherited_repo_and_ci_redirects(
     )
 
 
+def test_snapshot_attestation_accepts_a_clean_checkout_with_eol_conversion(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".gitattributes").write_text("*.lean text eol=crlf\n")
+    source = tmp_path / "A.lean"
+    source.write_text("def converted : Nat := 0\n")
+    commit = _init_git_repository(tmp_path)
+    source.unlink()
+    subprocess.run(["git", "checkout", "--", "A.lean"], cwd=tmp_path, check=True)
+    assert source.read_bytes() == b"def converted : Nat := 0\r\n"
+
+    assert verify_repository_snapshot(
+        tmp_path,
+        commit,
+        ((source, source.read_bytes()),),
+    ) == commit
+    assert verify_repository_snapshot(
+        tmp_path,
+        commit,
+        ((source, b"def changed : Nat := 0\r\n"),),
+    ) is None
+
+
 def test_snapshot_attestation_ignores_inherited_git_redirects(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

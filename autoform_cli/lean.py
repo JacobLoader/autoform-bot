@@ -1111,7 +1111,10 @@ def verify_repository_snapshot(
         ):
             return None
         framed = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
-        if hashlib.new(algorithm, framed).hexdigest() != entry[2]:
+        if (
+            hashlib.new(algorithm, framed).hexdigest() != entry[2]
+            and _git_clean_blob_id(repository_root, path, data) != entry[2]
+        ):
             return None
     directory_entries = _git_tree_entries(
         repository_root,
@@ -1277,6 +1280,31 @@ def _git(root: str | Path, *arguments: str) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     output = result.stdout.strip()
+    return output if result.returncode == 0 and output else None
+
+
+def _git_clean_blob_id(root: Path, path: str, data: bytes) -> str | None:
+    """Hash captured bytes as Git would store them at *path*.
+
+    A clean checkout can differ from its blobs byte for byte: an LFS smudge
+    filter or an eol attribute rewrites files on checkout. ``--path`` applies
+    the same clean filter and eol conversion ``git status`` uses, to the
+    captured bytes rather than whatever is on disk now.
+    """
+
+    try:
+        result = subprocess.run(
+            ["git", "hash-object", "--stdin", f"--path={path}"],
+            cwd=str(root),
+            input=data,
+            capture_output=True,
+            env=_git_environment(),
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    output = result.stdout.decode("ascii", "replace").strip()
     return output if result.returncode == 0 and output else None
 
 
