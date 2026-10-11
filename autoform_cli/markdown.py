@@ -68,7 +68,6 @@ EXTERNAL_SCHEMES = frozenset({"http", "https"})
 HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 INLINE_CODE = re.compile(r"(`+).*?\1")
-HTML_COMMENT = re.compile(r"<!--.*?(?:-->|$)", re.DOTALL)
 
 #: A closing fence carries nothing but its marker. ``pymdownx.superfences`` keeps
 #: ````` trailing`` inside the code block, so treating it as a closer would expose
@@ -508,8 +507,7 @@ def article_parts(text: str) -> ArticleParts:
     masked = mask_fences_and_comments(body)
 
     title = next((index for index, line in enumerate(masked) if _heading_level(line) == 1), None)
-    starts = [index for index, line in enumerate(masked) if _heading_level(line) == 2]
-    breaks = sorted([*starts, *(() if title is None else (title,))])
+    breaks = [index for index, line in enumerate(masked) if index == title or _heading_level(line) == 2]
 
     # The statement is whatever no section holds: the text before the first
     # heading and the text under the title. A title written below a section
@@ -784,7 +782,6 @@ __all__ = [
     "FENCE",
     "FENCE_CLOSE",
     "HEADING",
-    "HTML_COMMENT",
     "INLINE_CODE",
     "LINK",
     "SITE_EXTENSIONS",
