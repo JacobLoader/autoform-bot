@@ -327,7 +327,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     render.add_argument(
         "--require-declarations",
         action="store_true",
-        help="fail when a 'lean:' declaration is not found in the Lean sources",
+        help="fail when a 'lean:' declaration is not found in the Lean sources "
+        "or cannot be looked up because the sources cannot be read",
     )
 
     args = parser.parse_args(argv)
@@ -1094,7 +1095,10 @@ def _render(args: argparse.Namespace) -> int:
     print(f"{report.output_dir}: {report.pages} pages, {report.nodes} nodes, {report.linked} code links")
     for issue in report.unresolved:
         print(f"warning: declaration not found in the Lean sources: {issue}")
-    if report.unresolved and args.require_declarations:
+    for warning in report.warnings:
+        print(f"warning: {warning}")
+    # A declaration that was never looked up is not known to exist.
+    if (report.unresolved or report.unchecked) and args.require_declarations:
         return 1
     return 0
 

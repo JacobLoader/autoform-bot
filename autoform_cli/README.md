@@ -815,7 +815,11 @@ agent and the Lean kernel.
 
 Source-aware `--lean-root` inspection requires directory-descriptor traversal.
 Platforms without that capability, including Windows, fail closed instead of
-treating repeated pathname reads as one filesystem generation. Declaration
+treating repeated pathname reads as one filesystem generation. There, `render`
+without `--lean-root` does not read the Lean sources: it publishes without code
+links, and when a published statement names a `lean:` declaration it warns and
+`--require-declarations` makes it exit 1. Render on Linux or macOS to publish
+code links. Declaration
 locations and source revisions come from the same retained capture. Recognized
 skeleton packet/passages directories are identified by their bounded managed
 manifest before descendants are read; publication-output policy remains with

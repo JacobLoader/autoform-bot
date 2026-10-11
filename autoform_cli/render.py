@@ -22,7 +22,14 @@ from urllib.parse import quote, unquote, urlsplit
 from . import graph_pages, graph_views, mermaid, status
 from .coverage import COVERAGE_DISPOSITIONS, CoverageSummary, load_coverage
 from .graph import Graph, Node, load_graph
-from .lean import SourceLinker, build_linker, declaration_names, index_failure_message
+from .lean import (
+    SourceLinker,
+    build_linker,
+    declaration_names,
+    index_failure_message,
+    source_capture_supported,
+    unindexed_linker,
+)
 from .markdown import article_parts
 from .status import is_definition
 
@@ -225,6 +232,9 @@ class RenderReport:
     nodes: int = 0
     linked: int = 0
     unresolved: list[str] = field(default_factory=list)
+    unchecked: list[str] = field(default_factory=list)
+    """Published declarations not looked up because the sources were not read."""
+    warnings: list[str] = field(default_factory=list)
 
 
 class PublicationError(ValueError):
@@ -280,8 +290,14 @@ def render_site(
     # <repo>/docs/blueprint would otherwise be described as <repo>/blueprint,
     # and every generated permalink would 404.
     repo_root = Path(lean_root).expanduser().resolve() if lean_root is not None else blueprint.parent
+    # Without descriptor capture every Lean capture fails closed. The implicit
+    # root is then not read and the site has no code links; an explicit Lean
+    # root asks for links, so it still fails.
     try:
-        linker = build_linker(repo_root, repository_url=repository_url, ref=ref)
+        if lean_root is None and not source_capture_supported():
+            linker = unindexed_linker(repo_root, repository_url=repository_url, ref=ref)
+        else:
+            linker = build_linker(repo_root, repository_url=repository_url, ref=ref)
     except OSError as error:
         raise PublicationError([index_failure_message(error)]) from error
     numbers = _number_nodes(graph)
@@ -304,6 +320,21 @@ def render_site(
     # blueprint chapter carries many statements in sequence. Each keeps an
     # anchor so every cross-reference still lands on the statement itself.
     groups = _group_nodes(graph)
+    if not linker.indexed:
+        # Only the declarations a page would link are lost. A blueprint that
+        # names none publishes the same site as a host that read the sources.
+        report.unchecked = [
+            f"{node_id}: {name}"
+            for node_ids in groups.values()
+            for node_id in node_ids
+            for name in declaration_names(graph.nodes[node_id].lean or "")
+        ]
+        if report.unchecked:
+            report.warnings.append(
+                "code links were skipped because this platform cannot capture Lean "
+                "sources safely (directory-descriptor traversal is unavailable); "
+                "render on Linux or macOS to link declarations"
+            )
     containers = _containers(graph)
     anchors = {
         node_id: _anchor(node_id, group)
@@ -1739,7 +1770,10 @@ def _lean_presentation(
         url = linker.url(name)
         location = linker.location(name)
         code = f"<code>{html.escape(name)}</code>"
-        if url:
+        if not linker.indexed:
+            # The sources were not read, so "not found" would be false.
+            fallback.append(code)
+        elif url:
             label = html.escape(f"View {name} in Lean source", quote=True)
             icons.append(
                 f'<a class="bp-code-link" href="{html.escape(url, quote=True)}" '

@@ -846,6 +846,15 @@ def _directory_names_match(
     return tuple(sorted(os.listdir(descriptor))) == expected
 
 
+def descriptor_capture_supported() -> bool:
+    """Whether this host can bind and capture directory trees through descriptors."""
+
+    return bool(
+        directory_binding.DIRECTORY_BINDING_SUPPORTED
+        and _DESCRIPTOR_CAPTURE_SUPPORTED
+    )
+
+
 class BoundDirectoryTree:
     """One retained directory generation that can be recaptured and compared."""
 
@@ -868,10 +877,7 @@ class BoundDirectoryTree:
         self._portable_path_identities: tuple[tuple[int, int], ...] | None = None
         self._verification_limits: TreeCaptureLimits | None = None
         self._closed = False
-        if (
-            directory_binding.DIRECTORY_BINDING_SUPPORTED
-            and _DESCRIPTOR_CAPTURE_SUPPORTED
-        ):
+        if descriptor_capture_supported():
             try:
                 binding = open_directory(self.root)
             except DirectoryChangedError as error:

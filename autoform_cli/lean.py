@@ -35,6 +35,7 @@ from ._tree_snapshot import (
     TreeSelection,
     TreeSnapshot,
     TreeSnapshotError,
+    descriptor_capture_supported,
 )
 
 _NAMESPACE = re.compile(r"^\s*namespace\s+(.+)$")
@@ -313,6 +314,17 @@ def bind_project_sources(
         yield bound
     finally:
         bound.close()
+
+
+def source_capture_supported() -> bool:
+    """Whether this host can capture Lean sources at all.
+
+    Capture is bound through directory descriptors and fails closed without
+    them, as on Windows, so a caller that can proceed without the sources
+    decides from this before reading rather than from a failed capture.
+    """
+
+    return descriptor_capture_supported()
 
 
 def open_project_sources(
@@ -857,6 +869,8 @@ class SourceLinker:
     repository_url: str | None = None
     ref: str | None = None
     linkable_paths: frozenset[Path] | None = None
+    indexed: bool = True
+    """False when the sources were not read; see :func:`unindexed_linker`."""
 
     def location(self, name: str) -> Declaration | None:
         return self.index.find(name)
@@ -933,6 +947,36 @@ def build_linker(
         repository_url=resolved_repository_url,
         ref=resolved_ref,
         linkable_paths=linkable_paths,
+    )
+
+
+def unindexed_linker(
+    lean_root: str | Path,
+    *,
+    repository_url: str | None = None,
+    ref: str | None = None,
+) -> SourceLinker:
+    """A linker that never reads the Lean sources and so links no declaration.
+
+    Repository coordinates are resolved as for a project without Lean files,
+    so links to the Markdown sources and discussions are unaffected.
+    """
+    try:
+        root = directory_binding.lexical_absolute_path(lean_root).resolve()
+    except RuntimeError as error:
+        # As in build_linker: an unknown ~user, or before 3.13 a link loop.
+        raise LeanSourceError("Lean root cannot be resolved") from error
+    resolved_ref = ref
+    if resolved_ref is None:
+        detected_ref = detect_ref(root)
+        if detected_ref is not None:
+            resolved_ref = _git(root, "rev-parse", "--verify", f"{detected_ref}^{{commit}}")
+    return SourceLinker(
+        index=SourceIndex(root=root, declarations={}, source_digest=""),
+        repository_url=repository_url or detect_repository_url(root),
+        ref=resolved_ref,
+        linkable_paths=frozenset(),
+        indexed=False,
     )
 
 
@@ -1181,5 +1225,7 @@ __all__ = [
     "index_project",
     "project_source_revision",
     "snapshot_project_sources",
+    "source_capture_supported",
     "strip_lean_comments",
+    "unindexed_linker",
 ]
