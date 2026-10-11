@@ -443,7 +443,8 @@ _IMPORT_BUILD = """  -- `lake env` puts the project's libraries ahead of the too
     | throwError "AUTOFORM_AUDIT_LEAN_PATH is not set; run the probe as AUTOFORM_AUDIT_LEAN_PATH=\\"$(lake env printenv LEAN_PATH)\\" LEAN_ABORT_ON_PANIC=1 lean PROBE"
   -- The toolchain's library comes first, so `propext` and every other core
   -- name mean the toolchain's constants. A root module under one of its
-  -- entries would load the toolchain's file instead and go unaudited.
+  -- entries would be looked up there instead: it would fail to load, or the
+  -- toolchain's module of the same name would load and go unaudited.
   let libDir ← getLibDir (← getBuildDir)
   let projectEntries := System.SearchPath.parse projectPath
   let mut seenRoots : Array String := #[]

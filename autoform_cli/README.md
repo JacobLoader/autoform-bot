@@ -949,30 +949,30 @@ and the workflow runs it with plain `lean`, not `lake env lean`, passing the
 project's search path in `AUTOFORM_AUDIT_LEAN_PATH`. The probe refuses to run
 when that variable is unset or when `LEAN_PATH` is set. It loads the
 root-package modules as data, with the toolchain's library first on the search
-path and no environment extensions, so no `initialize` block runs and no
-project instance, macro, or elaborator applies to the probe's own code. It
-finds each declaration's axioms by walking types and values itself, not from
-the axiom tables the `.olean` files store, and counts a name that no module
-declares as an axiom, which fails with `NAME depends on X, which no module of
-the build declares`, or for a `lean:` name outside the root package with `NAME
-[ID] is outside the root package and depends on X, which no module of the build
-declares`. The walk takes a mutual inductive block as one node, so each type
-and constructor of the block gets the axioms of the whole block. It imports the
-toolchain's `Init` along with the build, so a build that declares a core name
-of its own, such as `propext`, fails to load with `environment already contains
+path and no environment extensions, so no `initialize` block runs and no project
+instance, macro, or elaborator applies to the probe's own code. It finds each
+declaration's axioms by walking types and values itself, not from the axiom
+tables the `.olean` files store, and counts a name that no module declares as an
+axiom, which fails with `NAME depends on X, which no module of the build
+declares`, or for a `lean:` name outside the root package with `NAME [ID] is
+outside the root package and depends on X, which no module of the build
+declares`. The walk takes a mutual inductive block as one node, so each type and
+constructor of the block gets the axioms of the whole block. It imports the
+toolchain's `Init` along with the build, so a build that declares a core name of
+its own, such as `propext`, fails to load with `environment already contains
 'propext'` instead of passing the axiom allowlist, which compares names. Lean
 does let a theorem stand in for another module's axiom of the same name and
-type, which the module system relies on, so a theorem restating an axiom such
-as `Lean.trustCompiler`, whose type is `True`, fails with `M declares a theorem
-N in place of the axiom K declares; rename one of them so the audit can run`. A
-root
-module whose first component names an entry of the toolchain's library, such as
-`Lean.Hack`, would load the toolchain's file in its place, so the audit refuses
-it with `root module M shares its first component R with the toolchain's
-library; rename the module so the audit can run`. Lean loads a module from the
-first search-path entry that holds its first component, and Lake lists
-dependency libraries before the root package's, so a dependency library that
-also provides a root module's first component could stand in for the root
+type, which the module system relies on, so a theorem restating an axiom such as
+`Lean.trustCompiler`, whose type is `True`, fails with `M declares a theorem N
+in place of the axiom K declares; rename one of them so the audit can run`. A
+root module whose first component names an entry of the toolchain's library,
+such as `Lean.Hack`, would be looked up in the toolchain's library, where it
+fails to load or a toolchain module of the same name stands in for it, so the
+audit refuses it with `root module M shares its first component R with the
+toolchain's library; rename the module so the audit can run`. Lean loads a
+module from the first search-path entry that holds its first component, and Lake
+lists dependency libraries before the root package's, so a dependency library
+that also provides a root module's first component could stand in for the root
 package's files. The audit refuses that with `root module M shares its first
 component R with another library on the search path; rename the module so the
 audit can run`. The workflow runs the probe with `LEAN_ABORT_ON_PANIC=1`, so a
