@@ -758,6 +758,74 @@ def test_render_translates_source_index_io_failure(
     assert str(tmp_path) not in str(error.value)
 
 
+def test_lasting_capture_failures_name_their_cause(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+
+    with pytest.raises(PublicationError, match="blueprint directory does not exist"):
+        render_site(project / "bluepirnt", tmp_path / "out", lean_root=project)
+    with pytest.raises(PublicationError, match="the Lean root is not a directory"):
+        render_site(project / "blueprint", tmp_path / "out", lean_root=project / "nope")
+
+    alias = project / "Project/Alias.lean"
+    alias.symlink_to(project / "Project/Basic.lean")
+    with pytest.raises(
+        PublicationError, match="unsafe Lean source Project/Alias.lean: symbolic links"
+    ):
+        render_site(project / "blueprint", tmp_path / "out", lean_root=project)
+    alias.unlink()
+
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
+        secret = project / "blueprint/roadmap/secret.md"
+        secret.write_text("# Secret\n", encoding="utf-8")
+        secret.chmod(0)
+        try:
+            with pytest.raises(
+                PublicationError,
+                match="blueprint could not be captured: permission denied: roadmap/secret.md",
+            ):
+                render_site(project / "blueprint", tmp_path / "out", lean_root=project)
+        finally:
+            secret.chmod(0o644)
+    assert not (tmp_path / "out").exists()
+
+
+def test_a_transient_lean_listing_change_is_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _project(tmp_path)
+    original = render_module._open_lean_sources
+    captures = 0
+
+    class OneListingChange:
+        def __init__(self, sources):
+            self._sources = sources
+
+        def __getattr__(self, name):
+            return getattr(self._sources, name)
+
+        def capture(self):
+            nonlocal captures
+            captures += 1
+            if captures in {1, 3}:
+                # The first initial capture and the first pre-commit recapture
+                # each see an unrelated entry appear.
+                raise tree_snapshot_module.TreeChangedError(
+                    "directory tree changed while it was captured"
+                )
+            return self._sources.capture()
+
+    monkeypatch.setattr(
+        render_module,
+        "_open_lean_sources",
+        lambda *args, **kwargs: OneListingChange(original(*args, **kwargs)),
+    )
+
+    report = render_site(project / "blueprint", tmp_path / "out", lean_root=project)
+
+    assert report.linked == 2
+    assert captures == 4
+
+
 def test_render_is_deterministic_and_records_a_path_free_manifest(tmp_path: Path) -> None:
     project = _project(tmp_path)
     ref = _commit_project(project)

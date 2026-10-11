@@ -35,6 +35,7 @@ from ._tree_snapshot import (
     OpaqueDirectoryMarker,
     TreeCaptureLimitError,
     TreeCaptureLimits,
+    TreeChangedError,
     TreeSelection,
     TreeSnapshot,
     TreeSnapshotError,
@@ -627,9 +628,17 @@ def render_site(
             raise PublicationError(
                 ["transactional publication requires safe directory traversal"]
             ) from error
-        raise PublicationError(
-            ["blueprint changed during publication; previous site was preserved"]
-        ) from error
+        if not blueprint.is_dir():
+            raise PublicationError(
+                [f"blueprint directory does not exist: {blueprint}"]
+            ) from error
+        if isinstance(error, TreeChangedError):
+            raise PublicationError(
+                ["blueprint changed during publication; previous site was preserved"]
+            ) from error
+        # A lasting failure (an unreadable entry, an unsupported name) carries a
+        # path relative to the blueprint; a retry would fail the same way.
+        raise PublicationError([f"blueprint could not be captured: {error}"]) from error
 
 
 def _render_bound_site(
@@ -743,8 +752,10 @@ def _render_in_bound_output_parent(
             )
 
         lean_exclusions = (destination, workspace)
-        lean_sources = _open_lean_sources(repo_root, exclude_roots=lean_exclusions)
-        lean_snapshot = _capture_bound_lean_source_snapshot(lean_sources)
+        lean_sources, lean_snapshot = _bind_lean_sources(
+            repo_root,
+            exclude_roots=lean_exclusions,
+        )
         lean_source_revision = lean_snapshot.revision
         lean_generation_revision = lean_snapshot.generation_revision
         resolved_repository_url = (
@@ -2794,29 +2805,73 @@ def _read_regular_file_at(
                 raise
 
 
+_LEAN_CAPTURE_ATTEMPTS = 3
+_LEAN_CAPTURE_RETRY_SECONDS = 0.05
+
+
 def _open_lean_sources(
     root: Path, *, exclude_roots: Iterable[Path]
 ) -> BoundProjectSources:
-    try:
-        return open_project_sources(
-            root,
-            exclude_roots=exclude_roots,
-            limits=_LEAN_CAPTURE_LIMITS,
-            opaque_markers=(
-                OpaqueDirectoryMarker(
-                    PUBLICATION_MANIFEST,
-                    PUBLICATION_MANIFEST_MAX_BYTES,
-                    _is_complete_publication_manifest,
-                ),
-                OpaqueDirectoryMarker(
-                    _WORKSPACE_MARKER,
-                    len(_WORKSPACE_MARKER_BYTES),
-                    _is_publication_workspace_marker,
-                ),
+    return open_project_sources(
+        root,
+        exclude_roots=exclude_roots,
+        limits=_LEAN_CAPTURE_LIMITS,
+        opaque_markers=(
+            OpaqueDirectoryMarker(
+                PUBLICATION_MANIFEST,
+                PUBLICATION_MANIFEST_MAX_BYTES,
+                _is_complete_publication_manifest,
             ),
+            OpaqueDirectoryMarker(
+                _WORKSPACE_MARKER,
+                len(_WORKSPACE_MARKER_BYTES),
+                _is_publication_workspace_marker,
+            ),
+        ),
+    )
+
+
+def _bind_lean_sources(
+    root: Path, *, exclude_roots: Iterable[Path]
+) -> tuple[BoundProjectSources, IndexedSourceSnapshot]:
+    """Bind one stable Lean generation, retrying a concurrent directory change.
+
+    The walk verifies every listing it descends into, so unrelated churn under
+    the Lean root (editor swap files, logs) can interrupt it; main retried the
+    same way through ``lean.bind_project_source_snapshot``.
+    """
+
+    exclusions = tuple(exclude_roots)
+    for attempt in range(_LEAN_CAPTURE_ATTEMPTS):
+        if attempt:
+            time.sleep(_LEAN_CAPTURE_RETRY_SECONDS * attempt)
+        sources: BoundProjectSources | None = None
+        try:
+            sources = _open_lean_sources(root, exclude_roots=exclusions)
+            return sources, sources.capture()
+        except TreeChangedError:
+            if sources is not None:
+                sources.close()
+            continue
+        except BaseException as error:
+            if sources is not None:
+                sources.close()
+            if isinstance(error, TreeCaptureLimitError):
+                raise PublicationError([f"Lean source {error}"]) from error
+            if isinstance(error, OSError):
+                raise PublicationError([index_failure_message(error)]) from error
+            if isinstance(error, TreeSnapshotError):
+                raise PublicationError(
+                    [f"Lean sources could not be indexed: {error}"]
+                ) from error
+            raise
+    if not root.is_dir():
+        raise PublicationError(
+            ["Lean sources could not be indexed: the Lean root is not a directory"]
         )
-    except (OSError, TreeSnapshotError) as error:
-        raise PublicationError(["could not capture a stable Lean source revision"]) from error
+    raise PublicationError(
+        ["Lean sources kept changing while they were captured; retry"]
+    )
 
 
 def _is_complete_publication_manifest(data: bytes) -> bool:
@@ -2835,17 +2890,6 @@ def _is_complete_publication_manifest(data: bytes) -> bool:
 
 def _is_publication_workspace_marker(data: bytes) -> bool:
     return data == _WORKSPACE_MARKER_BYTES
-
-
-def _capture_bound_lean_source_snapshot(
-    sources: BoundProjectSources,
-) -> IndexedSourceSnapshot:
-    try:
-        return sources.capture()
-    except TreeCaptureLimitError as error:
-        raise PublicationError([f"Lean source {error}"]) from error
-    except (OSError, TreeSnapshotError) as error:
-        raise PublicationError(["could not capture a stable Lean source revision"]) from error
 
 
 def _verified_repository_ref(
@@ -2887,16 +2931,29 @@ def _require_bound_lean_source_revision(
     sources: BoundProjectSources,
     expected_generation: str,
 ) -> None:
-    try:
-        sources.verify()
-        actual = sources.capture().generation_revision
-        sources.verify()
-    except TreeCaptureLimitError as error:
-        raise PublicationError([f"Lean source {error}"]) from error
-    except (OSError, TreeSnapshotError) as error:
+    changed: TreeChangedError | None = None
+    for attempt in range(_LEAN_CAPTURE_ATTEMPTS):
+        if attempt:
+            time.sleep(_LEAN_CAPTURE_RETRY_SECONDS * attempt)
+        try:
+            sources.verify()
+            actual = sources.capture().generation_revision
+            sources.verify()
+            break
+        except TreeChangedError as error:
+            # Unrelated entries can change a listing without changing any
+            # Lean file; only the Lean generation below decides.
+            changed = error
+        except TreeCaptureLimitError as error:
+            raise PublicationError([f"Lean source {error}"]) from error
+        except (OSError, TreeSnapshotError) as error:
+            raise PublicationError(
+                ["Lean sources changed during publication; previous site was preserved"]
+            ) from error
+    else:
         raise PublicationError(
             ["Lean sources changed during publication; previous site was preserved"]
-        ) from error
+        ) from changed
     if actual != expected_generation:
         raise PublicationError(
             ["Lean sources changed during publication; previous site was preserved"]
