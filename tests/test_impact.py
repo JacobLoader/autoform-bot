@@ -2520,8 +2520,9 @@ def test_import_impact_refuses_a_glob_module_the_inventory_lacks(tmp_path: Path,
     (root / "Demo" / "docs").mkdir(parents=True)
     shutil.copy(_SKELETON_FIXTURE / "lean-toolchain", root / "lean-toolchain")
     (root / "lakefile.toml").write_text(
-        'name = "Demo"\nversion = "0.1.0"\ndefaultTargets = ["Demo"]\n\n'
-        '[[lean_lib]]\nname = "Demo"\nglobs = ["Demo.*"]\n',
+        'name = "Demo"\nversion = "0.1.0"\ndefaultTargets = ["Demo", "Tools"]\n\n'
+        '[[lean_lib]]\nname = "Demo"\nglobs = ["Demo.*"]\n\n'
+        '[[lean_lib]]\nname = "Tools"\nsrcDir = "tools"\n',
         encoding="utf-8",
     )
     vendor = tmp_path / "vendor" / "Sym"
@@ -2539,6 +2540,10 @@ def test_import_impact_refuses_a_glob_module_the_inventory_lacks(tmp_path: Path,
         # A nested checkout without Lean files gives the glob nothing to build.
         ("Demo/docs/.git", "gitdir: ../../.git/modules/docs\n"),
         ("Demo/docs/README.md", "Notes.\n"),
+        # Another library's srcDir spells the symlinked module's name too, but
+        # no library selects that file, so it must not stand in for it.
+        ("tools/Tools.lean", "def Tools.t : Nat := 0\n"),
+        ("tools/Demo/Sym/Y.lean", "def Demo.Sym.stray : Nat := 0\n"),
     ):
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_text(text, encoding="utf-8")
@@ -2569,7 +2574,7 @@ def test_import_impact_refuses_a_glob_module_the_inventory_lacks(tmp_path: Path,
         assert code == 2, output.out
         assert output.out == ""
         assert output.err.startswith(f"error: the impact probe found root-package module {module} under glob Demo.*, ")
-        assert "but the captured source inventory has no such module" in output.err
+        assert "but loaded no captured source for it" in output.err
 
     code = cli.main(command)
 
