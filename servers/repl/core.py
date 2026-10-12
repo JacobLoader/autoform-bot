@@ -577,23 +577,27 @@ class LeanReplConfig:
 
 
 def _adjust_line_numbers(resp: dict, offset: int) -> None:
-    """Offset all pos.line values so they map back to original source."""
+    """Offset all pos.line values so they map back to original source.
+
+    A position inside generated imports, such as an import error, maps to
+    line 1 rather than to line 0 or before.
+    """
     if offset == 0:
         return
     for msg in resp.get("messages", []):
         pos = msg.get("pos")
         if pos and isinstance(pos, dict) and "line" in pos:
-            pos["line"] = pos["line"] + offset
+            pos["line"] = max(1, pos["line"] + offset)
         end_pos = msg.get("endPos")
         if end_pos and isinstance(end_pos, dict) and "line" in end_pos:
-            end_pos["line"] = end_pos["line"] + offset
+            end_pos["line"] = max(1, end_pos["line"] + offset)
     for sorry in resp.get("sorries", []):
         pos = sorry.get("pos")
         if pos and isinstance(pos, dict) and "line" in pos:
-            pos["line"] = pos["line"] + offset
+            pos["line"] = max(1, pos["line"] + offset)
         end_pos = sorry.get("endPos")
         if end_pos and isinstance(end_pos, dict) and "line" in end_pos:
-            end_pos["line"] = end_pos["line"] + offset
+            end_pos["line"] = max(1, end_pos["line"] + offset)
 
 
 def _without_process_handles(response: dict[str, Any]) -> dict[str, Any]:

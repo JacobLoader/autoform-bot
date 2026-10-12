@@ -793,11 +793,17 @@ def test_disposable_call_uses_one_frame_and_removes_process_handles(monkeypatch)
             "env": 4,
             "messages": [
                 {
+                    "severity": "error",
+                    "data": "unknown module prefix 'Mathlib'",
+                    "pos": {"line": 1, "column": 0},
+                    "endPos": {"line": 1, "column": 14},
+                },
+                {
                     "severity": "info",
                     "data": "message",
                     "pos": {"line": 2, "column": 1},
                     "endPos": {"line": 2, "column": 3},
-                }
+                },
             ],
             "sorries": [
                 {
@@ -814,11 +820,17 @@ def test_disposable_call_uses_one_frame_and_removes_process_handles(monkeypatch)
     assert repl.run_disposable("#check Nat", timeout=3) == {
         "messages": [
             {
+                "severity": "error",
+                "data": "unknown module prefix 'Mathlib'",
+                "pos": {"line": 1, "column": 0},
+                "endPos": {"line": 1, "column": 14},
+            },
+            {
                 "severity": "info",
                 "data": "message",
                 "pos": {"line": 1, "column": 1},
                 "endPos": {"line": 1, "column": 3},
-            }
+            },
         ],
         "sorries": [
             {
@@ -935,9 +947,14 @@ def test_disposable_backlog_adjusts_prefixed_positions(monkeypatch):
         "messages": [
             {
                 "severity": "error",
+                "data": "unknown module prefix 'Mathlib'",
+                "pos": {"line": 1, "column": 0},
+            },
+            {
+                "severity": "error",
                 "data": "bad",
                 "pos": {"line": 2, "column": 1},
-            }
+            },
         ],
     }
     monkeypatch.setattr(
@@ -952,9 +969,14 @@ def test_disposable_backlog_adjusts_prefixed_positions(monkeypatch):
         "messages": [
             {
                 "severity": "error",
+                "data": "unknown module prefix 'Mathlib'",
+                "pos": {"line": 1, "column": 0},
+            },
+            {
+                "severity": "error",
                 "data": "bad",
                 "pos": {"line": 1, "column": 1},
-            }
+            },
         ]
     }
 
