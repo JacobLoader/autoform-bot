@@ -464,6 +464,46 @@ def test_check_and_runtime_refuse_the_same_roadmap_symlinks(tmp_path: Path) -> N
         load_runtime_graph(blueprint)
 
 
+def test_check_and_runtime_refuse_a_symlinked_roadmap_directory(tmp_path: Path) -> None:
+    _roadmap_page(tmp_path / "real", "README.md", "# Root\n")
+    blueprint = tmp_path / "blueprint"
+    blueprint.mkdir()
+    try:
+        (blueprint / "roadmap").symlink_to(tmp_path / "real" / "roadmap", target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    with pytest.raises(GraphValidationError, match="roadmap contains a symbolic link: roadmap$"):
+        load_graph(blueprint)
+    with pytest.raises(RuntimeProjectionError, match="roadmap contains a symbolic link: roadmap$"):
+        load_runtime_graph(blueprint)
+
+
+def test_a_readme_symlink_outside_the_roadmap_contains_nothing(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    _roadmap_page(project / "blueprint", "README.md", "# Root\n")
+    _roadmap_page(project / "blueprint", "a.md", "# A\n")
+    try:
+        (project / "README.md").symlink_to("blueprint/roadmap/README.md")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    assert load_graph(project / "blueprint").nodes["roadmap"].parent is None
+
+
+def test_load_graph_refuses_a_containment_cycle_before_depths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    _roadmap_page(blueprint, "README.md", "# Root\n")
+    _roadmap_page(blueprint, "a.md", "# A\n")
+    monkeypatch.setattr("autoform_cli.graph._article_parents", lambda *_: {"roadmap": "a", "a": "roadmap"})
+    monkeypatch.setattr("autoform_cli.graph._article_depth", lambda *_: pytest.fail("depth walked a containment cycle"))
+
+    with pytest.raises(GraphValidationError, match="a: containment cycle: a -> roadmap -> a"):
+        load_graph(blueprint)
+
+
 def test_containment_cycles_are_reported_once_per_cycle() -> None:
     parents: dict[str, str | None] = {"a": "a/b", "a/b": "a", "c": "a", "roadmap": None}
 
