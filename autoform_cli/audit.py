@@ -20,10 +20,12 @@ from .graph import Graph, GraphValidationError, Node, load_graph
 from .lean import (
     _DECLARATION,
     Declaration,
+    LeanSourceError,
     SourceIndex,
     _without_lean_comments,
     declaration_names,
     index_failure_message,
+    resolve_lean_root,
     snapshot_project_sources,
 )
 from .markdown import article_parts as _article_parts
@@ -372,18 +374,9 @@ def _coverage_findings(
 
 def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
     try:
-        root = Path(lean_root).expanduser().resolve()
-        valid = root.is_dir()
-    except (OSError, RuntimeError, ValueError):
-        valid = False
-    if not valid:
-        return [
-            AuditFinding(
-                ".",
-                "invalid-lean-root",
-                "Lean root does not exist or is not a directory",
-            )
-        ]
+        root = resolve_lean_root(lean_root)
+    except LeanSourceError as error:
+        return [AuditFinding(".", "invalid-lean-root", str(error))]
 
     findings: list[AuditFinding] = []
     try:

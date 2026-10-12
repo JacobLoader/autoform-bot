@@ -96,12 +96,12 @@ def test_lean_root_commands_report_an_unresolvable_root_without_traceback(tmp_pa
     root = lean_root(tmp_path)
 
     # expanduser() raises RuntimeError for an unknown ~user, as resolve() does
-    # for a loop before Python 3.13; 3.13 returns the loop path, so check fails
-    # later, when it reads the sources.
+    # for a loop before Python 3.13; 3.13 returns the loop path, which stat
+    # then refuses with ELOOP.
     assert main(["check", blueprint, "--lean-root", root]) == 1
     assert capsys.readouterr().out.startswith("error: Lean sources could not be indexed")
     assert main(["audit", blueprint, "--lean-root", root]) == 1
-    assert "error: .: invalid-lean-root: Lean root does not exist or is not a directory\n" in capsys.readouterr().out
+    assert "error: .: invalid-lean-root: Lean root cannot be resolved\n" in capsys.readouterr().out
     assert main(["skeleton", blueprint, "--lean-root", root]) == 2
     assert capsys.readouterr().err.startswith("error: ")
 

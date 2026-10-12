@@ -283,7 +283,7 @@ def test_runtime_translates_source_index_io_failure(
             raise LeanSourceError(reason)
         raise OSError(f"private host detail: {root}")
 
-    monkeypatch.setattr("autoform_cli.runtime.index_project", fail_index)
+    monkeypatch.setattr("autoform_cli.runtime.snapshot_project_sources", fail_index)
 
     with pytest.raises(RuntimeProjectionError) as error:
         load_runtime_graph(project, lean_root=project)

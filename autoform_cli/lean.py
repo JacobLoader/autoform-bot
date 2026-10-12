@@ -12,6 +12,7 @@ and deliberately reports nothing it cannot see rather than guessing.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -148,15 +149,68 @@ def index_failure_message(error: OSError) -> str:
     return "Lean sources could not be indexed"
 
 
+def resolve_lean_root(lean_root: str | Path) -> Path:
+    """Resolve *lean_root* to the directory it names.
+
+    Raises :class:`LeanSourceError` naming why the root cannot be used, for
+    example when it does not exist or lies under a folder that cannot be
+    searched.
+    """
+
+    root, is_directory = _inspect_lean_root(lean_root)
+    if not is_directory:
+        raise LeanSourceError("Lean root does not exist or is not a directory")
+    return root
+
+
+def _inspect_lean_root(lean_root: str | Path) -> tuple[Path, bool]:
+    """Resolve *lean_root* and report whether it is a directory.
+
+    A root that does not exist or is not a directory is reported, not raised;
+    any other reason it cannot be inspected raises :class:`LeanSourceError`.
+    """
+
+    try:
+        root = directory_binding.lexical_absolute_path(lean_root).resolve()
+    except RuntimeError as error:
+        # An unknown ~user, or before Python 3.13 a symbolic link loop.
+        raise LeanSourceError(_UNRESOLVABLE_LEAN_ROOT) from error
+    except (OSError, ValueError) as error:
+        raise _lean_root_failure(error) from error
+    try:
+        metadata = os.stat(root)
+    except (FileNotFoundError, NotADirectoryError):
+        return root, False
+    except (OSError, ValueError) as error:
+        raise _lean_root_failure(error) from error
+    return root, stat.S_ISDIR(metadata.st_mode)
+
+
+_UNRESOLVABLE_LEAN_ROOT = "Lean root cannot be resolved"
+
+
+def _lean_root_failure(error: Exception) -> LeanSourceError:
+    if isinstance(error, PermissionError):
+        return LeanSourceError("permission denied while resolving the Lean root")
+    if isinstance(error, OSError) and error.errno == errno.ELOOP:
+        # Python 3.13 and later resolve a symbolic link loop without raising.
+        return LeanSourceError(_UNRESOLVABLE_LEAN_ROOT)
+    return LeanSourceError("Lean root cannot be inspected")
+
+
 def index_project(
     root: str | Path, *, exclude_roots: Iterable[str | Path] = ()
 ) -> SourceIndex:
-    """Scan ``*.lean`` beneath *root* and index declarations by full name."""
-    requested_root = directory_binding.lexical_absolute_path(root)
-    root_path = requested_root.resolve()
-    if not root_path.is_dir():
+    """Scan ``*.lean`` beneath *root* and index declarations by full name.
+
+    A root that does not exist or is not a directory has an empty index; any
+    other reason the root cannot be inspected raises :class:`LeanSourceError`.
+    """
+    root_path, is_directory = _inspect_lean_root(root)
+    if not is_directory:
         digest = hashlib.sha256(b"autoform-lean-source-index/v1\0").hexdigest()
         return SourceIndex(root=root_path, declarations={}, source_digest=digest)
+    requested_root = directory_binding.lexical_absolute_path(root)
     remapped_exclusions = tuple(
         _remap_resolved_root_exclusion(requested_root, root_path, value)
         for value in exclude_roots
@@ -895,12 +949,8 @@ def build_linker(
     A supplied source snapshot never inherits a live Git ref; callers must bind
     that ref explicitly if they want permalinks.
     """
-    try:
-        requested_root = directory_binding.lexical_absolute_path(lean_root)
-        resolved_root = requested_root.resolve()
-    except RuntimeError as error:
-        # An unknown ~user, or before Python 3.13 a symbolic link loop.
-        raise LeanSourceError("Lean root cannot be resolved") from error
+    resolved_root = resolve_lean_root(lean_root)
+    requested_root = directory_binding.lexical_absolute_path(lean_root)
     remapped_exclusions = tuple(
         _remap_resolved_root_exclusion(requested_root, resolved_root, value)
         for value in exclude_roots
@@ -921,10 +971,10 @@ def build_linker(
             resolved_repository_url = repository_url or detected_url
             resolved_ref = detected_ref
         else:
-            index = index_project(
+            index = snapshot_project_sources(
                 resolved_root,
                 exclude_roots=remapped_exclusions,
-            )
+            ).index
     if detect_missing and resolved_repository_url is None:
         resolved_repository_url = detect_repository_url(resolved_root)
     assert index is not None
@@ -1180,6 +1230,7 @@ __all__ = [
     "index_failure_message",
     "index_project",
     "project_source_revision",
+    "resolve_lean_root",
     "snapshot_project_sources",
     "strip_lean_comments",
 ]

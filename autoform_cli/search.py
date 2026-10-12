@@ -12,7 +12,13 @@ from functools import lru_cache
 from pathlib import Path
 
 from .graph import load_graph
-from .lean import SourceIndex, index_failure_message, index_project
+from .lean import (
+    LeanSourceError,
+    SourceIndex,
+    index_failure_message,
+    resolve_lean_root,
+    snapshot_project_sources,
+)
 from .markdown import ArticleParts, article_parts, visible_prose
 from .runtime import RuntimeNode, build_runtime_graph, resolve_runtime_paths
 
@@ -444,11 +450,12 @@ def _fields(
 def _lean_index(lean_root: str | Path | None) -> SourceIndex | None:
     if lean_root is None:
         return None
-    root = Path(lean_root).expanduser().resolve()
-    if not root.is_dir():
-        raise SearchError("Lean root does not exist or is not a directory")
     try:
-        return index_project(root)
+        root = resolve_lean_root(lean_root)
+    except LeanSourceError as error:
+        raise SearchError(str(error)) from error
+    try:
+        return snapshot_project_sources(root).index
     except OSError as error:
         raise SearchError(index_failure_message(error)) from error
 

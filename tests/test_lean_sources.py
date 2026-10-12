@@ -290,6 +290,26 @@ def test_missing_project_keeps_the_empty_index_contract(tmp_path: Path) -> None:
     assert index.declarations == {}
 
 
+def test_root_under_an_unsearchable_folder_is_refused_not_empty(tmp_path: Path) -> None:
+    if os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0):
+        pytest.skip("search permission is not enforced here")
+    locked = tmp_path / "locked"
+    _index(locked / "project", "def hidden : Nat := 0\n")
+    locked.chmod(0)
+    try:
+        if os.access(locked, os.X_OK):
+            pytest.skip("search permission is not enforced")
+        with pytest.raises(
+            lean_module.LeanSourceError,
+            match=r"^permission denied while resolving the Lean root$",
+        ) as caught:
+            index_project(locked / "project")
+    finally:
+        locked.chmod(0o755)
+
+    assert str(tmp_path) not in str(caught.value)
+
+
 @pytest.mark.parametrize("root_kind", ["missing", "file"])
 def test_direct_snapshot_names_a_stable_invalid_root(
     tmp_path: Path,
@@ -2478,18 +2498,18 @@ def test_explicit_ref_linker_keeps_remote_bound_to_resolved_root(
         alias.symlink_to(first, target_is_directory=True)
     except OSError:
         pytest.skip("symlinks are unavailable")
-    original_index = lean_module.index_project
+    original_snapshot = lean_module.snapshot_project_sources
     swapped = False
 
-    def index_then_swap(*args, **kwargs):
+    def snapshot_then_swap(*args, **kwargs):
         nonlocal swapped
-        index = original_index(*args, **kwargs)
+        snapshot = original_snapshot(*args, **kwargs)
         alias.unlink()
         alias.symlink_to(second, target_is_directory=True)
         swapped = True
-        return index
+        return snapshot
 
-    monkeypatch.setattr(lean_module, "index_project", index_then_swap)
+    monkeypatch.setattr(lean_module, "snapshot_project_sources", snapshot_then_swap)
 
     linker = build_linker(alias, ref=commit)
 

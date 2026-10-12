@@ -14,7 +14,13 @@ from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote, urlsplit
 
 from .graph import Graph, load_graph, roadmap_symlink_issues
-from .lean import declaration_names, index_failure_message, index_project
+from .lean import (
+    LeanSourceError,
+    declaration_names,
+    index_failure_message,
+    resolve_lean_root,
+    snapshot_project_sources,
+)
 from .status import derive, is_definition
 
 RUNTIME_SCHEMA = "autoform-runtime/v3"
@@ -315,11 +321,12 @@ def build_runtime_graph(
     statuses = derive(graph)
     lean_index = None
     if lean_root is not None:
-        root = Path(lean_root).expanduser().resolve()
-        if not root.is_dir():
-            raise RuntimeProjectionError(["Lean root does not exist or is not a directory"])
         try:
-            lean_index = index_project(root)
+            root = resolve_lean_root(lean_root)
+        except LeanSourceError as error:
+            raise RuntimeProjectionError([str(error)]) from error
+        try:
+            lean_index = snapshot_project_sources(root).index
         except OSError as error:
             raise RuntimeProjectionError([index_failure_message(error)]) from error
 
