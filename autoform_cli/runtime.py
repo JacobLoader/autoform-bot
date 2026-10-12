@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote, urlsplit
 
-from .graph import Graph, load_graph
+from .graph import Graph, load_graph, roadmap_symlink_issues
 from .lean import declaration_names, index_failure_message, index_project
 from .status import derive, is_definition
 
@@ -398,13 +398,9 @@ def _reject_roadmap_symlinks(blueprint: Path) -> None:
     roadmap = blueprint / "roadmap"
     if not roadmap.is_dir():
         raise RuntimeProjectionError(["roadmap directory does not exist"])
-    for path in (roadmap, *sorted(roadmap.rglob("*"))):
-        if path.is_symlink():
-            try:
-                label = path.relative_to(blueprint).as_posix()
-            except ValueError:
-                label = "roadmap"
-            raise RuntimeProjectionError([f"roadmap contains a symbolic link: {label}"])
+    symlink_issues = roadmap_symlink_issues(blueprint)
+    if symlink_issues:
+        raise RuntimeProjectionError(symlink_issues)
 
 
 def _ordered_union(first: tuple[str, ...], second: tuple[str, ...]) -> tuple[str, ...]:
