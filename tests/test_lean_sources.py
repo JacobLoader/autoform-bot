@@ -706,6 +706,39 @@ def test_editor_lock_link_appearing_during_capture_is_accepted(
     assert snapshot.index.find("kept") is not None
 
 
+def test_marker_candidate_removed_before_it_is_read_is_absent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_descriptor_capture()
+    _index(tmp_path, "def kept : Nat := 0\n", "Proj/A.lean")
+    site = tmp_path / "site"
+    site.mkdir()
+    manifest = site / "manifest.json"
+    manifest.write_text('{"name": "web app"}\n', encoding="utf-8")
+    original_names = tree_snapshot_module._capture_directory_names
+    removed = False
+
+    def list_then_remove(descriptor, **kwargs):
+        nonlocal removed
+        names = original_names(descriptor, **kwargs)
+        if not removed and "manifest.json" in names:
+            # The site generator removes its output between the listing and
+            # the marker lookup.
+            removed = True
+            manifest.unlink()
+        return names
+
+    monkeypatch.setattr(tree_snapshot_module, "_capture_directory_names", list_then_remove)
+    binds = _count_binds(monkeypatch)
+
+    snapshot = snapshot_project_sources(tmp_path)
+
+    assert removed
+    assert len(binds) == 1
+    assert snapshot.index.find("kept") is not None
+
+
 def test_unrecognized_manifest_in_rebuilt_folder_is_captured_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

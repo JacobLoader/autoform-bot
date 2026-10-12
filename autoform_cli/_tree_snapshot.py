@@ -1222,7 +1222,7 @@ def capture_directory_descriptor(
             try:
                 metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
             except OSError as error:
-                if selected_only and error.errno == errno.ENOENT:
+                if _vanished_in_selected_capture(error, selection):
                     continue
                 raise _entry_error(error, child_relative)
             child_identity = _stat_signature(metadata)
@@ -1312,7 +1312,7 @@ def capture_directory_descriptor(
                 except _TreeChanged as error:
                     raise _TreeChanged(child_relative) from error
                 except OSError as error:
-                    if selected_only and error.errno == errno.ENOENT:
+                    if _vanished_in_selected_capture(error, selection):
                         continue
                     raise _entry_error(error, child_relative)
                 budget.add_file_bytes(len(data))
@@ -1324,7 +1324,7 @@ def capture_directory_descriptor(
                         os.stat(name, dir_fd=descriptor, follow_symlinks=False)
                     )
                 except OSError as error:
-                    if selected_only and error.errno == errno.ENOENT:
+                    if _vanished_in_selected_capture(error, selection):
                         continue
                     raise _entry_error(error, child_relative)
                 if link_identity != child_identity:
@@ -1464,6 +1464,12 @@ def _entry_error(error: OSError, relative: str) -> BaseException:
     return error
 
 
+def _vanished_in_selected_capture(error: OSError, selection: TreeSelection) -> bool:
+    """Whether a selected-entry capture treats this lookup failure as an absent entry."""
+
+    return selection.unselected_may_change and error.errno == errno.ENOENT
+
+
 def _tree_snapshot_checkpoint(_event: str, _relative: str) -> None:
     """Deterministic concurrency boundary used by adversarial tests."""
 
@@ -1558,6 +1564,8 @@ def _opaque_marker(
         try:
             metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
         except OSError as error:
+            if _vanished_in_selected_capture(error, selection):
+                continue
             raise _entry_error(error, marker_path)
         identity = _stat_signature(metadata)
         if marker.presence_only:
@@ -1581,6 +1589,8 @@ def _opaque_marker(
         except _TreeChanged as error:
             raise _TreeChanged(marker_path) from error
         except OSError as error:
+            if _vanished_in_selected_capture(error, selection):
+                continue
             raise _entry_error(error, marker_path)
         if len(data) <= marker.max_bytes and marker.recognizes(data):
             budget.add_file_bytes(len(data))
