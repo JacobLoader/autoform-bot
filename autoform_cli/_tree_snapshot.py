@@ -1,4 +1,24 @@
-"""Capture one immutable directory-tree generation for internal consumers."""
+"""Capture a directory tree for internal consumers.
+
+With descriptor capture, only the root descriptor is retained: each descended
+directory is opened by name through its parent when it is walked, listed again
+when its walk ends, and reopened the same way by a final verification.
+Captured files are rechecked by their full ``stat`` signature and directories
+by ``(dev, ino, file type)``.  By default every descended directory must also
+keep its full list of names.  A selection with ``unselected_may_change``
+narrows this to what it selects: only selected entries, directories with a
+recognized opaque marker, and the directories that contain them are compared;
+any other directory may change, vanish or be rebuilt, and is only required to
+hold no selected entry or marker when it is listed again.  The contents of a
+directory with a recognized marker are not examined; the marker is rechecked
+by signature and bytes, or only by entry kind for a presence-only marker.
+
+A capture is not one atomic generation.  An entry that is present at a path
+only after the walk last looked at that path (when it listed or relisted the
+parent, or examined the entry) and before verification reached it is not
+seen, so coordinated moves across directories between those checks can yield
+a set of entries that no single state had.
+"""
 
 from __future__ import annotations
 
