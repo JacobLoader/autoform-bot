@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from . import status
-from .article_identity import plan_article_ids
+from .article_identity import ArticleIdWriteError, plan_article_ids, write_article_ids
 from .audit import audit_blueprint
 from .claims import CLAIM_TTL_S, ClaimBoard, ClaimTransportError, author_claim_key
 from .doctor import diagnose_project
@@ -27,6 +27,7 @@ from .project import ProjectCatalogError, ProjectCreateError, create_project, in
 from .render import PublicationError, render_site
 from .runtime import RuntimeProjectionError, load_runtime_graph, resolve_runtime_paths
 from .scaffold import ScaffoldError, scaffold_project
+from .search import SearchError, search_blueprint, statement_preview
 from .skeleton import (
     DEFAULT_PROBE_TIMEOUT,
     SkeletonError,
@@ -204,6 +205,39 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=f"seconds the Lean probe may run (default {DEFAULT_PROBE_TIMEOUT:g}); "
         "the Lake freshness check before it has its own budget",
     )
+    search = subparsers.add_parser(
+        "search", help="find articles by title, Lean name, or statement text before adding one"
+    )
+    search.add_argument("target", help="project root or blueprint directory")
+    search.add_argument(
+        "query",
+        help="one quoted argument; every word, with filler such as 'of' dropped and common endings cut, "
+        "must occur in an article's title, Lean name, path, or statement; put -- before one starting with -",
+    )
+    search.add_argument("--lean-root", type=Path, help="resolve local Lean declaration targets")
+    search.add_argument(
+        "--state",
+        action="append",
+        default=[],
+        dest="states",
+        choices=[state.key for state in status.STATES],
+        metavar="KEY",
+        help="keep articles in exactly this derived state (repeatable): "
+        + ", ".join(state.key for state in status.STATES),
+    )
+    search.add_argument(
+        "--declaration",
+        action="append",
+        default=[],
+        dest="declarations",
+        metavar="KIND",
+        help="keep articles whose frontmatter declaration is KIND: theorem, lemma, def, ... (repeatable)",
+    )
+    search.add_argument(
+        "--limit", type=int, default=20, metavar="N", help="show at most N articles (default 20)"
+    )
+    search.add_argument("--json", action="store_true", help="write stable machine-readable output")
+
     claim = subparsers.add_parser("claim", help="coordinate temporary node ownership through Git refs")
     claim_subparsers = claim.add_subparsers(dest="claim_command", required=True)
     for operation in ("acquire", "renew", "release"):
@@ -219,17 +253,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     claim_cleanup = claim_subparsers.add_parser("cleanup")
     _add_claim_board_arguments(claim_cleanup)
 
-    migrate = subparsers.add_parser("migrate", help="inspect authored migration contracts")
+    migrate = subparsers.add_parser("migrate", help="plan or apply authored migrations")
     migrate_subparsers = migrate.add_subparsers(dest="migrate_command", required=True)
     article_ids = migrate_subparsers.add_parser(
         "article-ids",
-        help="plan durable roadmap article identifiers without writing files",
+        help="plan durable roadmap article identifiers, or add them with --write",
     )
     article_ids.add_argument("blueprint_dir")
-    article_ids.add_argument(
+    article_ids_mode = article_ids.add_mutually_exclusive_group()
+    article_ids_mode.add_argument(
         "--check",
         action="store_true",
         help="fail when an article is missing article_id frontmatter",
+    )
+    article_ids_mode.add_argument(
+        "--write",
+        action="store_true",
+        help="add each planned article_id to the frontmatter of the article missing one",
     )
     article_ids.add_argument("--json", action="store_true", help="write stable machine-readable output")
 
@@ -306,6 +346,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _project(args)
     if args.command == "work":
         return _work(args)
+    if args.command == "search":
+        return _search(args)
     if args.command == "claim":
         return _claim(args)
     if args.command == "migrate":
@@ -660,6 +702,59 @@ def _work(args: argparse.Namespace) -> int:
     return 0
 
 
+def _search(args: argparse.Namespace) -> int:
+    # Only reading the blueprint can fail on the project's paths; printing the
+    # result stays outside, so an output error is not reported as one.
+    try:
+        result = search_blueprint(
+            args.target,
+            args.query,
+            lean_root=args.lean_root,
+            states=args.states,
+            declarations=args.declarations,
+            limit=args.limit,
+        )
+    except (GraphValidationError, RuntimeProjectionError) as error:
+        for issue in error.issues:
+            print(f"error: {_human_text(issue)}", file=sys.stderr)
+        return 2
+    except SearchError as error:
+        print(f"error: {_human_text(error)}", file=sys.stderr)
+        return 2
+    except (OSError, RuntimeError, ValueError):
+        print("error: project, blueprint, or Lean root path cannot be read", file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(result.to_json())
+        return 0
+    if not result.hits:
+        print("No matching articles.")
+        return 0
+    for hit in result.hits:
+        durable = f" [{hit.article_id}]" if hit.article_id else ""
+        print(_human_text(f"{hit.title} ({hit.node_id}){durable}"))
+        summary = [
+            hit.declaration or "no declaration",
+            hit.state,
+            f"used by {hit.used_by_count}",
+        ]
+        if hit.shared_title:
+            summary.append("title shared with another article")
+        print(_human_text("  " + ", ".join(summary)))
+        for target in hit.lean_targets:
+            location = f" ({target.source_file}:{target.line})" if target.source_file else ""
+            print(_human_text(f"  Lean: {target.declaration}{location}"))
+        if hit.mathlib_declarations:
+            print(_human_text("  Mathlib: " + ", ".join(hit.mathlib_declarations)))
+        preview = statement_preview(hit)
+        if preview:
+            print(_human_text(f"  Statement: {preview}"))
+        print("  Matched: " + ", ".join(hit.matched_fields))
+    print(f"{len(result.hits)} of {result.total_matches} matching article(s) shown.")
+    return 0
+
+
 def _work_assumptions(args: argparse.Namespace) -> int:
     # As in `_work`, only loading the roadmap is reported as a path error.
     try:
@@ -852,7 +947,20 @@ def _migrate(args: argparse.Namespace) -> int:
     if args.migrate_command != "article-ids":
         return 2
     try:
+        if args.write:
+            # Beside --json, stdout carries only the plan, so the writes go to stderr.
+            stream = sys.stderr if args.json else sys.stdout
+            for entry in write_article_ids(args.blueprint_dir):
+                print(f"{entry.article_path}: added article_id {entry.article_id}", file=stream)
         plan = plan_article_ids(args.blueprint_dir)
+    except ArticleIdWriteError as error:
+        for entry in error.written:
+            print(f"{entry.article_path}: added article_id {entry.article_id}", file=sys.stderr)
+        for issue in error.issues:
+            print(f"error: {issue}", file=sys.stderr)
+        if error.written:
+            print(f"error: added {len(error.written)} article_id(s) before stopping", file=sys.stderr)
+        return 2
     except GraphValidationError as error:
         for issue in error.issues:
             print(f"error: {issue}", file=sys.stderr)

@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -208,8 +208,11 @@ def project_modules(
     modules: set[str] = set()
     local_modules: set[str] = set()
     for library in libraries:
-        sources = _source_modules(library, snapshot)
+        sources, unimportable = _source_modules(library, snapshot)
         local_modules.update(sources)
+        # A glob also selects modules nothing can import; they are refused
+        # below like any other non-plain name, not dropped.
+        selected = {**unimportable, **sources}
         for glob in library.globs or library.roots:
             base, mode = _glob(glob, library)
             if mode != "+":
@@ -217,12 +220,12 @@ def project_modules(
                     raise SkeletonError([f"lean_lib {library.name}: module {base} has no source file"])
                 modules.add(base)
             if mode:
-                descendants = sorted(module for module in sources if module.startswith(f"{base}."))
+                descendants = sorted(module for module in selected if module.startswith(f"{base}."))
                 for module in descendants:
                     if not all(_MODULE_COMPONENT.fullmatch(part) for part in module.split(".")):
                         raise SkeletonError(
                             [
-                                f"lean_lib {library.name}: cannot import {sources[module].as_posix()}; "
+                                f"lean_lib {library.name}: cannot import {selected[module].as_posix()}; "
                                 "the impact probe supports plain module names only"
                             ]
                         )
@@ -232,14 +235,21 @@ def project_modules(
     return tuple(sorted(modules)), tuple(sorted(local_modules))
 
 
-def _source_modules(library: LeanLibrary, snapshot: IndexedSourceSnapshot) -> dict[str, Path]:
-    """Map source modules to captured repository-relative paths for one library."""
+def _source_modules(
+    library: LeanLibrary, snapshot: IndexedSourceSnapshot
+) -> tuple[dict[str, Path], dict[str, Path]]:
+    """Map source modules to captured repository-relative paths for one library.
+
+    The second map holds sources whose module name would contain ``»``. Lake
+    may build them, but no import can name them, so they are never local.
+    """
 
     try:
         prefix = library.src_dir.relative_to(snapshot.index.root)
     except ValueError as exc:
         raise SkeletonError([f"lean_lib {library.name}: srcDir is outside the captured Lean root"]) from exc
     found: dict[str, Path] = {}
+    unimportable: dict[str, Path] = {}
     for path, _data in snapshot.source_files:
         try:
             relative = path.relative_to(prefix) if prefix.parts else path
@@ -249,7 +259,17 @@ def _source_modules(library: LeanLibrary, snapshot: IndexedSourceSnapshot) -> di
             raise SkeletonError(
                 [f"lean_lib {library.name}: source tree exceeds {_MAX_SOURCE_DEPTH} directory levels"]
             )
-        module = ".".join(relative.with_suffix("").parts)
+        # Not with_suffix(""), which rejects the stem `.` of `..lean` on 3.13.
+        parts = (*relative.parts[:-1], relative.stem)
+        # Quote components that are not plain identifiers, so `Basic copy.lean`
+        # is the module `«Basic copy»` that Lean reports.
+        module = ".".join(part if _MODULE_COMPONENT.fullmatch(part) else f"«{part}»" for part in parts)
+        # A component containing `»` has no quoted spelling, so nothing can
+        # import that module. Quoting it anyway keeps a dotted stem one
+        # component, so a glob selects it exactly when Lake does.
+        if any("»" in part for part in parts):
+            unimportable.setdefault(module, path)
+            continue
         if not module:
             continue
         found.setdefault(module, path)
@@ -257,7 +277,7 @@ def _source_modules(library: LeanLibrary, snapshot: IndexedSourceSnapshot) -> di
             raise SkeletonError(
                 [f"lean_lib {library.name}: source tree exceeds {_MAX_PROJECT_MODULES} Lean modules"]
             )
-    return found
+    return found, unimportable
 
 
 def _module_source_paths(
@@ -267,7 +287,7 @@ def _module_source_paths(
 
     paths: dict[str, str] = {}
     for library in libraries:
-        for module, path in _source_modules(library, snapshot).items():
+        for module, path in _source_modules(library, snapshot)[0].items():
             paths.setdefault(module, path.as_posix())
     return paths
 
@@ -709,29 +729,22 @@ def _owners(
 ) -> tuple[str, ...]:
     """Every article naming the nearest ``parent`` ancestor of ``record``."""
 
-    seen: set[str] = set()
-    parent = record.parent
-    while parent is not None and parent not in seen:
+    for parent in _ancestors(record, records):
         if parent in named:
             return tuple(sorted(set(named[parent])))
-        seen.add(parent)
-        ancestor = records.get(parent)
-        parent = ancestor.parent if ancestor is not None else None
     return ()
 
 
-def _descends_from(record: ConstantRecord, ancestor: str, records: Mapping[str, ConstantRecord]) -> bool:
-    """Whether ``ancestor`` is on the ``parent`` chain of ``record``."""
+def _ancestors(record: ConstantRecord, records: Mapping[str, ConstantRecord]) -> Iterator[str]:
+    """The ``parent`` chain of ``record``, nearest first, stopping where it repeats."""
 
     seen: set[str] = set()
     parent = record.parent
     while parent is not None and parent not in seen:
-        if parent == ancestor:
-            return True
+        yield parent
         seen.add(parent)
         ancestor_record = records.get(parent)
         parent = ancestor_record.parent if ancestor_record is not None else None
-    return False
 
 
 def _reaches(
@@ -776,7 +789,7 @@ def _users_through_internal(
             continue
         seen.add(user)
         further = users.get(user, set()) - {user}
-        if records[user].internal and (further or _descends_from(records[user], name, records)):
+        if records[user].internal and (further or name in _ancestors(records[user], records)):
             work.extend(sorted(further))
         else:
             found.add(user)
@@ -885,13 +898,13 @@ def _locator(
     """Locate a constant through one captured index, else by its captured module path."""
 
     def locate(record: ConstantRecord) -> tuple[str | None, int | None]:
-        module_path = module_paths.get(record.module)
+        module_path = module_paths.get(_name_key(record.module))
         declaration = snapshot.index.find(record.user_name or record.name)
         if declaration is not None and module_path in (None, declaration.path.as_posix()):
             return declaration.path.as_posix(), declaration.line
         return module_path, None
 
-    module_paths = _module_source_paths(libraries, snapshot)
+    module_paths = {_name_key(module): path for module, path in _module_source_paths(libraries, snapshot).items()}
     return locate
 
 

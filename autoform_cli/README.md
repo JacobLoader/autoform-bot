@@ -57,6 +57,21 @@ State the intended result and proof sketch here.
 - [Chapter 2](../../sources/convexity.md#separation)
 ```
 
+An article's statement is its body from the end of the frontmatter to the first
+`##` heading, without the H1 line. A deeper heading does not end it, and neither
+does a `##` line inside a fenced code block or an HTML comment. `autoform audit`
+and the published theorem box both read that span. A fence closes only on a
+bare fence line. A fence that never closes is read as plain text when its
+article is inspected alone, so it hides no heading or dependency link there,
+but on a chapter page it can pair with a later article's closing fence and hide
+everything between them. The audit reports a fence with no closing line as
+`unclosed-code-fence`. A later bare fence line of the same character and at
+least the opener's length closes it here, though the page asks for the opener's
+exact length and indent, so close each fence with its own line. The page can
+also pair an unclosed backtick fence line with a later backtick run in the same
+paragraph and show the text between them as inline code; a link there is not a
+link on the page but is still read as a dependency.
+
 `## Depends on` lists what the article needs in order to be *stated*;
 `## Proof depends on` lists what only its *proof* needs. Both are graph edges.
 Links anywhere else are ordinary navigation or citations. Dependencies resolve
@@ -627,8 +642,8 @@ worktree or a submodule. Blockers are unmet dependency IDs or one of
 `roadmap:not-a-formalizable-leaf`, `roadmap:missing-article-id`,
 `roadmap:missing-article-revision`, and `roadmap:not-ready`. The claim target
 prefers durable `article_id` metadata. `work list` fails explicitly if an
-unfinished formalizable leaf lacks one; plan the missing IDs with `autoform
-migrate article-ids` and add them to the frontmatter. `work context` may still
+unfinished formalizable leaf lacks one; add the missing IDs with `autoform
+migrate article-ids --write`. `work context` may still
 select that article by its path ID to
 report the migration blocker. An item whose article records `statement:
 retracted` is a revision: it carries `revision` true in JSON, and the text of
@@ -710,18 +725,38 @@ or sandbox. It compares elaborated types and values; changes to notation,
 attributes, instance priority, or unreported generated declarations still
 require human review.
 
-Plan durable article identity metadata without changing the blueprint:
+Ask whether the blueprint already holds a result before adding an article or
+a Lean helper:
+
+```bash
+autoform search . "separating hyperplane" --lean-root .
+autoform search . "non-ambiguous" --lean-root . --json --limit 20
+autoform search blueprint "interlacing" --state proved --state fully_proved
+```
+
+`search` takes the project or blueprint directory, then one quoted query; both
+are required. A query that starts with `-` goes last, after `--`. It exits 0
+with or without hits. See the [search contract](#search-contract).
+
+Plan durable article identity metadata, and add it:
 
 ```bash
 autoform migrate article-ids blueprint --json
 autoform migrate article-ids blueprint --check
+autoform migrate article-ids blueprint --write
 ```
 
 `article_id` accepts opaque values in the form `af_` plus 24 lowercase hex
 digits. The planner validates uniqueness, proposes deterministic IDs for
-missing articles, includes exact source hashes, and is strictly read-only.
-Runtime v3 and `autoform work` expose assigned IDs immediately; applying plans
-and preserving publication routes across path moves remain follow-up changes.
+missing articles, and includes exact source hashes; without `--write` it is
+strictly read-only. `--write` adds each planned ID as the first frontmatter
+line of the article that lacks one, or as a frontmatter block of its own, and
+changes nothing else. It writes an article only while its bytes still have
+the planned hash, checks every article before writing the first, and refuses
+an article that changed or became a symlink after planning; after such a
+refusal, running it again completes the plan. Runtime v3 and
+`autoform work` expose assigned IDs immediately; preserving publication routes
+across path moves remains a follow-up change.
 
 Coordinate temporary cross-machine ownership without modifying the book:
 
@@ -785,8 +820,9 @@ example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml).
 
 ## Validation
 
-`autoform check` rejects cycles, missing targets, escaping paths,
-self-dependencies, cycles introduced at any rolled-up containment level,
+`autoform check` rejects cycles, missing targets, escaping paths, symbolic
+links anywhere under `roadmap/`, self-dependencies, cycles introduced at any
+rolled-up containment level,
 missing or multiple H1 titles, unsupported frontmatter keys, assertion values
 it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
@@ -814,8 +850,10 @@ that may be regenerated at any time.
 ## Audit contract
 
 `autoform audit` reports structured findings at blueprint-relative paths. It
-checks that formalizable articles are declaration-sized leaves with statement
-text and an explicit dependency section, that asserted Mathlib facts are
+checks that no article leaves a code fence open, that formalizable articles are
+declaration-sized leaves with statement text (prose in the statement, outside
+code blocks, HTML comments, and headings) and an explicit dependency section,
+that asserted Mathlib facts are
 internally consistent, and that cited work resolves to local source
 material without escaping the blueprint. Coverage files are checked for broken
 links and explicitly declared gaps. With `--lean-root`, local declaration names
@@ -856,6 +894,114 @@ rejected on that evidence.
 The audit API also accepts an already compiled graph. Formalize may use its
 findings while working the Markdown frontier, but the audit itself never
 enqueues work, stamps articles, or creates another graph artifact.
+
+### Statement text
+
+A formalizable article must state its result in prose a reader sees. At most
+one of three findings reports a statement that does not, checked in this order:
+
+- `missing-statement-text`: the statement has no prose outside code blocks, HTML
+  comments, and headings.
+- `empty-statement-text`: the published prose has no letter or digit, as with a
+  hidden element, a horizontal rule, an image, or a link with no text.
+- `placeholder-statement-text`: every word is one of `pending`, `placeholder`,
+  `todo`, `tbd`, `unknown`, or the statement opens with one of them followed by
+  a colon or a dash, as in `TODO: state it`. A single hyphen or en dash counts
+  only with a space after it, so `Unknown-variance` is a word.
+
+The prose is read as the site publishes it, without headings, code blocks, and
+diagrams; inline code and mathematics count. A status word that begins a
+sentence passes ("Pending Mathlib PR 1234 ..."), and so does a marker written
+without punctuation; both are left to review. A real statement that opens
+`Unknown: ...` or `Pending: ...` is reported and needs rewording, and so does
+one written in symbols alone, such as `⊥ ≠ ⊤.`, which has no letter or digit.
+A reference-style link is read
+without its definition when that sits in a later section. Coverage evidence is
+held to the same placeholder rule.
+
+## Search contract
+
+`autoform search` is a read-only projection of Markdown: it writes nothing,
+keeps no index, and starts no process. The query splits on whitespace into
+terms. Words that carry no meaning (`a`, `an`, `and`, `are`, `as`, `at`, `be`,
+`by`, `can`, `do`, `does`, `for`, `from`, `has`, `have`, `if`, `in`, `is`,
+`it`, `its`, `let`, `of`, `on`, `or`, `such`, `that`, `the`, `then`, `there`,
+`these`, `this`, `to`, `we`, `when`, `where`, `which`, `whose`, `with`) are
+dropped unless the query has no other word; `not`, `every`, and `exists` are
+kept. A term sheds surrounding sentence punctuation, quotation marks,
+backticks, `$`, emphasis marks that wrap it on both sides, and parentheses
+around it, in any combination, but keeps a parenthesis that closes one inside
+it, as in `f(x)`, and keeps square brackets. A word of letters only also sheds a
+final `ing`, `ed`, `es`, or `s`, with the `i` of `-ies` and a doubled last
+letter, when four letters remain and it does not end in `ss`, `us`, or `is`,
+and a final `y` after a consonant when five remain: `recovered`, `topologies`,
+and `topology` are searched as `recover`, `topolog`, and `topolog`. Only the
+query is shortened, so a form that does not begin with the shortened word
+finds nothing: `indices` does not find `index`, `mapping` `map`, `sets` `set`,
+`bodies` `body`, nor `define` `defining`. A name with a dot, underscore, or
+digit is searched exactly. `terms` in the JSON
+shows what was searched. An article is a hit
+when every term is a substring of one of its fields; terms may sit in
+different fields. Both sides are folded first: case,
+width, accents and other combining marks on letters, typographic dashes and
+quotes, and invisible characters do not matter. Fields, best
+first: `title`; `lean` (the last component of each `lean:` and
+`mathlib_declaration` name, and a term that is the whole name or its last
+components, as `Convex.separation` is of `Project.Convex.separation`, with or
+without `_root_.` and `«»`; a prime, `?`, or `!` ending a name is not compared,
+so `Project.foo` is also a `lean` match for `Project.foo'`); `node_id` (the
+last component of the path ID);
+`statement_text`; `ancestors` (titles of containing articles below the roadmap
+root); `qualified_names` (the path ID and Lean names in full, which is where a
+namespace alone matches). A title is
+matched as the page shows it, without its Markdown markup. The statement is
+matched as the site publishes it, without headings, code blocks, diagrams,
+comments, and elements carrying `hidden`; inline code and mathematics count,
+and published mathematics is delimited `\(...\)`, so search for a formula's
+content. Other frontmatter and the sections after the statement are not
+searched. There is no phrase search and no synonym or prefix handling: `map`
+matches `roadmap`, `unambiguous` does not match `non-ambiguous`, and one
+absent term means no hit, so query with a few distinctive words or one exact
+Lean name, and retry with fewer words before treating a result as new.
+A symbol such as `ℝ` folds to its plain letter, and a one-letter term matches
+nearly every article.
+
+Hits sort by the best field any term matched. Among hits with the same best
+field, those that contain every word as typed, in any field, come before those
+reached only through a shortened word; then by the weakest field any term
+needed, then more dependents first, then node ID.
+
+`--state` takes exact derived state keys, which `autoform search --help` lists
+(`proved` does not include `fully_proved`), and `--declaration` frontmatter
+`declaration` kinds, each repeatable; they apply before `total_matches` is
+counted and `--limit` (default 20) after. `--declaration def` also keeps
+`noncomputable def`, but not `definition`. A kind that no article in the
+blueprint declares is refused with exit code 2 and the kinds in use, rather
+than answered with no hits.
+
+`--json` writes `autoform-search/v1`: `schema`, `source_revision`,
+`open_statements`, `query`, `terms`, `filters` (`declaration` and `state`,
+each a list), `limit`, `total_matches`, and
+`hits`, with no timestamp and no path outside the project. A hit carries
+`node_id`, `article_id`, `article_path`, `article_revision`, `title`,
+`declaration`, `state`, `statement_text` (the authored Markdown),
+`lean_targets` (all of them), `mathlib`, `mathlib_declarations`,
+`mathlib_file`, `source_targets` (as the article writes them), `used_by`,
+`used_by_count`, `shared_title`, and `matched_fields`; `article_id`,
+`declaration`, and `mathlib_file` may be null. A Lean target has `declaration`,
+`source_file` (relative to `--lean-root`), and `line`; the last two are null
+without `--lean-root` or when the lexical scan does not find the name.
+`used_by` holds the first ten dependents by node ID, through statement or
+proof; `used_by_count` counts all. `shared_title` marks a title another article
+repeats and is advisory. `matched_fields` lists, best first and once each, the
+fields in which some term found its best match; it does not say which term.
+No hit is `"hits":[]` with exit 0. Human output shortens the statement, omits
+sources and dependent names, and is not a contract.
+
+Search rereads each article it matches against and refuses, with exit 2, bytes
+other than those the graph was built from, as it refuses a symlinked roadmap
+entry. Each call reads every such article and renders its statement, so its
+cost grows with the blueprint.
 
 ## Open statements
 
@@ -927,7 +1073,8 @@ article, which assumes nothing, may reach none), a `lean:` name missing from the
 build, and an open statement that its article records as proved. Each article
 declaration gets at most one of these status lines, with `NAME` the declaration
 and `ID` the article's node ID. A declaration with an error, or one that
-reaches a failed declaration, gets none of them:
+reaches a failed declaration, gets none of them, and no declaration gets one
+when the kernel replay fails:
 
 ```text
 open statement (proof is sorry): NAME [ID]
@@ -950,18 +1097,63 @@ outside the root package and is unsafe or partial` or `NAME [ID] is outside the
 root package and depends on unexpected axiom AX`. The open-statement audit
 reports `sorryAx` there as `NAME [ID] is outside the root package and depends
 on sorry`. And both replay every root-package declaration through the kernel
-on top of a fresh import of the modules outside the root package, because
-`collectAxioms` trusts whatever the environment holds and a root `run_cmd` can
-add a declaration with kernel checking off. A declaration the kernel rejects
-fails with `kernel replay of the root package failed: ...`, which names the
-first one; the workflow's scan for the kernel-check bypass option is only
-lexical.
+on top of a fresh import of the modules outside the root package, because the
+build's `.olean` files can hold anything and a root `run_cmd` can add a
+declaration with kernel checking off. The replay runs only once every other
+check has passed: replaying a declaration that reaches `Lean.reduceBool` or
+`Lean.reduceNat` runs compiled project code, and the axiom check rejects every
+such declaration, since both depend on `Lean.trustCompiler`. Until then the
+audit logs `kernel replay of the root package skipped: it runs once every other
+check passes`. A declaration the kernel rejects fails with `kernel replay of the
+root package failed: ...`, which names the first one; the workflow's scan for
+the kernel-check bypass option is only lexical.
 
-The replay does not cover build-time IO. A root module's initializer or
-`run_cmd` runs during `lake build`, and its initializers run again when the
-probe imports it, so it can rewrite the audit script, the workflow's inputs, or
-the blueprint before the audit reads them. Closing that needs a separate audit
-job that runs no project code; the generated workflow does not have one.
+The probe runs no project code. Its header imports only the toolchain's Lean,
+and the workflow runs it with plain `lean`, not `lake env lean`, passing the
+project's search path in `AUTOFORM_AUDIT_LEAN_PATH`. The probe refuses to run
+when that variable is unset or when `LEAN_PATH` is set. It loads the
+root-package modules as data, with the toolchain's library first on the search
+path and no environment extensions, so no `initialize` block runs and no project
+instance, macro, or elaborator applies to the probe's own code. It finds each
+declaration's axioms by walking types and values itself, not from the axiom
+tables the `.olean` files store, and counts a name that no module declares as an
+axiom, which fails with `NAME depends on X, which no module of the build
+declares`, or for a `lean:` name outside the root package with `NAME [ID] is
+outside the root package and depends on X, which no module of the build
+declares`. The walk takes a mutual inductive block as one node, so each type and
+constructor of the block gets the axioms of the whole block. It imports the
+toolchain's `Init` along with the build, so a build that declares a core name of
+its own, such as `propext`, fails to load with `environment already contains
+'propext'` instead of passing the axiom allowlist, which compares names. Lean
+does let a theorem stand in for another module's axiom of the same name and
+type, which the module system relies on, so a theorem restating an axiom such as
+`Lean.trustCompiler`, whose type is `True`, fails with `M declares a theorem N
+in place of the axiom K declares; rename one of them so the audit can run`. A
+root module whose first component names an entry of the toolchain's library,
+such as `Lean.Hack`, would be looked up in the toolchain's library, where it
+fails to load or a toolchain module of the same name stands in for it, so the
+audit refuses it with `root module M shares its first component R with the
+toolchain's library; rename the module so the audit can run`. Lean loads a
+module from the first search-path entry that holds its first component, and Lake
+lists dependency libraries before the root package's, so a dependency library
+that also provides a root module's first component could stand in for the root
+package's files. The audit refuses that with `root module M shares its first
+component R with another library on the search path; rename the module so the
+audit can run`. The workflow runs the probe with `LEAN_ABORT_ON_PANIC=1`, so a
+panic stops it instead of letting it continue with a default value. It also
+requires the probe's success line as its last line, so a probe that stops early
+fails the step even when it exits 0.
+
+The audit does not cover build-time IO. `lake build` runs root and dependency
+code, and the Lake configuration, on the same runner before the audit, so that
+code can rewrite the audit script, the toolchain, the workflow's inputs, or the
+blueprint before the audit reads them. The audit also does not defend against a
+malicious dependency at build time, edits to the workflow, or crafted `.olean`
+bytes. Closing those needs a separate audit job that runs no project code; the
+generated workflow does not have one. The project's `lean-toolchain` chooses
+the Lean that builds the project and runs the probe: the workflow installs elan
+with `--default-toolchain none`, and elan installs any toolchain the file names,
+including a fork on GitHub, so the audit trusts that toolchain too.
 
 `autoform init` writes `.github/CODEOWNERS.autoform.example`. GitHub ignores
 that filename, so the example cannot mask or replace a repository's active
@@ -996,7 +1188,9 @@ audit without the `lean:` name check, as earlier workflows did. Any other
 failure there, such as a failed fetch, fails the step. An older workflow runs
 the strict audit, which rejects every `sorry`. A newer
 `.github/autoform_audit.py` keeps the older workflow's three-argument form,
-which runs the strict audit without the `lean:` name check.
+which runs the strict audit without the `lean:` name check. Its probe refuses
+to run under an older workflow's `lake env lean`, so replace the two files
+together.
 
 To reproduce the CI audit locally after a build, with `ROOT_PACKAGE` the Lake
 package name the workflow reads from `lake translate-config toml`, and
@@ -1008,7 +1202,8 @@ lake pack /tmp/autoform-root.tgz
 autoform work assumptions blueprint --json > /tmp/autoform-assumptions.json
 python3 .github/autoform_audit.py --open-statements /tmp/autoform-assumptions.json \
   ROOT_PACKAGE /tmp/autoform-root.tgz /tmp/autoform-probe.lean
-lake env lean /tmp/autoform-probe.lean
+AUTOFORM_AUDIT_LEAN_PATH="$(lake env printenv LEAN_PATH)" LEAN_ABORT_ON_PANIC=1 \
+  lean /tmp/autoform-probe.lean
 ```
 
 ## Claim contract
