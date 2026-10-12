@@ -320,11 +320,15 @@ def render_site(
     if requested_destination.is_symlink():
         raise PublicationError(["refusing symlink output directory"])
     destination = requested_destination.resolve()
-    if _is_within(destination, blueprint) or _is_within(blueprint, destination):
+    if (
+        _is_within(destination, blueprint)
+        or _is_within(blueprint, destination)
+        or _reaches(destination, blueprint)
+    ):
         raise PublicationError(
             ["blueprint and output directories must be disjoint; refusing destructive render"]
         )
-    _recover_backup(destination)
+    recovered = _recover_backup(destination)
     snapshot = _capture_blueprint(blueprint)
     # The repository root, not the vault's parent. A blueprint nested at
     # <repo>/docs/blueprint would otherwise be described as <repo>/blueprint,
@@ -388,6 +392,7 @@ def render_site(
                 lean_source_revision=lean.revision,
             ),
         )
+    report.warnings[:0] = recovered
     if repository_url and ref and commit is None:
         report.warnings.append(
             "repository links were omitted because the captured blueprint and Lean inputs "
@@ -807,12 +812,7 @@ def _publish(
                 kept_note = f", and {kept} may hold the previous site" if kept else ""
                 raise PublicationError([f"{message}; nothing was deleted{kept_note}"]) from error
         if expected is not None:  # the replaced site now sits at the stage's name
-            try:
-                if _destination_state(stage) != expected:
-                    raise PublicationError(["it changed during the commit"])
-                _remove_tree(stage)
-            except (OSError, PublicationError) as error:
-                report.warnings.append(f"the previous site was kept at {stage}: {error}")
+            report.warnings.extend(_retire(stage, expected))
         report.output_dir = destination
         return report
     finally:
@@ -902,29 +902,48 @@ def _backup(destination: Path) -> Path:
     return destination.with_name(f"{_STAGE_PREFIX}backup-{destination.name}")
 
 
-def _recover_backup(destination: Path) -> None:
+def _recover_backup(destination: Path) -> list[str]:
     """Finish a two-rename replacement that a killed render left half done.
 
     Beside a missing or empty output the backup is the site, so it goes back;
     beside an exact site it is the replaced one, so it goes. Anything else is
-    left for the user.
+    left for the user. Returns warnings for the report.
     """
     backup = _backup(destination)
     if not os.path.lexists(backup):
-        return
+        return []
     with _locked_parent(destination.parent):
         try:
             state = _destination_state(destination)
             if state is None or not state[1]:
                 os.rename(backup, destination)  # also replaces an empty directory
-            elif _destination_state(backup) is not None:
-                retired = destination.with_name(f"{_STAGE_PREFIX}{secrets.token_hex(8)}")
-                os.rename(backup, retired)
-                _remove_tree(retired)
+                return []
+            replaced = _destination_state(backup)
+            if replaced is None:
+                return []
+            retired = destination.with_name(f"{_STAGE_PREFIX}{secrets.token_hex(8)}")
+            os.rename(backup, retired)
         except (OSError, PublicationError) as error:
             raise PublicationError(
                 [f"could not recover the previous site at {backup}: {error}; restore or remove it by hand"]
             ) from error
+    return _retire(retired, replaced)
+
+
+def _retire(site: Path, expected: _State) -> list[str]:
+    """Delete a replaced site that still equals *expected*; otherwise say where it is."""
+    try:
+        unchanged = _destination_state(site) == expected
+    except (OSError, PublicationError):
+        unchanged = False
+    if not unchanged:
+        return [f"the previous site was kept at {site}: it changed during the commit"]
+    try:
+        _remove_tree(site)
+    except OSError as error:
+        reason = error.strerror or error
+        return [f"the previous site at {site} was only partly deleted: {reason}; remove the rest by hand"]
+    return []
 
 
 def _identity(path: Path) -> tuple[int, int] | None:
@@ -951,7 +970,8 @@ def _remove_tree(path: Path) -> None:
     """Delete a site or stage, its ``publication.json`` last.
 
     Until then a leftover of an interrupted deletion still carries the marker
-    that keeps Lean walks out of it.
+    that keeps Lean walks out of it. The root itself goes with rmdir, so a file
+    saved into it meanwhile stops the deletion instead of being lost.
     """
     with os.scandir(path) as entries:
         children = [entry for entry in entries if entry.name != PUBLICATION_MANIFEST]
@@ -960,7 +980,9 @@ def _remove_tree(path: Path) -> None:
             shutil.rmtree(child.path)
         else:
             os.unlink(child.path)
-    shutil.rmtree(path)
+    with suppress(FileNotFoundError):  # a stage that failed early has none
+        os.unlink(path / PUBLICATION_MANIFEST)
+    os.rmdir(path)
 
 
 def _sources_base(blueprint: Path, repo_root: Path, linker: SourceLinker) -> "_SourceBase | None":
@@ -1907,6 +1929,26 @@ def _is_within(path: Path, directory: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _reaches(path: Path, directory: Path) -> bool:
+    """Whether *path* lies inside *directory* under another spelling.
+
+    A case- or normalization-insensitive filesystem opens ``BLUEPRINT/site``
+    inside ``blueprint`` although the two paths differ, so compare identities.
+    """
+    try:
+        target = os.stat(directory)
+    except OSError:
+        return False
+    for candidate in (path, *path.parents):
+        try:
+            metadata = os.stat(candidate)
+        except OSError:
+            continue
+        if (metadata.st_dev, metadata.st_ino) == (target.st_dev, target.st_ino):
+            return True
+    return False
 
 
 def _outside_fences(text: str, transform) -> str:

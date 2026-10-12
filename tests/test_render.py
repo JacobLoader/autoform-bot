@@ -1796,6 +1796,62 @@ def test_the_next_render_finishes_an_interrupted_backup_commit(tmp_path: Path) -
     assert (backup / "README.md").read_text(encoding="utf-8") == "edited\n" and _tree(output) == site
 
 
+def test_a_partly_deleted_backup_does_not_block_the_render(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, output, site = _published(tmp_path)
+    shutil.copytree(output, render_module._backup(output))  # killed after the second rename
+    remove_tree = render_module._remove_tree
+    removed: list[Path] = []
+
+    def busy_once(path: Path) -> None:
+        removed.append(path)
+        if len(removed) == 1:  # the retired backup
+            raise OSError(errno.EBUSY, os.strerror(errno.EBUSY))
+        remove_tree(path)
+
+    monkeypatch.setattr(render_module, "_remove_tree", busy_once)
+    report = render_site(project / "blueprint", output, lean_root=project)
+
+    assert (
+        f"the previous site at {removed[0]} was only partly deleted: {os.strerror(errno.EBUSY)}; "
+        "remove the rest by hand"
+    ) in report.warnings
+    assert _tree(output) == site
+
+
+def test_a_file_saved_into_the_replaced_site_during_deletion_is_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, output, _site = _published(tmp_path)
+    rmtree = shutil.rmtree
+    saved: list[Path] = []
+
+    def save_meanwhile(path, *args, **kwargs) -> None:  # an editor whose cwd was the old output
+        rmtree(path, *args, **kwargs)
+        parent = Path(path).parent
+        if not saved and parent.name.startswith(render_module._STAGE_PREFIX):
+            saved.append(parent / "notes.md")
+            saved[0].write_text("draft\n", encoding="utf-8")
+
+    monkeypatch.setattr(render_module.shutil, "rmtree", save_meanwhile)
+    report = render_site(project / "blueprint", output, lean_root=project)
+
+    assert saved[0].read_text(encoding="utf-8") == "draft\n"
+    assert any(f"{saved[0].parent} was only partly deleted" in warning for warning in report.warnings)
+
+
+def test_an_output_inside_the_vault_under_another_spelling_is_refused(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    if not (project / "BLUEPRINT").is_dir():
+        pytest.skip("filesystem is case-sensitive")
+
+    with pytest.raises(PublicationError, match="must be disjoint"):
+        render_site(project / "blueprint", project / "BLUEPRINT" / "site", lean_root=project)
+
+    assert not (project / "blueprint" / "site").exists()
+
+
 def test_a_capable_filesystem_swaps_the_site_in_one_step(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
