@@ -79,7 +79,7 @@ def test_diagram_colours_and_shapes_follow_derived_status(tmp_path: Path) -> Non
     document = export_graph(blueprint).read_text(encoding="utf-8")
 
     # Fine nodes are collapsed; status counts remain visible on the scope.
-    assert 'n0["Roadmap<br/><small>2 items · 2 fully proved</small>"]:::scope' in document
+    assert 'n0["Roadmap<br/><small>2 items · 2 fully proved</small>"]:::scope_complete' in document
     # The vault copy carries its palette inline; Obsidian has no init script.
     assert f"classDef fully_proved fill:{_state('fully_proved').fill}" in document
     assert '<span class="bp-swatch bp-swatch-fully_proved">' in document

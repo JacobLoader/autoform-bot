@@ -7,6 +7,7 @@ import pytest
 
 import autoform_cli.audit as audit_module
 from autoform_cli.audit import audit_blueprint
+from autoform_cli.graph import load_graph
 from autoform_cli.lean import LeanSourceError
 
 
@@ -1025,9 +1026,72 @@ def test_audit_reports_one_statement_finding_at_a_time(tmp_path: Path) -> None:
     assert _statement_codes(tmp_path, "<!-- TODO -->") == {"missing-statement-text"}
 
 
-def test_a_statement_the_site_publishes_from_a_fence_that_never_closes_is_not_missing(tmp_path: Path) -> None:
-    assert _statement_codes(tmp_path, "```\nFor all n, P(n) holds.") == set()
-    assert _statement_codes(tmp_path, "```\nTODO") == {"placeholder-statement-text"}
+def test_a_statement_from_a_fence_that_never_closes_keeps_its_statement_finding(tmp_path: Path) -> None:
+    assert _statement_codes(tmp_path, "```\nFor all n, P(n) holds.") == {"unclosed-code-fence"}
+    assert _statement_codes(tmp_path, "```\nTODO") == {
+        "placeholder-statement-text",
+        "unclosed-code-fence",
+    }
+
+
+def test_audit_reports_an_unclosed_code_fence(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    path = _article(blueprint, "chapter/result.md", declaration="theorem")
+    path.write_text(path.read_text(encoding="utf-8") + "\n```lean\n#check result\n", encoding="utf-8")
+
+    assert _finding_map(blueprint)["roadmap/chapter/result.md"] == [
+        ("unclosed-code-fence", "code fence opened on line 13 never closes")
+    ]
+
+
+def test_audit_reports_an_unclosed_code_fence_in_a_chapter_article(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    _article(blueprint, "chapter/result.md", declaration="theorem")
+    readme = blueprint / "roadmap" / "chapter" / "README.md"
+    readme.write_text("# Chapter\n\n```text\nsketch\n", encoding="utf-8")
+
+    assert ("unclosed-code-fence", "code fence opened on line 3 never closes") in _finding_map(blueprint)[
+        "roadmap/chapter/README.md"
+    ]
+
+
+def test_audit_does_not_treat_inline_backticks_as_a_fence(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    path = _article(blueprint, "chapter/result.md", declaration="theorem")
+    path.write_text(path.read_text(encoding="utf-8") + "\n```x``` is inline code here.\n", encoding="utf-8")
+
+    codes = {
+        code
+        for code, _reason in _finding_map(blueprint).get(path.relative_to(blueprint).as_posix(), [])
+    }
+    assert "unclosed-code-fence" not in codes
+
+
+def test_audit_graph_does_not_reread_an_article_for_fences(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    path = _article(blueprint, "chapter/result.md", declaration="theorem")
+    graph = load_graph(blueprint)
+    path.unlink()
+
+    result = audit_module.audit_graph(graph)
+
+    assert "unclosed-code-fence" not in {finding.code for finding in result.findings}
+
+
+def test_audit_ignores_fence_like_text_in_frontmatter(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    path = _article(blueprint, "chapter/result.md", declaration="theorem")
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace("---\n", "---\n# <!-- ```draft\n", 1), encoding="utf-8")
+
+    codes = {finding.code for finding in audit_blueprint(blueprint).findings}
+
+    assert "unclosed-code-fence" not in codes
 
 
 def test_statement_findings_say_what_is_wrong(tmp_path: Path) -> None:
@@ -1062,9 +1126,14 @@ def test_audit_leaves_a_placeholder_alone_outside_formalizable_articles(tmp_path
     assert "roadmap/chapter/README.md" not in _finding_map(blueprint)
 
 
-def test_bundled_example_has_no_statement_text_finding(repo_root: Path) -> None:
+def test_bundled_example_has_no_statement_or_unclosed_fence_finding(repo_root: Path) -> None:
     blueprint = repo_root / "skills" / "setup" / "assets" / "cabannes-thesis-project" / "blueprint"
 
     codes = {finding.code for finding in audit_blueprint(blueprint).findings}
 
-    assert not codes & {"missing-statement-text", "empty-statement-text", "placeholder-statement-text"}
+    assert not codes & {
+        "missing-statement-text",
+        "empty-statement-text",
+        "placeholder-statement-text",
+        "unclosed-code-fence",
+    }

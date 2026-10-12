@@ -253,7 +253,7 @@ def test_roadmap_root_dependencies_have_nodes_in_every_view(
     assert {(edge.source, edge.target) for edge in complete.edges} == {(source, target)}
     chapter_node = next(node for node in complete.nodes if node.id == "chapter")
     assert chapter_node.kind == "scope"
-    assert chapter_node.members == ("chapter", "chapter/result")
+    assert chapter_node.members == ("chapter",)
     assert chapter_node.status_key == statuses["chapter/result"].key
 
 

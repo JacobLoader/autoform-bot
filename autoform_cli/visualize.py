@@ -93,6 +93,9 @@ def export_graph(
     graph = load_graph(blueprint_dir)
     statuses = status.derive(graph)
     view = graph_views.project_view(graph, statuses)
+    # A scope's members are only its formalization targets, so a scope without
+    # a README page links to its first article of any kind instead.
+    groups = graph_views.group_nodes(graph)
     links = {}
     for node in view.nodes:
         scope = node.id.removeprefix("scope:")
@@ -101,8 +104,9 @@ def export_graph(
             if scope == "roadmap"
             else blueprint_dir / "roadmap" / scope / "README.md"
         )
-        if not target.is_file() and node.members:
-            target = graph.nodes[node.members[0]].path
+        articles = groups.get(scope, ())
+        if not target.is_file() and articles:
+            target = graph.nodes[articles[0]].path
         links[node.id] = mermaid.relative_link(target, destination, link_extension)
     diagram = mermaid.render_view_diagram(view, links=links)
     legend = mermaid.render_legend(_target_statuses(graph, statuses))

@@ -165,7 +165,7 @@ def _atlas_positions(view: GraphView) -> dict[str, dict[str, int]]:
     gap = 14
 
     def diameter(node: ViewNode) -> int:
-        count = max(1, len(node.members))
+        count = max(1, node.item_count)
         if node.kind == "scope":
             return max(92, min(164, round(72 + 11 * math.log2(count + 1))))
         if node.kind == "boundary":
@@ -318,7 +318,9 @@ def write_payload(
                 "kind": node.kind,
                 "layout": layout,
                 "lean": node.lean,
-                "member_count": len(node.members),
+                # The items the status counts add up to, so a scope's
+                # "N items" header agrees with the rows beneath it.
+                "member_count": node.item_count,
                 "rank": layout["rank"],
                 "row": layout["row"],
                 "status": status_key,

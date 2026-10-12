@@ -201,7 +201,7 @@ def test_high_level_topics_use_a_weighted_knowledge_atlas(tmp_path: Path) -> Non
             title=f"Chapter {index}",
             kind="scope",
             members=tuple(f"chapter-{index}/item-{item}" for item in range(index + 1)),
-            status_counts=(("planned", 1),),
+            status_counts=(("planned", index + 1),),
             status_key="planned",
             area="Foundations" if index < 10 else "Applications",
         )

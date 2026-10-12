@@ -43,7 +43,7 @@ from .markdown import article_parts
 from .status import is_definition
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
-_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+_FENCE = re.compile(r"^ {0,3}(`{3,}(?=[^`]*$)|~{3,})")
 # A link label may itself contain a closing bracket, most commonly inside
 # inline mathematical code such as ``[0,1]^n``.  Only ``](`` closes the label.
 _LINK_LABEL_PART = r"(?:[^\]]|\](?!\())"

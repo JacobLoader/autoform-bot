@@ -85,7 +85,7 @@ def write_graph_pages(
     dag_viewer.write_search_index(search_index, complete, context_links=context_links)
 
     project = project_view(graph, statuses)
-    project_item_count = sum(len(node_ids) for node_ids in groups.values())
+    project_item_count = sum(node.item_count for node in project.nodes)
     project_book_links = node_links(project_page, _article_link_ids(project))
     project_links = {
         view_node.id: (
@@ -109,7 +109,7 @@ def write_graph_pages(
             links=project_links,
             heading="Mathematics atlas",
             lead=(
-                f"{project_item_count} roadmap entr{'y' if project_item_count == 1 else 'ies'} across "
+                f"{project_item_count} item{'s' if project_item_count != 1 else ''} across "
                 f"{len(groups)} chapter{'s' if len(groups) != 1 else ''}."
             ),
             navigation="",

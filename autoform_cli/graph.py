@@ -239,7 +239,10 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
     if issues:
         raise GraphValidationError(issues)
 
-    parents = _article_parents(parsed)
+    parents = _article_parents(parsed, blueprint / "roadmap")
+    issues.extend(_containment_cycles(parents))
+    if issues:
+        raise GraphValidationError(issues)
     nodes: dict[str, Node] = {}
     for parsed_node in parsed:
 
@@ -398,6 +401,12 @@ def _discover_nodes(blueprint: Path) -> tuple[list[_NodeSource], list[str]]:
     if not roadmap_root.is_dir():
         return [], [f"roadmap directory does not exist: {roadmap_root}"]
 
+    symlink_issues = roadmap_symlink_issues(blueprint)
+    if symlink_issues:
+        # Containment and ids are read from paths, so one symbolic link can make two
+        # pages each other's parent; refuse the layout before anything is read.
+        return [], symlink_issues
+
     issues: list[str] = []
     sources: list[_NodeSource] = []
     roadmap_root = roadmap_root.resolve()
@@ -431,6 +440,18 @@ def _discover_nodes(blueprint: Path) -> tuple[list[_NodeSource], list[str]]:
 
     issues.extend(_chapter_issues(roadmap_root))
     return sources, issues
+
+
+def roadmap_symlink_issues(blueprint: Path) -> list[str]:
+    """Report the symbolic links among ``roadmap/`` and every path beneath it.
+
+    Graph loading and runtime projection share this policy, so ``autoform check``
+    accepts exactly the roadmaps the runtime does.
+    """
+
+    roadmap = blueprint / "roadmap"
+    paths = [roadmap] if roadmap.is_symlink() else [path for path in sorted(roadmap.rglob("*")) if path.is_symlink()]
+    return [f"roadmap contains a symbolic link: {path.relative_to(blueprint).as_posix()}" for path in paths]
 
 
 def _chapter_issues(roadmap_root: Path) -> list[str]:
@@ -488,7 +509,7 @@ def _article_id(path: Path, roadmap_root: Path) -> str:
     return relative.with_suffix("").as_posix()
 
 
-def _article_parents(parsed: list[_ParsedNode]) -> dict[str, str | None]:
+def _article_parents(parsed: list[_ParsedNode], roadmap_root: Path) -> dict[str, str | None]:
     """Infer strict single-parent containment from nested README articles."""
     by_path = {node.path.resolve(): node.id for node in parsed}
     parents: dict[str, str | None] = {}
@@ -497,7 +518,7 @@ def _article_parents(parsed: list[_ParsedNode]) -> dict[str, str | None]:
         if node.path.name == "README.md":
             candidate = candidate.parent
         parent: str | None = None
-        while candidate != candidate.parent:
+        while _is_within(candidate, roadmap_root):
             readme = (candidate / "README.md").resolve()
             if readme in by_path:
                 parent = by_path[readme]
@@ -505,6 +526,22 @@ def _article_parents(parsed: list[_ParsedNode]) -> dict[str, str | None]:
             candidate = candidate.parent
         parents[node.id] = parent
     return parents
+
+
+def _containment_cycles(parents: dict[str, str | None]) -> list[str]:
+    """Report each cycle of containing READMEs once, before depths are computed."""
+    issues: list[str] = []
+    for node_id in sorted(parents):
+        chain = [node_id]
+        seen = {node_id}
+        parent = parents[node_id]
+        while parent is not None and parent not in seen:
+            chain.append(parent)
+            seen.add(parent)
+            parent = parents[parent]
+        if parent == node_id and node_id == min(chain):
+            issues.append(f"{node_id}: containment cycle: {' -> '.join([*chain, node_id])}")
+    return issues
 
 
 def _article_depth(node_id: str, parents: dict[str, str | None]) -> int:

@@ -28,6 +28,8 @@ from .lean import (
 )
 from .markdown import article_parts as _article_parts
 from .markdown import content_lines as _content_lines
+from .markdown import first_unclosed_fence as _first_unclosed_fence
+from .markdown import frontmatter_end as _frontmatter_end
 from .markdown import has_substance as _has_substance
 from .markdown import HEADING as _HEADING
 from .markdown import is_placeholder as _is_placeholder
@@ -172,6 +174,15 @@ def audit_graph(
         children = contained.get(node_id, ())
         article = _read_article(node.path)
 
+        if article.unclosed_fence is not None:
+            findings.append(
+                AuditFinding(
+                    article_path,
+                    "unclosed-code-fence",
+                    f"code fence opened on line {article.unclosed_fence} never closes",
+                )
+            )
+
         if node.formalizable:
             if children:
                 findings.append(
@@ -270,6 +281,8 @@ def audit_graph(
 class _ArticleShape:
     statement: str
     has_depends_section: bool
+    #: The one-based source line of the first fence that never closes.
+    unclosed_fence: int | None = None
 
 
 def _read_article(path: Path) -> _ArticleShape:
@@ -279,9 +292,13 @@ def _read_article(path: Path) -> _ArticleShape:
         return _ArticleShape(statement="", has_depends_section=False)
 
     parts = _article_parts(text)
+    lines = text.splitlines()
+    start = _frontmatter_end(lines)
+    unclosed = _first_unclosed_fence(lines[start:])
     return _ArticleShape(
         statement=parts.statement,
         has_depends_section=any(section.title.casefold() == "depends on" for section in parts.sections),
+        unclosed_fence=None if unclosed is None else start + unclosed + 1,
     )
 
 

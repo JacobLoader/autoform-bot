@@ -122,9 +122,9 @@ still reconciles every public declaration. Do not turn existing formalization
 into fictional future work. Ground each statement and proof sketch in the
 source. Put genuine statement prerequisites under `## Depends on` and
 proof-only prerequisites under `## Proof depends on`. Assign durable
-`article_id` metadata to new articles; use
-`autoform migrate article-ids blueprint --json` to obtain deterministic IDs
-after creating the pages.
+`article_id` metadata to new articles; run
+`autoform migrate article-ids blueprint --write` after creating the pages to
+add deterministic IDs.
 
 Before revising a formalizable leaf, acquire the `claim_target` that `autoform
 work context` reports for it, passing your own `--worker-id`; renew it while

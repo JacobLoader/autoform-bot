@@ -56,15 +56,29 @@ Without version flags `project new` uses the recommended release from
 listed pair. If the user needs a different Lean version, pass
 `--lean-toolchain <vX.Y.Z>`; `--mathlib-rev <REV>` overrides the default Mathlib
 tag of the same name, and the toolchain must match the `lean-toolchain` of that
-Mathlib revision. Such a project is created without `lake-manifest.json` and
-with a warning: run `lake update` in it, which needs network access and
-downloads the Mathlib build cache, then commit the manifest it writes. Autoform
-needs Lean v4.27.0 or newer, and `project new` also warns below that.
+Mathlib revision. A pair equal to a listed release, by Mathlib tag or commit,
+gets that release's bundled lock. Any other pair is created without
+`lake-manifest.json` and with a warning: run `lake update` in it, which needs
+network access and downloads the Mathlib build cache, then commit the manifest
+it writes. Autoform needs Lean v4.27.0 or newer, and `project new` also warns
+below that.
 Every component of the target parent must be a real directory, not a symlink;
 on macOS use `/private/tmp`, not the `/tmp` alias. The parent must not be group-
 or world-writable unless it is a sticky directory owned by the user or root. If
 `project new` reports `project-parent-unsafe`, choose another parent or, with the
 user's agreement, remove that write access with `chmod g-w,o-w`.
+
+When the user says the project will depend on a Lean library, create the
+project on that library's Lean and Mathlib: Lake builds a dependency with the
+project's own Lean and Mathlib, not the versions the library pins, so a project
+on another pair builds the library against the wrong Mathlib. Read the
+library's `lean-toolchain` and the Mathlib `rev` its `lake-manifest.json`
+locks, at the revision the user plans to require; a read-only fetch of those
+two files is allowed. Pass both, as `--lean-toolchain` and `--mathlib-rev`;
+`project new` then uses a listed release when the pair is one. If either file
+cannot be read or the revision is unknown, ask the user instead of guessing.
+Say which pair you chose and why in the setup report. Adding the `require`
+stays the user's decision; do not add it or fetch the library into the project.
 
 `project new` writes the requested `lean-toolchain` and Mathlib revision (by
 default the recommended, locked catalog pair), the Lean shell, and the complete
