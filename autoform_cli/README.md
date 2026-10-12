@@ -1397,11 +1397,12 @@ exFAT, sshfs) the previous site is first renamed to
 `.autoform-publication-backup-<name>`; if render dies between the two renames,
 the next render moves it back before anything else. Render replaces only an
 empty directory or a complete `autoform-publication/v2` site whose files match
-its inventory (a Finder `.DS_Store` is ignored in both), and refuses anything
-else, including a legacy v1 output, which you remove once by hand. A failed or
-refused render leaves the output as it was. A render killed mid-way can leave a
-`.autoform-publication-*` directory beside the output (the repository root for
-`--output site-src`); render never indexes it as Lean source and the setup
-ignore rules cover it, but it may hold the previous site, so inspect it before
-deleting it. (On macOS `fsync` does not flush the drive's cache, so a power loss
-can still lose the newest site.) Native Windows cannot run `autoform render`.
+its inventory (macOS metadata files, `.DS_Store` and `._*`, are ignored in
+both), and refuses anything else, including a legacy v1 output, which you
+remove once by hand. A failed or refused render leaves the output as it was. A
+render killed mid-way can leave a `.autoform-publication-*` directory beside the
+output (the repository root for `--output site-src`); render never indexes it
+as Lean source and the setup ignore rules cover it, but it may hold the previous
+site, so inspect it before deleting it. (On macOS `fsync` does not flush the
+drive's cache, so a power loss can still lose the newest site.) Native Windows
+cannot run `autoform render`.

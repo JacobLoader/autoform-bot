@@ -698,18 +698,24 @@ def load_publication_source(blueprint_dir: str | Path) -> tuple[str, Graph]:
 _State = tuple[tuple[int, int], dict[str, str]]
 
 
+def _is_os_metadata(name: str) -> bool:
+    base = PurePosixPath(name).name
+    return base == ".DS_Store" or base.startswith("._")
+
+
 def _destination_state(path: Path) -> _State | None:
     """The state of an empty directory or an exact Autoform site at *path*.
 
     ``None`` means nothing is there. Anything render does not own is refused: a
     symlink, a file, a legacy or foreign directory, or a site whose files no
-    longer match its manifest. A Finder ``.DS_Store`` is disposable and leaves
-    with the directory that holds it.
+    longer match its manifest. macOS metadata files (Finder's ``.DS_Store`` and
+    the ``._*`` files it writes on non-APFS volumes) are disposable and leave
+    with the directory that holds them.
     """
     try:
         metadata = os.lstat(path)
         empty = stat.S_ISDIR(metadata.st_mode) and all(
-            name == ".DS_Store" and stat.S_ISREG(os.lstat(path / name).st_mode) for name in os.listdir(path)
+            _is_os_metadata(name) and stat.S_ISREG(os.lstat(path / name).st_mode) for name in os.listdir(path)
         )
     except FileNotFoundError:
         return None
@@ -750,7 +756,7 @@ def _destination_state(path: Path) -> _State | None:
     files = {
         name: hashlib.sha256(data).hexdigest()
         for name, data in snapshot.files
-        if name != PUBLICATION_MANIFEST and PurePosixPath(name).name != ".DS_Store"
+        if name != PUBLICATION_MANIFEST and not _is_os_metadata(name)
     }
     names = {*files, *dict(snapshot.symlinks), *dict(snapshot.special)}
     if names != expected.keys():
@@ -801,7 +807,8 @@ def _publish(
                 raise PublicationError([f"output directory changed during publication; {unchanged}"])
             try:
                 _commit(stage, destination, backup, replace=expected is not None)
-                _fsync(destination.parent)
+                with suppress(PermissionError):  # nor can such a parent be opened to sync
+                    _fsync(destination.parent)
             except OSError as error:
                 if _identity(stage) == staged and not os.path.lexists(backup):  # nothing moved
                     reason = _REFUSED_COMMITS.get(error.errno, error.strerror or str(error))
@@ -832,6 +839,9 @@ def _locked_parent(parent: Path) -> Iterator[None]:
 
     try:
         descriptor = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+    except PermissionError:  # a parent the user may write but not read cannot hold the lock
+        yield
+        return
     except OSError as error:
         message = f"could not open the output parent {parent}: {error.strerror or error}"
         raise PublicationError([message]) from error
@@ -877,7 +887,8 @@ def _commit(stage: Path, destination: Path, backup: Path, *, replace: bool) -> N
     try:
         os.rename(stage, destination)
     except BaseException:
-        os.rename(backup, destination)
+        with suppress(OSError):  # after a Ctrl-C that landed past the install, the new site stays
+            os.rename(backup, destination)
         raise
     os.rename(backup, stage)  # no backup outlives the lock
 

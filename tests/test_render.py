@@ -1590,7 +1590,8 @@ def test_a_statement_written_below_a_section_is_still_published(tmp_path: Path) 
 
 def test_finder_metadata_does_not_block_replacing_an_owned_publication(tmp_path: Path) -> None:
     project, output, _site = _published(tmp_path)
-    finder_files = [output / ".DS_Store", output / "roadmap" / ".DS_Store"]
+    # ._* is the extended-attribute file macOS writes beside a file on a non-APFS volume.
+    finder_files = [output / ".DS_Store", output / "roadmap" / ".DS_Store", output / "._README.md"]
     for path in finder_files:
         path.write_bytes(b"\x00\x00\x00\x01Bud1")
 
@@ -1751,6 +1752,53 @@ def test_an_unwritable_output_parent_is_reported_not_a_traceback(tmp_path: Path)
         parent.chmod(0o755)
 
     assert not any(output.iterdir())
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="root ignores directory read permission",
+)
+def test_an_output_parent_that_cannot_be_read_still_publishes(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    parent = tmp_path / "dropbox"
+    parent.mkdir()
+    output = parent / "out"
+    parent.chmod(0o300)  # write and search, no read
+    try:
+        render_site(project / "blueprint", output, lean_root=project)
+        render_site(project / "blueprint", output, lean_root=project)
+    finally:
+        parent.chmod(0o755)
+
+    assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["complete"]
+    assert not _debris(parent)
+
+
+def test_a_ctrl_c_after_the_fallback_install_keeps_the_new_site(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, output, site = _published(tmp_path)
+    _edit(project / "blueprint/roadmap/top.md", "The main result.", "Revised.")
+    rename = os.rename
+
+    def unsupported(first: Path, second: Path) -> None:
+        raise OSError(errno.ENOTSUP, os.strerror(errno.ENOTSUP))
+
+    def interrupt_after_install(source, target) -> None:
+        rename(source, target)
+        if Path(target) == output and Path(source).name.startswith(render_module._STAGE_PREFIX):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(render_module, "_exchange", unsupported)
+    monkeypatch.setattr(render_module.os, "rename", interrupt_after_install)
+    with pytest.raises(KeyboardInterrupt):
+        render_site(project / "blueprint", output, lean_root=project)
+    monkeypatch.undo()
+
+    assert "Revised." in (output / "roadmap/README.md").read_text(encoding="utf-8")
+    assert _tree(render_module._backup(output)) == site
+    render_site(project / "blueprint", output, lean_root=project)  # retires the backup
+    assert not _debris(tmp_path)
 
 
 @pytest.mark.parametrize("code", sorted(render_module._UNSUPPORTED))
