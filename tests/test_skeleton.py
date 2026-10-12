@@ -4248,6 +4248,37 @@ def _build(project: Path, *targets: str) -> None:
 
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+def test_statement_review_round_trips_on_a_built_project(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`review prepare` writes the packet real Lean extracts, `review record`
+    files a card for it without Lean, and `review check`, extracting again,
+    finds the card current, asks for the approval, then accepts it."""
+
+    project = _project(tmp_path)
+    _build(project, "Skel.Main")
+    blueprint = _blueprint(tmp_path, lean={"supervision": "Skel.supervision_nonAmbiguous"})
+    article = blueprint / "roadmap" / "basics" / "supervision.md"
+    text = article.read_text(encoding="utf-8")
+    article.write_text(text.replace("---\n", "---\narticle_id: af_0123456789abcdef01234567\n", 1), encoding="utf-8")
+    packets = tmp_path / "packets"
+    assert main(["review", "prepare", str(blueprint), "--lean-root", str(project), "--packets", str(packets)]) == 0
+    (entry,) = json.loads((packets / "manifest.json").read_text(encoding="utf-8"))["packets"]
+    testimony = tmp_path / "testimony.txt"
+    testimony.write_text("For every value $y$, at most one value equals $y$.\n", encoding="utf-8")
+    record = ["review", "record", str(blueprint), "--packets", str(packets), "--model", "test-model"]
+    record += ["--article-id", entry["article_id"], "--declaration", entry["declaration"], "--testimony", str(testimony)]
+    assert main(record) == 0
+    capsys.readouterr()
+
+    assert main(["review", "check", str(blueprint), "--lean-root", str(project), "--json"]) == 1
+    (finding,) = json.loads(capsys.readouterr().out)["findings"]
+    assert finding["code"] == "review-unapproved"
+    approval = finding["reason"].rsplit(" ", 1)[1]
+    text = article.read_text(encoding="utf-8")
+    article.write_text(text.replace("---\n", f"---\nreview_approved: {approval}\n", 1), encoding="utf-8")
+    assert main(["review", "check", str(blueprint), "--lean-root", str(project)]) == 0
+
+
+@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
 def test_type_and_value_less_roots_show_their_whole_declaration(tmp_path: Path) -> None:
     project = _project(tmp_path)
     _build(project, "Skel.Kinds")

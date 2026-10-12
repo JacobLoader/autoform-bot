@@ -86,6 +86,13 @@ def mathjax_script(kept: bytes | None, macros: bytes | None) -> tuple[str, list[
     return _script(parsed), issues + macro_issues
 
 
+def project_macros(data: bytes | None) -> dict[str, object]:
+    """The macros the site defines from ``data``, a ``tex-macros.json``'s
+    bytes or ``None`` when there is none: those :func:`mathjax_script` keeps."""
+
+    return _tex_macros(data)[0]
+
+
 def _tex_macros(data: bytes | None) -> tuple[dict[str, object], list[str]]:
     """The macros in ``data``, a ``tex-macros.json``'s bytes or ``None`` when
     there is none, and what is wrong with the ones it leaves out.
@@ -295,5 +302,6 @@ __all__ = [
     "MATHJAX_VERSION",
     "NEUTRALISED",
     "TEX_MACROS",
+    "project_macros",
     "mathjax_script",
 ]

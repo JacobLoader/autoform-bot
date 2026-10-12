@@ -44,6 +44,7 @@ _FRONTMATTER_KEYS = frozenset(
         "not_ready",
         "origin",
         "discussion",
+        "review_approved",
         "open_statements",
         "published",
     }
@@ -106,6 +107,11 @@ class Node:
     depth: int = 0
     article_id: str | None = None
     source_sha256: str | None = None
+    #: Hash of the complete review surface a person approved. Unlike the
+    #: skeleton alone, this binds the article, source, and read-backs. Kept as
+    #: written: ``review check`` reports a value that is not the current hash,
+    #: malformed or not, so loading never refuses one.
+    review_approved: str | None = None
 
     @property
     def formalizable(self) -> bool:
@@ -274,6 +280,7 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
             depth=_article_depth(parsed_node.id, parents),
             article_id=metadata.get("article_id"),
             source_sha256=source_hashes[parsed_node.id],
+            review_approved=metadata.get("review_approved"),
         )
 
     if not issues:
