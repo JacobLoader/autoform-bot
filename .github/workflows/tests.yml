@@ -93,12 +93,24 @@ jobs:
           version: "0.12.1"
           python-version: "3.13"
           enable-cache: true
-      - uses: leanprover/lean-action@50fcf42d2e460296f1a34b402e990d1b24f8b596 # v1
-        with:
-          auto-config: false
-          build: true
-          build-args: "Mathlib Secret @repl/repl"
-          lake-package-directory: tests/fixtures/repl-smoke
+      - name: Install pinned Elan
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=15s 2m curl -sSfL \
+            https://github.com/leanprover/elan/releases/download/v4.2.3/elan-x86_64-unknown-linux-gnu.tar.gz \
+            -o elan.tar.gz
+          echo "df0b2b3a439961ffcbb3985214365ffe40f49bc871df04dff268c7d8e21ca8b2  elan.tar.gz" \
+            | sha256sum --check --strict
+          tar xzf elan.tar.gz
+          ./elan-init -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Build the REPL fixture
+        working-directory: tests/fixtures/repl-smoke
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=30s 5m \
+            elan toolchain install "$(tr -d '\r\n' < lean-toolchain)"
+          timeout --signal=TERM --kill-after=30s 8m lake build Mathlib Secret @repl/repl
       - run: uv sync --frozen --extra dev --extra repl
       - run: uv run pytest -q tests/test_real_repl.py
         env:
