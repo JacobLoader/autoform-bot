@@ -78,7 +78,16 @@ class TreeSnapshotError(ValueError):
 
 
 class TreeChangedError(TreeSnapshotError):
-    """The directory tree changed while it was bound or captured; a retry may succeed."""
+    """The directory tree changed while it was bound or captured; a retry may succeed.
+
+    ``relative`` is the root-relative POSIX path of the entry whose recheck
+    failed (``.`` for the root), or ``None`` when no single entry is known.  It
+    is kept out of the message so callers decide how to show it.
+    """
+
+    def __init__(self, message: str, *, relative: str | None = None) -> None:
+        super().__init__(message)
+        self.relative = relative
 
 
 class TreeCaptureLimitError(TreeSnapshotError):
@@ -1151,7 +1160,10 @@ def capture_directory_descriptor(
         _tree_snapshot_checkpoint("after-directory-list", relative)
         for name in names:
             child_relative = f"{relative}/{name}" if relative else name
-            metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            try:
+                metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            except OSError as error:
+                raise _entry_error(error, child_relative)
             child_identity = _stat_signature(metadata)
             relative_path = PurePosixPath(child_relative)
             if stat.S_ISDIR(metadata.st_mode):
@@ -1166,20 +1178,25 @@ def capture_directory_descriptor(
                         child_descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=descriptor)
                     except PermissionError as error:
                         raise _PermissionDenied(child_relative) from error
+                    except OSError as error:
+                        raise _entry_error(error, child_relative)
                     opened = os.fstat(child_descriptor)
                     opened_identity = _stat_signature(opened)
                     if _stable_entry_identity(opened_identity) != _stable_entry_identity(
                         child_identity
                     ):
-                        raise _TreeChanged
+                        raise _TreeChanged(child_relative)
                     scan(child_descriptor, child_relative, depth + 1, opened_identity)
-                    final_identity = _stat_signature(
-                        os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-                    )
+                    try:
+                        final_identity = _stat_signature(
+                            os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                        )
+                    except OSError as error:
+                        raise _entry_error(error, child_relative)
                     if _stable_entry_identity(final_identity) != _stable_entry_identity(
                         opened_identity
                     ):
-                        raise _TreeChanged
+                        raise _TreeChanged(child_relative)
                 finally:
                     if child_descriptor is not None:
                         _close_descriptor(child_descriptor)
@@ -1218,14 +1235,22 @@ def capture_directory_descriptor(
                     )
                 except PermissionError as error:
                     raise _PermissionDenied(child_relative) from error
+                except _TreeChanged as error:
+                    raise _TreeChanged(child_relative) from error
+                except OSError as error:
+                    raise _entry_error(error, child_relative)
                 budget.add_file_bytes(len(data))
                 files.append((child_relative, data))
             elif stat.S_ISLNK(metadata.st_mode):
-                target = os.readlink(name, dir_fd=descriptor)
-                if _stat_signature(
-                    os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-                ) != child_identity:
-                    raise _TreeChanged
+                try:
+                    target = os.readlink(name, dir_fd=descriptor)
+                    link_identity = _stat_signature(
+                        os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                    )
+                except OSError as error:
+                    raise _entry_error(error, child_relative)
+                if link_identity != child_identity:
+                    raise _TreeChanged(child_relative)
                 symlinks.append((child_relative, target))
             else:
                 special.append((child_relative, stat.S_IFMT(metadata.st_mode)))
@@ -1239,7 +1264,7 @@ def capture_directory_descriptor(
                 limits=budget.limits,
             )
         ):
-            raise _TreeChanged
+            raise _TreeChanged(relative)
 
     try:
         scan(descriptor, "", 0, _stat_signature(root))
@@ -1278,6 +1303,10 @@ def capture_directory_descriptor(
 class _TreeChanged(Exception):
     """The retained directory did not remain one stable generation."""
 
+    def __init__(self, relative: str | None = None) -> None:
+        super().__init__(relative)
+        self.relative = relative
+
 
 class _PermissionDenied(Exception):
     """An entry selected for capture could not be opened or listed."""
@@ -1313,15 +1342,28 @@ def _capture_failure(error: BaseException) -> TreeSnapshotError:
         return TreeSnapshotError(f"permission denied: {error.relative}")
     if isinstance(error, PermissionError):
         return TreeSnapshotError("permission denied while the directory tree was captured")
-    if isinstance(error, _TreeChanged) or (
-        isinstance(error, OSError) and error.errno in _CHANGED_ERRNOS
-    ):
+    if isinstance(error, _TreeChanged):
+        return TreeChangedError(
+            "directory tree changed while it was captured",
+            relative=None if error.relative is None else error.relative or ".",
+        )
+    if isinstance(error, OSError) and error.errno in _CHANGED_ERRNOS:
         return TreeChangedError("directory tree changed while it was captured")
     if isinstance(error, RecursionError):
         return TreeSnapshotError("directory tree is nested too deeply to capture")
     if isinstance(error, OSError) and error.errno is not None:
         return TreeSnapshotError(f"directory tree could not be read: {os.strerror(error.errno)}")
     return TreeSnapshotError("directory tree could not be read")
+
+
+def _entry_error(error: OSError, relative: str) -> BaseException:
+    """Tie a concurrent-change errno from one entry's lookup to that entry."""
+
+    if error.errno in _CHANGED_ERRNOS:
+        changed = _TreeChanged(relative)
+        changed.__cause__ = error
+        return changed
+    return error
 
 
 def _tree_snapshot_checkpoint(_event: str, _relative: str) -> None:
@@ -1414,7 +1456,11 @@ def _opaque_marker(
         if len(matches) != 1:
             continue
         name = matches[0]
-        metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+        marker_path = f"{relative}/{name}" if relative else name
+        try:
+            metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+        except OSError as error:
+            raise _entry_error(error, marker_path)
         identity = _stat_signature(metadata)
         if marker.presence_only:
             return (
@@ -1433,8 +1479,11 @@ def _opaque_marker(
                 max_bytes=max_bytes,
             )
         except PermissionError as error:
-            marker_path = f"{relative}/{name}" if relative else name
             raise _PermissionDenied(marker_path) from error
+        except _TreeChanged as error:
+            raise _TreeChanged(marker_path) from error
+        except OSError as error:
+            raise _entry_error(error, marker_path)
         if len(data) <= marker.max_bytes and marker.recognizes(data):
             budget.add_file_bytes(len(data))
             return (
@@ -1508,42 +1557,48 @@ def _verify_snapshot(
         relative: str,
         marker: _OpaqueMarkerRecord,
     ) -> None:
-        metadata = os.stat(marker.name, dir_fd=descriptor, follow_symlinks=False)
+        marker_relative = f"{relative}/{marker.name}" if relative else marker.name
+        try:
+            metadata = os.stat(marker.name, dir_fd=descriptor, follow_symlinks=False)
+        except OSError as error:
+            raise _entry_error(error, marker_relative)
         observed = _stat_signature(metadata)
         if marker.data is None:
             if _entry_kind(observed[2]) != _entry_kind(marker.identity[2]):
-                raise _TreeChanged
+                raise _TreeChanged(marker_relative)
         else:
             if observed != marker.identity:
-                raise _TreeChanged
-            if (
-                _read_file(
+                raise _TreeChanged(marker_relative)
+            try:
+                data = _read_file(
                     descriptor,
                     marker.name,
                     marker.identity,
                     max_bytes=marker.max_bytes,
                 )
-                != marker.data
-            ):
-                raise _TreeChanged
-        marker_relative = f"{relative}/{marker.name}" if relative else marker.name
+            except _TreeChanged as error:
+                raise _TreeChanged(marker_relative) from error
+            except OSError as error:
+                raise _entry_error(error, marker_relative)
+            if data != marker.data:
+                raise _TreeChanged(marker_relative)
         expected_entry = expected_entries.get(marker_relative)
         if expected_entry is None or (
             not expected_entry.ignored and expected_entry.identity != marker.identity
         ):
-            raise _TreeChanged
+            raise _TreeChanged(marker_relative)
         visited_entries.add(marker_relative)
 
     def verify_directory(descriptor: int, relative: str) -> None:
         expected = expected_directories.get(relative)
         if expected is None:
-            raise _TreeChanged
+            raise _TreeChanged(relative)
         visited_directories.add(relative)
         if expected.marker is not None:
             if _stable_entry_identity(
                 _stat_signature(os.fstat(descriptor))
             ) != _stable_entry_identity(expected.identity):
-                raise _TreeChanged
+                raise _TreeChanged(relative)
             verify_marker(descriptor, relative, expected.marker)
             return
         names_match = _directory_names_match(
@@ -1557,48 +1612,18 @@ def _verify_snapshot(
             != _stable_entry_identity(expected.identity)
             or not names_match
         ):
-            raise _TreeChanged
+            raise _TreeChanged(relative)
         for name in names:
             child_relative = f"{relative}/{name}" if relative else name
-            metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            try:
+                metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            except OSError as error:
+                raise _entry_error(error, child_relative)
             directory = expected_directories.get(child_relative)
             if directory is None:
-                entry = expected_entries.get(child_relative)
-                if entry is None or (
-                    not entry.ignored and _stat_signature(metadata) != entry.identity
-                ):
-                    raise _TreeChanged
-                if entry.ignored and _entry_kind(metadata.st_mode) != _entry_kind(
-                    entry.identity[2]
-                ):
-                    raise _TreeChanged
-                visited_entries.add(child_relative)
+                verify_entry(child_relative, metadata)
                 continue
-            observed_identity = _stat_signature(metadata)
-            expected_identity = directory.identity
-            if not stat.S_ISDIR(metadata.st_mode) or _stable_entry_identity(
-                observed_identity
-            ) != _stable_entry_identity(expected_identity):
-                raise _TreeChanged
-            child_descriptor: int | None = None
-            try:
-                child_descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=descriptor)
-                opened_identity = _stat_signature(os.fstat(child_descriptor))
-                if _stable_entry_identity(opened_identity) != _stable_entry_identity(
-                    directory.identity
-                ):
-                    raise _TreeChanged
-                verify_directory(child_descriptor, child_relative)
-                final_identity = _stat_signature(
-                    os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-                )
-                if _stable_entry_identity(final_identity) != _stable_entry_identity(
-                    directory.identity
-                ):
-                    raise _TreeChanged
-            finally:
-                if child_descriptor is not None:
-                    _close_descriptor(child_descriptor)
+            verify_child_directory(descriptor, name, child_relative, metadata, directory)
         if (
             _stable_entry_identity(
                 _stat_signature(os.fstat(descriptor))
@@ -1609,7 +1634,58 @@ def _verify_snapshot(
                 limits=limits,
             )
         ):
-            raise _TreeChanged
+            raise _TreeChanged(relative)
+
+    def verify_entry(child_relative: str, metadata: os.stat_result) -> None:
+        entry = expected_entries.get(child_relative)
+        if entry is None or (
+            not entry.ignored and _stat_signature(metadata) != entry.identity
+        ):
+            raise _TreeChanged(child_relative)
+        if entry.ignored and _entry_kind(metadata.st_mode) != _entry_kind(
+            entry.identity[2]
+        ):
+            raise _TreeChanged(child_relative)
+        visited_entries.add(child_relative)
+
+    def verify_child_directory(
+        descriptor: int,
+        name: str,
+        child_relative: str,
+        metadata: os.stat_result,
+        directory: _DirectoryRecord,
+    ) -> None:
+        observed_identity = _stat_signature(metadata)
+        expected_identity = directory.identity
+        if not stat.S_ISDIR(metadata.st_mode) or _stable_entry_identity(
+            observed_identity
+        ) != _stable_entry_identity(expected_identity):
+            raise _TreeChanged(child_relative)
+        child_descriptor: int | None = None
+        try:
+            try:
+                child_descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=descriptor)
+            except OSError as error:
+                raise _entry_error(error, child_relative)
+            opened_identity = _stat_signature(os.fstat(child_descriptor))
+            if _stable_entry_identity(opened_identity) != _stable_entry_identity(
+                directory.identity
+            ):
+                raise _TreeChanged(child_relative)
+            verify_directory(child_descriptor, child_relative)
+            try:
+                final_identity = _stat_signature(
+                    os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                )
+            except OSError as error:
+                raise _entry_error(error, child_relative)
+            if _stable_entry_identity(final_identity) != _stable_entry_identity(
+                directory.identity
+            ):
+                raise _TreeChanged(child_relative)
+        finally:
+            if child_descriptor is not None:
+                _close_descriptor(child_descriptor)
 
     verify_directory(root_descriptor, "")
     if visited_directories != set(expected_directories) or visited_entries != set(

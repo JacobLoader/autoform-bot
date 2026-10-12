@@ -110,16 +110,24 @@ def _on_checkpoint(
 
 
 def _count_binds(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
-    """Record the arguments of every `bind_project_sources` call, one per capture attempt."""
+    """Record the arguments of every `open_project_sources` call, one per capture attempt."""
     calls: list[tuple] = []
-    original_bind = lean_module.bind_project_sources
+    original_open = lean_module.open_project_sources
 
-    def counted_bind(*args, **kwargs):
+    def counted_open(*args, **kwargs):
         calls.append(args)
-        return original_bind(*args, **kwargs)
+        return original_open(*args, **kwargs)
 
-    monkeypatch.setattr(lean_module, "bind_project_sources", counted_bind)
+    monkeypatch.setattr(lean_module, "open_project_sources", counted_open)
     return calls
+
+
+def _capture_through(entry: str, root: Path):
+    """Capture Lean sources through one of the two public retrying entry points."""
+    if entry == "snapshot":
+        return snapshot_project_sources(root)
+    with lean_module.bind_project_source_snapshot(root) as (_bound, snapshot):
+        return snapshot
 
 
 def test_qualifies_names_with_their_namespace(tmp_path: Path) -> None:
@@ -387,12 +395,13 @@ def test_source_capture_rejects_mid_capture_change(
 
     sources = open_project_sources(tmp_path)
     try:
-        with pytest.raises(TreeSnapshotError, match="changed while it was captured"):
+        with pytest.raises(TreeChangedError, match="changed while it was captured") as error:
             sources.capture()
     finally:
         sources.close()
 
     assert changed
+    assert error.value.relative == "Project/Basic.lean"
 
 
 def test_snapshot_retries_a_capture_that_races_one_edit(
@@ -419,9 +428,11 @@ def test_snapshot_retries_a_capture_that_races_one_edit(
     assert snapshot.index.find("before") is None
 
 
+@pytest.mark.parametrize("entry", ["snapshot", "bind"])
 def test_snapshot_reports_sources_that_keep_changing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    entry: str,
 ) -> None:
     source = tmp_path / "Project" / "Basic.lean"
     _index(tmp_path, "def churn : Nat := 0\n")
@@ -436,10 +447,116 @@ def test_snapshot_reports_sources_that_keep_changing(
     _on_checkpoint(monkeypatch, "before-final-verification", change_source)
     monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
 
-    with pytest.raises(lean_module.LeanSourceError, match="Lean sources kept changing while they were indexed"):
-        snapshot_project_sources(tmp_path)
+    with pytest.raises(lean_module.LeanSourceError, match="Lean sources kept changing while they were indexed") as error:
+        _capture_through(entry, tmp_path)
 
     assert edits == lean_module._SNAPSHOT_ATTEMPTS
+    if tree_snapshot_module._DESCRIPTOR_CAPTURE_SUPPORTED:
+        assert str(error.value).endswith("; changed: Project/Basic.lean")
+
+
+@pytest.mark.parametrize("entry", ["snapshot", "bind"])
+def test_kept_changing_names_each_changed_path_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    entry: str,
+) -> None:
+    _require_descriptor_capture()
+    _index(tmp_path, "def a : Nat := 0\n", "Project/A.lean")
+    _index(tmp_path, "def b : Nat := 0\n", "Project/B.lean")
+    edits = 0
+
+    def change_source() -> None:
+        nonlocal edits
+        edits += 1
+        name = "A.lean" if edits == 1 else "B.lean"
+        (tmp_path / "Project" / name).write_text(
+            f"def churn : Nat := {'1' * (edits + 1)}\n",
+            encoding="utf-8",
+        )
+
+    _on_checkpoint(monkeypatch, "before-final-verification", change_source)
+    monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
+
+    with pytest.raises(lean_module.LeanSourceError) as error:
+        _capture_through(entry, tmp_path)
+
+    assert edits == lean_module._SNAPSHOT_ATTEMPTS
+    assert str(error.value) == (
+        "Lean sources kept changing while they were indexed; "
+        "changed: Project/A.lean, Project/B.lean"
+    )
+
+
+@pytest.mark.parametrize("entry", ["snapshot", "bind"])
+def test_kept_changing_names_only_known_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    entry: str,
+) -> None:
+    _require_descriptor_capture()
+    source = tmp_path / "Project" / "Basic.lean"
+    _index(tmp_path, "def churn : Nat := 0\n")
+    original_open = lean_module.open_project_sources
+    opens = 0
+    edits = 0
+
+    def open_with_unattributed_change(*args, **kwargs):
+        nonlocal opens
+        opens += 1
+        if opens == 1:
+            raise TreeChangedError("directory tree changed before it was captured")
+        return original_open(*args, **kwargs)
+
+    def change_source() -> None:
+        nonlocal edits
+        edits += 1
+        source.write_text(f"def churn : Nat := {'1' * (edits + 1)}\n", encoding="utf-8")
+
+    monkeypatch.setattr(lean_module, "open_project_sources", open_with_unattributed_change)
+    _on_checkpoint(monkeypatch, "before-final-verification", change_source)
+    monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
+
+    with pytest.raises(lean_module.LeanSourceError) as error:
+        _capture_through(entry, tmp_path)
+
+    assert opens == lean_module._SNAPSHOT_ATTEMPTS
+    assert str(error.value) == (
+        "Lean sources kept changing while they were indexed; changed: Project/Basic.lean"
+    )
+
+
+def test_relevant_folder_replaced_by_identical_copy_is_named(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_descriptor_capture()
+    _index(tmp_path, "def kept : Nat := 0\n", "Project/A.lean")
+    replaced = False
+
+    def replace_folder() -> None:
+        nonlocal replaced
+        if replaced:
+            return
+        replaced = True
+        (tmp_path / "Project").rename(tmp_path / "Moved")
+        (tmp_path / "Project").mkdir()
+        (tmp_path / "Project" / "A.lean").write_bytes(
+            (tmp_path / "Moved" / "A.lean").read_bytes()
+        )
+        (tmp_path / "Moved" / "A.lean").unlink()
+        (tmp_path / "Moved").rmdir()
+
+    _on_checkpoint(monkeypatch, "before-final-verification", replace_folder)
+    sources = open_project_sources(tmp_path)
+    try:
+        with pytest.raises(TreeChangedError) as error:
+            sources.capture()
+    finally:
+        sources.close()
+
+    assert replaced
+    assert error.value.relative == "Project"
 
 
 def test_snapshot_retries_a_root_replaced_while_it_is_bound(

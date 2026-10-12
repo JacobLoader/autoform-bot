@@ -242,26 +242,57 @@ def snapshot_project_sources(
     of times.
     """
 
-    exclusions = tuple(exclude_roots)
+    bound, snapshot = _open_stable_project_sources(
+        root,
+        exclude_roots=tuple(exclude_roots),
+        limits=limits,
+    )
+    bound.close()
+    return snapshot
+
+
+def _open_stable_project_sources(
+    root: str | Path,
+    *,
+    exclude_roots: tuple[str | Path, ...],
+    limits: TreeCaptureLimits,
+) -> tuple[BoundProjectSources, IndexedSourceSnapshot]:
+    """Open and capture a Lean root, retrying a bounded number of changed attempts.
+
+    The caller owns the returned binding.  When every attempt changed, the error
+    names each changed root-relative path the attempts reported, once, in order.
+    """
+
     changed: TreeChangedError | None = None
+    changed_paths: list[str] = []
     for attempt in range(_SNAPSHOT_ATTEMPTS):
         if attempt:
             time.sleep(_SNAPSHOT_RETRY_DELAY_SECONDS * attempt)
+        bound: BoundProjectSources | None = None
         try:
-            with bind_project_sources(
-                root,
-                exclude_roots=exclusions,
-                limits=limits,
-            ) as bound:
-                return bound.capture()
+            bound = open_project_sources(root, exclude_roots=exclude_roots, limits=limits)
+            return bound, bound.capture()
         except TreeChangedError as error:
             changed = error
+            if error.relative is not None and error.relative not in changed_paths:
+                changed_paths.append(error.relative)
+            if bound is not None:
+                bound.close()
         except TreeSnapshotError as error:
+            if bound is not None:
+                bound.close()
             raise LeanSourceError(str(error)) from error
+        except BaseException:
+            if bound is not None:
+                bound.close()
+            raise
     lasting = _lasting_root_failure(root)
     if lasting is not None:
         raise LeanSourceError(lasting) from changed
-    raise LeanSourceError("Lean sources kept changing while they were indexed") from changed
+    message = "Lean sources kept changing while they were indexed"
+    if changed_paths:
+        message += "; changed: " + ", ".join(changed_paths)
+    raise LeanSourceError(message) from changed
 
 
 def _lasting_root_failure(root: str | Path) -> str | None:
@@ -293,26 +324,6 @@ def project_source_revision(
         exclude_roots=exclude_roots,
         limits=limits,
     ).revision
-
-
-@contextmanager
-def bind_project_sources(
-    root: str | Path,
-    *,
-    exclude_roots: Iterable[str | Path] = (),
-    limits: TreeCaptureLimits = TreeCaptureLimits(),
-) -> Iterator[BoundProjectSources]:
-    """Retain a Lean root while one or more source snapshots are consumed."""
-
-    bound = open_project_sources(
-        root,
-        exclude_roots=exclude_roots,
-        limits=limits,
-    )
-    try:
-        yield bound
-    finally:
-        bound.close()
 
 
 def open_project_sources(
@@ -362,37 +373,15 @@ def bind_project_source_snapshot(
     open so a caller can verify and recapture it after using the evidence.
     """
 
-    exclusions = tuple(exclude_roots)
-    changed: TreeChangedError | None = None
-    for attempt in range(_SNAPSHOT_ATTEMPTS):
-        if attempt:
-            time.sleep(_SNAPSHOT_RETRY_DELAY_SECONDS * attempt)
-        bound: BoundProjectSources | None = None
-        try:
-            bound = open_project_sources(root, exclude_roots=exclusions, limits=limits)
-            snapshot = bound.capture()
-        except TreeChangedError as error:
-            changed = error
-            if bound is not None:
-                bound.close()
-            continue
-        except TreeSnapshotError as error:
-            if bound is not None:
-                bound.close()
-            raise LeanSourceError(str(error)) from error
-        except BaseException:
-            if bound is not None:
-                bound.close()
-            raise
-        try:
-            yield bound, snapshot
-        finally:
-            bound.close()
-        return
-    lasting = _lasting_root_failure(root)
-    if lasting is not None:
-        raise LeanSourceError(lasting) from changed
-    raise LeanSourceError("Lean sources kept changing while they were indexed") from changed
+    bound, snapshot = _open_stable_project_sources(
+        root,
+        exclude_roots=tuple(exclude_roots),
+        limits=limits,
+    )
+    try:
+        yield bound, snapshot
+    finally:
+        bound.close()
 
 
 def _project_exclusions(
