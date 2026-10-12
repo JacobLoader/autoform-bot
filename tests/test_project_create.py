@@ -28,6 +28,7 @@ except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
 _RELEASE = "lean-v4.32.2-mathlib-v4.32.2"
+_CATALOG = load_release_catalog().releases
 _SOURCE = "https://example.test/owner/autoform.git"
 _CORE_FILES = ("lean-toolchain", "lakefile.toml", "lake-manifest.json", "src/Project.lean")
 _UNLISTED_LAKEFILE = (
@@ -496,6 +497,31 @@ def test_rejects_unknown_release_before_writing(tmp_path: Path) -> None:
     _refused(tmp_path / "project", "project-release-unknown", release_id="unknown")
 
 
+def test_listing_a_release_does_not_change_the_recommended_one() -> None:
+    # The bundled example and its tests are pinned to the recommended release.
+    assert load_release_catalog().recommended.id == _RELEASE
+
+
+@pytest.mark.parametrize("release", _CATALOG, ids=lambda release: release.id)
+def test_creates_a_locked_supported_project_on_each_release(tmp_path: Path, release) -> None:
+    target = tmp_path / "Project"
+    result = create_project(target, package="Project", release_id=release.id)
+
+    assert result.release == release.id
+    assert result.warnings == ()
+    assert (target / "lean-toolchain").read_text(encoding="utf-8") == f"{release.lean_toolchain}\n"
+    assert f'rev = "{release.mathlib_rev}"' in (target / "lakefile.toml").read_text(encoding="utf-8")
+    manifest = json.loads((target / "lake-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["name"] == "Project"
+    assert {entry["name"]: entry["inputRev"] for entry in manifest["packages"] if not entry["inherited"]} == {
+        "mathlib": release.mathlib_rev
+    }
+    inspection = inspect_project(target)
+    assert inspection.ok
+    assert inspection.compatibility.status == "supported"
+    assert inspection.compatibility.release == release.id
+
+
 def test_omitted_release_uses_the_recommended_release(tmp_path: Path) -> None:
     recommended = load_release_catalog().recommended
 
@@ -557,24 +583,23 @@ def test_unlisted_pair_threads_the_mathlib_revision(tmp_path: Path, toolchain: s
         ]
 
 
-@pytest.mark.parametrize(
-    ("toolchain", "revision"),
-    [
-        ("v4.32.2", None),
-        ("leanprover/lean4:v4.32.2", "v4.32.2"),
-        ("v4.32.2", "905b95818eb32af7874a58b427f50c1711a5e96c"),
-        ("v4.32.2", "905B95818EB32AF7874A58B427F50C1711A5E96C"),
-    ],
-)
-def test_catalog_pair_given_as_versions_uses_the_bundled_lock(
-    tmp_path: Path, toolchain: str, revision: str | None
-) -> None:
+@pytest.mark.parametrize("spelling", ["tag", "full toolchain", "commit", "upper-case commit"])
+@pytest.mark.parametrize("release", _CATALOG, ids=lambda release: release.id)
+def test_catalog_pair_given_as_versions_uses_the_bundled_lock(tmp_path: Path, release, spelling: str) -> None:
+    # Setup passes a library's Lean and locked Mathlib commit; a listed pair must still get its lock.
+    tag = release.lean_toolchain.removeprefix("leanprover/lean4:")
+    toolchain, revision = {
+        "tag": (tag, None),
+        "full toolchain": (release.lean_toolchain, release.mathlib_rev),
+        "commit": (tag, release.mathlib_commit),
+        "upper-case commit": (tag, release.mathlib_commit.upper()),
+    }[spelling]
     result = create_project(
         tmp_path / "Versions", package="Project", release_id=None, lean_toolchain=toolchain, mathlib_rev=revision
     )
-    create_project(tmp_path / "Release", package="Project", release_id=_RELEASE)
+    create_project(tmp_path / "Release", package="Project", release_id=release.id)
 
-    assert result.release == _RELEASE
+    assert result.release == release.id
     assert result.warnings == ()
     for relative in _CORE_FILES:
         assert (tmp_path / "Versions" / relative).read_bytes() == (tmp_path / "Release" / relative).read_bytes()

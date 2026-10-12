@@ -208,6 +208,13 @@ def test_setup_guidance_uses_the_offline_atomic_project_creator(repo_root: Path)
     assert "--lean-toolchain" in normalized
     assert "lake update" in normalized
     assert "v4.27.0" in normalized
+    assert "the project will depend on a Lean library, create the project on that library's Lean and Mathlib" in normalized
+    # Lean alone does not pick the release: a library may lock a Mathlib commit that is not the tag.
+    assert "the Mathlib `rev` its `lake-manifest.json` locks, at the revision the user plans to require" in normalized
+    assert "Pass both, as `--lean-toolchain` and `--mathlib-rev`" in normalized
+    assert "ask the user instead of guessing" in normalized
+    assert "Say which pair you chose and why in the setup report" in normalized
+    assert "Adding the `require` stays the user's decision" in normalized
     assert (
         "appending only missing Autoform rules through a retained bounded regular root"
         in normalized
