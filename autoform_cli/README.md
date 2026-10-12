@@ -790,31 +790,6 @@ its local context. Point `mkdocs.yml` at `docs_dir: site-src` and enable
 `md_in_html` plus a `pymdownx.superfences` mermaid fence; see the [repository
 example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml).
 
-Publication is staged, synced, validated, and atomically exchanged with the
-previous generated site. This fail-closed transaction requires macOS
-`renameatx_np` or Linux `renameat2`, plus descriptor-relative traversal,
-advisory locking, and directory sync. Autoform exercises no-replace and
-cross-directory exchange inside its private workspace before it inspects the
-live output, so a network or local filesystem that does not implement those
-flags fails without changing the published site. Other platforms, including
-Windows, can still use the remaining supported CLI commands but cannot run
-`autoform render`; Autoform never falls back to a two-rename replacement with a
-missing-site crash window. A legacy
-`autoform-publication/v1` output is never deleted automatically. Remove it
-explicitly or choose an empty output directory once, then subsequent v2 renders
-can replace only the exact checksummed generation they inspected.
-The renderer hashes both the blueprint snapshot and the exact Lean-file
-generation used for declaration links, then rechecks both under the publication
-lock immediately before the atomic rename. That check is the publication
-linearization point; later source edits belong to the next render. Render
-never indexes a complete generated v1/v2 publication tree or one of its private
-workspaces as Lean source.
-Repository links are emitted only when those captured blueprint and Lean bytes
-match one locally available Git commit. Mutable ref names are recorded as that
-commit's full object ID. For dirty, untracked, or otherwise unverifiable inputs,
-the render remains local, keeps source notes in the site, records no Git ref,
-and reports a warning instead of producing a stale or missing link.
-
 ## Validation
 
 `autoform check` rejects cycles, missing targets, escaping paths,
@@ -1336,29 +1311,36 @@ project, chapter, nested-scope, local, and full-graph scales. It never reads a
 `graph.json` or an operational queue. Hidden files are omitted, while symlinks,
 credentials, logs, provider state, and agent/task state inside the blueprint
 cause the render to fail rather than silently leak them. Source and output
-directories must be disjoint. The site root holds the generated `SUMMARY.md`,
-`dependencies.md`, `structure.md`, `publication.json`, `assets/`,
-`dependencies/`, `javascripts/` and `stylesheets/`; a blueprint root entry that
-differs from one of these only in case is refused, because the two would collide
-on a case-insensitive filesystem.
+directories must be disjoint. A blueprint root entry that differs only in case
+from one render writes (`SUMMARY.md`, `dependencies.md`, `structure.md`,
+`publication.json`, `assets/`, `dependencies/`, `javascripts/`, `stylesheets/`)
+is refused, as are two blueprint paths that differ only in case or Unicode form,
+because they would collide on a case-insensitive filesystem.
 
 Every render writes `publication.json` with blueprint and Lean-source hashes,
-Git ref, article and dependency counts, complete file inventory, and available
+Git ref, article and dependency counts, the site's file inventory, and available
 views. It contains no timestamp or absolute path, so identical inputs produce
-identical output files. Autoform validates and syncs the staged tree before one
-atomic filesystem commit, then verifies ownership and syncs both parent
-directories. Once the commit begins, Autoform never tries to exchange a recovery
-path back into the live destination. If it cannot verify the final state or
-sync it, it preserves the private workspace instead of deleting a potentially
-unique generation. (On macOS, `fsync` does not flush the drive's cache, so a
-power loss can still lose the newest generation.) It reports an exact recovery path only while the bound output
-parent is still addressable. Losing that parent path after commit is an uncertain
-publication error; the parent is checked again after workspace cleanup before
-success is returned. Other post-verification cleanup refusals leave the
-published site in place and return the retained workspace as a warning. A process
-exit immediately after exchange likewise leaves the complete previous generation
-under that workspace while the complete replacement occupies the output path.
-The workspace is a hidden `.autoform-publication-*` directory beside the output
-(the repository root for `--output site-src`). A render killed by a signal
-leaves it behind without a message; later renders do not remove it. It may hold
-the only copy of the previous generation, so inspect it before removing it.
+identical output files. Render reads the blueprint and the Lean sources once
+each and derives every page, link and hash from those bytes; an edit saved
+during a render waits for the next one. Repository links appear only when those
+bytes match one locally available Git commit, recorded by its full object ID; a
+clean checkout that Git converts on checkout still matches. Otherwise the render
+stays local, keeps source notes in the site, records no Git ref, and warns with
+the first mismatch.
+
+The site is built and synced in a hidden `.autoform-publication-*` directory
+beside the output, then swapped in with one atomic exchange (`renamex_np` on
+macOS, `renameat2` on Linux); renders committing into the same parent directory
+take turns. On filesystems without the exchange (NFS, SMB, 9p or WSL2 `/mnt/c`,
+exFAT, sshfs) the previous site is first renamed to
+`.autoform-publication-backup-<name>`; if render dies between the two renames,
+the next render moves it back before anything else. Render replaces only an
+empty directory or a complete `autoform-publication/v2` site whose files match
+its inventory (a Finder `.DS_Store` is ignored in both), and refuses anything
+else, including a legacy v1 output, which you remove once by hand. A failed or
+refused render leaves the output as it was. A render killed mid-way can leave a
+`.autoform-publication-*` directory beside the output (the repository root for
+`--output site-src`); render never indexes it as Lean source and the setup
+ignore rules cover it, but it may hold the previous site, so inspect it before
+deleting it. (On macOS `fsync` does not flush the drive's cache, so a power loss
+can still lose the newest site.) Native Windows cannot run `autoform render`.
