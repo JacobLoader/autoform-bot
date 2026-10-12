@@ -1155,7 +1155,8 @@ def test_real_check_and_stale_build(built: Path, tmp_path: Path, capsys) -> None
 
 @real_library
 def test_real_a_module_set_of_thousands_of_modules_elaborates(built: Path, tmp_path: Path) -> None:
-    names = [f"Lib.M{i}" for i in range(3000)] + ["Lib.A'", "Lib.B!", "Lib.C?"]
+    # Well past the array literal's limit, which fell between 2,003 and 2,808 names on Lean 4.34.1.
+    names = [f"Lib.M{i}" for i in range(10000)] + ["Lib.A'", "Lib.B!", "Lib.C?"]
     probe = render_library_probe(names)
     start = probe.index("def libraryModules")
     file = tmp_path / "ModuleSet.lean"
@@ -1170,7 +1171,7 @@ def test_real_a_module_set_of_thousands_of_modules_elaborates(built: Path, tmp_p
         ["lake", "env", "lean", str(file)], cwd=built, capture_output=True, text=True, timeout=600, check=False
     )
     assert result.returncode == 0, (result.stdout + result.stderr)[-2000:]
-    assert result.stdout.strip() == "(3003, true)"
+    assert result.stdout.strip() == "(10003, true)"
 
 
 @real_library
