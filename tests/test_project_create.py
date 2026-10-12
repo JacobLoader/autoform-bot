@@ -559,6 +559,30 @@ def test_unlisted_pair_is_written_without_a_lock(tmp_path: Path) -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("toolchain", "revision"),
+    [
+        ("v4.30.0", "master"),
+        ("v4.30.0", "bump/v4.30.0"),
+        ("v4.30.0", "0123456789abcdef0123456789abcdef01234567"),
+        ("v4.30.0", "a" * 255),
+        ("v4.30.0", "Feature/fix_x"),
+        ("v4.32.0-rc1", "v4.32.0-rc1-patch1"),
+    ],
+)
+def test_unlisted_pair_threads_the_mathlib_revision(tmp_path: Path, toolchain: str, revision: str) -> None:
+    target = tmp_path / "Project"
+
+    result = create_project(target, package="Project", release_id=None, lean_toolchain=toolchain, mathlib_rev=revision)
+
+    assert result.release is None
+    assert result.mathlib_rev == revision
+    with (target / "lakefile.toml").open("rb") as lakefile:
+        assert tomllib.load(lakefile)["require"] == [
+            {"name": "mathlib", "git": "https://github.com/leanprover-community/mathlib4", "rev": revision}
+        ]
+
+
 @pytest.mark.parametrize("spelling", ["tag", "full toolchain", "commit", "upper-case commit"])
 @pytest.mark.parametrize("release", _CATALOG, ids=lambda release: release.id)
 def test_catalog_pair_given_as_versions_uses_the_bundled_lock(tmp_path: Path, release, spelling: str) -> None:
