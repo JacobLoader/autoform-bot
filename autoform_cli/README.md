@@ -61,13 +61,16 @@ An article's statement is its body from the end of the frontmatter to the first
 `##` heading, without the H1 line. A deeper heading does not end it, and neither
 does a `##` line inside a fenced code block or an HTML comment. `autoform audit`
 and the published theorem box both read that span. A fence closes only on a
-bare fence line; one that never closes is plain text on the page and hides no
-heading and no dependency link. A later bare fence line of the same character
-and at least the opener's length closes it here, though the page asks for the
-opener's exact length and indent, so close each fence with its own line. The
-page can also pair an unclosed backtick fence line with a later backtick run in
-the same paragraph and show the text between them as inline code; a link there
-is not a link on the page but is still read as a dependency.
+bare fence line. A fence that never closes is read as plain text when its
+article is inspected alone, so it hides no heading or dependency link there,
+but on a chapter page it can pair with a later article's closing fence and hide
+everything between them. The audit reports a fence with no closing line as
+`unclosed-code-fence`. A later bare fence line of the same character and at
+least the opener's length closes it here, though the page asks for the opener's
+exact length and indent, so close each fence with its own line. The page can
+also pair an unclosed backtick fence line with a later backtick run in the same
+paragraph and show the text between them as inline code; a link there is not a
+link on the page but is still read as a dependency.
 
 `## Depends on` lists what the article needs in order to be *stated*;
 `## Proof depends on` lists what only its *proof* needs. Both are graph edges.
@@ -822,9 +825,10 @@ that may be regenerated at any time.
 ## Audit contract
 
 `autoform audit` reports structured findings at blueprint-relative paths. It
-checks that formalizable articles are declaration-sized leaves with statement
-text (prose in the statement, outside code blocks, HTML comments, and headings)
-and an explicit dependency section, that asserted Mathlib facts are
+checks that no article leaves a code fence open, that formalizable articles are
+declaration-sized leaves with statement text (prose in the statement, outside
+code blocks, HTML comments, and headings) and an explicit dependency section,
+that asserted Mathlib facts are
 internally consistent, and that cited work resolves to local source
 material without escaping the blueprint. Coverage files are checked for broken
 links and explicitly declared gaps. With `--lean-root`, local declaration names
