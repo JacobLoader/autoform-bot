@@ -41,10 +41,12 @@ from .lean import (
     MANAGED_OUTPUT_SCHEMAS,
     PACKET_SCHEMA,
     PASSAGE_SCHEMA,
+    LeanSourceError,
     SourceIndex,
     declaration_names,
     index_failure_message,
-    index_project,
+    resolve_lean_root,
+    snapshot_project_sources,
 )
 
 SKELETON_SCHEMA = "autoform-skeleton/v4"
@@ -2042,10 +2044,9 @@ def extract_skeletons(
     except GraphValidationError as exc:
         raise SkeletonError(exc.issues) from exc
     try:
-        root = Path(lean_root).expanduser().resolve()
-    except RuntimeError as error:
-        # An unknown ~user, or before Python 3.13 a symbolic link loop.
-        raise SkeletonError([f"Lean root {lean_root} cannot be resolved: {error}"]) from error
+        root = resolve_lean_root(lean_root)
+    except LeanSourceError as error:
+        raise SkeletonError([str(error)]) from error
     graph_snapshot = _graph_snapshot(graph)
     control_snapshot = _project_control_snapshot(root)
     libraries = lean_libraries(root)
@@ -2054,7 +2055,7 @@ def extract_skeletons(
             ["Lean project configuration changed while skeletons were being extracted; retry after the project is idle"]
         )
     try:
-        index = index_project(root)
+        index = snapshot_project_sources(root).index
     except OSError as error:
         raise SkeletonError([index_failure_message(error)]) from error
     report = extract_graph_skeletons(
@@ -2066,7 +2067,7 @@ def extract_skeletons(
         node_ids=node_ids,
     )
     try:
-        current_index = index_project(root)
+        current_index = snapshot_project_sources(root).index
     except OSError as error:
         raise SkeletonError([index_failure_message(error)]) from error
     if current_index.source_digest != index.source_digest:

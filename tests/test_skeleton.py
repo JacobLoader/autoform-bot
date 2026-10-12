@@ -25,6 +25,7 @@ from autoform_cli.lean import (
     LeanSourceError,
     SourceIndex,
     index_project,
+    snapshot_project_sources,
 )
 from autoform_cli.skeleton import (
     DeclarationSkeleton,
@@ -1468,7 +1469,7 @@ def test_extraction_translates_source_index_io_failure(
 ) -> None:
     project = _project(tmp_path)
     blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
-    real_index_project = index_project
+    real_snapshot_project_sources = snapshot_project_sources
     calls = 0
 
     def fail_index(root: Path):
@@ -1478,9 +1479,9 @@ def test_extraction_translates_source_index_io_failure(
             if reason is not None:
                 raise LeanSourceError(reason)
             raise OSError(f"private host detail: {root}")
-        return real_index_project(root)
+        return real_snapshot_project_sources(root)
 
-    monkeypatch.setattr("autoform_cli.skeleton.index_project", fail_index)
+    monkeypatch.setattr("autoform_cli.skeleton.snapshot_project_sources", fail_index)
 
     with pytest.raises(SkeletonError) as error:
         extract_skeletons(
@@ -1927,7 +1928,7 @@ def test_cli_reports_extraction_failures_on_stderr(tmp_path: Path, capsys) -> No
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err.startswith("error: no lakefile.toml or lakefile.lean in ")
+    assert captured.err == "error: Lean root does not exist or is not a directory\n"
 
 
 def test_cli_reports_an_invalid_report_output_without_a_traceback(

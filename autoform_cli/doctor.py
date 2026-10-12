@@ -15,6 +15,7 @@ from pathlib import Path, PureWindowsPath
 
 from .audit import AuditFinding, audit_graph
 from .graph import GraphValidationError, load_graph
+from .lean import LeanSourceError, resolve_lean_root
 from .runtime import (
     RUNTIME_AUTHORITY,
     RUNTIME_SCHEMA,
@@ -105,7 +106,7 @@ def diagnose_project(
         checks.append(DoctorCheck("graph", False, reason))
         return _blocked_result(checks, "graph validation failed", lean_root=lean_root)
 
-    resolved_lean_root, lean_root_valid = _resolve_lean_root(lean_root)
+    resolved_lean_root, lean_root_failure = _resolve_lean_root(lean_root)
     try:
         runtime = build_runtime_graph(
             graph,
@@ -148,15 +149,12 @@ def diagnose_project(
 
     audit = audit_graph(graph, lean_root=resolved_lean_root)
     lean_findings = tuple(finding for finding in audit.findings if finding.code in _LEAN_FINDING_CODES)
-    if lean_root is not None and not lean_root_valid:
-        lean_findings = (
-            AuditFinding(".", "invalid-lean-root", "Lean root does not exist or is not a directory"),
-            *lean_findings,
-        )
     roadmap_findings = tuple(finding for finding in audit.findings if finding.code not in _LEAN_FINDING_CODES)
     checks.append(_finding_check("audit", roadmap_findings, "roadmap audit passed"))
     if lean_root is None:
         checks.append(DoctorCheck("lean targets", True, "not checked; no Lean root supplied"))
+    elif lean_root_failure is not None:
+        checks.append(DoctorCheck("lean targets", False, lean_root_failure))
     else:
         checks.append(_finding_check("lean targets", lean_findings, "all asserted local Lean targets resolve"))
     return _result(checks)
@@ -187,15 +185,15 @@ def _finding_check(name: str, findings: tuple[AuditFinding, ...], clean_detail: 
     return DoctorCheck(name, False, f"{len(findings)} finding(s): {codes}")
 
 
-def _resolve_lean_root(lean_root: str | Path | None) -> tuple[Path | None, bool]:
+def _resolve_lean_root(lean_root: str | Path | None) -> tuple[Path | None, str | None]:
+    """Return the resolved Lean root, or the reason it cannot be used."""
+
     if lean_root is None:
-        return None, True
+        return None, None
     try:
-        root = Path(lean_root).expanduser().resolve()
-        valid = root.is_dir()
-    except (OSError, RuntimeError, ValueError):
-        return None, False
-    return (root if valid else None), valid
+        return resolve_lean_root(lean_root), None
+    except LeanSourceError as error:
+        return None, str(error)
 
 
 def _sanitize_issues(issues: tuple[str, ...], paths: RuntimePaths) -> str:

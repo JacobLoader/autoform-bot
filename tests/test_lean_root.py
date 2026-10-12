@@ -167,3 +167,47 @@ def test_work_names_the_unusable_lean_root(
     captured = capsys.readouterr()
     assert captured.err == f"error: {reason}\n"
     assert _without_host_paths(captured.out + captured.err, tmp_path)
+
+
+@_EVERY_ROOT
+def test_skeleton_checks_the_lean_root_before_the_lake_files(
+    tmp_path: Path, unusable_root: tuple[Path, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, reason = unusable_root
+    blueprint = _blueprint(tmp_path)
+
+    assert main(["skeleton", str(blueprint), "--lean-root", str(root)]) == 2
+
+    captured = capsys.readouterr()
+    assert captured.err == f"error: {reason}\n"
+    assert _without_host_paths(captured.out + captured.err, tmp_path)
+
+
+@_EVERY_ROOT
+def test_impact_checks_the_lean_root_before_the_lake_files(
+    tmp_path: Path, unusable_root: tuple[Path, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, reason = unusable_root
+    blueprint = _blueprint(tmp_path)
+
+    assert main(["work", "impact", "result", str(blueprint), "--lean-root", str(root)]) == 2
+
+    captured = capsys.readouterr()
+    assert captured.err == f"error: {reason}\n"
+    assert _without_host_paths(captured.out + captured.err, tmp_path)
+
+
+@_EVERY_ROOT
+def test_doctor_reports_why_the_lean_root_is_unusable(
+    tmp_path: Path, unusable_root: tuple[Path, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, reason = unusable_root
+    blueprint = _blueprint(tmp_path)
+
+    assert main(["doctor", str(blueprint), "--lean-root", str(root), "--json"]) == 1
+
+    captured = capsys.readouterr()
+    checks = {check["name"]: check for check in json.loads(captured.out)["checks"]}
+    assert checks["lean targets"] == {"detail": reason, "name": "lean targets", "ok": False}
+    assert checks["runtime"]["ok"]
+    assert _without_host_paths(captured.out + captured.err, tmp_path)
