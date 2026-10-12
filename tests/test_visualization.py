@@ -347,8 +347,8 @@ def test_the_vault_gets_a_structure_page_obsidian_can_read(tmp_path: Path) -> No
     assert "dependencies.md)" not in page
 
 
-def test_the_vault_structure_page_leaves_implementation_notes_out(tmp_path: Path) -> None:
-    """The page is the shape of the book, and notes are not part of the book."""
+def test_the_vault_structure_page_leaves_implementation_notes_and_readback_cards_out(tmp_path: Path) -> None:
+    """The page is the shape of the book, and notes and cards are not part of the book."""
     blueprint = tmp_path / "blueprint"
     _write_node(blueprint / "roadmap" / "README.md", "Roadmap")
     article_id = "af_0123456789abcdef01234567"
@@ -361,11 +361,14 @@ def test_the_vault_structure_page_leaves_implementation_notes_out(tmp_path: Path
     notes = blueprint / ".implementation-notes"
     notes.mkdir()
     (notes / f"{article_id}.md").write_text("Mathlib gap.\n", encoding="utf-8")
+    cards = blueprint / "readbacks" / article_id
+    cards.mkdir(parents=True)
+    (cards / f"Base--{'0' * 64}.md").write_text("A card.\n", encoding="utf-8")
 
     page = export_structure(blueprint).read_text(encoding="utf-8")
 
     assert "[Base](roadmap/base.md)" in page
-    assert ".implementation-notes" not in page
+    assert ".implementation-notes" not in page and "readbacks" not in page
 
 
 def test_generated_structure_can_be_refreshed(tmp_path: Path) -> None:
