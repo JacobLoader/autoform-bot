@@ -13,7 +13,8 @@ namespace AutoformLibrary
 
 def probeOutputLimit : Nat := {output_limit}
 
-def libraryModules : NameSet := ({modules} : Array Name).foldl (·.insert ·) {{}}
+def libraryModules : NameSet :=
+  (({modules} : String).splitOn "\n").foldl (fun set module => set.insert module.toName) {{}}
 
 def emitRecord (out : IO.FS.Handle) (written : IO.Ref Nat) (record : Json) : IO Unit := do
   let line := s!"{marker}{{record.compress}}\n"

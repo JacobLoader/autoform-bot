@@ -392,6 +392,19 @@ def test_the_probe_names_the_constant_when_it_cannot_print_read_a_docstring_or_c
         assert bare not in probe
 
 
+def test_the_probe_names_its_modules_in_one_string_however_many_there_are() -> None:
+    # An `Array Name` literal of 2,808 names exceeded Lean's maximum recursion depth on ATLAS.
+    names = [f"Lib.M{i}" for i in range(3000)]
+    probe = render_library_probe(names)
+    start = probe.index("def libraryModules")
+    definition = probe[start : probe.index("\n\n", start)]
+    # Booleans, so a failure does not make pytest diff a string of 3,000 names.
+    is_array_literal = "#[" in definition or "Name.str" in definition
+    assert not is_array_literal
+    literal = definition[definition.index('"') : definition.index('" : String)') + 1]
+    assert json.loads(literal).split("\n") == sorted(names)
+
+
 def test_two_copies_of_one_library_in_differently_named_folders_give_identical_bytes(tmp_path: Path) -> None:
     first = generate_index(library(tmp_path / "one"), runner=runner_for()).data
     second = generate_index(library(tmp_path / "another-name" / "checkout"), runner=runner_for()).data
@@ -697,7 +710,7 @@ def test_the_probe_imports_each_module_plainly_and_is_not_a_module_file() -> Non
     assert "module" not in {line.strip() for line in lines}
     assert not any(line.startswith(("public import", "meta import")) for line in lines)
     assert LIBRARY_MARKER in probe
-    assert 'Name.str (Name.str (Name.anonymous) "Lib") "A"' in probe
+    assert '("Lib.A\\nLib.B" : String)' in probe
     assert "{" + "output_limit" + "}" not in probe
 
 
@@ -1138,6 +1151,26 @@ def test_real_check_and_stale_build(built: Path, tmp_path: Path, capsys) -> None
     assert error.startswith("error: the build is missing or stale; run `lake build Fix` and index again (Lake: ✖ [")
     assert error.rstrip().endswith("Building Fix.Public)")
     assert error.count("\n") == 1 and "Fix.Wanted" not in error
+
+
+@real_library
+def test_real_a_module_set_of_thousands_of_modules_elaborates(built: Path, tmp_path: Path) -> None:
+    names = [f"Lib.M{i}" for i in range(3000)] + ["Lib.A'", "Lib.B!", "Lib.C?"]
+    probe = render_library_probe(names)
+    start = probe.index("def libraryModules")
+    file = tmp_path / "ModuleSet.lean"
+    file.write_text(
+        "import Lean\nopen Lean\n\n"
+        + probe[start : probe.index("\n\n", start)]
+        # Name literals are built by Lean's parser, not by `String.toName`.
+        + "\n\n#eval IO.println (libraryModules.size, [`Lib.A', `Lib.B!, `Lib.C?].all libraryModules.contains)\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["lake", "env", "lean", str(file)], cwd=built, capture_output=True, text=True, timeout=600, check=False
+    )
+    assert result.returncode == 0, (result.stdout + result.stderr)[-2000:]
+    assert result.stdout.strip() == "(3003, true)"
 
 
 @real_library

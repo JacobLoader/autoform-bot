@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib.metadata
+import json
 import os
 import re
 import stat
@@ -14,7 +15,7 @@ from pathlib import Path, PurePosixPath
 import tomli
 
 from .. import skeleton
-from ..skeleton import SkeletonError, _lean_name, lean_libraries
+from ..skeleton import SkeletonError, lean_libraries
 from .declarations import ProbeOutputError, classify, parse_probe_output, starts_with_module
 from .index import (
     INDEX_FILE,
@@ -116,8 +117,19 @@ def render_library_probe(modules: Sequence[str]) -> str:
         marker=LIBRARY_MARKER,
         output_env=skeleton.PROBE_OUTPUT_ENV,
         output_limit=skeleton.DEFAULT_PROBE_OUTPUT_LIMIT,
-        modules="#[" + ", ".join(_lean_name(module) for module in names) + "]",
+        modules=_module_set(names),
     )
+
+
+def _module_set(names: Sequence[str]) -> str:
+    """The module names as one Lean string literal, one per line, which the probe reads with `String.toName`.
+
+    An `Array Name` literal elaborates a nested term per element, and 2,808 modules exceeded Lean's
+    maximum recursion depth. A module name the index accepts is ASCII identifiers joined by dots, so
+    `String.toName` gives the name `Name.str` would.
+    """
+
+    return json.dumps("\n".join(names))
 
 
 def library_sources(root: Path, libraries: Sequence[str] = ()) -> LibrarySources:
