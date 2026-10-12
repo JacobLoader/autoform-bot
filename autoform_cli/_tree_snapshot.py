@@ -522,7 +522,10 @@ class TreeCaptureLimits:
     """Optional bounds on observed entries and captured regular-file bytes.
 
     The retained root has depth zero. Every observed child counts as an entry,
-    including omitted and placeholder entries.
+    including omitted and placeholder entries.  With
+    ``TreeSelection.unselected_may_change`` the scan, its end-of-folder
+    relists and the final verification each have their own budget under the
+    same limits.
     """
 
     max_entries: int | None = None
@@ -544,7 +547,19 @@ class TreeCaptureLimits:
 
 @dataclass(frozen=True, slots=True)
 class TreeSelection:
-    """Select which paths are descended into and captured as bytes."""
+    """Select which paths are descended into and captured as bytes.
+
+    By default a capture proves the whole descended tree stable: every
+    descended folder keeps its identity and full list of names.  With
+    ``unselected_may_change`` it proves stable only what it selected: the
+    entries ``include`` or ``placeholder`` capture, folders with a recognized
+    opaque marker, and the folders that contain either.  Any other descended
+    folder may change, vanish or be rebuilt during the capture, provided it
+    still holds no selected entry and no recognized marker when it is
+    rechecked.  Such folders leave no trace in the snapshot or its revisions.
+    This mode needs directory-descriptor traversal and does not record omitted
+    entries.
+    """
 
     include: Callable[[PurePosixPath, int], bool]
     descend: Callable[[PurePosixPath], bool]
@@ -553,6 +568,13 @@ class TreeSelection:
     record_omitted: bool = True
     limits: TreeCaptureLimits = TreeCaptureLimits()
     opaque_markers: tuple["OpaqueDirectoryMarker", ...] = ()
+    unselected_may_change: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.unselected_may_change, bool):
+            raise ValueError("unselected_may_change must be a boolean")
+        if self.unselected_may_change and self.record_omitted:
+            raise ValueError("unselected_may_change requires record_omitted=False")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1103,6 +1125,10 @@ def capture_directory_descriptor(
 ) -> TreeSnapshot:
     """Capture a tree below an already retained directory descriptor."""
 
+    if selection.unselected_may_change and expected_children:
+        # Expected children are checked against root records, which this mode
+        # keeps only for selected entries and the folders that hold them.
+        raise ValueError("unselected_may_change cannot be combined with expected_children")
     try:
         root = os.fstat(descriptor)
     except OSError as error:
@@ -1121,8 +1147,19 @@ def capture_directory_descriptor(
     omitted: list[tuple[str, str]] = []
     opaque_directories: list[str] = []
     budget = _CaptureBudget(selection.limits)
+    recheck_budget = _CaptureBudget(selection.limits)
 
-    def scan(descriptor: int, relative: str, depth: int, identity: tuple[int, ...]) -> None:
+    def scan(descriptor: int, relative: str, depth: int, identity: tuple[int, ...]) -> bool:
+        """Record one folder and its descendants; return whether it was recorded.
+
+        By default every descended folder is recorded.  With
+        ``selection.unselected_may_change`` only relevant folders are: the root, a
+        folder with a recognized marker, and a folder that directly holds a
+        selected entry or a relevant folder.  Unselected entries leave no record,
+        and an entry that vanishes before it is examined is treated as absent.
+        """
+
+        selected_only = selection.unselected_may_change
         # The root is the directory the caller explicitly asked to inspect.  A
         # marker name in that directory must not turn the entire requested input
         # into generated output.
@@ -1155,19 +1192,25 @@ def capture_directory_descriptor(
             if marker_data is not None:
                 files.append((marker_relative, marker_data))
             opaque_directories.append(relative)
-            return
-        directories.append(_DirectoryRecord(relative, identity, names))
+            return True
+        if not selected_only:
+            directories.append(_DirectoryRecord(relative, identity, names))
         _tree_snapshot_checkpoint("after-directory-list", relative)
+        relevant_names: list[str] = []
         for name in names:
             child_relative = f"{relative}/{name}" if relative else name
             try:
                 metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
             except OSError as error:
+                if selected_only and error.errno == errno.ENOENT:
+                    continue
                 raise _entry_error(error, child_relative)
             child_identity = _stat_signature(metadata)
             relative_path = PurePosixPath(child_relative)
             if stat.S_ISDIR(metadata.st_mode):
                 if not selection.descend(relative_path):
+                    if selected_only:
+                        continue
                     entries.append(_EntryRecord(child_relative, child_identity, ignored=True))
                     if selection.record_omitted:
                         omitted.append((child_relative, "directory"))
@@ -1179,14 +1222,22 @@ def capture_directory_descriptor(
                     except PermissionError as error:
                         raise _PermissionDenied(child_relative) from error
                     except OSError as error:
+                        if selected_only and error.errno in _VANISHED_ERRNOS:
+                            continue
                         raise _entry_error(error, child_relative)
                     opened = os.fstat(child_descriptor)
                     opened_identity = _stat_signature(opened)
-                    if _stable_entry_identity(opened_identity) != _stable_entry_identity(
+                    moved = _stable_entry_identity(opened_identity) != _stable_entry_identity(
                         child_identity
-                    ):
+                    )
+                    if moved and not selected_only:
                         raise _TreeChanged(child_relative)
-                    scan(child_descriptor, child_relative, depth + 1, opened_identity)
+                    # Selected mode checks the name binding only for a folder it
+                    # records; any other folder is examined again where it is now.
+                    if not scan(child_descriptor, child_relative, depth + 1, opened_identity):
+                        continue
+                    if moved:
+                        raise _TreeChanged(child_relative)
                     try:
                         final_identity = _stat_signature(
                             os.stat(name, dir_fd=descriptor, follow_symlinks=False)
@@ -1197,6 +1248,7 @@ def capture_directory_descriptor(
                         opened_identity
                     ):
                         raise _TreeChanged(child_relative)
+                    relevant_names.append(name)
                 finally:
                     if child_descriptor is not None:
                         _close_descriptor(child_descriptor)
@@ -1208,6 +1260,9 @@ def capture_directory_descriptor(
                 ):
                     entries.append(_EntryRecord(child_relative, child_identity))
                     placeholders.append(child_relative)
+                    relevant_names.append(name)
+                    continue
+                if selected_only:
                     continue
                 entries.append(_EntryRecord(child_relative, child_identity, ignored=True))
                 kind = (
@@ -1220,7 +1275,6 @@ def capture_directory_descriptor(
                 if selection.record_omitted:
                     omitted.append((child_relative, kind))
                 continue
-            entries.append(_EntryRecord(child_relative, child_identity))
             if stat.S_ISREG(metadata.st_mode):
                 max_bytes = budget.file_read_limit(
                     metadata.st_size,
@@ -1238,6 +1292,8 @@ def capture_directory_descriptor(
                 except _TreeChanged as error:
                     raise _TreeChanged(child_relative) from error
                 except OSError as error:
+                    if selected_only and error.errno == errno.ENOENT:
+                        continue
                     raise _entry_error(error, child_relative)
                 budget.add_file_bytes(len(data))
                 files.append((child_relative, data))
@@ -1248,12 +1304,30 @@ def capture_directory_descriptor(
                         os.stat(name, dir_fd=descriptor, follow_symlinks=False)
                     )
                 except OSError as error:
+                    if selected_only and error.errno == errno.ENOENT:
+                        continue
                     raise _entry_error(error, child_relative)
                 if link_identity != child_identity:
                     raise _TreeChanged(child_relative)
                 symlinks.append((child_relative, target))
             else:
                 special.append((child_relative, stat.S_IFMT(metadata.st_mode)))
+            entries.append(_EntryRecord(child_relative, child_identity))
+            relevant_names.append(name)
+        if selected_only:
+            relevant = not relative or bool(relevant_names)
+            _recheck_scanned_directory(
+                descriptor,
+                relative=relative,
+                depth=depth,
+                listed=names,
+                kept=relevant_names,
+                selection=selection,
+                budget=recheck_budget,
+            )
+            if relevant:
+                directories.append(_DirectoryRecord(relative, identity, tuple(relevant_names)))
+            return relevant
         if (
             _stable_entry_identity(
                 _stat_signature(os.fstat(descriptor))
@@ -1265,6 +1339,7 @@ def capture_directory_descriptor(
             )
         ):
             raise _TreeChanged(relative)
+        return True
 
     try:
         scan(descriptor, "", 0, _stat_signature(root))
@@ -1274,7 +1349,7 @@ def capture_directory_descriptor(
             descriptor,
             directories,
             entries,
-            limits=selection.limits,
+            selection=selection,
         )
     except (_PermissionDenied, _TreeChanged, OSError, RecursionError) as error:
         raise _capture_failure(error) from error
@@ -1333,6 +1408,9 @@ _CHANGED_ERRNOS = frozenset(
     )
     if hasattr(errno, name)
 )
+# Opening a listed child folder fails with these once it was removed or
+# replaced by a non-directory.
+_VANISHED_ERRNOS = frozenset((errno.ENOENT, errno.ENOTDIR))
 
 
 def _capture_failure(error: BaseException) -> TreeSnapshotError:
@@ -1494,6 +1572,163 @@ def _opaque_marker(
     return None, None, names
 
 
+def _recheck_scanned_directory(
+    descriptor: int,
+    *,
+    relative: str,
+    depth: int,
+    listed: tuple[str, ...],
+    kept: list[str],
+    selection: TreeSelection,
+    budget: _CaptureBudget,
+) -> None:
+    """Relist a folder once its scan ends, in selected-entry mode.
+
+    Its recorded names must still be present, it must not have become opaque,
+    and every name that appeared since its scan listing must hold no selected
+    entry.  This is the selected-mode form of the strict end-of-folder relist,
+    and like it bounds the undetected window of this folder to the time
+    between this relist and its verification.
+    """
+
+    names = _relist_directory(
+        descriptor,
+        relative,
+        depth=depth,
+        selection=selection,
+        budget=budget,
+    )
+    current = set(names)
+    for name in kept:
+        if name not in current:
+            raise _TreeChanged(f"{relative}/{name}" if relative else name)
+    scanned = set(listed)
+    for name in names:
+        if name not in scanned:
+            _require_no_inputs(
+                descriptor,
+                name,
+                relative=relative,
+                depth=depth,
+                selection=selection,
+                budget=budget,
+            )
+
+
+def _relist_directory(
+    descriptor: int,
+    relative: str,
+    *,
+    depth: int,
+    selection: TreeSelection,
+    budget: _CaptureBudget,
+) -> tuple[str, ...]:
+    """List a folder again for a selected-mode recheck, as the scan lists it.
+
+    A recognized marker means the folder became opaque after it was scanned,
+    which changes what is captured.  Limit, name and permission failures
+    become changes too: the scan already passed this folder, so the retry's
+    scan decides whether such a condition lasts.
+    """
+
+    try:
+        if relative and selection.opaque_markers:
+            marker, _marker_data, names = _opaque_marker(
+                descriptor,
+                relative,
+                selection,
+                budget=budget,
+                depth=depth,
+            )
+            if marker is not None:
+                raise _TreeChanged(relative)
+            return names
+        return _capture_directory_names(descriptor, budget=budget, depth=depth + 1)
+    except _PermissionDenied as error:
+        raise _TreeChanged(error.relative) from error
+    except (TreeSnapshotError, PermissionError) as error:
+        raise _TreeChanged(relative) from error
+
+
+def _require_no_inputs(
+    descriptor: int,
+    name: str,
+    *,
+    relative: str,
+    depth: int,
+    selection: TreeSelection,
+    budget: _CaptureBudget,
+) -> None:
+    """Prove that whatever is now at *name* holds no selected entry or marker.
+
+    *relative* and *depth* describe the parent folder.  Nothing here is
+    compared with the scan: a missing entry holds nothing, an unselected entry
+    contributes nothing, and a folder may be new or rebuilt as long as it is
+    not opaque and, recursively, holds nothing selected.  Folders the scan
+    never descends into are not opened.
+    """
+
+    child_relative = f"{relative}/{name}" if relative else name
+    relative_path = PurePosixPath(child_relative)
+    child_descriptor: int | None = None
+    for _look in range(2):
+        try:
+            metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        except PermissionError as error:
+            raise _TreeChanged(child_relative) from error
+        except OSError as error:
+            raise _entry_error(error, child_relative)
+        if not stat.S_ISDIR(metadata.st_mode):
+            if _selected(selection, relative_path, metadata.st_mode):
+                raise _TreeChanged(child_relative)
+            return
+        if not selection.descend(relative_path):
+            return
+        try:
+            child_descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=descriptor)
+        except FileNotFoundError:
+            return
+        except NotADirectoryError:
+            # Replaced by a non-directory since the stat: look at that instead.
+            continue
+        except PermissionError as error:
+            raise _TreeChanged(child_relative) from error
+        except OSError as error:
+            raise _entry_error(error, child_relative)
+        break
+    if child_descriptor is None:
+        raise _TreeChanged(child_relative)
+    try:
+        names = _relist_directory(
+            child_descriptor,
+            child_relative,
+            depth=depth + 1,
+            selection=selection,
+            budget=budget,
+        )
+        for child_name in names:
+            _require_no_inputs(
+                child_descriptor,
+                child_name,
+                relative=child_relative,
+                depth=depth + 1,
+                selection=selection,
+                budget=budget,
+            )
+    finally:
+        _close_descriptor(child_descriptor)
+
+
+def _selected(selection: TreeSelection, relative: PurePosixPath, mode: int) -> bool:
+    """Whether the scan records a non-directory entry: the scan's include and placeholder branches."""
+
+    return selection.include(relative, mode) or (
+        stat.S_ISREG(mode) and selection.placeholder(relative, mode)
+    )
+
+
 def _read_file(
     parent_descriptor: int,
     name: str,
@@ -1545,12 +1780,16 @@ def _verify_snapshot(
     directories: list[_DirectoryRecord],
     entries: list[_EntryRecord],
     *,
-    limits: TreeCaptureLimits,
+    selection: TreeSelection,
 ) -> None:
+    limits = selection.limits
     expected_directories = {record.relative: record for record in directories}
     expected_entries = {record.relative: record for record in entries}
     visited_directories: set[str] = set()
     visited_entries: set[str] = set()
+    # Selected mode lists every recorded folder and walks every unrecorded
+    # child, charged once against the capture limits for the whole pass.
+    budget = _CaptureBudget(limits)
 
     def verify_marker(
         descriptor: int,
@@ -1601,6 +1840,9 @@ def _verify_snapshot(
                 raise _TreeChanged(relative)
             verify_marker(descriptor, relative, expected.marker)
             return
+        if selection.unselected_may_change:
+            verify_selected_directory(descriptor, relative, expected)
+            return
         names_match = _directory_names_match(
             descriptor,
             expected.names,
@@ -1635,6 +1877,50 @@ def _verify_snapshot(
             )
         ):
             raise _TreeChanged(relative)
+
+    def verify_selected_directory(
+        descriptor: int,
+        relative: str,
+        expected: _DirectoryRecord,
+    ) -> None:
+        if _stable_entry_identity(
+            _stat_signature(os.fstat(descriptor))
+        ) != _stable_entry_identity(expected.identity):
+            raise _TreeChanged(relative)
+        depth = relative.count("/") + 1 if relative else 0
+        names = _relist_directory(
+            descriptor,
+            relative,
+            depth=depth,
+            selection=selection,
+            budget=budget,
+        )
+        current = set(names)
+        for name in expected.names:
+            if name not in current:
+                raise _TreeChanged(f"{relative}/{name}" if relative else name)
+        recorded = set(expected.names)
+        for name in names:
+            if name not in recorded:
+                _require_no_inputs(
+                    descriptor,
+                    name,
+                    relative=relative,
+                    depth=depth,
+                    selection=selection,
+                    budget=budget,
+                )
+                continue
+            child_relative = f"{relative}/{name}" if relative else name
+            try:
+                metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            except OSError as error:
+                raise _entry_error(error, child_relative)
+            directory = expected_directories.get(child_relative)
+            if directory is None:
+                verify_entry(child_relative, metadata)
+                continue
+            verify_child_directory(descriptor, name, child_relative, metadata, directory)
 
     def verify_entry(child_relative: str, metadata: os.stat_result) -> None:
         entry = expected_entries.get(child_relative)
@@ -1687,7 +1973,13 @@ def _verify_snapshot(
             if child_descriptor is not None:
                 _close_descriptor(child_descriptor)
 
-    verify_directory(root_descriptor, "")
+    try:
+        verify_directory(root_descriptor, "")
+    finally:
+        # verify_directory and verify_child_directory hold each other through
+        # their closures. Breaking that cycle lets reference counting free the
+        # selection they hold once verification ends.
+        verify_directory = None  # type: ignore[assignment]
     if visited_directories != set(expected_directories) or visited_entries != set(
         expected_entries
     ):
@@ -1733,6 +2025,12 @@ def _capture_portable(
     because the root's ancestors are compared only by identity.
     """
 
+    if selection.unselected_may_change:
+        # Comparing two whole captures is this path's only stability check, so
+        # it cannot let unselected folders change between them.
+        raise TreeSnapshotError(
+            "selected-entry capture requires directory-descriptor traversal"
+        )
     path_identities = _portable_directory_identities(root)
     root_before = os.lstat(root)
     root_identity = (root_before.st_dev, root_before.st_ino)

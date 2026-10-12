@@ -427,13 +427,12 @@ def _lean_tree_selection(
             excluded,
         ),
         descend=lambda path: not _lean_path_is_excluded(path, excluded),
-        byte_limit=lambda path: (
-            _MANAGED_OUTPUT_MANIFEST_BYTE_LIMIT
-            if _is_managed_output_manifest_name(path.name)
-            else None
-        ),
         record_omitted=False,
         limits=limits,
+        # Only Lean inputs, markers and the folders holding them must stay
+        # stable; generated sites, editor temporaries and other folders under
+        # the root may change while sources are captured.
+        unselected_may_change=True,
         opaque_markers=(
             # A nested Git checkout is another source tree.  Treat the
             # presence of either a worktree/submodule .git file or a clone's
@@ -465,14 +464,7 @@ def _lean_snapshot_includes(
             relative.suffix.casefold() == ".lean"
             and not relative.name.startswith(".#")
         )
-    return (
-        stat.S_ISDIR(mode)
-        or relative.suffix.casefold() == ".lean"
-        or (
-            len(relative.parts) > 1
-            and _is_managed_output_manifest_name(relative.name)
-        )
-    )
+    return stat.S_ISDIR(mode) or relative.suffix.casefold() == ".lean"
 
 
 def _lean_path_is_excluded(
@@ -641,10 +633,6 @@ def _is_managed_output_manifest_bytes(data: bytes) -> bool:
         and (kind, schema) in MANAGED_OUTPUT_SCHEMAS
         and isinstance(value.get(kind), list)
     )
-
-
-def _is_managed_output_manifest_name(name: str) -> bool:
-    return unicodedata.normalize("NFC", name).casefold() == _MANAGED_OUTPUT_MANIFEST
 
 
 def _path_is_within_roots(

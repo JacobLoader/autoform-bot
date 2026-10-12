@@ -17,6 +17,7 @@ from autoform_cli._tree_snapshot import (
     OpaqueDirectoryMarker,
     TreeCaptureLimitError,
     TreeCaptureLimits,
+    TreeChangedError,
     TreeSelection,
     TreeSnapshot,
     TreeSnapshotError,
@@ -718,3 +719,145 @@ def test_descriptor_capture_releases_its_state_without_cyclic_gc(
         gc.enable()
 
     assert snapshot.files == (("payload", b"payload"),)
+
+
+def _selected_sources(
+    *,
+    markers: tuple[OpaqueDirectoryMarker, ...] = (),
+) -> TreeSelection:
+    return TreeSelection(
+        include=lambda path, _mode: path.suffix == ".src",
+        descend=lambda _path: True,
+        record_omitted=False,
+        opaque_markers=markers,
+        unselected_may_change=True,
+    )
+
+
+def _at_final_verification(monkeypatch: pytest.MonkeyPatch, action) -> None:
+    original = tree_snapshot_module._tree_snapshot_checkpoint
+
+    def checkpoint(name: str, path: str) -> None:
+        original(name, path)
+        if name == "before-final-verification":
+            action()
+
+    monkeypatch.setattr(tree_snapshot_module, "_tree_snapshot_checkpoint", checkpoint)
+
+
+def test_selected_capture_requires_a_boolean_flag_and_no_omitted_records() -> None:
+    with pytest.raises(ValueError, match="record_omitted=False"):
+        TreeSelection(
+            include=lambda _path, _mode: True,
+            descend=lambda _path: True,
+            unselected_may_change=True,
+        )
+    with pytest.raises(ValueError, match="must be a boolean"):
+        TreeSelection(
+            include=lambda _path, _mode: True,
+            descend=lambda _path: True,
+            record_omitted=False,
+            unselected_may_change=1,
+        )
+
+
+def test_selected_capture_refuses_portable_traversal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "a.src").write_bytes(b"a\n")
+
+    with pytest.raises(TreeSnapshotError, match="directory-descriptor traversal"):
+        _capture(tmp_path, _selected_sources(), portable=True, monkeypatch=monkeypatch)
+
+
+def test_selected_capture_refuses_expected_children(tmp_path: Path) -> None:
+    _require_descriptor_capture()
+    child = tmp_path / "child"
+    child.mkdir()
+    metadata = child.stat()
+
+    with bind_directory_tree(
+        tmp_path,
+        expected_children={"child": (metadata.st_dev, metadata.st_ino)},
+    ) as bound:
+        with pytest.raises(ValueError, match="expected_children"):
+            bound.capture(selection=_selected_sources())
+
+
+@pytest.mark.parametrize(("folder", "expected"), [("", "."), ("sub", "sub")])
+def test_strict_selection_still_rejects_unselected_churn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    folder: str,
+    expected: str,
+) -> None:
+    _require_descriptor_capture()
+    parent = tmp_path / folder if folder else tmp_path
+    parent.mkdir(exist_ok=True)
+    (parent / "notes.md").write_bytes(b"0\n")
+
+    def save() -> None:
+        (parent / "notes.md.tmp").write_bytes(b"1\n")
+
+    _at_final_verification(monkeypatch, save)
+
+    with pytest.raises(TreeChangedError) as error:
+        _capture(tmp_path, _all_entries(TreeCaptureLimits()), portable=False, monkeypatch=monkeypatch)
+
+    assert error.value.relative == expected
+
+
+def test_selected_capture_ignores_unselected_churn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_descriptor_capture()
+    (tmp_path / "kept.src").write_bytes(b"kept\n")
+    (tmp_path / "out" / "deep").mkdir(parents=True)
+    (tmp_path / "out" / "deep" / "page.html").write_bytes(b"0\n")
+
+    def rebuild() -> None:
+        (tmp_path / "out" / "deep" / "page.html").unlink()
+        (tmp_path / "out" / "deep").rmdir()
+        (tmp_path / "out" / "fresh").mkdir()
+        (tmp_path / "notes.md.tmp").write_bytes(b"1\n")
+
+    _at_final_verification(monkeypatch, rebuild)
+
+    snapshot = _capture(tmp_path, _selected_sources(), portable=False, monkeypatch=monkeypatch)
+
+    assert snapshot.directories == ("",)
+    assert snapshot.files == (("kept.src", b"kept\n"),)
+    assert snapshot.omitted == ()
+
+
+@pytest.mark.parametrize("holds_selected_entry", [False, True])
+def test_verification_recognizes_markers_like_the_scan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    holds_selected_entry: bool,
+) -> None:
+    _require_descriptor_capture()
+    (tmp_path / "kept.src").write_bytes(b"kept\n")
+    folder = tmp_path / "X"
+    folder.mkdir()
+    (folder / "m.json").write_bytes(b"no")
+    if holds_selected_entry:
+        (folder / "inner.src").write_bytes(b"inner\n")
+    selection = _selected_sources(
+        markers=(OpaqueDirectoryMarker("m.json", 16, lambda data: data == b"ok"),),
+    )
+
+    snapshot = _capture(tmp_path, selection, portable=False, monkeypatch=monkeypatch)
+    assert ("X" in snapshot.directories) is holds_selected_entry
+    assert snapshot.opaque_directories == ()
+
+    def recognize() -> None:
+        (folder / "m.json").write_bytes(b"ok")
+
+    _at_final_verification(monkeypatch, recognize)
+    with pytest.raises(TreeChangedError) as error:
+        _capture(tmp_path, selection, portable=False, monkeypatch=monkeypatch)
+
+    assert error.value.relative == "X"
