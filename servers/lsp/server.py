@@ -35,6 +35,8 @@ T = TypeVar("T")
 DEFAULT_LSP_TIMEOUT = 60
 MAX_LSP_HEADER_BYTES = 16 * 1024
 MAX_LSP_MESSAGE_BYTES = 16 * 1024 * 1024
+# How long Lean's watchdog gets to stop its file workers once stdin closes.
+LSP_EOF_GRACE_SECONDS = 2.0
 
 
 class LspProtocolError(RuntimeError):
@@ -146,6 +148,19 @@ class LeanLspSession:
                         "refusing to signal an LSP process group after its leader was reaped"
                     )
             else:
+                # Lean's watchdog starts each file worker in its own session
+                # and stops every worker group when its stdin closes. A TERM
+                # first would kill the watchdog and orphan workers the group
+                # signal cannot reach. The leader stays unreaped while the
+                # watchdog exits, so the PGID cannot be reused meanwhile.
+                if process.stdin is not None:
+                    try:
+                        process.stdin.close()
+                    except OSError:
+                        logger.warning("failed to close Lean LSP stdin", exc_info=True)
+                _wait_for_live_process_group_exit(
+                    process_group_id, time.monotonic() + LSP_EOF_GRACE_SECONDS
+                )
                 _terminate_process_group(process_group_id)
             # Publish this before any operation that can reap the leader. A
             # retry must never signal a reused numeric PGID.
@@ -176,7 +191,8 @@ class LeanLspSession:
             if self.is_alive():
                 try:
                     self._send_request("shutdown", {})
-                    self._send_notification("exit", {})
+                    # Lean leaves after shutdown only on an exit without params.
+                    self._send_notification("exit", None)
                     if self._process_group_id is not None:
                         _wait_for_live_process_group_exit(
                             self._process_group_id, time.monotonic() + 5
@@ -378,16 +394,14 @@ class LeanLspSession:
     def _send_notification(
         self,
         method: str,
-        params: dict,
+        params: dict | None,
         *,
         timeout: float = 30,
     ) -> None:
         """Send a JSON-RPC notification (no response expected)."""
-        msg = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        }
+        msg: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+        if params is not None:
+            msg["params"] = params
         self._write_message(msg, timeout=timeout)
 
     def _write_message(self, msg: dict, *, timeout: float = 30) -> None:
