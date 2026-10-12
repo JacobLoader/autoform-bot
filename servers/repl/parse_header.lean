@@ -1,5 +1,4 @@
 import Lean.Elab.Import
-import Lean.Elab.ParseImportsFast
 
 open Lean Elab
 
@@ -17,7 +16,11 @@ def main : IO Unit := do
   for message in messages.toList do
     if message.severity == .error then
       errors := errors.push s!"{message.pos.line}:{message.pos.column}: {← message.data.toString}"
-  let result : PrintImportResult :=
-    if errors.isEmpty then { result? := some (HeaderSyntax.toModuleHeader header) }
-    else { errors }
-  IO.println (toJson { imports := #[result] : PrintImportsResult }).compress
+  let mut entry := Json.mkObj [("errors", toJson errors)]
+  if errors.isEmpty then
+    -- Before v4.30 an ordinary header and `prelude` followed by `import Init`
+    -- both report one plain `Init` import, so also say whether `prelude` is there.
+    let result := (toJson (HeaderSyntax.toModuleHeader header)).setObjVal! "isPrelude"
+      (toJson !header.raw[1].isNone)
+    entry := entry.setObjVal! "result" result
+  IO.println (Json.mkObj [("imports", Json.arr #[entry])]).compress

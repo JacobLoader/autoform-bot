@@ -452,6 +452,7 @@ def _decode_header_analysis(stdout: bytes) -> _LeanHeaderAnalysis:
         if has_result == has_imports:
             raise ValueError
         is_module: bool | None = None
+        is_prelude: bool | None = None
         if has_result:
             result = entry["result"]
             if not isinstance(result, dict):
@@ -460,14 +461,15 @@ def _decode_header_analysis(stdout: bytes) -> _LeanHeaderAnalysis:
             is_module = result.get("isModule")
             if is_module is not None and type(is_module) is not bool:
                 raise ValueError
+            is_prelude = result.get("isPrelude")
+            if is_prelude is not None and type(is_prelude) is not bool:
+                raise ValueError
         else:
             imports = entry["imports"]
         if not isinstance(imports, list):
             raise ValueError
 
         modules: list[str] = []
-        has_implicit_init = False
-        has_composition_metadata = has_result and is_module is not None
         for item in imports:
             if not isinstance(item, dict):
                 raise ValueError
@@ -489,23 +491,17 @@ def _decode_header_analysis(stdout: bytes) -> _LeanHeaderAnalysis:
                 is_meta = item.get("isMeta")
                 if is_meta is not None and type(is_meta) is not bool:
                     raise ValueError
-                if is_meta is None:
-                    has_composition_metadata = False
-                if module == "Init" and is_meta:
-                    has_implicit_init = True
             if module != "Init":
                 modules.append(module)
-        # Only the current schema exposes enough parser state to distinguish
-        # Lean's implicit Init imports from an explicit ``prelude``/``module``
-        # header. The legacy schema remains valid for allowlist checks, but
-        # fails closed on source rewriting and sends the validated frame exact.
+        # Imports can go in front only of a header that starts with neither
+        # ``module`` nor ``prelude``. Lean's implicit Init entries cannot say
+        # which: before v4.30 an ordinary header and ``prelude`` followed by
+        # ``import Init`` both report one plain Init. Output without both
+        # flags, such as plain ``lean --deps-json``, remains valid for allowlist
+        # checks but sends the validated frame exact.
         return _LeanHeaderAnalysis(
             modules=tuple(modules),
-            accepts_leading_imports=(
-                has_composition_metadata
-                and has_implicit_init
-                and is_module is False
-            ),
+            accepts_leading_imports=is_module is False and is_prelude is False,
         )
     except (ReplProtocolError, TypeError, KeyError, json.JSONDecodeError):
         raise ValueError("unrecognized output from the Lean header parser") from None

@@ -1081,7 +1081,7 @@ def _deps_json(
     if not errors:
         implicit = [] if prelude else [item("Init"), item("Init", is_meta=True)]
         imports = implicit + [item(module) for module in modules]
-        entry["result"] = {"imports": imports, "isModule": is_module}
+        entry["result"] = {"imports": imports, "isModule": is_module, "isPrelude": prelude}
     return json.dumps({"imports": [entry]})
 
 
@@ -1265,6 +1265,29 @@ def test_disposable_call_refuses_non_posix_before_spawning_header_parser(monkeyp
 _LEGACY_INIT_ONLY = json.dumps(
     {"imports": [{"errors": [], "imports": [{"module": "Init", "importAll": False}]}]}
 )
+# The header parser on Lean v4.27.0 reports one plain Init import both for an
+# ordinary header and for ``prelude`` followed by ``import Init``.
+_V4_27_INIT_ONLY = (
+    '{"imports":[{"errors":[],"result":{"imports":[{"importAll":false,"isExported":true,'
+    '"isMeta":false,"module":"Init"}],"isModule":false,"isPrelude":%s}}]}'
+)
+# Plain ``lean --deps-json`` output says nothing about ``prelude``.
+_FAST_PARSER_ORDINARY = json.dumps(
+    {
+        "imports": [
+            {
+                "errors": [],
+                "result": {
+                    "imports": [
+                        {"importAll": False, "isExported": True, "isMeta": False, "module": "Init"},
+                        {"importAll": False, "isExported": True, "isMeta": True, "module": "Init"},
+                    ],
+                    "isModule": False,
+                },
+            }
+        ]
+    }
+)
 
 
 @pytest.mark.parametrize(
@@ -1287,8 +1310,15 @@ _LEGACY_INIT_ONLY = json.dumps(
             "prelude\nimport REPL.Frontend\n#check Nat",
         ),
         (_deps_json("Init", prelude=True), "prelude\nimport Init\n#check Nat", "prelude\nimport Init\n#check Nat"),
-        # The legacy schema cannot prove an ordinary header, so nothing is prefixed.
+        (_V4_27_INIT_ONLY % "false", "#check Nat", "import Mathlib\n#check Nat"),
+        (
+            _V4_27_INIT_ONLY % "true",
+            "prelude\nimport Init\n#check Nat",
+            "prelude\nimport Init\n#check Nat",
+        ),
+        # Output that cannot prove an ordinary header gets nothing prefixed.
         (_LEGACY_INIT_ONLY, "#check Nat", "#check Nat"),
+        (_FAST_PARSER_ORDINARY, "#check Nat", "#check Nat"),
     ],
 )
 def test_disposable_call_prefixes_warmup_only_onto_proven_ordinary_headers(monkeypatch, deps_output, code, frame):
