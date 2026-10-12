@@ -138,6 +138,13 @@ def test_archive_modules_are_sorted_and_probe_fails_on_zero_declarations(
     assert "autoformAuditAxioms env declName" in probe
 
 
+def test_both_probes_spell_module_names_outside_the_basic_multilingual_plane(helper: ModuleType) -> None:
+    # Lean reads a JSON surrogate pair such as \ud835\udd3d as two NUL characters.
+    for probe in (helper.render_probe(("Fixture.𝔽",)), helper.render_open_probe(("Fixture.𝔽",), ())):
+        assert 'Name.str (Name.str (Name.anonymous) "Fixture") "𝔽"' in probe
+        assert "\\ud835" not in probe
+
+
 @pytest.mark.parametrize(
     ("members", "message"),
     [
