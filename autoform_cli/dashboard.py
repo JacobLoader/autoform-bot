@@ -12,13 +12,13 @@ from typing import Callable, Protocol
 from urllib.parse import urlsplit
 
 from .claims import ClaimTransportError, author_claim_key
-from .graph import GraphValidationError, Node, load_graph_snapshot
+from .graph import GraphValidationError, Node
 from .render import (
     LIVE_SCRIPT,
     PUBLICATION_MANIFEST,
     PUBLICATION_MANIFEST_MAX_BYTES,
     PUBLICATION_SCHEMA,
-    capture_publication_source,
+    load_publication_source,
 )
 from .runtime import RuntimeGraph, RuntimeNode, RuntimeProjectionError
 
@@ -124,7 +124,7 @@ def build_live_state(
 
 
 def live_state_loader(
-    runtime_loader: Callable[[], RuntimeGraph],
+    runtime_loader: Callable[[], RuntimeGraph | _PublicationLiveGraph],
     claims: ClaimReader,
 ) -> Callable[[], dict[str, object]]:
     """Return a request-time loader whose failures remain local and explicit."""
@@ -157,56 +157,30 @@ def publication_bound_live_state(
     blueprint_dir: str | Path,
     site_dir: str | Path,
 ) -> Callable[[], dict[str, object]]:
-    """Refuse live badges when the built publication is stale or incomplete."""
+    """Refuse live badges when the built publication is stale or incomplete.
 
-    lock = threading.Lock()
-    blueprint = Path(blueprint_dir)
+    The revision compared and the nodes claims are projected onto come from
+    one read of the blueprint.
+    """
+
     manifest_path = Path(site_dir) / PUBLICATION_MANIFEST
 
-    def guarded() -> dict[str, object]:
-        with lock:
-            try:
-                encoded = manifest_path.read_bytes()
-                if len(encoded) > PUBLICATION_MANIFEST_MAX_BYTES:
-                    raise ValueError("publication manifest is too large")
-                manifest = json.loads(encoded)
-                snapshot = capture_publication_source(blueprint)
-                if (
-                    not isinstance(manifest, dict)
-                    or manifest.get("schema") != PUBLICATION_SCHEMA
-                    or manifest.get("complete") is not True
-                    or manifest.get("source_revision") != snapshot.revision
-                ):
-                    raise ValueError("built dashboard is stale; rerun render and the MkDocs build")
-                graph = load_graph_snapshot(
-                    snapshot.root,
-                    {
-                        relative.as_posix(): data
-                        for relative, data in snapshot.files.items()
-                    },
-                    directories=(
-                        "" if relative.as_posix() == "." else relative.as_posix()
-                        for relative in snapshot.directories
-                    ),
-                )
-                runtime = _PublicationLiveGraph(
-                    snapshot.revision,
-                    tuple(graph.nodes.values()),
-                )
-                return build_live_state(runtime, claims.list())
-            except (
-                ClaimTransportError,
-                GraphValidationError,
-                OSError,
-                ValueError,
-            ) as error:
-                return {
-                    "schema": LIVE_SCHEMA,
-                    "claims": [],
-                    "error": f"{type(error).__name__}: {error}",
-                }
+    def runtime() -> _PublicationLiveGraph:
+        encoded = manifest_path.read_bytes()
+        if len(encoded) > PUBLICATION_MANIFEST_MAX_BYTES:
+            raise ValueError("publication manifest is too large")
+        manifest = json.loads(encoded)
+        revision, graph = load_publication_source(blueprint_dir)
+        if (
+            not isinstance(manifest, dict)
+            or manifest.get("schema") != PUBLICATION_SCHEMA
+            or manifest.get("complete") is not True
+            or manifest.get("source_revision") != revision
+        ):
+            raise ValueError("built dashboard is stale; rerun render and the MkDocs build")
+        return _PublicationLiveGraph(revision, tuple(graph.nodes.values()))
 
-    return guarded
+    return live_state_loader(runtime, claims)
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):

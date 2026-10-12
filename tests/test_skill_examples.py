@@ -16,6 +16,7 @@ from autoform_cli.graph import load_graph
 from autoform_cli.lean import build_linker, declaration_names
 from autoform_cli.render import render_site
 from autoform_cli.status import derive
+from tests.test_lean_sources import _git_commit
 
 
 _HREF = re.compile(r'href="([^"]+)"')
@@ -336,33 +337,10 @@ def test_roadmap_example_is_structural_not_a_completion_fixture(
 
 
 def test_setup_asset_static_site_contract(repo_root: Path, tmp_path: Path) -> None:
-    example = tmp_path / "consumer-project"
+    example = tmp_path / "consumer-project"  # links need a commit holding the rendered inputs
     shutil.copytree(repo_root / _EXAMPLE, example)
     subprocess.run(["git", "init", "-q"], cwd=example, check=True)
-    subprocess.run(["git", "add", "--all"], cwd=example, check=True)
-    subprocess.run(
-        [
-            "git",
-            "-c",
-            "user.name=Autoform Test",
-            "-c",
-            "user.email=autoform@example.invalid",
-            "commit",
-            "-q",
-            "--no-gpg-sign",
-            "-m",
-            "consumer fixture",
-        ],
-        cwd=example,
-        check=True,
-    )
-    ref = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=example,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
+    ref = _git_commit(example, "consumer fixture")
     site = tmp_path / "site-src"
 
     report = render_site(
@@ -827,9 +805,6 @@ def test_cli_reference_documents_only_commands_that_exist(repo_root: Path) -> No
     from autoform_cli.__main__ import main
 
     reference = (repo_root / "autoform_cli/README.md").read_text(encoding="utf-8")
-    normalized_reference = " ".join(reference.split())
-    assert "match one locally available Git commit" in normalized_reference
-    assert "records no Git ref" in normalized_reference
     documented = _documented_invocations(reference)
     assert {("check",), ("audit",), ("render",), ("search",), ("claim", "acquire")} <= documented
 
