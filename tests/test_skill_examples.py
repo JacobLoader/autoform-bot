@@ -1023,6 +1023,13 @@ def test_skills_search_shared_libraries_and_say_what_to_do_with_a_hit(repo_root:
     assert "once per checkout" in listing and "once per session" not in reference
     assert "not checked out" in listing
     assert "Do not pass a package" in listing
+    # Flags agents got wrong: --lean-root goes with --library, and library list takes only the root.
+    assert "`--library NAME`" in listing and "`--lean-root`" in listing and "only argument" in listing
+    # An unusable package is never passed, and a package left out is unknown, not merely skipped.
+    assert "not even to try" in listing and "unknown" in listing
+    # Every word of a query must match, so a library is not declared empty on a long query.
+    queries = rule("Library declarations")
+    assert "every word" in queries and "as a query of its own" in queries
     assert "Each worktree compiles" in rule("`lake-build`")
     assert "subagent" in rule("report to the lead")
     assert "in addition to the blueprint query" in rule("Library declarations")

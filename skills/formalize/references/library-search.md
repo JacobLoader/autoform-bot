@@ -11,12 +11,15 @@ the lead instead.
 
 Run `autoform library list` once per checkout, in the checkout being edited,
 once its packages are present: in a new worktree, after the step Formalize
-prescribes for a new worktree. A package still reported as not checked out is
-not fetched any other way (never `lake update`, never a new `require`): search
-without it and report that library as unchecked, as for a refused library. Pass
-every package it reports as usable to each search. Do not pass a package it
-reports as not usable; tell the user once which package was left out and the
-reason the listing gives.
+prescribes for a new worktree. The Lake project root is its only argument. A
+package still reported as not checked out is not fetched any other way (never
+`lake update`, never a new `require`). Pass every package it reports as usable
+to each search as `--library NAME`, together with `--lean-root` naming the same
+Lake project root: search refuses `--library` without it. Do not pass a package
+it reports as not usable, such as a dependency that publishes no index, not even
+to try. A package left out, as not usable or not checked out, is unchecked, as
+for a refused library: tell the user once which package was left out and the
+reason the listing gives, and that whether it has the result is unknown.
 
 ## A refusal that names a library
 
@@ -31,9 +34,12 @@ other refusal is handled as the skill says for any refusal.
 
 Library declarations are found mostly by name: many have no docstring. Run one
 or two distinctive words, or a Lean name, as a search of its own for a library,
-in addition to the blueprint query of a few words. Retry with other usual names
-before deciding it has no such result, and search by the words of the result,
-since a library names it differently.
+in addition to the blueprint query of a few words. A hit must contain every word
+of the query, so a longer query misses a declaration whose name and docstring
+lack one of its words. Before deciding that a library has no such result, run
+each distinctive word, and the Lean name the result would likely have, as a
+query of its own, retry with other usual names, and search by the words of the
+result, since a library names it differently.
 
 ## A complete hit
 
