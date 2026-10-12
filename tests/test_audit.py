@@ -219,9 +219,40 @@ def test_container_note_stays_while_a_nested_formalizable_article_is_unproved(
     notes.mkdir()
     (notes / f"{container_id}.md").write_text("chapter route\n", encoding="utf-8")
 
-    codes = {finding.code for finding in audit_blueprint(blueprint).findings}
+    assert audit_blueprint(blueprint).clean
 
-    assert "stale-implementation-note" not in codes
+
+@pytest.mark.parametrize("leaf", ["a.md", "z.md"])
+def test_container_note_stays_while_a_direct_article_is_unproved_beside_a_proved_section(
+    tmp_path: Path, leaf: str
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    container_id = "af_0123456789abcdef01234567"
+    _article(blueprint, "chapter/README.md", article_id=container_id)
+    _article(
+        blueprint,
+        f"chapter/{leaf}",
+        article_id="af_100000000000000000000000",
+        declaration="theorem",
+        statement="formalized",
+        lean="Project.open",
+    )
+    _article(blueprint, "chapter/section/README.md", article_id="af_200000000000000000000000")
+    _article(
+        blueprint,
+        "chapter/section/done.md",
+        article_id="af_300000000000000000000000",
+        declaration="theorem",
+        statement="formalized",
+        proof="formalized",
+        lean="Project.done",
+    )
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{container_id}.md").write_text("chapter route\n", encoding="utf-8")
+
+    assert audit_blueprint(blueprint).clean
 
 
 @pytest.mark.parametrize("unproved_first", [True, False])
@@ -241,9 +272,7 @@ def test_container_note_stays_while_any_sibling_is_unproved(
     notes.mkdir()
     (notes / f"{container_id}.md").write_text("chapter route\n", encoding="utf-8")
 
-    codes = {finding.code for finding in audit_blueprint(blueprint).findings}
-
-    assert "stale-implementation-note" not in codes
+    assert audit_blueprint(blueprint).clean
 
 
 def test_container_note_without_formalizable_descendants_is_not_stale(tmp_path: Path) -> None:

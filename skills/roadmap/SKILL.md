@@ -78,7 +78,8 @@ Never link it from an article. Delete it when the article is proved or marked
 is proved and there is at least one. When a commit deletes or merges an article,
 move anything still useful from its note into a surviving article's note and
 delete the note in that commit; an orphaned note blocks every command that loads
-the graph, and any worker may repair one the same way.
+the graph, and any worker may repair one the same way, or by restoring the
+`article_id` line of an article that still exists but lost it.
 Assert formalization or `mathlib: true` only after exact verification. Before
 revising a formalizable leaf, acquire the `claim_target` that `autoform work
 context` reports for it, passing your own `--worker-id`; renew it while editing

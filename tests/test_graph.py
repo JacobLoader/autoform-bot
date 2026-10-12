@@ -572,7 +572,7 @@ def test_implementation_notes_are_keyed_by_durable_article_id(tmp_path: Path) ->
         (
             "af_111111111111111111111111.md",
             "route\n",
-            "names no roadmap article; delete it, first moving anything still useful",
+            "names no roadmap article; restore the article_id of an article that still exists",
         ),
         ("af_0123456789abcdef01234567.md", "\n", "empty implementation note"),
         ("af_0123456789abcdef01234567.md", "\ufeff\u200b\n", "empty implementation note"),

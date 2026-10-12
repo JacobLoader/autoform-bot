@@ -42,9 +42,10 @@ scope against the sources, then inspect the fine DAG and its coarse roadmap.
   the intended change without reconstructing the plan from unrelated pages.
 - Frontmatter asserts only verified facts. Readiness and completion remain
   derived from the DAG.
-- Uncertainty and unresolved source questions are explicit. Articles hold only
-  frontmatter and informal mathematics; Mathlib candidates and other Lean-side
-  findings are in the article's implementation note, never in the article.
+- Uncertainty, Mathlib candidates, and unresolved source questions are explicit.
+  Articles hold only frontmatter and informal mathematics, so Mathlib candidates
+  and other Lean-side findings are in the article's implementation note, never
+  in the article.
 
 ## Scores and verdict
 

@@ -112,7 +112,6 @@ def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path
     assert "Delete the file once the article is proved" in formalize
     assert "Delete every note the audit reports as `stale-implementation-note`" in formalize
     assert "even though it belongs to another article" in formalize
-    assert "The exceptions are deleting stale implementation notes" in formalize
     assert "delete every note the audit now reports as stale in a follow-up commit" in formalize
     assert '"stale-implementation-note"' in read("autoform_cli/audit.py")
     assert "never a secret or machine-local path" in formalize
@@ -131,8 +130,12 @@ def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path
         "containers have no claims, and any worker may delete a note that `autoform audit` reports as stale"
         in reference
     )
-    assert "delete the orphan, and commit; any worker may do this" in formalize
+    assert "When an article that still exists lost its `article_id` line, restore the line" in formalize
+    assert "delete the orphan, and commit. Any worker may make this repair" in formalize
+    assert "The exceptions are deleting stale implementation notes and repairing orphaned ones" in formalize
     assert "Parallel branches can orphan a note without a Git conflict" in reference
+    assert "reports as stale or repair an orphaned one" in reference
+    assert "When the article still exists but lost its `article_id` line, restore the line instead" in reference
     assert "Versioned implementation notes live outside the mathematical roadmap" in reference
     assert "delete it once every formalizable descendant is proved and there is at least one" in reference
     assert "Record what happened in the revision commit and report" in reference
@@ -143,6 +146,7 @@ def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path
     assert "Markdown under `blueprint/roadmap/` is the authored roadmap" in guidance
     assert "files under `blueprint/.implementation-notes/`" in guidance
     assert "with its hidden `blueprint/.implementation-notes/<article_id>.md` when present" in rubric
+    assert "Uncertainty, Mathlib candidates, and unresolved source questions are explicit" in rubric
     assert (
         "Mathlib candidates and other Lean-side findings are in the article's implementation note, "
         "never in the article"

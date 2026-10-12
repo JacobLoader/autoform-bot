@@ -20,10 +20,12 @@ author ready, running, retrying, failed, or blocked scheduler states. If `work
 list` refuses because unfinished leaves lack `article_id`, add the IDs planned
 by `autoform migrate article-ids <PROJECT>/blueprint --json` to those articles'
 frontmatter, validate, and commit that change before claiming anything. If a
-command refuses because an implementation note names no roadmap article, its
-article was deleted or merged, often by a parallel branch that Git merged
-without a conflict: move anything still useful into a surviving article's note,
-delete the orphan, and commit; any worker may do this.
+command refuses because an implementation note names no roadmap article, find
+out why. When an article that still exists lost its `article_id` line, restore
+the line. When the article was deleted or merged, often by a parallel branch
+that Git merged without a conflict, move anything still useful into the
+surviving article's note, delete the orphan, and commit. Any worker may make
+this repair.
 
 For a direct formalization request, use a compatible native persistent Goal
 when available and complete one useful frontier pass. Native subagents may work
@@ -67,8 +69,9 @@ Read the complete article, its `blueprint/.implementation-notes/<article_id>.md`
 when present, cited sources, dependency articles, and existing Lean target.
 Preserve the exact mathematical statement. Work only on the selected phase: do
 not modify another article or its Lean declarations, or weaken a public
-statement. The exceptions are deleting stale implementation notes, as described
-below, and revising a declaration other articles' Lean uses: start from
+statement. The exceptions are deleting stale implementation notes and repairing
+orphaned ones, as this skill describes, and revising a declaration other
+articles' Lean uses: start from
 `autoform work impact` and make only the edits the
 [revision contract](../../autoform_cli/README.md#revision-contract) requires,
 under the claims it requires. A work item flagged `revision`, whose article

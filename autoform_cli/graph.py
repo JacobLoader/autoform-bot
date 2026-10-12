@@ -411,8 +411,9 @@ def _implementation_note_issues(
             continue
         if path.stem not in article_ids:
             issues.append(
-                f"{relative}: implementation note names no roadmap article; "
-                "delete it, first moving anything still useful to a surviving article's note"
+                f"{relative}: implementation note names no roadmap article; restore the "
+                "article_id of an article that still exists, or delete the note after "
+                "moving anything still useful to a surviving article's note"
             )
             continue
         try:
