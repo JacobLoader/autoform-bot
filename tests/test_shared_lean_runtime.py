@@ -543,13 +543,16 @@ def test_service_close_starts_lsp_retirement_before_blocked_repl_cleanup_finishe
         {"project_dir": str(project), "file_path": "Main.lean"},
     )
 
-    thread = threading.Thread(target=lambda: (services.close(), services_closed.set()))
+    thread = threading.Thread(
+        target=lambda: (services.close(), services_closed.set()), daemon=True
+    )
     thread.start()
-    assert repl_close_started.wait(timeout=1)
-    assert lsp_closed.wait(timeout=1)
-    assert not services_closed.is_set()
-
-    release_repl_close.set()
+    try:
+        assert repl_close_started.wait(timeout=1)
+        assert lsp_closed.wait(timeout=1)
+        assert not services_closed.is_set()
+    finally:
+        release_repl_close.set()
     thread.join(timeout=2)
     assert not thread.is_alive()
     assert services_closed.is_set()
@@ -872,8 +875,9 @@ def test_lru_retirement_never_blocks_the_request_thread_past_its_deadline(tmp_pa
     with pytest.raises(ProjectResourceBusyError, match="shared Lean project slot"):
         with cache.lease(str(second), acquisition_timeout=0.05):
             pytest.fail("LRU cleanup ran synchronously or freed capacity early")
-    assert time.monotonic() - started < 0.5
-    assert close_started.is_set()
+    # A synchronous close would block on release_close for its full 2s.
+    assert time.monotonic() - started < 1.5
+    assert close_started.wait(timeout=1)
     assert created == [first.resolve()]
 
     release_close.set()
@@ -1034,6 +1038,8 @@ def test_failed_retirement_retries_without_parallel_reapers(tmp_path):
             maximum_active = max(maximum_active, active)
             attempt = attempts
         try:
+            # Hold each attempt open long enough to overlap a second reaper.
+            time.sleep(0.05)
             if attempt < 3:
                 raise RuntimeError("injected cleanup failure")
             retired.set()
@@ -1041,10 +1047,11 @@ def test_failed_retirement_retries_without_parallel_reapers(tmp_path):
             with lock:
                 active -= 1
 
+    # Two reapers, so only the claim flag keeps them off the one entry.
     cache = ProjectResourceCache(
         lambda root: root,
         close_resource,
-        max_entries=1,
+        max_entries=2,
         idle_seconds=1,
         start_sweeper=False,
         clock=lambda: clock["now"],
@@ -1285,11 +1292,13 @@ def test_cache_close_waits_for_retirement_before_returning(tmp_path):
     with cache.lease(str(project)):
         pass
 
-    thread = threading.Thread(target=lambda: (cache.close(), close_finished.set()))
+    thread = threading.Thread(target=lambda: (cache.close(), close_finished.set()), daemon=True)
     thread.start()
-    assert close_started.wait(timeout=1)
-    assert not close_finished.wait(timeout=0.1)
-    release_close.set()
+    try:
+        assert close_started.wait(timeout=1)
+        assert not close_finished.wait(timeout=0.1)
+    finally:
+        release_close.set()
     thread.join(timeout=2)
 
     assert not thread.is_alive()

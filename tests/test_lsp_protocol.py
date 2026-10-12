@@ -474,6 +474,7 @@ def test_close_retires_a_descendant_without_pre_reaping_its_wrapper():
     finally:
         if process.returncode is None:
             session.abort()
+        _kill_quietly(child_pid)
 
 
 def test_close_sends_exit_without_params(monkeypatch):
