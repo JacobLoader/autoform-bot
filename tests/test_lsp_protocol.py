@@ -650,6 +650,29 @@ def _command_mentions(pid: int, text: str) -> bool:
         return False
 
 
+def _open_until(session, project: Path, leader, marker: str, descendants: set[int]) -> None:
+    """Open Probe/Main.lean and record descendants until one's command mentions marker."""
+    main = project / "Probe" / "Main.lean"
+    session._send_notification(
+        "textDocument/didOpen",
+        {
+            "textDocument": {
+                "uri": main.as_uri(),
+                "languageId": "lean4",
+                "version": 1,
+                "text": main.read_text(encoding="utf-8"),
+            }
+        },
+    )
+    deadline = time.monotonic() + 120
+    while not any(_command_mentions(pid, marker) for pid in descendants):
+        if time.monotonic() >= deadline:
+            pytest.fail(f"Lean never started a process mentioning {marker}")
+        descendants.update(child.pid for child in leader.children(recursive=True))
+        time.sleep(0.1)
+    descendants.update(child.pid for child in leader.children(recursive=True))
+
+
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
 def test_real_lean_abort_stops_file_workers(tmp_path):
     import psutil
@@ -663,24 +686,7 @@ def test_real_lean_abort_stops_file_workers(tmp_path):
     descendants: set[int] = set()
     try:
         # A timed-out diagnostics call leaves the document open like this.
-        session._send_notification(
-            "textDocument/didOpen",
-            {
-                "textDocument": {
-                    "uri": (project / "Probe" / "Main.lean").as_uri(),
-                    "languageId": "lean4",
-                    "version": 1,
-                    "text": "import Probe.Slow\n",
-                }
-            },
-        )
-        deadline = time.monotonic() + 120
-        while not any(_command_mentions(pid, "Slow.lean") for pid in descendants):
-            if time.monotonic() >= deadline:
-                pytest.fail("Lean never started building the slow import")
-            descendants.update(child.pid for child in leader.children(recursive=True))
-            time.sleep(0.1)
-        descendants.update(child.pid for child in leader.children(recursive=True))
+        _open_until(session, project, leader, "Slow.lean", descendants)
 
         session.retire()
         session.close()
@@ -917,10 +923,11 @@ def test_real_lean_graceful_close_is_prompt_and_complete(tmp_path):
     session = lsp.LeanLspSession(lsp.LspConfig(cwd=str(project), timeout=120))
     session.start()
     leader = psutil.Process(session.process.pid)
-    descendants = {child.pid for child in leader.children(recursive=True)}
+    descendants: set[int] = set()
     try:
-        assert session.get_diagnostics(str(project / "Probe" / "Main.lean")) == []
-        descendants.update(child.pid for child in leader.children(recursive=True))
+        # Opened directly, so a file worker is running at close time without
+        # depending on get_diagnostics' one-second quiet-period reads.
+        _open_until(session, project, leader, "--worker", descendants)
 
         started = time.monotonic()
         session.close()
