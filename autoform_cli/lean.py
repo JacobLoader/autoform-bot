@@ -501,47 +501,13 @@ def _indexed_source_snapshot(
     snapshot: TreeSnapshot,
     excluded: tuple[PurePosixPath, ...],
 ) -> IndexedSourceSnapshot:
-    managed_output_manifests: dict[
-        PurePosixPath,
-        list[tuple[str, bytes | None]],
-    ] = {}
-
-    def add_manifest(relative: str, kind: str, data: bytes | None = None) -> None:
-        path = PurePosixPath(relative)
-        if len(path.parts) > 1 and _is_managed_output_manifest_name(path.name):
-            managed_output_manifests.setdefault(path.parent, []).append((kind, data))
-
-    for relative, data in snapshot.files:
-        add_manifest(relative, "file", data)
-    for relative, _target in snapshot.symlinks:
-        add_manifest(relative, "symlink")
-    for relative, _mode in snapshot.special:
-        add_manifest(relative, "special")
-    for relative in snapshot.placeholders:
-        add_manifest(relative, "placeholder")
-    for relative in snapshot.directories:
-        add_manifest(relative, "directory")
-
-    # An unrecognized manifest marks nothing; its directory stays Lean source.
+    # The capture's opaque markers alone decide which folders are skeleton
+    # output or nested checkouts; an unrecognized manifest marks nothing.
     ignored_roots: set[PurePosixPath] = {
         PurePosixPath(relative)
         for relative in snapshot.opaque_directories
         if relative
     }
-    for parent in sorted(
-        managed_output_manifests,
-        key=lambda path: (len(path.parts), path.as_posix()),
-    ):
-        if _path_is_within_roots(parent, ignored_roots):
-            continue
-        manifests = managed_output_manifests[parent]
-        if (
-            len(manifests) == 1
-            and manifests[0][0] == "file"
-            and manifests[0][1] is not None
-            and _is_managed_output_manifest_bytes(manifests[0][1])
-        ):
-            ignored_roots.add(parent)
 
     def in_ignored_root(relative_text: str) -> bool:
         return _path_is_within_roots(PurePosixPath(relative_text), ignored_roots)

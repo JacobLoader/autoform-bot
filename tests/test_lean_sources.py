@@ -1829,27 +1829,56 @@ def test_snapshot_materialization_rejects_final_tree_tampering(
             destination.rmdir()
 
 
-def test_outer_managed_marker_ignores_unrelated_files_below_it(
+def test_outer_managed_marker_hides_everything_below_it(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    outer_name = "manifest.json"
-    outer_data = (
-        b'{"kind":"packets","packets":[],"schema":"autoform-skeleton-packets/v2"}\n'
+    _index(tmp_path, "def authored : Nat := 0\n", "Authored.lean")
+    nested = tmp_path / "generated" / "nested"
+    nested.mkdir(parents=True)
+    (tmp_path / "generated" / "manifest.json").write_text(
+        '{"kind":"packets","packets":[],"schema":"autoform-skeleton-packets/v2"}\n'
     )
-    nested_name = "other.json"
-    snapshot = _synthetic_snapshot(
-        directories=("", "generated", "generated/nested"),
-        files=(
-            ("generated/nested/Copied.lean", b"def hiddenByOuterMarker : Nat := 0\n"),
-            (f"generated/nested/{nested_name}", b"{}\n"),
-            (f"generated/{outer_name}", outer_data),
-        ),
-        symlinks=((f"generated/nested/{nested_name.upper()}", "elsewhere"),),
+    (nested / "Copied.lean").write_text("def hiddenByOuterMarker : Nat := 0\n")
+    (nested / "manifest.json").write_text("{}\n")
+    original_checkpoint = tree_snapshot_module._tree_snapshot_checkpoint
+    scanned: list[str] = []
+
+    def record_scan(event: str, relative: str) -> None:
+        original_checkpoint(event, relative)
+        if event == "after-directory-list":
+            scanned.append(relative)
+
+    monkeypatch.setattr(tree_snapshot_module, "_tree_snapshot_checkpoint", record_scan)
+
+    snapshot = snapshot_project_sources(tmp_path)
+
+    assert snapshot.index.find("authored") is not None
+    assert snapshot.index.find("hiddenByOuterMarker") is None
+    # The scan lists every folder it walks; the root shows the hook fired.
+    assert "" in scanned
+    assert "generated/nested" not in scanned
+
+
+def test_folded_duplicate_marker_leaves_its_folder_indexed(tmp_path: Path) -> None:
+    generated = tmp_path / "review-packets"
+    generated.mkdir()
+    (generated / "manifest.json").write_text(
+        '{"kind":"packets","packets":[],"schema":"autoform-skeleton-packets/v2"}\n'
     )
+    try:
+        (generated / "MANIFEST.JSON").symlink_to("elsewhere")
+    except FileExistsError:
+        pytest.skip("filesystem folds letter case in names")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+    (generated / "Visible.lean").write_text("def visibleBesideFoldedLink : Nat := 0\n")
 
-    index = lean_module._indexed_source_snapshot(tmp_path, snapshot, ())
+    index = index_project(tmp_path)
 
-    assert index.index.find("hiddenByOuterMarker") is None
+    # Two folded matches are no marker, so the capture descends and reads the
+    # Lean file; indexing must keep what the capture kept.
+    assert index.find("visibleBesideFoldedLink") is not None
 
 
 def test_empty_non_source_directory_does_not_change_lean_generation(tmp_path: Path) -> None:
@@ -2264,7 +2293,7 @@ def test_oversized_managed_manifest_leaves_its_directory_indexed_at_its_read_bou
 
     index = index_project(tmp_path)
 
-    assert observed_lengths == [65]
+    assert all(length <= 64 for length in observed_lengths)
     assert index.find("oversizedPacket") is not None
 
 
