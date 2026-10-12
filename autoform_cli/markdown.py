@@ -584,12 +584,6 @@ def markdown_anchors(path: Path) -> set[str]:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return set()
-    return markdown_text_anchors(text)
-
-
-def markdown_text_anchors(text: str) -> set[str]:
-    """Return the anchors for already captured Markdown text."""
-
     lines = text.splitlines()
     # MkDocs strips YAML frontmatter before Markdown ever sees it, so those
     # lines cannot contribute headings. Caching by this exact content observes
@@ -806,7 +800,6 @@ __all__ = [
     "link_targets",
     "local_target_issue",
     "markdown_anchors",
-    "markdown_text_anchors",
     "PublishedTable",
     "markdown_links",
     "mask_fences_and_comments",
