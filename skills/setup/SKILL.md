@@ -60,6 +60,16 @@ Mathlib revision. Such a project is created without `lake-manifest.json` and
 with a warning: run `lake update` in it, which needs network access and
 downloads the Mathlib build cache, then commit the manifest it writes. Autoform
 needs Lean v4.27.0 or newer, and `project new` also warns below that.
+
+When the user says the project will depend on a Lean library, read that
+library's `lean-toolchain` before choosing the release. Lake builds a
+dependency with the project's own Lean and Mathlib, not the versions the library
+pins, so a project on another release builds the library against the wrong
+Mathlib. Create the project on the matching release: `--release` with a listed
+pair from `autoform project versions` when there is one, otherwise
+`--lean-toolchain`. Say which release you chose and why in the setup report.
+Adding the `require` stays the user's decision; do not add it or run
+`lake update` for the library yourself.
 Every component of the target parent must be a real directory, not a symlink;
 on macOS use `/private/tmp`, not the `/tmp` alias. The parent must not be group-
 or world-writable unless it is a sticky directory owned by the user or root. If

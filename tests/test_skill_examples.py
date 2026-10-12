@@ -208,6 +208,11 @@ def test_setup_guidance_uses_the_offline_atomic_project_creator(repo_root: Path)
     assert "--lean-toolchain" in normalized
     assert "lake update" in normalized
     assert "v4.27.0" in normalized
+    assert "the project will depend on a Lean library, read that library's `lean-toolchain`" in normalized
+    assert "`--release` with a listed pair from `autoform project versions` when there is one" in normalized
+    assert "otherwise `--lean-toolchain`" in normalized
+    assert "Say which release you chose and why in the setup report" in normalized
+    assert "Adding the `require` stays the user's decision" in normalized
     assert (
         "appending only missing Autoform rules through a retained bounded regular root"
         in normalized

@@ -28,6 +28,7 @@ except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
 _RELEASE = "lean-v4.32.2-mathlib-v4.32.2"
+_ATLAS_RELEASE = "lean-v4.34.1-mathlib-v4.34.1"
 _SOURCE = "https://example.test/owner/autoform.git"
 _CORE_FILES = ("lean-toolchain", "lakefile.toml", "lake-manifest.json", "src/Project.lean")
 _UNLISTED_LAKEFILE = (
@@ -494,6 +495,42 @@ def test_open_parent_descriptor_rechecks_the_generated_module_filename_limit(
 
 def test_rejects_unknown_release_before_writing(tmp_path: Path) -> None:
     _refused(tmp_path / "project", "project-release-unknown", release_id="unknown")
+
+
+def test_catalog_lists_the_atlas_release_without_recommending_it() -> None:
+    catalog = load_release_catalog()
+
+    assert [release.id for release in catalog.releases] == [_RELEASE, _ATLAS_RELEASE]
+    assert catalog.recommended.id == _RELEASE
+
+
+def test_creates_a_locked_project_on_the_atlas_release(tmp_path: Path) -> None:
+    target = tmp_path / "AtlasReady"
+    result = create_project(target, package="AtlasReady", release_id=_ATLAS_RELEASE)
+
+    assert result.release == _ATLAS_RELEASE
+    assert result.warnings == ()
+    assert (target / "lean-toolchain").read_text(encoding="utf-8") == "leanprover/lean4:v4.34.1\n"
+    assert 'rev = "v4.34.1"' in (target / "lakefile.toml").read_text(encoding="utf-8")
+    manifest = json.loads((target / "lake-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["name"] == "AtlasReady"
+    assert {entry["name"]: entry["inputRev"] for entry in manifest["packages"] if not entry["inherited"]} == {
+        "mathlib": "v4.34.1"
+    }
+    inspection = inspect_project(target)
+    assert inspection.ok
+    assert inspection.compatibility.status == "supported"
+    assert inspection.compatibility.release == _ATLAS_RELEASE
+
+
+def test_atlas_release_given_as_versions_uses_the_bundled_lock(tmp_path: Path) -> None:
+    result = create_project(tmp_path / "Versions", package="Project", release_id=None, lean_toolchain="v4.34.1")
+    create_project(tmp_path / "Release", package="Project", release_id=_ATLAS_RELEASE)
+
+    assert result.release == _ATLAS_RELEASE
+    assert result.warnings == ()
+    for relative in _CORE_FILES:
+        assert (tmp_path / "Versions" / relative).read_bytes() == (tmp_path / "Release" / relative).read_bytes()
 
 
 def test_omitted_release_uses_the_recommended_release(tmp_path: Path) -> None:
