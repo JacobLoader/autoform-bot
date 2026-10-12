@@ -13,8 +13,16 @@ from types import ModuleType
 
 import pytest
 
+from tests.test_impact import _lean_toolchain_available
+
 
 _TEMPLATE = Path("autoform_cli/templates/github/autoform_audit.py")
+# The toolchain the real-Lean CI job installs. Under AUTOFORM_REQUIRE_REAL_LEAN_TESTS=1
+# the availability check fails instead of skipping.
+_TOOLCHAIN = (Path(__file__).parent / "fixtures" / "skeleton-project" / "lean-toolchain").read_text(
+    encoding="utf-8"
+).strip() + "\n"
+_REAL_LEAN = _lean_toolchain_available()
 
 
 def _load_helper(repo_root: Path) -> ModuleType:
@@ -254,13 +262,13 @@ def _run_probe(project: Path, probe: Path, **env: str) -> subprocess.CompletedPr
     )
 
 
-@pytest.mark.skipif(shutil.which("lake") is None, reason="Lake is not installed")
+@pytest.mark.skipif(not _REAL_LEAN, reason="needs lake and the fixture's Lean toolchain")
 def test_real_toml_build_uses_target_src_dir_globs_and_import_closure(
     helper: ModuleType, tmp_path: Path
 ) -> None:
     project = tmp_path / "toml-project"
     project.mkdir()
-    _write(project / "lean-toolchain", "leanprover/lean4:v4.32.2\n")
+    _write(project / "lean-toolchain", _TOOLCHAIN)
     _write(
         project / "lakefile.toml",
         '''name = "TomlFixture"
@@ -311,13 +319,13 @@ srcDir = "app-src"
     assert audited.returncode == 0, audited.stdout + audited.stderr
 
 
-@pytest.mark.skipif(shutil.which("lake") is None, reason="Lake is not installed")
+@pytest.mark.skipif(not _REAL_LEAN, reason="needs lake and the fixture's Lean toolchain")
 def test_root_package_clean_excludes_stale_custom_artifacts(
     helper: ModuleType, tmp_path: Path
 ) -> None:
     project = tmp_path / "stale-project"
     project.mkdir()
-    _write(project / "lean-toolchain", "leanprover/lean4:v4.32.2\n")
+    _write(project / "lean-toolchain", _TOOLCHAIN)
     _write(
         project / "lakefile.lean",
         '''import Lake
@@ -348,11 +356,11 @@ lean_lib «Fresh»
     assert helper.modules_from_archive(archive, "StaleFixture") == ("Fresh",)
 
 
-@pytest.mark.skipif(shutil.which("lake") is None, reason="Lake is not installed")
+@pytest.mark.skipif(not _REAL_LEAN, reason="needs lake and the fixture's Lean toolchain")
 def test_real_lean_manifest_supports_custom_build_dir(helper: ModuleType, tmp_path: Path) -> None:
     dependency = tmp_path / "dependency"
     dependency.mkdir()
-    _write(dependency / "lean-toolchain", "leanprover/lean4:v4.32.2\n")
+    _write(dependency / "lean-toolchain", _TOOLCHAIN)
     _write(
         dependency / "lakefile.lean",
         '''import Lake
@@ -365,7 +373,7 @@ lean_lib «Dependency»
 
     project = tmp_path / "lean-project"
     project.mkdir()
-    _write(project / "lean-toolchain", "leanprover/lean4:v4.32.2\n")
+    _write(project / "lean-toolchain", _TOOLCHAIN)
     _write(
         project / "lakefile.lean",
         '''import Lake
@@ -1049,11 +1057,11 @@ theorem Fixture.uses_bogus : False := Fixture.bogus
 
 @pytest.fixture(scope="module")
 def open_projects(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tuple[Path, Path]]:
-    if shutil.which("lake") is None:
-        pytest.skip("Lake is not installed")
+    if not _REAL_LEAN:
+        pytest.skip("needs lake and the fixture's Lean toolchain")
     root = tmp_path_factory.mktemp("open-statements")
     dependency = root / "dependency"
-    _write(dependency / "lean-toolchain", "leanprover/lean4:v4.32.2\n")
+    _write(dependency / "lean-toolchain", _TOOLCHAIN)
     _write(dependency / "lakefile.toml", 'name = "Dep"\ndefaultTargets = ["Dep"]\n\n[[lean_lib]]\nname = "Dep"\n')
     _write(dependency / "Dep.lean", _DEPENDENCY_LEAN)
     projects: dict[str, tuple[Path, Path]] = {}
@@ -1069,7 +1077,7 @@ def open_projects(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tuple[P
         ("unchecked", _UNCHECKED_LEAN),
     ):
         project = root / name
-        _write(project / "lean-toolchain", "leanprover/lean4:v4.32.2\n")
+        _write(project / "lean-toolchain", _TOOLCHAIN)
         _write(
             project / "lakefile.toml",
             'name = "Fixture"\ndefaultTargets = ["Fixture"]\n\n'
@@ -1514,8 +1522,8 @@ run_cmd liftCoreM <| addDecl (.thmDecl
 
 @pytest.fixture(scope="module")
 def hostile_projects(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tuple[Path, Path]]:
-    if shutil.which("lake") is None:
-        pytest.skip("Lake is not installed")
+    if not _REAL_LEAN:
+        pytest.skip("needs lake and the fixture's Lean toolchain")
     root = tmp_path_factory.mktemp("hostile")
     projects: dict[str, tuple[Path, Path]] = {}
     for name, files, lib in (
@@ -1528,7 +1536,7 @@ def hostile_projects(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tupl
         (
             "native",
             {"Fixture.lean": "import EvilDep\ntheorem Fixture.t : Lean.reduceBool Dep.evil = true := rfl\n",
-             "evildep/lean-toolchain": "leanprover/lean4:v4.32.2\n",
+             "evildep/lean-toolchain": _TOOLCHAIN,
              "evildep/lakefile.toml": 'name = "evildep"\ndefaultTargets = ["EvilDep"]\n\n[[lean_lib]]\nname = "EvilDep"\n',
              "evildep/EvilDep.lean": _NATIVE_DEP_LEAN},
             'name = "Fixture"\n\n[[require]]\nname = "evildep"\npath = "evildep"\n',
@@ -1542,7 +1550,7 @@ def hostile_projects(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tupl
             # A dependency that declares an axiom and a mutual inductive using it.
             "mutual-axiom",
             {"Fixture.lean": "import MDep\ntheorem Fixture.t0 : ∀ _ : MDep.B0, True := fun _ => trivial\n",
-             "mdep/lean-toolchain": "leanprover/lean4:v4.32.2\n",
+             "mdep/lean-toolchain": _TOOLCHAIN,
              "mdep/lakefile.toml": 'name = "mdep"\ndefaultTargets = ["MDep"]\n\n[[lean_lib]]\nname = "MDep"\n',
              "mdep/MDep.lean": _MUTUAL_DEP_LEAN},
             'name = "Fixture"\n\n[[require]]\nname = "mdep"\npath = "mdep"\n',
@@ -1554,7 +1562,7 @@ def hostile_projects(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tupl
             "trust-theorem",
             {"Fixture.lean": "import Fixture.Trust\nimport EvilDep\ntheorem Fixture.t : Lean.reduceBool Dep.evil = true := rfl\n",
              "Fixture/Trust.lean": "prelude\nimport Init.Prelude\ntheorem Lean.trustCompiler : True := True.intro\n",
-             "evildep/lean-toolchain": "leanprover/lean4:v4.32.2\n",
+             "evildep/lean-toolchain": _TOOLCHAIN,
              "evildep/lakefile.toml": 'name = "evildep"\ndefaultTargets = ["EvilDep"]\n\n[[lean_lib]]\nname = "EvilDep"\n',
              "evildep/EvilDep.lean": _NATIVE_DEP_LEAN},
             'name = "Fixture"\n\n[[require]]\nname = "evildep"\npath = "evildep"\n',
@@ -1569,7 +1577,7 @@ def hostile_projects(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tupl
             # A dependency library whose clean `Fixture` comes first on the search path.
             "shadow",
             {"Fixture.lean": "theorem Fixture.cheat : 2 + 2 = 5 := sorry\n",
-             "evildep/lean-toolchain": "leanprover/lean4:v4.32.2\n",
+             "evildep/lean-toolchain": _TOOLCHAIN,
              "evildep/lakefile.toml": 'name = "evildep"\n\n[[lean_lib]]\nname = "Shadow"\nroots = ["Fixture"]\nsrcDir = "src"\n',
              "evildep/src/Fixture.lean": "theorem Fixture.cheat : 2 + 2 = 4 := rfl\n"},
             'name = "Fixture"\nneeds = ["evildep/Shadow"]\n\n[[require]]\nname = "evildep"\npath = "evildep"\n',
@@ -1577,7 +1585,7 @@ def hostile_projects(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tupl
     ):
         project = root / name
         marker = json.dumps(str(project / "marker"))
-        _write(project / "lean-toolchain", "leanprover/lean4:v4.32.2\n")
+        _write(project / "lean-toolchain", _TOOLCHAIN)
         _write(project / "lakefile.toml", f'name = "Fixture"\ndefaultTargets = ["Fixture"]\n\n[[lean_lib]]\n{lib}')
         for path, source in files.items():
             _write(project / path, source.replace("MARKER", marker))
