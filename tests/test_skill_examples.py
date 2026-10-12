@@ -181,6 +181,7 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
     assert "default and maximum are 240 seconds" in servers
     assert "does not mean a REPL subprocess remains resident" in servers
     assert "`LEAN_REPL_HEADER_CMD`" in servers
+    assert "the runtime refuses to start" in servers
     assert "`leanprover-community/repl` at an immutable revision" in setup
     assert "run `lake update repl`" in setup
     assert "commit the manifest" in setup
