@@ -103,6 +103,7 @@ def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path
     roadmap = read("skills/roadmap/SKILL.md")
     reference = read("autoform_cli/README.md")
     guidance = read("AGENTS.md")
+    rubric = read("skills/agent-review/references/roadmap-quality.md")
 
     assert "Read the complete article, its `blueprint/.implementation-notes/<article_id>.md`" in formalize
     assert "The article keeps only frontmatter and mathematics." in formalize
@@ -133,7 +134,12 @@ def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path
     )
     assert "Markdown under `blueprint/roadmap/` is the authored roadmap" in guidance
     assert "files under `blueprint/.implementation-notes/`" in guidance
-    for text in (formalize, roadmap, reference):
+    assert "with its hidden `blueprint/.implementation-notes/<article_id>.md` when present" in rubric
+    assert (
+        "Mathlib candidates and other Lean-side findings are in the article's implementation note, "
+        "never in the article"
+    ) in rubric
+    for text in (formalize, roadmap, reference, rubric):
         assert "Execution notes" not in text
         assert "`agents.md`" not in text
 

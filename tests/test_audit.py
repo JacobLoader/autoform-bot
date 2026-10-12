@@ -190,6 +190,62 @@ def test_container_note_is_stale_when_its_formalizable_subtree_is_proved(
     assert ("stale-implementation-note" in codes) is stale
 
 
+def test_container_note_stays_while_a_nested_formalizable_article_is_unproved(
+    tmp_path: Path,
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    container_id = "af_0123456789abcdef01234567"
+    _article(blueprint, "chapter/README.md", article_id=container_id)
+    _article(
+        blueprint,
+        "chapter/done.md",
+        article_id="af_100000000000000000000000",
+        declaration="theorem",
+        statement="formalized",
+        proof="formalized",
+        lean="Project.done",
+    )
+    _article(blueprint, "chapter/section/README.md", article_id="af_200000000000000000000000")
+    _article(
+        blueprint,
+        "chapter/section/open.md",
+        article_id="af_300000000000000000000000",
+        declaration="theorem",
+        statement="formalized",
+        lean="Project.open",
+    )
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{container_id}.md").write_text("chapter route\n", encoding="utf-8")
+
+    codes = {finding.code for finding in audit_blueprint(blueprint).findings}
+
+    assert "stale-implementation-note" not in codes
+
+
+@pytest.mark.parametrize("unproved_first", [True, False])
+def test_container_note_stays_while_any_sibling_is_unproved(
+    tmp_path: Path, unproved_first: bool
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    container_id = "af_0123456789abcdef01234567"
+    _article(blueprint, "chapter/README.md", article_id=container_id)
+    proved = {"declaration": "theorem", "statement": "formalized", "proof": "formalized"}
+    unproved = {"declaration": "theorem", "statement": "formalized"}
+    first, second = (unproved, proved) if unproved_first else (proved, unproved)
+    _article(blueprint, "chapter/a.md", article_id="af_100000000000000000000000", lean="Project.a", **first)
+    _article(blueprint, "chapter/b.md", article_id="af_200000000000000000000000", lean="Project.b", **second)
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{container_id}.md").write_text("chapter route\n", encoding="utf-8")
+
+    codes = {finding.code for finding in audit_blueprint(blueprint).findings}
+
+    assert "stale-implementation-note" not in codes
+
+
 def test_container_note_without_formalizable_descendants_is_not_stale(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)

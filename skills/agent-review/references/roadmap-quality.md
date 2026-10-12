@@ -9,7 +9,8 @@ scope against the sources, then inspect the fine DAG and its coarse roadmap.
    substitutes for the source.
 2. Run `autoform check` and inspect the project, chapter, and node-neighborhood
    graphs.
-3. Inspect every milestone and every node in the requested review scope.
+3. Inspect every milestone and every node in the requested review scope, with
+   its hidden `blueprint/.implementation-notes/<article_id>.md` when present.
 4. Distinguish statement prerequisites from proof-only prerequisites.
 
 ## Source fidelity and coverage — 40%
@@ -41,7 +42,9 @@ scope against the sources, then inspect the fine DAG and its coarse roadmap.
   the intended change without reconstructing the plan from unrelated pages.
 - Frontmatter asserts only verified facts. Readiness and completion remain
   derived from the DAG.
-- Uncertainty, Mathlib candidates, and unresolved source questions are explicit.
+- Uncertainty and unresolved source questions are explicit. Articles hold only
+  frontmatter and informal mathematics; Mathlib candidates and other Lean-side
+  findings are in the article's implementation note, never in the article.
 
 ## Scores and verdict
 
