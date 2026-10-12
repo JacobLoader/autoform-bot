@@ -74,9 +74,10 @@ such as Mathlib gaps, prior art, and declaration names in
 stays out of the mathematical wiki and remains valid when the article moves.
 Never link it from an article. Delete it when the article is proved or marked
 `mathlib: true`; delete a container's note when every formalizable descendant
-is proved and there is at least one. Delete any note in the same commit that
-deletes or merges its article; an orphaned note blocks every command that loads
-the graph.
+is proved and there is at least one. When a commit deletes or merges an article,
+move anything still useful from its note into a surviving article's note and
+delete the note in that commit; an orphaned note blocks every command that loads
+the graph, and any worker may repair one the same way.
 Assert formalization or `mathlib: true` only after exact verification. Before
 revising a formalizable leaf, acquire the `claim_target` that `autoform work
 context` reports for it, passing your own `--worker-id`; renew it while editing

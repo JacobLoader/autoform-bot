@@ -82,12 +82,15 @@ Versioned implementation notes live outside the mathematical roadmap at
 durable ID survives article moves, and article claims keep independent workers
 from editing the same note. Every command that loads the graph, including
 `autoform check`, rejects malformed, empty, symlinked, or orphaned notes; assign
-the article ID before creating its note. Delete the file once its article is
-proved; for a container, delete it once every formalizable descendant is proved
-and there is at least one. The directory is hidden, so current and older
-renderers omit it from the site and publication hash without requiring an
-`AUTOFORM_REF` migration; `autoform audit` reports a note left behind after
-that point.
+the article ID before creating its note. Parallel branches can orphan a note
+without a Git conflict, when one deletes or merges an article while another
+writes its note; any worker repairs that by moving anything still useful into a
+surviving article's note and deleting the orphan. Delete the file once its
+article is proved; for a container, delete it once every formalizable
+descendant is proved and there is at least one. The directory is hidden, so
+current and older renderers omit it from the site and publication hash without
+requiring an `AUTOFORM_REF` migration; `autoform audit` reports a note left
+behind after that point.
 
 ## Assertions and derived status
 

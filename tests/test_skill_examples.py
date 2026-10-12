@@ -125,6 +125,9 @@ def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path
         in roadmap
     )
     assert "an orphaned note blocks every command that loads the graph" in roadmap
+    assert "any worker may repair one the same way" in roadmap
+    assert "delete the orphan, and commit; any worker may do this" in formalize
+    assert "Parallel branches can orphan a note without a Git conflict" in reference
     assert "Versioned implementation notes live outside the mathematical roadmap" in reference
     assert "delete it once every formalizable descendant is proved and there is at least one" in reference
     assert "Record what happened in the revision commit and report" in reference

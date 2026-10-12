@@ -19,7 +19,11 @@ returned phase is derived from typed dependencies and verified assertions; never
 author ready, running, retrying, failed, or blocked scheduler states. If `work
 list` refuses because unfinished leaves lack `article_id`, add the IDs planned
 by `autoform migrate article-ids <PROJECT>/blueprint --json` to those articles'
-frontmatter, validate, and commit that change before claiming anything.
+frontmatter, validate, and commit that change before claiming anything. If a
+command refuses because an implementation note names no roadmap article, its
+article was deleted or merged, often by a parallel branch that Git merged
+without a conflict: move anything still useful into a surviving article's note,
+delete the orphan, and commit; any worker may do this.
 
 For a direct formalization request, use a compatible native persistent Goal
 when available and complete one useful frontier pass. Native subagents may work

@@ -569,7 +569,11 @@ def test_implementation_notes_are_keyed_by_durable_article_id(tmp_path: Path) ->
     [
         ("result.md", "route\n", "must be named <article_id>.md"),
         ("af_0123456789abcdef01234567.txt", "route\n", "must be named <article_id>.md"),
-        ("af_111111111111111111111111.md", "route\n", "names no roadmap article"),
+        (
+            "af_111111111111111111111111.md",
+            "route\n",
+            "names no roadmap article; delete it, first moving anything still useful",
+        ),
         ("af_0123456789abcdef01234567.md", "\n", "empty implementation note"),
         ("af_0123456789abcdef01234567.md", "\ufeff\u200b\n", "empty implementation note"),
     ],
