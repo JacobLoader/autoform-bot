@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import socket
 import subprocess
@@ -25,6 +26,7 @@ from servers.lean_runtime import (
     ProjectResourceCache,
     ProjectResourceBusyError,
 )
+from servers.lsp.server import LeanLspSession, LspConfig
 
 
 def make_lake_project(tmp_path, name: str):
@@ -1891,6 +1893,56 @@ def test_hover_input_os_error_does_not_retire_healthy_session(tmp_path):
         assert len(resident) == 1 and resident[0]["valid"] is True
     finally:
         services.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="native LSP backend requires POSIX groups")
+@pytest.mark.parametrize("method", ["lsp.diagnostics", "lsp.hover"])
+def test_lsp_timeout_with_a_live_process_retires_the_session(tmp_path, method):
+    project = make_lake_project(tmp_path, "lsp-live-timeout")
+    # Larger than a pipe buffer, so didOpen cannot finish against a server
+    # that never reads: the call times out while its process is still alive.
+    (project / "Main.lean").write_text("-- padding\n" * 50_000)
+    sessions = []
+
+    def factory(root):
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            start_new_session=True,
+        )
+        session = LeanLspSession(LspConfig(cwd=str(root), timeout=0.5))
+        session.process = process
+        session._process_group_id = process.pid
+        sessions.append(session)
+        return session
+
+    services = LeanRuntimeServices(
+        runtime_config(),
+        repl_factory=FakePool,
+        lsp_factory=factory,
+        start_sweepers=False,
+    )
+    try:
+        params = {"project_dir": str(project), "file_path": str(project / "Main.lean")}
+        if method == "lsp.hover":
+            params.update(line=0, character=0)
+        with pytest.raises(TimeoutError):
+            services.dispatch(method, params)
+
+        # Only the failed call's retire flag tells dispatch that this live
+        # process can no longer share its stream.
+        assert services.lsp_projects.stats()["resident"] == []
+        deadline = time.monotonic() + 10
+        while sessions[0].process is not None:
+            if time.monotonic() >= deadline:
+                pytest.fail("the timed-out LSP session was never retired")
+            time.sleep(0.05)
+    finally:
+        services.close()
+        for session in sessions:
+            if session.process is not None:
+                session.abort()
 
 
 def test_successful_lsp_result_retires_a_session_poisoned_by_did_close(tmp_path):
