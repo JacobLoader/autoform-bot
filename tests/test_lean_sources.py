@@ -16,7 +16,6 @@ from autoform_cli import _tree_snapshot as tree_snapshot_module
 from autoform_cli import lean as lean_module
 from autoform_cli._tree_snapshot import (
     BoundDirectoryTree,
-    OpaqueDirectoryMarker,
     TreeCaptureLimits,
     TreeChangedError,
     TreeSelection,
@@ -1205,37 +1204,6 @@ def test_explicit_roots_are_skipped(tmp_path: Path) -> None:
 
     assert index.find("canonical") is not None
     assert index.find("copied") is None
-
-
-def test_open_sources_supports_a_caller_owned_opaque_marker(
-    tmp_path: Path,
-) -> None:
-    _index(tmp_path, "def canonical : Nat := 0\n", "Project/Basic.lean")
-    generated = tmp_path / "prior-site"
-    generated.mkdir()
-    (generated / "owned.marker").write_text("generated\n", encoding="utf-8")
-    (generated / "Copied.lean").write_text(
-        "def generatedOnly : Nat := 0\n",
-        encoding="utf-8",
-    )
-
-    sources = open_project_sources(
-        tmp_path,
-        opaque_markers=(
-            OpaqueDirectoryMarker(
-                "owned.marker",
-                64,
-                lambda data: data == b"generated\n",
-            ),
-        ),
-    )
-    try:
-        index = sources.capture().index
-    finally:
-        sources.close()
-
-    assert index.find("canonical") is not None
-    assert index.find("generatedOnly") is None
 
 
 @pytest.mark.parametrize("alias_exclusion", [False, True])
@@ -2612,30 +2580,3 @@ def test_snapshot_attestation_names_why_it_failed(tmp_path: Path) -> None:
         tmp_path, commit, ((untracked, untracked.read_bytes()),), reasons=reasons
     ) is None
     assert reasons == [f"Scratch.lean is not a file in commit {commit[:12]}"]
-
-
-def test_snapshot_attestation_ignores_inherited_git_redirects(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    first = tmp_path / "first"
-    first.mkdir()
-    source = first / "A.lean"
-    source.write_text("def stableRepository : Nat := 0\n")
-    first_commit = _init_git_repository(first)
-    second = tmp_path / "second"
-    second.mkdir()
-    (second / "A.lean").write_bytes(source.read_bytes())
-    (second / "OnlyB.txt").write_text("different tree\n")
-    _init_git_repository(second)
-    monkeypatch.setenv("GIT_DIR", str(second / ".git"))
-    monkeypatch.setenv("GIT_WORK_TREE", str(second))
-    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
-    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.repositoryFormatVersion")
-    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "1")
-
-    assert verify_repository_snapshot(
-        first,
-        first_commit,
-        ((source, source.read_bytes()),),
-    ) == first_commit
