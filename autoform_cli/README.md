@@ -82,8 +82,9 @@ dependency list included, in the theorem box. Nothing reports the comment
 itself.
 
 `## Depends on` lists what the article needs in order to be *stated*;
-`## Proof depends on` lists what only its *proof* needs. Both are graph edges.
-Links anywhere else are ordinary navigation or citations. Dependencies resolve
+`## Proof depends on` lists what only its *proof* needs. Both are graph edges,
+except a link in a code block, fenced or indented, or in an HTML comment. Links
+anywhere else are ordinary navigation or citations. Dependencies resolve
 relative to the current article and must point at another roadmap article.
 
 The optional `declaration` field marks a formalizable leaf and describes its
@@ -521,7 +522,11 @@ anywhere in a declaration's trusted closure is refused, as recorded by the Lean
 environment rather than by the source text: its kernel face is an opaque
 constant, so the body a reader would see is not what Lean checks. The command
 exits nonzero when a `lean:` name is absent from the sources or from the built
-environment, or reaches a refused declaration; that name is unresolved for its article only, other articles still extract, and it writes nothing into the vault;
+environment, or reaches a refused declaration; that name is unresolved for its article only, other articles still extract, and it writes nothing into the vault.
+A name that several indexed files declare, even when all but one of them
+declare it `private`, is unresolved without a probe, because the index cannot
+tell which one Lean binds; the reason names each of those files in sorted
+order. `unused-hypotheses` looks names up the same way.
 `--output` records the `autoform-skeleton/v4` report, which contains no
 timestamp or absolute path, for a later render or review to consume. The
 report identifies the exact blueprint, its complete target set, and whether
@@ -671,8 +676,9 @@ binder mentions cannot be deleted and is not listed. A proof that itself
 contains `sorry` is not read; a complete proof that uses an open statement is.
 Findings are for a reviewer and never fail the run, since the source may state
 a hypothesis its theorem does not need; the command exits 1 only when a `lean:`
-name cannot be read: it is not found, or it is an alias, whose proof only names
-its target. `--json` writes the `autoform-unused-hypotheses/v1` report.
+name cannot be read: it is not found, several source files declare it, or it
+is an alias, whose proof only names its target. `--json` writes the
+`autoform-unused-hypotheses/v1` report.
 
 `lake build` already warns about some of these: Lean's `unusedVariables`
 linter names a hypothesis the proof never references, and `unusedSectionVars`
@@ -1015,7 +1021,8 @@ that appears at a path after the capture last looked there, or in a folder
 after the final check listed it, is not seen, so coordinated moves across
 folders can yield a set of sources that no single state had.
 
-Within each file the index records the declarations written with `theorem`,
+Within each file, up to an `#exit` line, the index records the declarations
+written with `theorem`,
 `lemma`, `def`, `abbrev`, `instance`, `structure`, `class`, `inductive`,
 `opaque`, `axiom`, `irreducible_def`, Batteries' wanted commands
 (`Batteries.Util.ProofWanted`) `theorem_wanted`, `proof_wanted`, `def_wanted`,
@@ -1462,7 +1469,7 @@ contract. Under `forbidden` it runs the strict audit with `--targets`: any
 `root-package declarations failed the kernel-trust audit`. So does a `lean:`
 name the build did not compile, with `NAME [ID] is not a declaration of the
 Lean build; fix the article's lean: name or build the module that declares
-it`: a theorem in a file no target imports, after `#exit`, or inside a string
+it`: a theorem in a file no target imports or inside a string
 passes the lexical `autoform check --lean-root` but not this. The strict audit
 refuses a contract that allows open statements, records an article as open, or
 lets one assume an open statement. Under `allowed` the workflow audits every

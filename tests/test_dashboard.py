@@ -22,6 +22,7 @@ from autoform_cli.dashboard import (
     serve_dashboard,
 )
 from autoform_cli.render import publication_source_revision
+from tests.undecodable_json import UNDECODABLE_JSON
 
 
 def _runtime():
@@ -195,6 +196,17 @@ def test_live_overlay_projects_claims_onto_the_bytes_it_compared(
     # The revision matched before the edit, and the title comes from the same capture.
     assert state["source_revision"] == revision
     assert [(item["node_id"], item["title"]) for item in state["claims"]] == [("roadmap", "Roadmap")]
+
+
+def test_live_overlay_reports_a_publication_manifest_nested_too_deep_to_decode(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "publication.json").write_text(UNDECODABLE_JSON["nested"], encoding="utf-8")
+
+    state = publication_bound_live_state(SimpleNamespace(list=lambda: []), blueprint_dir=tmp_path, site_dir=site)()
+
+    assert state["claims"] == []
+    assert str(state["error"]).startswith("RecursionError: ")
 
 
 def test_dashboard_handler_serves_static_site_and_no_store_overlay(tmp_path: Path) -> None:

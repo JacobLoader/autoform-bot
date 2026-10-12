@@ -6,8 +6,9 @@ nothing is a validation error rather than a broken link -- the job
 ``leanblueprint checkdecls`` does for LaTeX blueprints.
 
 The scanner is a lexical pass, not an elaborator. It tracks ``namespace`` and
-comment nesting, which is enough for declarations written in the ordinary way,
-and deliberately reports nothing it cannot see rather than guessing.
+comment nesting and stops at ``#exit``, which is enough for declarations
+written in the ordinary way, and deliberately reports nothing it cannot see
+rather than guessing.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ _SECTION = re.compile(
 )
 _MUTUAL = re.compile(r"^\s*mutual\s*$")
 _END = re.compile(r"^\s*end\b\s*(\S*)")
+_EXIT = re.compile(r"^\s*#exit\b")
 # The ``*_wanted`` commands are Batteries' ``Batteries.Util.ProofWanted``: each
 # states a result whose proof or construction is deferred. ``alias`` is
 # Batteries' ``Batteries.Tactic.Alias``.
@@ -120,6 +122,9 @@ class SourceIndex:
     declarations: dict[str, Declaration]
     source_digest: str
     line_counts: dict[Path, int] = field(default_factory=dict)
+    #: For a name more than one file declares, the files after the one
+    #: ``find`` returns.
+    elsewhere: dict[str, tuple[Path, ...]] = field(default_factory=dict)
 
     def find(self, name: str) -> Declaration | None:
         return self.declarations.get(name)
@@ -616,6 +621,7 @@ def _indexed_source_snapshot(
         raise LeanSourceError(f"unsafe Lean source {relative}: {reason}")
 
     declarations: dict[str, Declaration] = {}
+    elsewhere: dict[str, tuple[Path, ...]] = {}
     line_counts: dict[Path, int] = {}
     source_files: list[tuple[Path, bytes]] = []
     digest = hashlib.sha256(b"autoform-lean-source-index/v1\0")
@@ -633,9 +639,11 @@ def _indexed_source_snapshot(
             text = data.decode("utf-8")
         except UnicodeError:
             continue
-        line_counts[relative_path] = len(text.splitlines())
-        for declaration in _scan(text, relative_path):
-            declarations.setdefault(declaration.name, declaration)
+        found, line_counts[relative_path] = _scan(text, relative_path)
+        for declaration in found:
+            first = declarations.setdefault(declaration.name, declaration)
+            if first.path != relative_path and relative_path not in elsewhere.get(declaration.name, ()):
+                elsewhere[declaration.name] = (*elsewhere.get(declaration.name, ()), relative_path)
     source_digest = digest.hexdigest()
     return IndexedSourceSnapshot(
         SourceIndex(
@@ -643,6 +651,7 @@ def _indexed_source_snapshot(
             declarations=declarations,
             source_digest=source_digest,
             line_counts=line_counts,
+            elsewhere=elsewhere,
         ),
         source_digest,
         _lean_generation_revision(snapshot),
@@ -722,7 +731,8 @@ def _update_source_digest(digest, relative: Path, data: bytes) -> None:
     digest.update(data)
 
 
-def _scan(text: str, relative: Path) -> list[Declaration]:
+def _scan(text: str, relative: Path) -> tuple[list[Declaration], int]:
+    """The declarations in ``text`` and the number of its lines Lean reads."""
     found: list[Declaration] = []
     namespaces: list[str] = []
     scopes: list[str | None] = []
@@ -731,6 +741,8 @@ def _scan(text: str, relative: Path) -> list[Declaration]:
     for number, line in enumerate(lines, start=1):
         if not line.strip():
             continue
+        if _EXIT.match(line):
+            return found, number - 1
 
         namespace_match = _NAMESPACE.match(line)
         if namespace_match:
@@ -773,7 +785,7 @@ def _scan(text: str, relative: Path) -> list[Declaration]:
             if name is None:
                 continue
             found.append(Declaration(_qualified(namespaces, name), relative, number, keyword, protected))
-    return found
+    return found, len(lines)
 
 
 _ATTRIBUTE_LIST = re.compile(r"@\[[^\]]*\]")

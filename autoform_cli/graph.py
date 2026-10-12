@@ -10,13 +10,15 @@ a second graph file that could drift from the book.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .lean import declaration_names
-from .markdown import mask_fences_and_comments
+from .markdown import mask_code_and_comments
 
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
@@ -277,23 +279,34 @@ def _discover_nodes(blueprint: Path) -> tuple[list[_NodeSource], list[str]]:
     issues: list[str] = []
     sources: list[_NodeSource] = []
     roadmap_root = roadmap_root.resolve()
-    entries = sorted(roadmap_root.rglob("*"))
-    for path in entries:
-        if path.is_file() and path.name.casefold() == "readme.md" and path.name != "README.md":
-            relative = path.relative_to(roadmap_root).as_posix()
-            issues.append(
-                f"{relative}: noncanonical README filename; container pages must be named exactly README.md "
-                "for portable behavior on case-sensitive filesystems"
-            )
 
+    def unlistable(exc: OSError) -> None:
+        issues.append(f"cannot list roadmap directory {exc.filename}: {exc.strerror}")
+
+    # Unlike a glob, a walk reports each directory it cannot list.
+    entries = sorted(
+        Path(directory, name) for directory, _, files in os.walk(roadmap_root, onerror=unlistable) for name in files
+    )
+    issues.sort()  # a walk visits directories in arbitrary order
     for path in entries:
-        if not path.is_file() or path.suffix != ".md":
+        if path.suffix != ".md" and path.name.casefold() != "readme.md":
             continue
+        relative = path.relative_to(roadmap_root).as_posix()
         try:
+            if not stat.S_ISREG(path.stat().st_mode):
+                continue
+            if path.name.casefold() == "readme.md" and path.name != "README.md":
+                issues.append(
+                    f"{relative}: noncanonical README filename; container pages must be named exactly README.md "
+                    "for portable behavior on case-sensitive filesystems"
+                )
+            if path.suffix != ".md":
+                continue
             content = path.read_bytes()
             text = content.decode("utf-8")
+        except FileNotFoundError:
+            continue  # removed since the walk
         except (OSError, UnicodeError) as exc:
-            relative = path.relative_to(roadmap_root).as_posix()
             issues.append(f"{relative}: cannot read roadmap page: {exc}")
             continue
         node_id = _article_id(path, roadmap_root)
@@ -317,7 +330,9 @@ def roadmap_symlink_issues(blueprint: Path) -> list[str]:
     """
 
     roadmap = blueprint / "roadmap"
-    paths = [roadmap] if roadmap.is_symlink() else [path for path in sorted(roadmap.rglob("*")) if path.is_symlink()]
+    # os.path.islink is False for a path it cannot stat, which discovery then reports; Path.is_symlink raises
+    # before 3.14.
+    paths = [roadmap] if roadmap.is_symlink() else [path for path in sorted(roadmap.rglob("*")) if os.path.islink(path)]
     return [f"roadmap contains a symbolic link: {path.relative_to(blueprint).as_posix()}" for path in paths]
 
 
@@ -354,10 +369,10 @@ def _chapter_issues(roadmap_root: Path) -> list[str]:
         return []
     issues = []
     for chapter in chapters:
-        articles = [path for path in chapter.rglob("*.md") if path.is_file()]
+        articles = [path for path in chapter.rglob("*.md") if os.path.isfile(path)]
         if not articles:
             continue
-        if (chapter / "README.md").is_file():
+        if os.path.isfile(chapter / "README.md"):
             continue
         names = articles
         issues.append(
@@ -512,9 +527,10 @@ def _parse_node(node_id: str, path: Path, text: str) -> tuple[_ParsedNode | None
     }
     section: str | None = None
 
-    # Fences and comments are read as the page and the audit read them, so a
-    # section a reader sees never loses its links here.
-    for line in mask_fences_and_comments(lines[body_start:]):
+    # Fences, comments and indented code are read as the page and the audit
+    # read them, so a section a reader sees never loses its links here, and a
+    # link the page shows as code is not read as one.
+    for line in mask_code_and_comments(lines[body_start:]):
         heading = _HEADING.match(line)
         if heading:
             level = len(heading.group(1))

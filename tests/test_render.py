@@ -28,6 +28,8 @@ from autoform_cli.render import (
     PublicationError,
     _COVERAGE_SUMMARY_ORDER,
     _completion_percentage,
+    _document_body,
+    _first_h1,
     load_publication_source,
     publication_source_revision,
     render_site,
@@ -2366,3 +2368,18 @@ def test_an_edit_during_a_render_publishes_the_captured_generation(
 
     chapter = (tmp_path / "out/roadmap/README.md").read_text(encoding="utf-8")
     assert "The main result." in chapter and "Edited mid-render." not in chapter
+
+
+def test_a_heading_shown_as_code_is_not_a_page_title() -> None:
+    text = "```markdown\n# Not the title\n```\n\n# Title\n\nBody.\n"
+
+    assert _first_h1(text) == "Title"
+    assert _document_body(text).startswith("```markdown\n# Not the title\n```")
+
+
+def test_a_fence_that_never_closes_does_not_hide_the_page_title() -> None:
+    # The site and article_parts read a fence without a closing line as text.
+    text = "Intro.\n\n```lean\n\n# Title\n\nBody.\n"
+
+    assert _first_h1(text) == "Title"
+    assert _document_body(text) == "Intro.\n\n```lean\n\n\nBody."

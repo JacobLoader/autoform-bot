@@ -1089,8 +1089,8 @@ def autoformAuditReadTargets (_ : String) : Except String (Array (Lean.Name × S
   .ok #[]
 """
 
-# Sorry'd theorems the lexical `autoform check --lean-root` finds but Lean never
-# compiles: one in a string, one after #exit, one in a file nothing imports.
+# Sorry'd theorems Lean never compiles: one in a string, one after #exit, one in a
+# file nothing imports.
 _STRICT_LEAN = """import Dep
 
 theorem Fixture.clean : True := Dep.dep_clean

@@ -678,6 +678,12 @@ def first_unclosed_fence(lines: list[str]) -> int | None:
     return min(unclosed, default=None)
 
 
+def mask_code_and_comments(lines: list[str]) -> list[str]:
+    """Return :func:`mask_fences_and_comments` with indented code blocks blanked too."""
+
+    return _mask_indented_code(mask_fences_and_comments(lines), set())
+
+
 def _mask_fences_and_comments(
     lines: list[str],
     hidden: set[int],
@@ -820,6 +826,7 @@ __all__ = [
     "markdown_anchors",
     "PublishedTable",
     "markdown_links",
+    "mask_code_and_comments",
     "mask_fences_and_comments",
     "published_tables",
     "render_html",
