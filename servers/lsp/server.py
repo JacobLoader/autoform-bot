@@ -190,7 +190,8 @@ class LeanLspSession:
             if self.is_alive():
                 try:
                     self._send_request("shutdown", {})
-                    self._send_notification("exit", {})
+                    # Lean leaves after shutdown only on an exit without params.
+                    self._send_notification("exit", None)
                     if self._process_group_id is not None:
                         _wait_for_live_process_group_exit(
                             self._process_group_id, time.monotonic() + 5
@@ -403,16 +404,14 @@ class LeanLspSession:
     def _send_notification(
         self,
         method: str,
-        params: dict,
+        params: dict | None,
         *,
         timeout: float = 30,
     ) -> None:
         """Send a JSON-RPC notification (no response expected)."""
-        msg = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        }
+        msg: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+        if params is not None:
+            msg["params"] = params
         self._write_message(msg, timeout=timeout)
 
     def _write_message(self, msg: dict, *, timeout: float = 30) -> None:

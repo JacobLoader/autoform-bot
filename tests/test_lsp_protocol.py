@@ -476,6 +476,24 @@ def test_close_retires_a_descendant_without_pre_reaping_its_wrapper():
             session.abort()
 
 
+def test_close_sends_exit_without_params(monkeypatch):
+    process = _FakeProcess()
+    session = _owned_session(process)
+    written = []
+    monkeypatch.setattr(session, "_send_request", lambda method, params, **kwargs: None)
+    monkeypatch.setattr(session, "_write_message", lambda msg, **kwargs: written.append(msg))
+    monkeypatch.setattr(lsp, "_wait_for_live_process_group_exit", lambda process_group_id, deadline: True)
+    monkeypatch.setattr(lsp, "_terminate_process_group", lambda process_group_id: None)
+    monkeypatch.setattr(lsp, "_reap_process", lambda owned: owned.wait())
+
+    session.close()
+
+    # Lean ignores an exit that carries params, so close() waited out its
+    # whole grace period before signalling the group.
+    assert written == [{"jsonrpc": "2.0", "method": "exit"}]
+    assert session.process is None
+
+
 # Like Lean's watchdog: each file worker runs in its own session, and stdin
 # EOF stops every worker group before the watchdog exits. SIGTERM kills it
 # before that cleanup can run.
@@ -888,3 +906,30 @@ def test_lsp_write_cannot_block_on_a_full_pipe():
     finally:
         writer.close()
         os.close(read_fd)
+
+
+@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+def test_real_lean_graceful_close_is_prompt_and_complete(tmp_path):
+    import psutil
+
+    project = _real_lean_project(tmp_path / "graceful", "theorem probe : 1 + 1 = 2 := rfl\n")
+    session = lsp.LeanLspSession(lsp.LspConfig(cwd=str(project), timeout=120))
+    session.start()
+    leader = psutil.Process(session.process.pid)
+    descendants = {child.pid for child in leader.children(recursive=True)}
+    try:
+        assert session.get_diagnostics(str(project / "Probe" / "Main.lean")) == []
+        descendants.update(child.pid for child in leader.children(recursive=True))
+
+        started = time.monotonic()
+        session.close()
+
+        # An exit with params left Lean running until the 5s grace expired.
+        assert time.monotonic() - started < 4
+        assert session.process is None
+        assert [pid for pid in descendants if not _wait_until_gone(pid, timeout=10)] == []
+    finally:
+        for pid in descendants:
+            _kill_quietly(pid)
+        if session.process is not None:
+            session.abort()
