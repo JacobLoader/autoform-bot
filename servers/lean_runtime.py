@@ -621,13 +621,17 @@ class ProjectResourceCache(Generic[T]):
                         + len(self._creating)
                         + len(self._retiring)
                     )
+                    # A retiring slot frees itself. Choose a victim only when
+                    # no retirement is already freeing one, or every wake-up
+                    # of this waiter would retire another idle project.
+                    resident = len(self._entries) + len(self._creating)
                     if occupied >= self._max_entries:
                         inactive = [
                             (candidate.last_used, path)
                             for path, candidate in self._entries.items()
                             if candidate.active == 0
                         ]
-                        if inactive:
+                        if inactive and resident >= self._max_entries:
                             _, victim = min(inactive)
                             self._retire_resident_locked(victim)
                         wait = True

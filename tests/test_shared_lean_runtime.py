@@ -881,6 +881,109 @@ def test_lru_retirement_never_blocks_the_request_thread_past_its_deadline(tmp_pa
     cache.close()
 
 
+def test_lru_waiter_retires_one_victim_while_its_cleanup_is_slow(tmp_path):
+    first = make_lake_project(tmp_path, "lru-one-victim-first")
+    second = make_lake_project(tmp_path, "lru-one-victim-second")
+    third = make_lake_project(tmp_path, "lru-one-victim-third")
+    closed = []
+    close_started = threading.Event()
+    release_close = threading.Event()
+    admitted = threading.Event()
+
+    def close_resource(resource):
+        close_started.set()
+        assert release_close.wait(timeout=5)
+        closed.append(resource)
+
+    cache = ProjectResourceCache(
+        lambda root: root,
+        close_resource,
+        max_entries=2,
+        idle_seconds=1800,
+        start_sweeper=False,
+    )
+    with cache.lease(str(first)):
+        pass
+    with cache.lease(str(second)):
+        pass
+
+    def acquire_third():
+        with cache.lease(str(third), acquisition_timeout=5.0):
+            admitted.set()
+
+    waiter = threading.Thread(target=acquire_third, daemon=True)
+    try:
+        waiter.start()
+        assert close_started.wait(timeout=1)
+        # Wake the waiter while its victim is still retiring: once through
+        # another lease's release, then through its own 0.5s poll.
+        with cache.lease(str(second)):
+            pass
+        time.sleep(0.6)
+        assert [entry["project_dir"] for entry in cache.stats()["resident"]] == [
+            str(second.resolve())
+        ]
+    finally:
+        release_close.set()
+    waiter.join(timeout=5)
+    assert admitted.is_set()
+    assert closed == [first.resolve()]
+    cache.close()
+
+
+def test_lru_waiter_lets_an_idle_retirement_in_flight_free_its_slot(tmp_path):
+    first = make_lake_project(tmp_path, "inflight-retirement-first")
+    second = make_lake_project(tmp_path, "inflight-retirement-second")
+    third = make_lake_project(tmp_path, "inflight-retirement-third")
+    clock = {"now": 0.0}
+    closed = []
+    close_started = threading.Event()
+    release_close = threading.Event()
+    admitted = threading.Event()
+
+    def close_resource(resource):
+        close_started.set()
+        assert release_close.wait(timeout=5)
+        closed.append(resource)
+
+    cache = ProjectResourceCache(
+        lambda root: root,
+        close_resource,
+        max_entries=2,
+        idle_seconds=10,
+        start_sweeper=False,
+        clock=lambda: clock["now"],
+    )
+    with cache.lease(str(first)):
+        pass
+    clock["now"] = 5.0
+    with cache.lease(str(second)):
+        pass
+    clock["now"] = 12.0
+    assert cache.evict_idle() == 1
+    assert close_started.wait(timeout=1)
+
+    def acquire_third():
+        with cache.lease(str(third), acquisition_timeout=5.0):
+            admitted.set()
+
+    waiter = threading.Thread(target=acquire_third, daemon=True)
+    try:
+        waiter.start()
+        time.sleep(0.6)
+        # The idle retirement already frees a slot, so the waiter must not
+        # retire the second project as well.
+        assert [entry["project_dir"] for entry in cache.stats()["resident"]] == [
+            str(second.resolve())
+        ]
+    finally:
+        release_close.set()
+    waiter.join(timeout=5)
+    assert admitted.is_set()
+    assert closed == [first.resolve()]
+    cache.close()
+
+
 def test_invalid_last_release_transfers_ownership_to_the_reaper(tmp_path):
     project = make_lake_project(tmp_path, "invalid-retirement")
     close_started = threading.Event()
