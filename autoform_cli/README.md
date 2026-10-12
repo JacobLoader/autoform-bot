@@ -1079,9 +1079,8 @@ Neither command starts a process or writes a file.
 
 The index is the file `autoform-library-index.jsonl` at the package root, or
 the file given as `--library NAME=PATH`. Its format,
-`autoform-library-index/v0`, is provisional: the generator (see "Publishing
-an index") has so far been run on part of one library only, and the format may
-change without notice. It becomes `v1` after a run on a complete library.
+`autoform-library-index/v0`, is provisional and may change without notice
+until it is promoted to `v1`.
 
 Before an index is used, search checks by reading files that the checkout is
 at the locked revision, that the index's toolchain and direct dependencies are

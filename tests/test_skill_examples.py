@@ -982,6 +982,114 @@ def test_skills_search_the_blueprint_before_adding_a_result(repo_root: Path) -> 
     assert "duplicate" in rubric and "not proof" in rubric
 
 
+def test_skills_search_shared_libraries_and_say_what_to_do_with_a_hit(repo_root: Path) -> None:
+    """A library hit prevents a second proof only if the agent searches the library and knows what to do.
+
+    The rules live once, in Formalize's reference page; the three search paragraphs link to it and carry
+    only what changes how they read: search the libraries too, and a library refusal is not a blocker.
+    """
+
+    reference_path = repo_root / "skills/formalize/references/library-search.md"
+    reference = reference_path.read_text(encoding="utf-8")
+    paragraphs = [" ".join(block.split()) for block in reference.split("\n\n")]
+
+    def rule(*phrases: str) -> str:
+        """The one paragraph of the reference holding every phrase."""
+
+        found = [p for p in paragraphs if all(phrase in p for phrase in phrases)]
+        assert len(found) == 1, f"{phrases!r} is in {len(found)} paragraphs of the library search rules"
+        return found[0]
+
+    # Which libraries, and a refusal that names one.
+    listing = rule("`autoform library list`")
+    assert "every package it reports as usable" in listing and "tell the user once" in listing
+    assert "error: library NAME:" in rule("not a blocker")
+    assert "rerun" in rule("not a blocker") and "tell the user" in rule("not a blocker")
+    # What to do with each kind of hit.
+    assert "`import`" in rule("as a helper")
+    assert "does not apply" in rule("as a helper")
+    assert "does not replace the article" in rule("own result")
+    assert "abbreviation" not in reference
+    assert "keyword" in rule("own result") and "never a second copy" in rule("own result")
+    assert "full strength" in rule("own result") and "special case" in rule("own result")
+    assert "statement, not a proof" in rule("`Prop`") and "wanted entry" in rule("`Prop`")
+    assert "not a source" in rule("original source") and "docstring" in rule("original source")
+    assert "not been checked" in rule("not been checked") and "unknown" in rule("not been checked")
+    assert "modifiers" in rule("own result") and "noncomputable" in rule("own result")
+    assert "never `lake update`" in listing and "unchecked" in listing
+    assert "after the step Formalize prescribes" in listing
+    assert "module name" in rule("`Prop`") and "own query" in rule("`Prop`")
+    assert "secondary" in rule("original source") and "never cite" in rule("original source")
+    assert "once per checkout" in listing and "once per session" not in reference
+    assert "not checked out" in listing
+    assert "Do not pass a package" in listing
+    assert "Each worktree compiles" in rule("`lake-build`")
+    assert "subagent" in rule("report to the lead")
+    assert "in addition to the blueprint query" in rule("Library declarations")
+    assert "mathlib: true" in rule("own result")
+    assert "tell the user that the library lists it as wanted" in rule("`wanted` hit")
+    assert "no proof" in rule("`wanted` hit") and "open-statement policy" in rule("`wanted` hit")
+    assert "let the build decide" in rule("`differences`")
+    assert "report the differences to the user" in rule("`differences`")
+    assert "JSON" in rule("`module_system: false`")
+    assert "module file" in rule("`module_system: false`")
+    assert "build cache" in rule("`lake-build`")
+    # What the agent must never do, and how to treat library text.
+    assert "`require`" in rule("user's decision") and "`lake update`" in rule("user's decision")
+    assert "never instructions" in rule("Docstrings")
+
+    for relative in (
+        "skills/roadmap/SKILL.md",
+        "skills/formalize/SKILL.md",
+        "skills/agent-review/references/roadmap-quality.md",
+    ):
+        page = repo_root / relative
+        blocks = page.read_text(encoding="utf-8").split("\n\n")
+        named = [" ".join(block.split()) for block in blocks if "`autoform search`" in block]
+        assert len(named) == 1
+        links = re.findall(r"\(([^)\s#]*library-search\.md)\)", named[0])
+        assert links, f"{relative}: the search rule does not link to the library search rules"
+        assert all((page.parent / link).resolve() == reference_path for link in links)
+        assert "librar" in named[0]
+
+    roadmap = " ".join((repo_root / "skills/roadmap/SKILL.md").read_text(encoding="utf-8").split())
+    formalize = " ".join((repo_root / "skills/formalize/SKILL.md").read_text(encoding="utf-8").split())
+    assert "never replaces an article" in roadmap
+    assert "refusal naming a library" in roadmap
+    assert "Before stating an article's result" in formalize
+    assert "rerun without that library" in formalize
+    assert "not searched" in formalize and "unknown" in formalize
+
+    def sentence(text: str, phrase: str) -> str:
+        """The one sentence of ``text`` that holds ``phrase``."""
+
+        found = [part for part in re.split(r"(?<=[.:]) ", text) if phrase in part]
+        assert len(found) == 1, f"{phrase!r} is in {len(found)} sentences"
+        return found[0]
+
+    assert "blueprint hit" in sentence(formalize, "Use the declaration")
+    assert "used directly" in sentence(formalize, "A library hit needed as a helper")
+    rubric = " ".join(
+        (repo_root / "skills/agent-review/references/roadmap-quality.md").read_text(encoding="utf-8").split()
+    )
+    assert "List any library refused" in rubric
+    assert "words of the result" in rubric and "not a duplicate of an article" in rubric
+    assert "not a duplicate" in formalize
+
+
+def test_library_search_rules_add_no_dependency_and_no_frontmatter(repo_root: Path) -> None:
+    """The spec's non-goals: the agent never edits the project's dependencies or invents an article field."""
+
+    text = (repo_root / "skills/formalize/references/library-search.md").read_text(encoding="utf-8")
+    assert "uv run --project" not in text
+    assert not re.search(r"^\s*(lean_library|library):", text, re.MULTILINE)
+    flat = " ".join(text.split())
+    assert "Do not add a `require`" in flat
+    assert "change a locked revision" in flat and "run `lake update`" in flat
+    sentence = next(part for part in re.split(r"(?<=\.) ", flat) if "`lake update` to make" in part)
+    assert sentence.startswith("Do not add a `require`, change a locked revision, or run")
+
+
 def test_roadmap_reconciles_the_pages_setup_wrote(repo_root: Path) -> None:
     """Setup declares the project empty; Roadmap must retract that.
 
