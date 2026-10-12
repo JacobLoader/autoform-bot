@@ -70,7 +70,8 @@ Assign durable `article_id` metadata to new articles; use
 after creating the pages.
 Articles hold only frontmatter and informal mathematics; put Lean-side findings
 such as Mathlib gaps, prior art, and declaration names in
-`blueprint/.implementation-notes/<article_id>.md`. The hidden per-article file
+`blueprint/.implementation-notes/<article_id>.md`, never a transcript, a secret,
+or a machine-local path. The hidden per-article file
 stays out of the mathematical wiki and remains valid when the article moves.
 Never link it from an article. Delete it when the article is proved or marked
 `mathlib: true`; delete a container's note when every formalizable descendant

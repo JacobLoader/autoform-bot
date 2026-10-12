@@ -146,8 +146,9 @@ pre-existing findings instead of fixing them.
 
 Commit the verified result in its worktree, renew the claim, and rebase onto or
 merge the current shared branch. On the result, run the default `lake build`
-and `autoform audit`, delete every note the audit now reports as stale, confirm
-that dependency readiness is unchanged, and confirm that the claimed
+and `autoform audit`, delete every note the audit now reports as stale in a
+follow-up commit, confirm that dependency readiness is unchanged, and confirm
+that the claimed
 article differs from its starting `article_revision` only by this worker's
 edits; if integration changed the candidate, repeat the review, check, and
 audit. For a revision, also re-run `autoform work impact` on the rebuilt result;

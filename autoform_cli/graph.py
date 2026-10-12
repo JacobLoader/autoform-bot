@@ -395,10 +395,11 @@ def _implementation_note_issues(
         return issues
     for path in entries:
         relative = f"{IMPLEMENTATION_NOTES_DIR}/{path.name}"
+        # Hidden entries, such as an editor's lock symlink, are never notes.
+        if path.name.startswith("."):
+            continue
         if path.is_symlink():
             issues.append(f"{relative}: implementation note must be a regular file")
-            continue
-        if path.name.startswith("."):
             continue
         if not path.is_file():
             issues.append(f"{relative}: implementation note must be a regular file")

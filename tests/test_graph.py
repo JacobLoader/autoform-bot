@@ -653,6 +653,27 @@ def test_implementation_note_must_not_be_a_symlink(tmp_path: Path) -> None:
         load_graph(blueprint)
 
 
+def test_hidden_entries_beside_implementation_notes_are_ignored(tmp_path: Path) -> None:
+    """Editors leave hidden lock symlinks, such as Emacs's `.#<name>`, beside a note."""
+    blueprint = tmp_path / "blueprint"
+    roadmap = blueprint / "roadmap"
+    roadmap.mkdir(parents=True)
+    article_id = "af_0123456789abcdef01234567"
+    (roadmap / "result.md").write_text(
+        f"---\narticle_id: {article_id}\ndeclaration: theorem\n---\n\n# Result\n",
+        encoding="utf-8",
+    )
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{article_id}.md").write_text("route\n", encoding="utf-8")
+    try:
+        (notes / f".#{article_id}.md").symlink_to("user@host.4242:1760000000")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    assert list(load_graph(blueprint).nodes) == ["result"]
+
+
 def test_implementation_notes_directory_must_not_be_a_symlink(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     roadmap = blueprint / "roadmap"

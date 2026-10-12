@@ -113,7 +113,7 @@ def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path
     assert "Delete every note the audit reports as `stale-implementation-note`" in formalize
     assert "even though it belongs to another article" in formalize
     assert "The exceptions are deleting stale implementation notes" in formalize
-    assert "delete every note the audit now reports as stale" in formalize
+    assert "delete every note the audit now reports as stale in a follow-up commit" in formalize
     assert '"stale-implementation-note"' in read("autoform_cli/audit.py")
     assert "never a secret or machine-local path" in formalize
     assert "Never link the hidden note from an article" in formalize
@@ -126,6 +126,11 @@ def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path
     )
     assert "an orphaned note blocks every command that loads the graph" in roadmap
     assert "any worker may repair one the same way" in roadmap
+    assert "never a transcript, a secret, or a machine-local path" in roadmap
+    assert (
+        "containers have no claims, and any worker may delete a note that `autoform audit` reports as stale"
+        in reference
+    )
     assert "delete the orphan, and commit; any worker may do this" in formalize
     assert "Parallel branches can orphan a note without a Git conflict" in reference
     assert "Versioned implementation notes live outside the mathematical roadmap" in reference

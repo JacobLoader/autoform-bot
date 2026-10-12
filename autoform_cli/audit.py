@@ -213,7 +213,8 @@ def audit_graph(
                     AuditFinding(
                         article_path,
                         "stale-implementation-note",
-                        "completed implementation scope still has a note; delete the note",
+                        "completed implementation scope still has "
+                        f"{IMPLEMENTATION_NOTES_DIR}/{node.article_id}.md; delete it",
                     )
                 )
 
@@ -586,7 +587,6 @@ def _validation_article_path(blueprint: Path, issue: str) -> str:
             boundary = issue.rfind(marker)
             if boundary >= 0:
                 return issue[:boundary]
-        return IMPLEMENTATION_NOTES_DIR
 
     node_id = issue.split(":", 1)[0]
     if not node_id or " " in node_id or node_id in {"dependency cycle", "rolled-up dependency cycle"}:

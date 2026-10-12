@@ -137,7 +137,7 @@ def test_audit_rejects_implementation_notes_left_after_proof(tmp_path: Path) -> 
     assert findings == [
         (
             "stale-implementation-note",
-            "completed implementation scope still has a note; delete the note",
+            f"completed implementation scope still has .implementation-notes/{article_id}.md; delete it",
         )
     ]
 
@@ -323,6 +323,21 @@ def test_audit_reports_invalid_note_at_its_blueprint_path(
     assert [(finding.article_path, finding.code) for finding in result.findings] == [
         (f".implementation-notes/{filename}", "invalid-graph")
     ]
+
+
+def test_audit_reports_a_misplaced_notes_directory_where_it_is(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    article_id = "af_0123456789abcdef01234567"
+    _article(blueprint, "result.md", article_id=article_id, declaration="theorem")
+    misplaced = blueprint / "roadmap" / ".implementation-notes"
+    misplaced.mkdir()
+    (misplaced / f"{article_id}.md").write_text("Mathlib gap.\n", encoding="utf-8")
+
+    paths = {finding.article_path for finding in audit_blueprint(blueprint).findings}
+
+    assert f"roadmap/.implementation-notes/{article_id}.md" in paths
+    assert ".implementation-notes" not in paths
 
 
 def test_audit_reports_formalizable_structure(tmp_path: Path) -> None:
