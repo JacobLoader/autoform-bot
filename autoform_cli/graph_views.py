@@ -23,9 +23,6 @@ NodeKind = Literal["scope", "boundary", "node"]
 # scope, or ``None`` when that endpoint lies outside it.
 _ScopedRelation = tuple[str, str, bool, str | None, str | None]
 
-# A scope is complete when every target under it closes its dependency chain.
-_DONE_STATES = frozenset({"fully_proved", "mathlib"})
-
 _H1 = re.compile(r"^ {0,3}#[ \t]+(.+?)[ \t]*#*[ \t]*$")
 
 
@@ -549,19 +546,21 @@ def _scope_node(
 ) -> ViewNode:
     """Summarize a container by the formalization targets beneath it.
 
-    Only leaves that declare something count, as in the landing-page figures,
-    so a note or sentinel article cannot hold a finished chapter open. In a
+    Only leaves that declare something or are marked not ready count, so a
+    note cannot hold a finished chapter open but deferred work does. In a
     node-level view the box stands for the container itself, so *members* is
     the container, while its counts still describe what lies beneath it.
     """
-    targets = tuple(node_id for node_id in leaves if graph.nodes[node_id].formalizable)
+    targets = tuple(
+        node_id for node_id in leaves if graph.nodes[node_id].formalizable or graph.nodes[node_id].not_ready
+    )
     return ViewNode(
         id=view_id,
         title=title,
         kind="scope",
         members=targets if members is None else members,
         status_counts=_status_counts(targets, statuses),
-        complete=bool(targets) and all(statuses[node_id].key in _DONE_STATES for node_id in targets),
+        complete=bool(targets) and all(statuses[node_id].fully_proved for node_id in targets),
     )
 
 
@@ -580,11 +579,6 @@ def container_nodes(graph: Graph, statuses: dict[str, NodeStatus]) -> dict[str, 
         for node_id in children
         if node_id in graph.nodes
     }
-
-
-def container_completion(graph: Graph, statuses: dict[str, NodeStatus]) -> dict[str, bool]:
-    """Map every container to whether all the targets beneath it are complete."""
-    return {node_id: node.complete for node_id, node in container_nodes(graph, statuses).items()}
 
 
 def _status_counts(
@@ -681,7 +675,6 @@ __all__ = [
     "ViewEdge",
     "ViewNode",
     "chapter_view",
-    "container_completion",
     "container_nodes",
     "focus_view",
     "focus_views",
