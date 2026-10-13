@@ -29,6 +29,36 @@ from servers.lean_runtime import (
 from servers.lsp.server import LeanLspSession, LspConfig
 from servers.repl.core import LEAN_HEADER_LAUNCHER, LEAN_HEADER_PARSER
 
+# Every variable LeanRuntimeConfig.from_environment reads.
+_RUNTIME_CONFIG_VARIABLES = (
+    "AUTOFORM_MAX_LEAN_PROJECTS",
+    "AUTOFORM_LEAN_IDLE_SECONDS",
+    "AUTOFORM_REPL_TOTAL_WORKERS",
+    "LEAN_NUM_REPLS",
+    "AUTOFORM_REPL_WORKERS_PER_PROJECT",
+    "LEAN_REPL_CMD",
+    "LEAN_REPL_HEADER_CMD",
+    "LEAN_LSP_CMD",
+    "AUTOFORM_MAX_REPL_REQUEST_SECONDS",
+    "AUTOFORM_REPL_REQUEST_TIMEOUT",
+    "LEAN_LSP_TIMEOUT",
+    "AUTOFORM_MAX_LSP_REQUEST_SECONDS",
+    "AUTOFORM_RUNTIME_RESPONSE_TIMEOUT",
+    "AUTOFORM_RUNTIME_READ_TIMEOUT",
+    "AUTOFORM_RUNTIME_MAX_CONNECTIONS",
+)
+
+
+@pytest.fixture(autouse=True)
+def default_runtime_configuration(monkeypatch):
+    """Start every test, and every runtime it boots, from the defaults.
+
+    Otherwise a value exported in the developer's shell, valid or not, changes
+    which check a configuration test reaches.
+    """
+    for name in _RUNTIME_CONFIG_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+
 
 def make_lake_project(tmp_path, name: str):
     project = tmp_path / name
@@ -1811,6 +1841,7 @@ def test_response_timeout_is_never_retried(runtime_dir, monkeypatch):
     [
         ("LEAN_NUM_REPLS", "-1", "nonnegative integer"),
         ("LEAN_REPL_CMD", "   ", "must not be empty"),
+        ("LEAN_REPL_HEADER_CMD", "   ", "LEAN_REPL_HEADER_CMD must not be empty"),
         ("AUTOFORM_LEAN_IDLE_SECONDS", "nan", "finite nonnegative"),
         ("AUTOFORM_MAX_REPL_REQUEST_SECONDS", "900", "too small"),
         ("LEAN_LSP_TIMEOUT", "601", "cannot exceed"),
@@ -1830,12 +1861,7 @@ def test_per_project_workers_cannot_exceed_node_budget(monkeypatch):
         LeanRuntimeConfig.from_environment()
 
 
-def test_default_repl_command_is_package_qualified(monkeypatch):
-    monkeypatch.delenv("LEAN_REPL_CMD", raising=False)
-    monkeypatch.delenv("LEAN_REPL_HEADER_CMD", raising=False)
-    monkeypatch.delenv("AUTOFORM_REPL_REQUEST_TIMEOUT", raising=False)
-    monkeypatch.delenv("AUTOFORM_MAX_REPL_REQUEST_SECONDS", raising=False)
-
+def test_default_repl_command_is_package_qualified():
     config = LeanRuntimeConfig.from_environment()
 
     assert config.repl_command == (
@@ -1849,7 +1875,6 @@ def test_default_repl_command_is_package_qualified(monkeypatch):
 
 def test_absolute_lake_command_is_reused_for_header_validation(monkeypatch):
     monkeypatch.setenv("LEAN_REPL_CMD", "/opt/lean/bin/lake exe @repl/repl")
-    monkeypatch.delenv("LEAN_REPL_HEADER_CMD", raising=False)
 
     config = LeanRuntimeConfig.from_environment()
 
@@ -1865,7 +1890,6 @@ def test_absolute_lake_command_is_reused_for_header_validation(monkeypatch):
 
 def test_wrapped_repl_command_requires_an_explicit_header_command(monkeypatch):
     monkeypatch.setenv("LEAN_REPL_CMD", "container run lake exe @repl/repl")
-    monkeypatch.delenv("LEAN_REPL_HEADER_CMD", raising=False)
 
     with pytest.raises(
         ValueError,
@@ -1884,7 +1908,6 @@ def test_wrapped_repl_command_requires_an_explicit_header_command(monkeypatch):
 
 
 def test_lowered_repl_maximum_lowers_only_the_default_timeout(monkeypatch):
-    monkeypatch.delenv("AUTOFORM_REPL_REQUEST_TIMEOUT", raising=False)
     monkeypatch.setenv("AUTOFORM_MAX_REPL_REQUEST_SECONDS", "120")
 
     config = LeanRuntimeConfig.from_environment()
