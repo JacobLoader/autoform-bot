@@ -508,31 +508,18 @@ def _indexed_source_snapshot(
     snapshot: TreeSnapshot,
     excluded: tuple[PurePosixPath, ...],
 ) -> IndexedSourceSnapshot:
-    # The capture's opaque markers alone decide which folders are skeleton
-    # output or nested checkouts; an unrecognized manifest marks nothing.
-    ignored_roots: set[PurePosixPath] = {
-        PurePosixPath(relative)
-        for relative in snapshot.opaque_directories
-        if relative
-    }
-
-    def in_ignored_root(relative_text: str) -> bool:
-        return _path_is_within_roots(PurePosixPath(relative_text), ignored_roots)
-
     # Editor lock links (``.#Name.lean``) are never read, so they are skipped;
     # any other ``.lean`` link, live or dangling, is refused.
     tolerated_links = frozenset(
         relative
         for relative, _target in snapshot.symlinks
         if PurePosixPath(relative).suffix.casefold() == ".lean"
-        and not in_ignored_root(relative)
         and PurePosixPath(relative).name.startswith(".#")
     )
     unsupported = [
         (relative, reason)
         for relative, reason in snapshot.unsupported_entries()
-        if not in_ignored_root(relative)
-        and PurePosixPath(relative).suffix.casefold() == ".lean"
+        if PurePosixPath(relative).suffix.casefold() == ".lean"
         and relative not in tolerated_links
     ]
     if unsupported:
@@ -549,8 +536,6 @@ def _indexed_source_snapshot(
             relative,
             excluded,
         ):
-            continue
-        if _path_is_within_roots(relative, ignored_roots):
             continue
         relative_path = Path(relative.as_posix())
         _update_source_digest(digest, relative_path, data)
@@ -571,24 +556,19 @@ def _indexed_source_snapshot(
             line_counts=line_counts,
         ),
         source_digest,
-        _lean_generation_revision(snapshot, ignored_roots, tolerated_links),
+        _lean_generation_revision(snapshot, tolerated_links),
         tuple(source_files),
     )
 
 
 def _lean_generation_revision(
     snapshot: TreeSnapshot,
-    ignored_roots: set[PurePosixPath],
     tolerated_links: frozenset[str],
 ) -> str:
     """Hash only effective Lean inputs and their ancestor directories."""
 
     def retained_entry(relative_text: str) -> bool:
-        relative = PurePosixPath(relative_text)
-        return relative.suffix.casefold() == ".lean" and not _path_is_within_roots(
-            relative,
-            ignored_roots,
-        )
+        return PurePosixPath(relative_text).suffix.casefold() == ".lean"
 
     files = tuple(entry for entry in snapshot.files if retained_entry(entry[0]))
     symlinks = tuple(
@@ -648,13 +628,6 @@ def _is_managed_output_manifest_bytes(data: bytes) -> bool:
         and (kind, schema) in MANAGED_OUTPUT_SCHEMAS
         and isinstance(value.get(kind), list)
     )
-
-
-def _path_is_within_roots(
-    path: PurePosixPath,
-    roots: set[PurePosixPath],
-) -> bool:
-    return any(candidate in roots for candidate in (path, *path.parents))
 
 
 def _update_source_digest(digest, relative: Path, data: bytes) -> None:
