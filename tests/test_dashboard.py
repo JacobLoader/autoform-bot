@@ -137,12 +137,13 @@ def test_live_overlay_refuses_a_stale_built_publication(tmp_path: Path) -> None:
     article.write_text("# Roadmap\n", encoding="utf-8")
     site = tmp_path / "site"
     site.mkdir()
+    revision = publication_source_revision(blueprint)
     (site / "publication.json").write_text(
         json.dumps(
             {
-                "schema": "autoform-publication/v1",
+                "schema": "autoform-publication/v2",
                 "complete": True,
-                "source_revision": publication_source_revision(blueprint),
+                "source_revision": revision,
             }
         ),
         encoding="utf-8",
@@ -153,17 +154,47 @@ def test_live_overlay_refuses_a_stale_built_publication(tmp_path: Path) -> None:
             return []
 
     state = publication_bound_live_state(
-        _runtime,
         EmptyClaims(),
         blueprint_dir=blueprint,
         site_dir=site,
     )
 
-    assert state()["source_revision"] == "revision"
+    assert state()["source_revision"] == revision
     article.write_text("# Changed\n", encoding="utf-8")
     stale = state()
     assert stale["claims"] == []
     assert "stale" in str(stale["error"])
+
+
+def test_live_overlay_projects_claims_onto_the_bytes_it_compared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import autoform_cli.render as render_module
+
+    article = tmp_path / "blueprint/roadmap/README.md"
+    article.parent.mkdir(parents=True)
+    article.write_text("# Roadmap\n", encoding="utf-8")
+    site = tmp_path / "site"
+    site.mkdir()
+    revision = publication_source_revision(tmp_path / "blueprint")
+    manifest = {"schema": "autoform-publication/v2", "complete": True, "source_revision": revision}
+    (site / "publication.json").write_text(json.dumps(manifest), encoding="utf-8")
+    capture = render_module._capture_blueprint
+
+    def edit_after_capture(blueprint: Path):
+        snapshot = capture(blueprint)
+        article.write_text("# Changed after capture\n", encoding="utf-8")
+        return snapshot
+
+    monkeypatch.setattr(render_module, "_capture_blueprint", edit_after_capture)
+    claim = {"_key": author_claim_key("roadmap"), "_malformed": False, "_expired": False, "owner": "worker-a"}
+    claims = SimpleNamespace(list=lambda: [claim])
+
+    state = publication_bound_live_state(claims, blueprint_dir=tmp_path / "blueprint", site_dir=site)()
+
+    # The revision matched before the edit, and the title comes from the same capture.
+    assert state["source_revision"] == revision
+    assert [(item["node_id"], item["title"]) for item in state["claims"]] == [("roadmap", "Roadmap")]
 
 
 def test_dashboard_handler_serves_static_site_and_no_store_overlay(tmp_path: Path) -> None:

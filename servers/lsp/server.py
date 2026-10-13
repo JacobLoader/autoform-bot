@@ -15,18 +15,32 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from logging import getLogger
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from fastmcp.server import FastMCP
 
 from servers import resolve_lean_project_dir
 from servers.lean_client import LeanRuntimeClient
+from servers.repl.core import (
+    _process_group_has_live_members,
+    _reap_process,
+    _terminate_process_group,
+    _wait_for_live_process_group_exit,
+)
 
 logger = getLogger(__name__)
+# Bound at import: tests swap subprocess.Popen for factories, and non-Popen
+# fakes skip the psutil liveness probe.
+_POPEN_TYPE = subprocess.Popen
+T = TypeVar("T")
 
 DEFAULT_LSP_TIMEOUT = 60
 MAX_LSP_HEADER_BYTES = 16 * 1024
 MAX_LSP_MESSAGE_BYTES = 16 * 1024 * 1024
+# How long Lean's watchdog gets to stop its file workers once its pipes close.
+LSP_EOF_GRACE_SECONDS = 2.0
+# How long close() waits for Lean to leave after shutdown and exit.
+LSP_SHUTDOWN_GRACE_SECONDS = 5.0
 
 
 class LspProtocolError(RuntimeError):
@@ -35,6 +49,15 @@ class LspProtocolError(RuntimeError):
 
 class LspBusyError(TimeoutError):
     """A queued operation could not enter the shared LSP session in time."""
+
+
+class LeanLspStartupError(RuntimeError):
+    """Startup failed while the session still owns process handles."""
+
+    def __init__(self, session: LeanLspSession, cause: BaseException) -> None:
+        super().__init__(str(cause))
+        self.session = session
+        self.cause = cause
 
 
 @dataclass
@@ -52,8 +75,12 @@ class LeanLspSession:
     def __init__(self, config: LspConfig) -> None:
         self.config = config
         self.process: subprocess.Popen | None = None
+        self._process_group_id: int | None = None
+        self._group_retired = False
+        self._retire_pending = False
         self._request_id = 0
         self._lock = threading.Lock()
+        self._lifecycle_lock = threading.Lock()
         # A session has one stdout stream. Serialize the complete document
         # lifecycle so concurrent MCP calls cannot race two readers against
         # that stream or consume one another's diagnostics/responses.
@@ -61,18 +88,24 @@ class LeanLspSession:
 
     def start(self) -> None:
         """Start the language server process."""
+        if os.name != "posix":
+            raise RuntimeError("Lean LSP transport requires a POSIX platform")
         env = os.environ.copy()
         env.pop("PYTHONPATH", None)
-
-        self.process = subprocess.Popen(
-            self.config.lake_command,
-            cwd=self.config.cwd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            env=env,
-        )
-
+        process: subprocess.Popen | None = None
         try:
+            process = subprocess.Popen(
+                self.config.lake_command,
+                cwd=self.config.cwd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                env=env,
+                start_new_session=True,
+            )
+            self.process = process
+            self._process_group_id = process.pid
+            self._group_retired = False
+            self._retire_pending = False
             # An initialize response must be an InitializeResult object. A
             # timeout, JSON-RPC error, or malformed result means the backing
             # Lean server is unusable, so do not expose an apparently healthy
@@ -89,56 +122,151 @@ class LeanLspSession:
                 )
 
             self._send_notification("initialized", {})
-        except BaseException:
-            self._abort_process()
+        except BaseException as error:
+            if self.process is None and process is not None:
+                self.process = process
+                self._process_group_id = process.pid
+                self._group_retired = False
+            try:
+                self._retire_once()
+            except BaseException as cleanup_error:
+                logger.exception("failed to retire Lean LSP process after startup failure")
+                raise LeanLspStartupError(self, error) from cleanup_error
             raise
 
-    def _abort_process(self) -> None:
-        """Force-close the backing process without attempting more JSON-RPC."""
-        process, self.process = self.process, None
-        if process is None or process.poll() is not None:
+    def _retire_once(self) -> None:
+        """Advance one owned process through verified retirement once."""
+        self._retire_pending = True
+        process = self.process
+        if process is None:
+            self._retire_pending = False
             return
-        try:
-            process.kill()
-            process.wait(timeout=5)
-        except Exception:
-            pass
+        if not self._group_retired:
+            process_group_id = self._process_group_id
+            if process_group_id is None:
+                process_group_id = process.pid
+                self._process_group_id = process_group_id
+            if getattr(process, "returncode", None) is not None:
+                if _process_group_has_live_members(process_group_id):
+                    raise RuntimeError(
+                        "refusing to signal an LSP process group after its leader was reaped"
+                    )
+            else:
+                # Lean's watchdog starts each file worker in its own session
+                # and stops every worker group when its stdin closes. A TERM
+                # first would kill the watchdog and orphan workers the group
+                # signal cannot reach. Close stdout too: the watchdog writes
+                # during that shutdown and handles a closed pipe, but would
+                # block on a full one. The leader stays unreaped while the
+                # watchdog exits, so the PGID cannot be reused meanwhile.
+                for stream in (process.stdin, process.stdout):
+                    if stream is not None:
+                        try:
+                            stream.close()
+                        except OSError:
+                            logger.warning("failed to close a Lean LSP pipe", exc_info=True)
+                _wait_for_live_process_group_exit(
+                    process_group_id, time.monotonic() + LSP_EOF_GRACE_SECONDS
+                )
+                _terminate_process_group(process_group_id)
+            # Publish this before any operation that can reap the leader. A
+            # retry must never signal a reused numeric PGID.
+            self._group_retired = True
+            self._process_group_id = None
+        _reap_process(process)
+        for stream in (process.stdin, process.stdout):
+            if stream is not None:
+                stream.close()
+        self.process = None
+        self._group_retired = False
+        self._retire_pending = False
+
+    def _abort_process(self) -> None:
+        """Retry verified retirement without ever surrendering ownership."""
+        delay = 0.01
+        while self.process is not None:
+            try:
+                self._retire_once()
+            except BaseException:
+                logger.exception("failed to retire the Lean LSP process group; retrying")
+                time.sleep(delay)
+                delay = min(delay * 2, 1.0)
 
     def close(self) -> None:
         """Shut down the language server."""
-        if self.process and self.process.poll() is None:
-            try:
-                self._send_request("shutdown", {})
-                self._send_notification("exit", {})
-                self.process.wait(timeout=5)
-            except Exception:
-                self._abort_process()
-        self.process = None
+        with self._lifecycle_lock:
+            if self.is_alive():
+                try:
+                    self._send_request("shutdown", {})
+                    # Lean leaves after shutdown only on an exit without params.
+                    self._send_notification("exit", None)
+                    if self._process_group_id is not None:
+                        _wait_for_live_process_group_exit(
+                            self._process_group_id,
+                            time.monotonic() + LSP_SHUTDOWN_GRACE_SECONDS,
+                        )
+                except Exception:
+                    logger.warning("graceful Lean LSP shutdown failed", exc_info=True)
+            self._abort_process()
 
     def abort(self) -> None:
         """Discard a protocol stream that can no longer be shared safely."""
-        self._abort_process()
+        with self._lifecycle_lock:
+            self._abort_process()
+
+    def retire(self) -> None:
+        """Prevent new work while the owner transfers cleanup to a reaper."""
+        self._retire_pending = True
 
     def is_alive(self) -> bool:
         """Return whether the cached language-server child can accept work."""
-        return self.process is not None and self.process.poll() is None
+        process = self.process
+        if (
+            process is None
+            or self._retire_pending
+            or getattr(process, "returncode", None) is not None
+        ):
+            return False
+        if not isinstance(process, _POPEN_TYPE):
+            return True
+        try:
+            import psutil
 
-    def get_diagnostics(self, file_path: str) -> list[dict]:
-        """Open a file and collect diagnostics from the language server."""
+            status = psutil.Process(process.pid).status()
+        except psutil.NoSuchProcess:
+            return False
+        except psutil.Error:
+            return True
+        return status not in {psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD}
+
+    def _admitted(self, operation: Callable[[float], T]) -> T:
+        """Run one serialized operation and fence a failed protocol stream."""
         deadline = time.monotonic() + self.config.timeout
         if not self._operation_lock.acquire(timeout=self.config.timeout):
             raise LspBusyError(
                 f"timed out after {self.config.timeout:g}s waiting for the Lean LSP session"
             )
         try:
+            if self._retire_pending:
+                raise LspProtocolError("Lean LSP session is retiring after a failed operation")
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise LspBusyError(
                     f"timed out after {self.config.timeout:g}s waiting for the Lean LSP session"
                 )
-            return self._get_diagnostics(file_path, timeout=remaining)
+            try:
+                return operation(remaining)
+            except BaseException:
+                self._retire_pending = True
+                raise
         finally:
             self._operation_lock.release()
+
+    def get_diagnostics(self, file_path: str) -> list[dict]:
+        """Open a file and collect diagnostics from the language server."""
+        return self._admitted(
+            lambda remaining: self._get_diagnostics(file_path, timeout=remaining)
+        )
 
     def _get_diagnostics(self, file_path: str, *, timeout: float | None = None) -> list[dict]:
         path = Path(file_path).resolve()
@@ -174,43 +302,40 @@ class LeanLspSession:
             )
         finally:
             try:
-                remaining = deadline - time.monotonic()
-                if remaining > 0:
-                    self._send_notification(
-                        "textDocument/didClose",
-                        {"textDocument": {"uri": uri}},
-                        timeout=remaining,
-                    )
+                self._send_notification(
+                    "textDocument/didClose",
+                    {"textDocument": {"uri": uri}},
+                    timeout=self._remaining(deadline, operation_timeout),
+                )
             except Exception:
+                self._retire_pending = True
                 logger.warning("failed to close LSP document %s", uri, exc_info=True)
 
     def hover(self, file_path: str, line: int, character: int) -> str | None:
         """Get hover information at a position."""
-        deadline = time.monotonic() + self.config.timeout
-        if not self._operation_lock.acquire(timeout=self.config.timeout):
-            raise LspBusyError(
-                f"timed out after {self.config.timeout:g}s waiting for the Lean LSP session"
+        # Input failures happen before admission and cannot desynchronize the
+        # shared protocol stream, so they must not retire a healthy session.
+        path = Path(file_path).resolve()
+        content = path.read_text()
+        return self._admitted(
+            lambda remaining: self._hover(
+                path,
+                content,
+                line,
+                character,
+                timeout=remaining,
             )
-        try:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise LspBusyError(
-                    f"timed out after {self.config.timeout:g}s waiting for the Lean LSP session"
-                )
-            return self._hover(file_path, line, character, timeout=remaining)
-        finally:
-            self._operation_lock.release()
+        )
 
     def _hover(
         self,
-        file_path: str,
+        path: Path,
+        content: str,
         line: int,
         character: int,
         *,
         timeout: float = 30,
     ) -> str | None:
-        path = Path(file_path).resolve()
-        content = path.read_text()
         uri = path.as_uri()
         deadline = time.monotonic() + timeout
         self._send_notification(
@@ -236,14 +361,13 @@ class LeanLspSession:
             )
         finally:
             try:
-                remaining = deadline - time.monotonic()
-                if remaining > 0:
-                    self._send_notification(
-                        "textDocument/didClose",
-                        {"textDocument": {"uri": uri}},
-                        timeout=remaining,
-                    )
+                self._send_notification(
+                    "textDocument/didClose",
+                    {"textDocument": {"uri": uri}},
+                    timeout=self._remaining(deadline, timeout),
+                )
             except Exception:
+                self._retire_pending = True
                 logger.warning("failed to close LSP document %s", uri, exc_info=True)
         if result and "contents" in result:
             contents = result["contents"]
@@ -272,16 +396,14 @@ class LeanLspSession:
     def _send_notification(
         self,
         method: str,
-        params: dict,
+        params: dict | None,
         *,
         timeout: float = 30,
     ) -> None:
         """Send a JSON-RPC notification (no response expected)."""
-        msg = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        }
+        msg: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+        if params is not None:
+            msg["params"] = params
         self._write_message(msg, timeout=timeout)
 
     def _write_message(self, msg: dict, *, timeout: float = 30) -> None:
@@ -354,20 +476,29 @@ class LeanLspSession:
             f"timed out after {timeout:g}s waiting for LSP response {request_id}"
         )
 
-    def _read_message(self, timeout: float = 5) -> dict | None:
-        """Read one bounded JSON-RPC frame within one absolute deadline."""
+    def _read_message(
+        self, timeout: float = 5, *, start_timeout: float | None = None
+    ) -> dict | None:
+        """Read one bounded JSON-RPC frame within one absolute deadline.
+
+        ``start_timeout`` bounds only the wait for a frame to begin, never past
+        ``timeout``. Once its first byte arrives, the frame may take the rest of
+        ``timeout``.
+        """
         if not self.process or not self.process.stdout:
             return None
 
         import select as _select
 
         stdout_fd = self.process.stdout.fileno()
-        deadline = time.monotonic() + timeout
+        now = time.monotonic()
+        deadline = now + timeout
+        start_deadline = deadline if start_timeout is None else min(deadline, now + start_timeout)
 
         # Read Content-Length header, checking the deadline before every byte.
         header = bytearray()
         while b"\r\n\r\n" not in header:
-            remaining = deadline - time.monotonic()
+            remaining = (deadline if header else start_deadline) - time.monotonic()
             if remaining <= 0:
                 if not header:
                     return None
@@ -438,7 +569,7 @@ class LeanLspSession:
 
         try:
             message = json.loads(bytes(body).decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        except (ValueError, RecursionError) as error:
             raise LspProtocolError("LSP emitted an invalid JSON body") from error
         if not isinstance(message, dict):
             raise LspProtocolError("LSP JSON-RPC message is not an object")
@@ -469,9 +600,12 @@ class LeanLspSession:
             # Before the first publication, keep waiting all the way to the
             # configured deadline. After one arrives, a one-second quiet period
             # is enough to treat the latest publication as final, while still
-            # respecting the same total deadline.
-            read_timeout = min(1 if received else 2, remaining)
-            msg = self._read_message(timeout=read_timeout)
+            # respecting the same total deadline. The quiet period bounds only
+            # the wait for the next frame to start: a frame that has started
+            # may finish within the total deadline.
+            msg = self._read_message(
+                timeout=remaining, start_timeout=1 if received else None
+            )
             if msg is None:
                 if received:
                     return diagnostics
@@ -501,6 +635,7 @@ class LeanLspProjects:
     ) -> None:
         self._session_factory = session_factory or self._start_session
         self._sessions: dict[Path, LeanLspSession] = {}
+        self._failed: dict[Path, LeanLspStartupError] = {}
         self._lock = threading.Lock()
         self._closed = False
 
@@ -516,20 +651,29 @@ class LeanLspProjects:
         with self._lock:
             if self._closed:
                 raise RuntimeError("Lean LSP project router is closed")
+            failed = self._failed.get(root)
+            if failed is not None:
+                raise RuntimeError("Lean LSP project startup cleanup is pending") from failed
             session = self._sessions.get(root)
             if session is None:
-                session = self._session_factory(root)
+                try:
+                    session = self._session_factory(root)
+                except LeanLspStartupError as error:
+                    self._failed[root] = error
+                    raise
                 self._sessions[root] = session
             return session
 
     def close(self) -> None:
         """Close all sessions created by this router."""
         with self._lock:
-            sessions = list(self._sessions.values())
-            self._sessions.clear()
             self._closed = True
-        for session in sessions:
-            session.close()
+            for root, session in list(self._sessions.items()):
+                session.close()
+                self._sessions.pop(root, None)
+            for root, error in list(self._failed.items()):
+                error.session.close()
+                self._failed.pop(root, None)
 
 
 def format_lsp_diagnostics(diagnostics: list[dict]) -> str:
