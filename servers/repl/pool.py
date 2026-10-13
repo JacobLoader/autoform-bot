@@ -1,4 +1,4 @@
-"""Pooled Lean REPL instances with load balancing."""
+"""Cold Lean REPL slots that each admit one disposable call."""
 
 from __future__ import annotations
 

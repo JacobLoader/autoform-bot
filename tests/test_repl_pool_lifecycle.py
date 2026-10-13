@@ -1,4 +1,4 @@
-"""Lifecycle regression tests for transactional REPL pool startup."""
+"""Lifecycle regression tests for the cold Lean REPL slot pool."""
 
 from __future__ import annotations
 

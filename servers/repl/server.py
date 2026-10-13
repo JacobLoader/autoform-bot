@@ -33,9 +33,11 @@ def create_repl_server(runtime: LeanRuntimeClient) -> FastMCP:
     def get_repl_status(project_dir: str) -> str:
         """Return pool capacity, memory use, lifecycle state, and shutdown state.
 
-        State is ``cold``, ``warming``, ``warm``, or ``retiring``. Memory use
-        is available only for a warm resident; retiring reports zero and
-        ``shutdown: true`` while verified cleanup remains in progress.
+        State is ``cold``, ``warming``, ``warm``, or ``retiring``; ``warm``
+        means the project's slots are cached, not that a REPL process stays
+        alive. Memory use counts only processes of calls in progress, so it is
+        zero between calls; retiring reports zero and ``shutdown: true`` while
+        verified cleanup remains in progress.
 
         Args:
             project_dir: Absolute path to the Lake project root.

@@ -1,7 +1,8 @@
-"""Lean REPL backend: one session managing a ``lake exe repl`` subprocess.
+"""Lean REPL backend: disposable ``lake exe @repl/repl`` children.
 
-Provides LeanRepl with non-blocking I/O, a preloaded import environment,
-memory monitoring, automatic restart, and multi-snippet chaining.
+LeanRepl.run_disposable checks the submitted header with Lean's parser,
+runs the call as the only frame of a fresh REPL process, and retires that
+process before returning.
 """
 
 from __future__ import annotations
@@ -36,6 +37,8 @@ _PUBLIC_DIAGNOSTIC_FIELDS = frozenset({"severity", "data", "pos", "endPos"})
 _PUBLIC_SORRY_FIELDS = frozenset({"goal", "pos", "endPos"})
 # Runs Lean's own header parser, which the REPL uses, on the source on stdin.
 LEAN_HEADER_PARSER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "parse_header.lean")
+# ``lake env`` sets LEAN_SYSROOT to the selected toolchain; exec its lean
+# directly, not whatever ``lean`` PATH finds.
 LEAN_HEADER_LAUNCHER = (
     "import os, sys; "
     "lean = os.path.join(os.environ['LEAN_SYSROOT'], 'bin', 'lean'); "
@@ -770,10 +773,10 @@ class ReplCleanupError(RuntimeError):
 
 
 class LeanRepl:
-    """Lean REPL process manager.
+    """Slot wrapper that runs each public call on a fresh Lean REPL process.
 
-    Manages a ``lake exe repl`` subprocess with non-blocking I/O,
-    a preloaded import environment, and automatic restart on failure.
+    It owns at most one process generation (header parser or REPL child) at
+    a time; close() verifies that generation's exit before the slot is reused.
     """
 
     def __init__(self, config: LeanReplConfig) -> None:

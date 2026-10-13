@@ -152,9 +152,9 @@ def test_unvalidated_calls_use_warmup_only_when_composition_is_proven(code):
 
 @pytest.mark.parametrize(("code", "is_prelude"), [("#check Nat", False), ("prelude\nimport Init", True)])
 def test_header_parser_runs_on_the_minimum_supported_lean(code, is_prelude):
-    # The default header command, run from a project on the oldest supported
-    # Lean. Before v4.30 both headers report one plain Init import, so only
-    # isPrelude tells them apart.
+    # The default header command, run in a directory pinned to the oldest
+    # supported Lean. Before v4.30 both headers report one plain Init import,
+    # so only isPrelude tells them apart.
     completed = subprocess.run(
         LeanReplConfig().header_command,
         cwd=MINIMUM_LEAN,

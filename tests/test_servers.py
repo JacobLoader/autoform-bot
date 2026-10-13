@@ -91,7 +91,7 @@ class _FailFirstShutdownPool:
 
 
 class TestReplServer:
-    """Contracts for the persistent Lean REPL server."""
+    """Contracts for the Lean REPL MCP adapter."""
 
     def test_import_server(self):
         from servers.repl import server  # noqa: F401
