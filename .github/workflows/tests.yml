@@ -143,8 +143,10 @@ jobs:
           set -euo pipefail
           timeout --signal=TERM --kill-after=30s 5m \
             elan toolchain install "$(tr -d '\r\n' < tests/fixtures/minimum-lean/lean-toolchain)"
-      - run: uv sync --frozen --extra dev --extra repl
-      - run: uv run pytest -q tests/test_real_repl.py
+      - name: Install locked development environment
+        run: timeout --signal=TERM --kill-after=30s 3m uv sync --frozen --extra dev --extra repl
+      - name: Run the REPL suite against the pinned upstream REPL
+        run: timeout --signal=TERM --kill-after=30s 10m uv run pytest -q tests/test_real_repl.py
         env:
           AUTOFORM_RUN_REAL_REPL_TESTS: "1"
 
