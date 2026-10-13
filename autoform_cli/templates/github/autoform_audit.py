@@ -466,7 +466,8 @@ _IMPORT_BUILD = """  -- `lake env` puts the project's libraries ahead of the too
         unless holders.contains real do
           holders := holders.push real
     if holders.size > 1 then
-      throwError "root module {moduleName} shares its first component {root} with another library on the search path; rename the module so the audit can run"
+      let listed := ", ".intercalate (holders.toList.map (·.toString))
+      throwError "root module {moduleName} shares its first component {root} with another library on the search path ({listed}); rename the module so the audit can run"
   searchPathRef.set (libDir :: projectEntries)
   -- Without extensions no `initialize` block of the build runs. `Init` comes
   -- along even when the build never imports it, so a build that declares a
