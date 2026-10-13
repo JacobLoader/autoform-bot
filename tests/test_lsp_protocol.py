@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -349,7 +350,7 @@ def test_did_close_failure_keeps_result_but_retires_session(
             raise TimeoutError("didClose write timed out")
 
     monkeypatch.setattr(session, "_send_notification", notify)
-    monkeypatch.setattr(session, "_collect_diagnostics", lambda uri, timeout: [])
+    monkeypatch.setattr(session, "_collect_diagnostics", lambda uri, version, timeout: [])
     monkeypatch.setattr(
         session,
         "_send_request",
@@ -412,7 +413,7 @@ def test_document_close_budget_exhaustion_retires_session(tmp_path, monkeypatch)
         lambda method, params, **kwargs: notifications.append(method),
     )
 
-    def finish_at_deadline(uri, timeout):
+    def finish_at_deadline(uri, version, timeout):
         clock["now"] = 60.0
         return []
 
@@ -732,8 +733,7 @@ def test_real_lean_graceful_close_is_prompt_and_complete(tmp_path):
     leader = psutil.Process(session.process.pid)
     descendants: set[psutil.Process] = set()
     try:
-        # Opened directly, so a file worker is running at close time without
-        # depending on get_diagnostics' one-second quiet-period reads.
+        # Opened directly, so a file worker is still running when close() starts.
         _open_until(session, project, leader, "--worker", descendants)
 
         started = time.monotonic()
@@ -750,62 +750,343 @@ def test_real_lean_graceful_close_is_prompt_and_complete(tmp_path):
             session.abort()
 
 
-def test_diagnostics_wait_through_initial_quiet_period(monkeypatch):
-    session = lsp.LeanLspSession(lsp.LspConfig())
-    uri = "file:///tmp/Test.lean"
-    messages = iter(
-        [
-            None,
-            None,
-            {
-                "jsonrpc": "2.0",
-                "method": "textDocument/publishDiagnostics",
-                "params": {"uri": uri, "diagnostics": []},
-            },
-            None,
-        ]
+
+
+def _error_lines(diagnostics):
+    return sorted({d["range"]["start"]["line"] for d in diagnostics if d.get("severity") == 1})
+
+
+@_requires_real_lean
+def test_real_lean_diagnostics_report_a_clean_file_then_its_error(tmp_path):
+    project = _real_lean_project(tmp_path / "clean-then-error", "theorem probe : 1 + 1 = 2 := rfl\n")
+    main = project / "Probe" / "Main.lean"
+    session = lsp.LeanLspSession(lsp.LspConfig(cwd=str(project), timeout=120))
+    session.start()
+    try:
+        assert session.get_diagnostics(str(main)) == []
+        # Same file again: the empty set Lean publishes when the first open is
+        # closed must not pass for this open's result.
+        main.write_text("example : 1 = 2 := rfl\n", encoding="utf-8")
+        assert _error_lines(session.get_diagnostics(str(main))) == [0]
+        assert session.is_alive() is True
+    finally:
+        session.close()
+
+
+@_requires_real_lean
+def test_real_lean_diagnostics_wait_for_a_slow_command(tmp_path):
+    # Lean publishes an empty set early and then stays silent through the
+    # sleep, which the old quiet-gap reader took for a clean file.
+    project = _real_lean_project(tmp_path / "slow", "#eval IO.sleep 10000\n\nexample : 1 = 2 := rfl\n")
+    session = lsp.LeanLspSession(lsp.LspConfig(cwd=str(project), timeout=120))
+    session.start()
+    try:
+        started = time.monotonic()
+        diagnostics = session.get_diagnostics(str(project / "Probe" / "Main.lean"))
+        assert time.monotonic() - started >= 10
+        assert _error_lines(diagnostics) == [2]
+    finally:
+        session.close()
+
+
+@_requires_real_lean
+def test_real_lean_diagnostics_timeout_fails_closed_and_cleans_up(tmp_path, monkeypatch):
+    project = _real_lean_project(tmp_path / "timeout", "#eval IO.sleep 300000\n")
+    session = lsp.LeanLspSession(lsp.LspConfig(cwd=str(project), timeout=10))
+    session.start()
+    leader = psutil.Process(session.process.pid)
+    methods: list[str] = []
+    write = session._write_message
+
+    def record(msg, timeout=30):
+        methods.append(msg.get("method"))
+        write(msg, timeout=timeout)
+
+    monkeypatch.setattr(session, "_write_message", record)
+    descendants: set[psutil.Process] = set()
+    try:
+        with pytest.raises(TimeoutError) as raised:
+            session.get_diagnostics(str(project / "Probe" / "Main.lean"))
+        assert not isinstance(raised.value, lsp.LspBusyError)
+        assert session.is_alive() is False
+        descendants.update(leader.children(recursive=True))
+
+        session.close()
+
+        # No didClose after the budget ran out, and no barrier replayed.
+        assert methods == ["textDocument/didOpen", "textDocument/waitForDiagnostics"]
+        assert session.process is None
+        assert [child for child in descendants if not _wait_until_gone(child, timeout=10)] == []
+    finally:
+        for child in descendants:
+            _kill_quietly(child)
+        if session.process is not None:
+            session.abort()
+
+
+@_requires_real_lean
+def test_real_lean_diagnostics_wait_through_a_mathlib_import():
+    root = os.environ.get("AUTOFORM_REAL_LEAN_MATHLIB_PROJECT")
+    if not root:
+        if os.environ.get("AUTOFORM_REQUIRE_REAL_LEAN_TESTS") == "1":
+            pytest.fail("AUTOFORM_REAL_LEAN_MATHLIB_PROJECT must name a built Mathlib project")
+        pytest.skip("needs AUTOFORM_REAL_LEAN_MATHLIB_PROJECT, a built Mathlib project")
+    project = Path(root).resolve()
+    probe = project / "src" / "GeneratedProject" / "Issue129Probe.lean"
+    probe.parent.mkdir(parents=True, exist_ok=True)
+    # The sleep keeps the error well past any quiet period, however fast Mathlib loads.
+    probe.write_text(
+        "import Mathlib\n#eval IO.sleep 10000\nexample : (2 : Nat) + 2 = 5 := rfl\n", encoding="utf-8"
     )
-    monkeypatch.setattr(session, "_read_message", lambda timeout: next(messages))
+    session = lsp.LeanLspSession(lsp.LspConfig(cwd=str(project), timeout=300))
+    try:
+        session.start()
+        assert _error_lines(session.get_diagnostics(str(probe))) == [2]
+    finally:
+        session.close()
+        probe.unlink(missing_ok=True)
 
-    # The first two quiet reads are not evidence that the file is clean. The
-    # explicit empty publication is, and should be returned as a valid result.
-    assert session._collect_diagnostics(uri, timeout=60) == []
+def _publication(uri, version, diagnostics):
+    return {
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": {"uri": uri, "version": version, "diagnostics": diagnostics},
+    }
 
 
-def test_diagnostics_timeout_without_publication(monkeypatch):
-    session = lsp.LeanLspSession(lsp.LspConfig())
+def _reply(request):
+    return {"jsonrpc": "2.0", "id": request["id"], "result": {}}
+
+
+_ERROR = {"range": {"start": {"line": 0, "character": 0}}, "severity": 1, "message": "type mismatch"}
+
+
+def _barrier_session(monkeypatch, script, *, timeout=60):
+    """A session whose stream plays script(request) once the barrier is written.
+
+    Script entries are (silence_seconds, message). Reads advance a fake clock:
+    a read offered less time than the next silence returns None at its
+    deadline, as a quiet pipe does.
+    """
+    session = _owned_session(_FakeProcess())
+    session.config.timeout = timeout
     clock = {"now": 0.0}
-
+    written: list[dict] = []
+    pending: list[tuple[float, dict]] = []
+    read_timeouts: list[float] = []
     monkeypatch.setattr(lsp.time, "monotonic", lambda: clock["now"])
 
-    def quiet_read(timeout):
-        clock["now"] += timeout
-        return None
+    def write(msg, timeout=30):
+        written.append(msg)
+        if msg.get("method") == "textDocument/waitForDiagnostics":
+            pending.extend(script(msg))
 
-    monkeypatch.setattr(session, "_read_message", quiet_read)
+    def read(timeout=5):
+        read_timeouts.append(timeout)
+        if not pending:
+            pytest.fail("read past the end of the scripted stream")
+        silence, message = pending[0]
+        if silence >= timeout:
+            pending[0] = (silence - timeout, message)
+            clock["now"] += timeout
+            return None
+        pending.pop(0)
+        clock["now"] += silence
+        return message
 
-    with pytest.raises(TimeoutError, match="waiting for diagnostics"):
-        session._collect_diagnostics("file:///tmp/Test.lean", timeout=5)
+    monkeypatch.setattr(session, "_write_message", write)
+    monkeypatch.setattr(session, "_read_message", read)
+    return session, written, read_timeouts
 
-    assert clock["now"] == 5
+
+def _methods(written):
+    return [msg.get("method") for msg in written]
 
 
-def test_malformed_diagnostics_payload_is_protocol_error(monkeypatch):
-    session = lsp.LeanLspSession(lsp.LspConfig())
-    uri = "file:///tmp/Test.lean"
-    messages = iter(
-        [
-            {
-                "jsonrpc": "2.0",
-                "method": "textDocument/publishDiagnostics",
-                "params": {"uri": uri, "diagnostics": {"not": "a list"}},
-            }
+def test_diagnostics_wait_for_lean_past_an_interim_empty_set(tmp_path, monkeypatch):
+    source = tmp_path / "Slow.lean"
+    source.write_text("#eval IO.sleep 30000\nexample : 1 = 2 := rfl\n")
+
+    def script(request):
+        uri, version = request["params"]["uri"], request["params"]["version"]
+        return [
+            (0, {"jsonrpc": "2.0", "id": "register_lean_watcher", "method": "client/registerCapability"}),
+            (0, {"jsonrpc": "2.0", "method": "$/lean/fileProgress", "params": {}}),
+            (0, _publication(uri, version, [])),
+            # Lean stays silent while the slow command runs.
+            (30, _publication(uri, version, [_ERROR])),
+            (0, _reply(request)),
         ]
-    )
-    monkeypatch.setattr(session, "_read_message", lambda timeout: next(messages))
+
+    session, written, read_timeouts = _barrier_session(monkeypatch, script)
+
+    assert session.get_diagnostics(str(source)) == [_ERROR]
+    # Every read was offered the remaining budget, never a quiet window.
+    assert min(read_timeouts) > 2
+    assert _methods(written) == [
+        "textDocument/didOpen",
+        "textDocument/waitForDiagnostics",
+        "textDocument/didClose",
+    ]
+    opened = written[0]["params"]["textDocument"]
+    assert written[1]["params"] == {"uri": opened["uri"], "version": opened["version"]}
+    assert session.is_alive() is True
+
+
+def test_diagnostics_return_on_the_barrier_reply_without_waiting(tmp_path, monkeypatch):
+    source = tmp_path / "Clean.lean"
+    source.write_text("#check Nat\n")
+
+    def script(request):
+        uri, version = request["params"]["uri"], request["params"]["version"]
+        return [(0, _publication(uri, version, [])), (0, _reply(request))]
+
+    session, _, read_timeouts = _barrier_session(monkeypatch, script)
+
+    assert session.get_diagnostics(str(source)) == []
+    assert len(read_timeouts) == 2
+
+
+def test_diagnostics_ignore_the_set_left_by_an_earlier_open(tmp_path, monkeypatch):
+    source = tmp_path / "Test.lean"
+    source.write_text("example : 1 = 2 := rfl\n")
+    calls = []
+
+    def script(request):
+        uri, version = request["params"]["uri"], request["params"]["version"]
+        calls.append(version)
+        if len(calls) == 1:
+            return [(0, _publication(uri, version, [_ERROR])), (0, _reply(request))]
+        # didClose of the first open left an empty set for its version.
+        return [
+            (0, _publication(uri, calls[0], [])),
+            (0, _publication("file:///other/Other.lean", version, [])),
+            (0, _publication(uri, version, [_ERROR])),
+            (0, _reply(request)),
+        ]
+
+    session, _, _ = _barrier_session(monkeypatch, script)
+
+    assert session.get_diagnostics(str(source)) == [_ERROR]
+    assert session.get_diagnostics(str(source)) == [_ERROR]
+    assert calls[1] > calls[0]
+
+
+@pytest.mark.parametrize("leftover", ["none", "other-file", "older-version"])
+def test_diagnostics_fail_closed_when_lean_finishes_without_a_publication(
+    tmp_path, monkeypatch, leftover
+):
+    source = tmp_path / "Test.lean"
+    source.write_text("#check Nat\n")
+
+    def script(request):
+        uri, version = request["params"]["uri"], request["params"]["version"]
+        stream = {
+            "none": [],
+            "other-file": [(0, _publication("file:///other/Other.lean", version, []))],
+            "older-version": [(0, _publication(uri, version - 1, []))],
+        }[leftover]
+        return stream + [(0, _reply(request))]
+
+    session, _, _ = _barrier_session(monkeypatch, script)
+
+    with pytest.raises(lsp.LspProtocolError, match="without publishing diagnostics"):
+        session.get_diagnostics(str(source))
+    assert session.is_alive() is False
+
+
+def test_diagnostics_fail_closed_when_the_document_is_replaced(tmp_path, monkeypatch):
+    source = tmp_path / "Test.lean"
+    source.write_text("#check Nat\n")
+
+    def script(request):
+        uri, version = request["params"]["uri"], request["params"]["version"]
+        return [(0, _publication(uri, version + 1, [])), (0, _reply(request))]
+
+    session, _, _ = _barrier_session(monkeypatch, script)
+
+    with pytest.raises(lsp.LspProtocolError, match="replaced"):
+        session.get_diagnostics(str(source))
+    assert session.is_alive() is False
+
+
+@pytest.mark.parametrize("code", [-32801, -32902])
+def test_diagnostics_fail_closed_on_a_barrier_error_reply(tmp_path, monkeypatch, code):
+    source = tmp_path / "Test.lean"
+    source.write_text("#check Nat\n")
+
+    def script(request):
+        uri, version = request["params"]["uri"], request["params"]["version"]
+        error = {"jsonrpc": "2.0", "id": request["id"], "error": {"code": code, "message": "worker gone"}}
+        return [(0, _publication(uri, version, [_ERROR])), (0, error)]
+
+    session, _, _ = _barrier_session(monkeypatch, script)
+
+    with pytest.raises(lsp.LspProtocolError, match=str(code)):
+        session.get_diagnostics(str(source))
+    assert session.is_alive() is False
+
+
+def test_diagnostics_timeout_after_an_interim_set_fails_closed(tmp_path, monkeypatch):
+    source = tmp_path / "Test.lean"
+    source.write_text("#eval IO.sleep 300000\n")
+
+    def script(request):
+        uri, version = request["params"]["uri"], request["params"]["version"]
+        return [(0, _publication(uri, version, [_ERROR])), (120, _reply(request))]
+
+    session, written, _ = _barrier_session(monkeypatch, script)
+
+    with pytest.raises(TimeoutError) as raised:
+        session.get_diagnostics(str(source))
+    assert not isinstance(raised.value, lsp.LspBusyError)
+    assert session.is_alive() is False
+    # The budget is gone, so neither didClose nor a second barrier is sent.
+    assert _methods(written) == ["textDocument/didOpen", "textDocument/waitForDiagnostics"]
+
+
+def test_diagnostics_skip_a_server_request_that_reuses_the_barrier_id(tmp_path, monkeypatch):
+    source = tmp_path / "Test.lean"
+    source.write_text("example : 1 = 2 := rfl\n")
+
+    def script(request):
+        uri, version = request["params"]["uri"], request["params"]["version"]
+        refresh = {"jsonrpc": "2.0", "id": request["id"], "method": "workspace/inlayHint/refresh"}
+        return [(0, refresh), (0, _publication(uri, version, [_ERROR])), (0, _reply(request))]
+
+    session, _, _ = _barrier_session(monkeypatch, script)
+
+    assert session.get_diagnostics(str(source)) == [_ERROR]
+    assert session.is_alive() is True
+
+
+def test_malformed_diagnostics_payload_is_protocol_error(tmp_path, monkeypatch):
+    source = tmp_path / "Test.lean"
+    source.write_text("#check Nat\n")
+
+    def script(request):
+        malformed = _publication(request["params"]["uri"], request["params"]["version"], [])
+        malformed["params"]["diagnostics"] = {"not": "a list"}
+        return [(0, malformed)]
+
+    session, _, _ = _barrier_session(monkeypatch, script)
 
     with pytest.raises(lsp.LspProtocolError, match="diagnostics must be a list"):
-        session._collect_diagnostics(uri, timeout=60)
+        session.get_diagnostics(str(source))
+
+
+def test_diagnostics_report_a_server_that_exited_mid_wait(monkeypatch):
+    session = _owned_session(_FakeProcess())
+    monkeypatch.setattr(session, "_write_message", lambda msg, timeout=30: None)
+
+    def read(timeout=5):
+        session.process = None
+        return None
+
+    monkeypatch.setattr(session, "_read_message", read)
+
+    with pytest.raises(lsp.LspProtocolError, match="exited while waiting"):
+        session._collect_diagnostics("file:///tmp/Test.lean", 1, timeout=60)
 
 
 def test_get_diagnostics_closes_document_after_timeout(tmp_path: Path, monkeypatch):
@@ -820,7 +1101,7 @@ def test_get_diagnostics_closes_document_after_timeout(tmp_path: Path, monkeypat
         lambda method, params, **kwargs: notifications.append(method),
     )
 
-    def timeout(uri, timeout):
+    def timeout(uri, version, timeout):
         raise TimeoutError("no diagnostics publication")
 
     monkeypatch.setattr(session, "_collect_diagnostics", timeout)
@@ -898,7 +1179,7 @@ def test_document_operations_are_serialized_per_session(tmp_path: Path, monkeypa
         lambda method, params, **kwargs: None,
     )
 
-    def collect(uri, timeout):
+    def collect(uri, version, timeout):
         nonlocal calls
         with calls_lock:
             calls += 1
@@ -989,6 +1270,46 @@ def test_partial_lsp_frame_cannot_block_past_deadline(partial):
         with pytest.raises(TimeoutError, match="reading an LSP"):
             session._read_message(timeout=0.01)
     finally:
+        os.close(write_fd)
+        reader.close()
+
+
+def test_diagnostics_finish_a_frame_whose_header_straddles_a_second(tmp_path, monkeypatch):
+    source = tmp_path / "Test.lean"
+    source.write_text("example : 1 = 2 := rfl\n")
+    read_fd, write_fd = os.pipe()
+    reader = os.fdopen(read_fd, "rb", buffering=0)
+    session = lsp.LeanLspSession(lsp.LspConfig())
+    session.process = SimpleNamespace(stdout=reader)
+    writers = []
+
+    def frame(msg):
+        body = json.dumps(msg).encode()
+        return f"Content-Length: {len(body)}\r\n\r\n".encode() + body
+
+    def write(msg, timeout=30):
+        if msg.get("method") != "textDocument/waitForDiagnostics":
+            return
+        uri, version = msg["params"]["uri"], msg["params"]["version"]
+        error = frame(_publication(uri, version, [_ERROR]))
+
+        def serve():
+            os.write(write_fd, frame(_publication(uri, version, [])) + error[:7])
+            # Longer than the old one-second quiet window.
+            time.sleep(1.2)
+            os.write(write_fd, error[7:] + frame(_reply(msg)))
+
+        writer = threading.Thread(target=serve, daemon=True)
+        writers.append(writer)
+        writer.start()
+
+    monkeypatch.setattr(session, "_write_message", write)
+    try:
+        assert session.get_diagnostics(str(source)) == [_ERROR]
+        assert session.is_alive() is True
+    finally:
+        for writer in writers:
+            writer.join(timeout=5)
         os.close(write_fd)
         reader.close()
 

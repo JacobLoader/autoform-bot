@@ -30,6 +30,12 @@ uv run autoform-lean-runtime stop
 `stop` is graceful: it waits for admitted tool calls and Lean children to
 finish shutting down before a subsequent `start` can replace the runtime.
 
+`lean_diagnostic_messages` waits until Lean says it has finished checking the
+file (`textDocument/waitForDiagnostics`) instead of guessing from a pause in its
+output. A file that takes longer than `LEAN_LSP_TIMEOUT` (60 seconds by default,
+capped by `AUTOFORM_MAX_LSP_REQUEST_SECONDS`) fails rather than returning partial
+diagnostics; raise it for heavy files.
+
 The private socket lives below `$XDG_RUNTIME_DIR/autoform`, falling back to a
 uid-specific directory in `/tmp`; the rotating runtime log is beside it.
 `AUTOFORM_RUNTIME_DIR` overrides that location. Node-wide limits are controlled
