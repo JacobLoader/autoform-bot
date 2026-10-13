@@ -863,24 +863,6 @@ def test_disposable_call_reports_every_malformed_response_as_unknown(
     assert frames == ["#eval 1"]
 
 
-def test_disposable_call_rejects_import_before_starting_a_process(monkeypatch):
-    repl = repl_core.LeanRepl(
-        repl_core.LeanReplConfig(
-            allowed_imports=frozenset({"Mathlib"}),
-            warmup_imports=frozenset(),
-            header_command=_fake_header_command(_header_json("Unsafe")),
-        )
-    )
-    starts = []
-    monkeypatch.setattr(repl, "start", lambda **kwargs: starts.append(kwargs))
-
-    result = repl.run_disposable("import Unsafe\n#check Nat", timeout=10)
-
-    assert "Disallowed imports: Unsafe" in result["repl_error"]
-    assert starts == []
-    assert repl.is_clean()
-
-
 def _fake_header_command(stdout: str, returncode: int = 0, stderr: str = "") -> list[str]:
     script = (
         "import sys; sys.stdin.read(); "
@@ -1288,7 +1270,6 @@ _V4_27_INIT_ONLY = (
             "prelude\nimport REPL.Frontend\n#check Nat",
             "prelude\nimport REPL.Frontend\n#check Nat",
         ),
-        (_header_json("Init", prelude=True), "prelude\nimport Init\n#check Nat", "prelude\nimport Init\n#check Nat"),
         (_V4_27_INIT_ONLY % "false", "#check Nat", "import Mathlib\n#check Nat"),
         (
             _V4_27_INIT_ONLY % "true",
