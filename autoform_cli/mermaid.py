@@ -15,7 +15,7 @@ from pathlib import Path
 from urllib.parse import quote
 from typing import TYPE_CHECKING
 
-from .graph_views import container_nodes, inventory_counts, is_scope_target
+from .graph_views import container_nodes, inventory_counts, inventory_state, is_scope_target
 from .status import INVENTORY_STATES, STATES, State, is_definition
 
 if TYPE_CHECKING:
@@ -91,11 +91,8 @@ def render_diagram(
             continue
         # Rectangles introduce data, rounded boxes assert something.
         shape = f'["{label}"]' if is_definition(node) else f'("{label}")'
-        state_key = (
-            "planned"
-            if node.catalog == "module" and statuses[node.id].fully_proved
-            else statuses[node.id].key
-        )
+        # A catalog takes the neutral planned colours, checked or not.
+        state_key = "planned" if inventory_state(node, statuses[node.id]) else statuses[node.id].key
         lines.append(f"  {handle}{shape}:::{state_key}")
 
     for node in ordered:
@@ -109,10 +106,8 @@ def render_diagram(
     for node in ordered:
         if node.id in boxes:
             state_label = _view_summary(boxes[node.id])
-        elif node.catalog == "module" and statuses[node.id].fully_proved:
-            state_label = "inventory checked"
         else:
-            state_label = statuses[node.id].label
+            state_label = (inventory_state(node, statuses[node.id]) or statuses[node.id].state).label
         tooltip = _escape(f"{node.title} — {state_label}")
         lines.append(f'  click {handles[node.id]} "{links[node.id]}" "{tooltip}"')
 

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Callable, Iterable, Literal
 
 from .graph import Graph, Node
-from .status import STATES, NodeStatus, topological_order
+from .status import INVENTORY_STATES, STATES, NodeStatus, State, topological_order
 
 
 ViewKind = Literal["project", "chapter", "focus", "full"]
@@ -24,9 +24,7 @@ NodeKind = Literal["scope", "boundary", "node"]
 _ScopedRelation = tuple[str, str, bool, str | None, str | None]
 
 _H1 = re.compile(r"^ {0,3}#[ \t]+(.+?)[ \t]*#*[ \t]*$")
-INVENTORY_CHECKED_STATUS = "inventory_checked"
-INVENTORY_PENDING_STATUS = "inventory_pending"
-INVENTORY_STATUSES = (INVENTORY_CHECKED_STATUS, INVENTORY_PENDING_STATUS)
+INVENTORY_STATUSES = tuple(state.key for state in INVENTORY_STATES)
 
 
 @dataclass(frozen=True, slots=True)
@@ -567,8 +565,8 @@ def _edges(counts: dict[tuple[str, str], list[int]]) -> tuple[ViewEdge, ...]:
 
 
 def _theorem_node(node: Node, node_status: NodeStatus) -> ViewNode:
-    inventory = _inventory_status(node, node_status)
-    display_status = inventory or node_status.key
+    inventory = inventory_state(node, node_status)
+    display_status = inventory.key if inventory else node_status.key
     return ViewNode(
         id=node.id,
         title=node.title,
@@ -596,14 +594,17 @@ def is_scope_target(node: Node) -> bool:
     return node.catalog is None and (node.formalizable or node.not_ready)
 
 
-def _inventory_status(node: Node, node_status: NodeStatus) -> str | None:
-    """Return a module catalog's neutral status, or None for any other node.
+def inventory_state(node: Node, node_status: NodeStatus) -> State | None:
+    """Return a module catalog's neutral inventory state, or None for any other node.
 
-    A catalog is checked once it is fully proved and pending until then.
+    A catalog is checked once it is fully proved and pending until then. Every
+    view names a catalog by this state rather than by its derived one, which
+    would present an inventory as mathematical work.
     """
     if node.catalog != "module":
         return None
-    return INVENTORY_CHECKED_STATUS if node_status.fully_proved else INVENTORY_PENDING_STATUS
+    checked, pending = INVENTORY_STATES
+    return checked if node_status.fully_proved else pending
 
 
 def _scope_node(
@@ -684,9 +685,9 @@ def _status_counts(
     for node_id in node_ids:
         node = graph.nodes[node_id]
         node_status = statuses[node_id]
-        inventory = _inventory_status(node, node_status)
+        inventory = inventory_state(node, node_status)
         if inventory is not None:
-            inventories[inventory] += 1
+            inventories[inventory.key] += 1
         elif is_scope_target(node):
             counts[node_status.key] += 1
     state_counts = tuple(
@@ -839,6 +840,7 @@ __all__ = [
     "group_nodes",
     "group_title",
     "inventory_counts",
+    "inventory_state",
     "is_scope_target",
     "project_view",
     "scope_view",

@@ -1186,18 +1186,15 @@ def _render_structure_page(
             continue
         href = links.get(node.id)
         label = f'<a href="{html.escape(href, quote=True)}">{name}</a>' if href else name
-        state = statuses[node.id]
-        inventory_checked = node.catalog == "module" and state.fully_proved
+        state = graph_views.inventory_state(node, statuses[node.id]) or statuses[node.id].state
         kind = "module inventory" if node.catalog == "module" else node.declaration or node.kind
-        state_key = "planned" if inventory_checked else state.key
-        state_label = "inventory checked" if inventory_checked else state.label
         rows.append(
             row(
                 depth,
                 f"{label} <span class='bp-tree-title'>{html.escape(node.title)}</span>",
                 html.escape(kind),
-                f'<span class="bp-swatch bp-swatch-{state_key}"></span>'
-                f'<span class="bp-tree-state">{html.escape(state_label)}</span>',
+                f'<span class="bp-swatch bp-swatch-{state.key}"></span>'
+                f'<span class="bp-tree-state">{html.escape(state.label)}</span>',
                 node_id=node.id,
             )
         )
@@ -2040,15 +2037,16 @@ def _render_environment(
 
     # amsthm distinguishes the two: a proposition is set in italics, a
     # definition upright. leanblueprint keeps that distinction on the web.
-    inventory_checked = node.catalog == "module" and node_status.fully_proved
-    display_key = "planned" if inventory_checked else node_status.key
-    display_label = "inventory checked" if inventory_checked else node_status.label
+    inventory = graph_views.inventory_state(node, node_status)
+    display_key = "planned" if inventory else node_status.key
+    display_label = inventory.label if inventory else node_status.label
     style = (
         "theorem-style-definition"
         if node.catalog == "module" or is_definition(node)
         else "theorem-style-plain"
     )
-    mark = "✓" if inventory_checked or node_status.key in {"fully_proved", "mathlib"} else "●"
+    # A checked inventory is fully proved, so it keeps the tick.
+    mark = "✓" if node_status.key in {"fully_proved", "mathlib"} else "●"
 
     lines = [
         f'<div class="bp-thmwrapper {style} bp-{display_key}" '
@@ -2214,13 +2212,17 @@ def _node_references(
     numbers: dict[str, str],
     links: dict[str, str],
 ) -> str:
-    """Link each node by number and title, coloured by its derived state."""
+    """Link each node by number and title, coloured by its derived state.
+
+    A catalog is coloured as neutrally as its own environment, checked or not.
+    """
     rendered = []
     for other_id in node_ids:
         other = graph.nodes[other_id]
         label = html.escape(f"{numbers[other_id]} ({other.title})")
+        key = "planned" if graph_views.inventory_state(other, statuses[other_id]) else statuses[other_id].key
         rendered.append(
-            f'<a class="bp-ref bp-ref-{statuses[other_id].key}" '
+            f'<a class="bp-ref bp-ref-{key}" '
             f'href="{html.escape(links[other_id], quote=True)}">{label}</a>'
         )
     return " · ".join(rendered)

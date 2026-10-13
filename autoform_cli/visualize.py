@@ -177,11 +177,10 @@ def export_structure(blueprint_dir: Path, output: Path | None = None) -> Path:
         if node is None:
             lines.append(f"{indent}- [{entry.name}]({entry.as_posix()}) · prose")
             continue
-        inventory_checked = node.catalog == "module" and statuses[node.id].fully_proved
+        state = graph_views.inventory_state(node, statuses[node.id]) or statuses[node.id].state
         kind = "module inventory" if node.catalog == "module" else node.declaration or node.kind
-        state_label = "inventory checked" if inventory_checked else statuses[node.id].label
         lines.append(
-            f"{indent}- [{node.title}]({entry.as_posix()}) · {kind} · {state_label}"
+            f"{indent}- [{node.title}]({entry.as_posix()}) · {kind} · {state.label}"
         )
 
     depths = {len(p.relative_to(blueprint_dir).parts) - 1 for p in by_path}

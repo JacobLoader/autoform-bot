@@ -788,6 +788,8 @@ def test_a_topic_of_unchecked_catalogs_counts_each_as_a_pending_inventory(tmp_pa
     Scope items counted only checked catalogs, so a topic made of catalogs not
     yet checked read "0 items" under a hero that counted three: a blank ring,
     the smallest bubble, and catalog nodes that presented as ready to state.
+    The book and the structure page show each catalog as the explorer does,
+    and a reference to one is drawn as neutrally as the catalog itself.
     """
     blueprint = tmp_path / "blueprint"
     library = blueprint / "roadmap/library"
@@ -803,6 +805,8 @@ def test_a_topic_of_unchecked_catalogs_counts_each_as_a_pending_inventory(tmp_pa
             "## Sources\n\n- [Declaration ledger](../../sources/library.md)\n",
             encoding="utf-8",
         )
+    with (library / "b.md").open("a", encoding="utf-8") as stream:
+        stream.write("\n## Depends on\n\n- [Module A](a.md)\n")
     coverage = blueprint / "coverage/README.md"
     coverage.parent.mkdir()
     coverage.write_text(
@@ -833,6 +837,17 @@ def test_a_topic_of_unchecked_catalogs_counts_each_as_a_pending_inventory(tmp_pa
         ("library/a", "library/b", "library/c"), "inventory_pending"
     )
     assert chapter["palette"]["inventory_pending"]["label"] == "inventory pending"
+    book = (out / "roadmap/library/README.md").read_text(encoding="utf-8")
+    for name in ("a", "b", "c"):
+        assert f'<div class="bp-thmwrapper theorem-style-definition bp-planned" id="{name}" ' in book
+    assert book.count('●<span class="bp-mark-label">inventory pending</span>') == 3
+    assert '<a class="bp-ref bp-ref-planned" href="#a">Module 1 (Module A)</a>' in book
+    assert "ready to state" not in book
+    structure = (out / "structure.md").read_text(encoding="utf-8")
+    assert structure.count(
+        '<span class="bp-swatch bp-swatch-inventory_pending"></span>'
+        '<span class="bp-tree-state">inventory pending</span>'
+    ) == 3
 
 
 def test_the_landing_page_is_the_hero_and_project_explorer_and_nothing_else(

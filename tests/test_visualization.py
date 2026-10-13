@@ -382,7 +382,9 @@ def test_vault_maps_count_every_catalog_as_an_inventory(tmp_path: Path) -> None:
 
     It used to count only checked catalogs, so a scope of unchecked ones read
     as empty on the vault map and on the full Mermaid page. The legend under
-    each map lists the inventory statuses the boxes count.
+    each map lists the inventory statuses the boxes count, and the full page
+    and the structure page name an unchecked catalog by that status, not as
+    ready to state.
     """
     blueprint = tmp_path / "blueprint"
     ledger = blueprint / "sources/catalog.md"
@@ -412,6 +414,11 @@ def test_vault_maps_count_every_catalog_as_an_inventory(tmp_path: Path) -> None:
         assert box in document
         legend = document.split("## Legend", 1)[1]
         assert all(row in legend for row in rows)
+    assert ":::can_state" not in page
+    assert '("Pending module"):::planned' in page
+    assert '"Pending module — inventory pending"' in page
+    structure = export_structure(blueprint).read_text(encoding="utf-8")
+    assert "[Pending module](roadmap/modules/pending.md) · module inventory · inventory pending" in structure
 
 
 def test_the_vault_structure_page_leaves_implementation_notes_out(tmp_path: Path) -> None:

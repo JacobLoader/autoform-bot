@@ -505,10 +505,10 @@ a scope's rolled-up status or completion.
 The coverage `counts` object always includes an integer
 `INVENTORIED` key, including zero when no row uses it. Status assertions on a
 catalog remain accepted. The presentation calls a fully checked catalog
-`inventory checked`, not a completed definition or result, and the dependency
-explorer calls any other catalog `inventory pending`, whatever its derived
-state. The rendered site and `autoform check` show the module-inventory count
-separately from those target metrics.
+`inventory checked`, not a completed definition or result, and any other
+catalog `inventory pending`, whatever its derived state. The rendered site and
+`autoform check` show the module-inventory count separately from those target
+metrics.
 
 For an existing blueprint, migrate a catalog-only `DECOMPOSED` row to
 `INVENTORIED`. If the same source also has declaration articles, keep that
