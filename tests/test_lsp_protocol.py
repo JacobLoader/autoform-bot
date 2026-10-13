@@ -1354,6 +1354,60 @@ def test_diagnostics_fail_closed_when_lean_exits_mid_wait(tmp_path, monkeypatch)
         reader.close()
 
 
+@pytest.mark.parametrize(
+    ("partial", "stage"),
+    [(b"C", "header"), (b"Content-Length: 10\r\n\r\n{}", "body")],
+)
+def test_diagnostics_time_out_at_the_deadline_on_a_frame_that_never_completes(
+    tmp_path, monkeypatch, partial, stage
+):
+    import select
+
+    source = tmp_path / "Test.lean"
+    source.write_text("example : 1 = 2 := rfl\n")
+    read_fd, write_fd = os.pipe()
+    reader = os.fdopen(read_fd, "rb", buffering=0)
+    session = lsp.LeanLspSession(lsp.LspConfig(timeout=10))
+    session.process = SimpleNamespace(stdout=reader)
+    clock = {"now": 0.0}
+    arrivals: list[tuple[float, bytes]] = []
+    real_select = select.select
+
+    def paced_select(rlist, wlist, xlist, timeout):
+        # Return at once while the pipe holds data, else at the next arrival
+        # within the timeout, else after the whole timeout.
+        ready, _, _ = real_select(rlist, wlist, xlist, 0)
+        if not ready and arrivals and arrivals[0][0] <= clock["now"] + timeout:
+            at, data = arrivals.pop(0)
+            clock["now"] = max(clock["now"], at)
+            os.write(write_fd, data)
+            ready, _, _ = real_select(rlist, wlist, xlist, 0)
+        if not ready:
+            clock["now"] += timeout
+        return ready, [], []
+
+    def write(msg, timeout=30):
+        if msg.get("method") == "textDocument/waitForDiagnostics":
+            uri, version = msg["params"]["uri"], msg["params"]["version"]
+            # An interim set, then a frame that starts mid-read and stalls while
+            # Lean stays alive.
+            arrivals.extend([(0.0, _frame(_publication(uri, version, [_ERROR]))), (1.9, partial)])
+
+    monkeypatch.setattr(lsp.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(select, "select", paced_select)
+    monkeypatch.setattr(session, "_write_message", write)
+    try:
+        # Only the operation's own deadline may cut off a started frame, and the
+        # interim set must not come back as the result.
+        with pytest.raises(TimeoutError, match=f"reading an LSP {stage}"):
+            session.get_diagnostics(str(source))
+        assert clock["now"] == pytest.approx(10)
+        assert session.is_alive() is False
+    finally:
+        os.close(write_fd)
+        reader.close()
+
+
 def test_lsp_write_cannot_block_on_a_full_pipe():
     read_fd, write_fd = os.pipe()
     os.set_blocking(write_fd, False)
