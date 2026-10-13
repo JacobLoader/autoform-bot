@@ -848,19 +848,16 @@ class BoundDirectoryTree:
         root: Path,
         *,
         expected_identity: tuple[int, int] | None = None,
-        expected_children: dict[str, tuple[int, int]] | None = None,
         selection: TreeSelection = ALL_ENTRIES,
         require_descriptor: bool = False,
     ) -> None:
         self._lock = threading.RLock()
         self.root = lexical_absolute_path(root)
         self.expected_identity = expected_identity
-        self.expected_children = dict(expected_children or {})
         self.selection = selection
         self._binding: RetainedDirectory | None = None
         self._portable_identity: tuple[int, int] | None = None
         self._portable_path_identities: tuple[tuple[int, int], ...] | None = None
-        self._verification_limits: TreeCaptureLimits | None = None
         self._closed = False
         if (
             directory_binding.DIRECTORY_BINDING_SUPPORTED
@@ -876,15 +873,6 @@ class BoundDirectoryTree:
                 binding.close()
                 raise TreeChangedError("directory tree changed before it was captured")
             self._binding = binding
-            try:
-                self._verify_expected_children(
-                    binding.descriptor,
-                    limits=self.selection.limits,
-                )
-            except BaseException:
-                binding.close()
-                self._binding = None
-                raise
             return
         if require_descriptor:
             raise TreeSnapshotError(
@@ -902,7 +890,6 @@ class BoundDirectoryTree:
             raise TreeChangedError("directory tree changed before it was captured")
         self._portable_identity = identity
         self._portable_path_identities = path_identities
-        self._verify_expected_children(None, limits=self.selection.limits)
 
     @property
     def identity(self) -> tuple[int, int]:
@@ -927,83 +914,30 @@ class BoundDirectoryTree:
                 )
             return self._binding.descriptor
 
-    def _verify_expected_children(
-        self,
-        descriptor: int | None,
-        *,
-        limits: TreeCaptureLimits,
-    ) -> None:
-        if not self.expected_children:
-            return
-
-        def capture_names() -> tuple[str, ...]:
-            if descriptor is None:
-                return _capture_path_names(self.root, budget=_CaptureBudget(limits), depth=1)
-            return _capture_directory_names(descriptor, budget=_CaptureBudget(limits), depth=1)
-
-        try:
-            names = capture_names()
-            folded_names: set[str] = set()
-            for name, expected in self.expected_children.items():
-                if not _valid_name(name):
-                    raise TreeSnapshotError("invalid bound child name")
-                folded = _normalized_name(name)
-                if folded in folded_names:
-                    raise TreeSnapshotError("invalid bound child name")
-                folded_names.add(folded)
-                matches = [actual for actual in names if _normalized_name(actual) == folded]
-                if len(matches) != 1:
-                    raise TreeChangedError("directory tree changed before it was captured")
-                actual = matches[0]
-                metadata = (
-                    os.stat(actual, dir_fd=descriptor, follow_symlinks=False)
-                    if descriptor is not None
-                    else os.lstat(self.root / actual)
-                )
-                if not stat.S_ISDIR(metadata.st_mode) or (
-                    metadata.st_dev,
-                    metadata.st_ino,
-                ) != expected:
-                    raise TreeChangedError("directory tree changed before it was captured")
-            if capture_names() != names:
-                raise TreeChangedError("directory tree changed before it was captured")
-        except (OSError, _TreeChanged) as error:
-            raise TreeChangedError("directory tree changed before it was captured") from error
-
     def verify(self) -> None:
         """Verify the retained generation is still selected by its public path."""
 
         with self._lock:
-            self._verify(self._verification_limits or self.selection.limits)
-
-    def _verify(self, limits: TreeCaptureLimits) -> None:
-        """Verify the retained generation under the active capture bounds."""
-
-        if self._closed:
-            raise TreeSnapshotError("directory tree binding is closed")
-        try:
-            if self._binding is not None:
-                self._binding.verify()
-                self._verify_expected_children(
-                    self._binding.descriptor,
-                    limits=limits,
-                )
-                return
-            if (
-                self._portable_path_identities is None
-                or _portable_directory_identities(self.root)
-                != self._portable_path_identities
-            ):
-                raise TreeChangedError("directory tree changed while it was in use")
-            metadata = os.lstat(self.root)
-            if not stat.S_ISDIR(metadata.st_mode) or (
-                metadata.st_dev,
-                metadata.st_ino,
-            ) != self.identity:
-                raise TreeChangedError("directory tree changed while it was in use")
-            self._verify_expected_children(None, limits=limits)
-        except OSError as error:
-            raise TreeChangedError("directory tree changed while it was in use") from error
+            if self._closed:
+                raise TreeSnapshotError("directory tree binding is closed")
+            try:
+                if self._binding is not None:
+                    self._binding.verify()
+                    return
+                if (
+                    self._portable_path_identities is None
+                    or _portable_directory_identities(self.root)
+                    != self._portable_path_identities
+                ):
+                    raise TreeChangedError("directory tree changed while it was in use")
+                metadata = os.lstat(self.root)
+                if not stat.S_ISDIR(metadata.st_mode) or (
+                    metadata.st_dev,
+                    metadata.st_ino,
+                ) != self.identity:
+                    raise TreeChangedError("directory tree changed while it was in use")
+            except OSError as error:
+                raise TreeChangedError("directory tree changed while it was in use") from error
 
     def capture(self, *, selection: TreeSelection | None = None) -> TreeSnapshot:
         """Capture one stable tree through the retained directory generation."""
@@ -1013,43 +947,35 @@ class BoundDirectoryTree:
 
     def _capture_locked(self, selection: TreeSelection | None) -> TreeSnapshot:
         active_selection = self.selection if selection is None else selection
-        previous_limits = self._verification_limits
-        self._verification_limits = active_selection.limits
+        self.verify()
         try:
-            self.verify()
-            try:
-                if self._binding is not None:
-                    snapshot = capture_directory_descriptor(
-                        self._binding.descriptor,
-                        expected_identity=self.identity,
-                        expected_children=self.expected_children,
-                        selection=active_selection,
+            if self._binding is not None:
+                snapshot = capture_directory_descriptor(
+                    self._binding.descriptor,
+                    expected_identity=self.identity,
+                    selection=active_selection,
+                )
+            else:
+                first = _capture_portable(
+                    self.root,
+                    expected_identity=self.identity,
+                    selection=active_selection,
+                )
+                _tree_snapshot_checkpoint("between-portable-captures", "")
+                _tree_snapshot_checkpoint("before-final-verification", "")
+                snapshot = _capture_portable(
+                    self.root,
+                    expected_identity=self.identity,
+                    selection=active_selection,
+                )
+                if first != snapshot:
+                    raise TreeChangedError(
+                        "directory tree changed while it was captured"
                     )
-                else:
-                    first = _capture_portable(
-                        self.root,
-                        expected_identity=self.identity,
-                        expected_children=self.expected_children,
-                        selection=active_selection,
-                    )
-                    _tree_snapshot_checkpoint("between-portable-captures", "")
-                    _tree_snapshot_checkpoint("before-final-verification", "")
-                    snapshot = _capture_portable(
-                        self.root,
-                        expected_identity=self.identity,
-                        expected_children=self.expected_children,
-                        selection=active_selection,
-                    )
-                    if first != snapshot:
-                        raise TreeChangedError(
-                            "directory tree changed while it was captured"
-                        )
-            except (_PermissionDenied, OSError, RuntimeError) as error:
-                raise _capture_failure(error) from error
-            self.verify()
-            return snapshot
-        finally:
-            self._verification_limits = previous_limits
+        except (_PermissionDenied, OSError, RuntimeError) as error:
+            raise _capture_failure(error) from error
+        self.verify()
+        return snapshot
 
     def close(self) -> None:
         with self._lock:
@@ -1066,7 +992,6 @@ def bind_directory_tree(
     root: Path,
     *,
     expected_identity: tuple[int, int] | None = None,
-    expected_children: dict[str, tuple[int, int]] | None = None,
     selection: TreeSelection = ALL_ENTRIES,
     require_descriptor: bool = False,
 ) -> Iterator[BoundDirectoryTree]:
@@ -1075,7 +1000,6 @@ def bind_directory_tree(
     bound = BoundDirectoryTree(
         root,
         expected_identity=expected_identity,
-        expected_children=expected_children,
         selection=selection,
         require_descriptor=require_descriptor,
     )
@@ -1089,7 +1013,6 @@ def capture_directory_descriptor(
     descriptor: int,
     *,
     expected_identity: tuple[int, int] | None = None,
-    expected_children: dict[str, tuple[int, int]] | None = None,
     selection: TreeSelection = ALL_ENTRIES,
 ) -> TreeSnapshot:
     """Capture a tree below an already retained directory descriptor."""
@@ -1151,7 +1074,7 @@ def capture_directory_descriptor(
         _tree_snapshot_checkpoint("after-directory-list", relative)
         for name in names:
             child_relative = f"{relative}/{name}" if relative else name
-            metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            metadata = _lookup(descriptor, name, relative)
             child_identity = _stat_signature(metadata)
             relative_path = PurePosixPath(child_relative)
             if stat.S_ISDIR(metadata.st_mode):
@@ -1165,7 +1088,7 @@ def capture_directory_descriptor(
                     try:
                         child_descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=descriptor)
                     except PermissionError as error:
-                        raise _PermissionDenied(child_relative) from error
+                        raise _access_denied(descriptor, name, relative) from error
                     opened = os.fstat(child_descriptor)
                     opened_identity = _stat_signature(opened)
                     if _stable_entry_identity(opened_identity) != _stable_entry_identity(
@@ -1173,9 +1096,7 @@ def capture_directory_descriptor(
                     ):
                         raise _TreeChanged
                     scan(child_descriptor, child_relative, depth + 1, opened_identity)
-                    final_identity = _stat_signature(
-                        os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-                    )
+                    final_identity = _stat_signature(_lookup(descriptor, name, relative))
                     if _stable_entry_identity(final_identity) != _stable_entry_identity(
                         opened_identity
                     ):
@@ -1217,14 +1138,15 @@ def capture_directory_descriptor(
                         max_bytes=max_bytes,
                     )
                 except PermissionError as error:
-                    raise _PermissionDenied(child_relative) from error
+                    raise _access_denied(descriptor, name, relative) from error
                 budget.add_file_bytes(len(data))
                 files.append((child_relative, data))
             elif stat.S_ISLNK(metadata.st_mode):
-                target = os.readlink(name, dir_fd=descriptor)
-                if _stat_signature(
-                    os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-                ) != child_identity:
+                try:
+                    target = os.readlink(name, dir_fd=descriptor)
+                except PermissionError as error:
+                    raise _access_denied(descriptor, name, relative) from error
+                if _stat_signature(_lookup(descriptor, name, relative)) != child_identity:
                     raise _TreeChanged
                 symlinks.append((child_relative, target))
             else:
@@ -1243,7 +1165,6 @@ def capture_directory_descriptor(
 
     try:
         scan(descriptor, "", 0, _stat_signature(root))
-        _verify_captured_children(directories, entries, expected_children or {})
         _tree_snapshot_checkpoint("before-final-verification", "")
         _verify_snapshot(
             descriptor,
@@ -1280,7 +1201,7 @@ class _TreeChanged(Exception):
 
 
 class _PermissionDenied(Exception):
-    """An entry selected for capture could not be opened or listed."""
+    """An entry selected for capture could not be opened, listed, or searched."""
 
     def __init__(self, relative: str) -> None:
         super().__init__(relative)
@@ -1391,6 +1312,35 @@ def _stable_entry_identity(signature: tuple[int, ...]) -> tuple[int, int, int]:
     return signature[0], signature[1], stat.S_IFMT(signature[2])
 
 
+def _lookup(descriptor: int, name: str, relative: str) -> os.stat_result:
+    """Look up *name* in the directory *relative* held open by *descriptor*.
+
+    A lookup needs only search permission on that directory, so a refusal
+    names the directory, not the entry.
+    """
+
+    try:
+        return os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+    except PermissionError as error:
+        raise _PermissionDenied(relative or ".") from error
+
+
+def _access_denied(descriptor: int, name: str, relative: str) -> _PermissionDenied:
+    """Name what refused an open, read or readlink of *name* in *relative*.
+
+    Either the directory denies search permission or the entry denies access.
+    Repeating only the lookup tells which: if that is refused too, the
+    directory is at fault. Any other lookup failure propagates, so an entry
+    that vanished in between reads as a change.
+    """
+
+    try:
+        _lookup(descriptor, name, relative)
+    except _PermissionDenied as denied:
+        return denied
+    return _PermissionDenied(f"{relative}/{name}" if relative else name)
+
+
 def _opaque_marker(
     descriptor: int,
     relative: str,
@@ -1414,7 +1364,7 @@ def _opaque_marker(
         if len(matches) != 1:
             continue
         name = matches[0]
-        metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+        metadata = _lookup(descriptor, name, relative)
         identity = _stat_signature(metadata)
         if marker.presence_only:
             return (
@@ -1433,8 +1383,7 @@ def _opaque_marker(
                 max_bytes=max_bytes,
             )
         except PermissionError as error:
-            marker_path = f"{relative}/{name}" if relative else name
-            raise _PermissionDenied(marker_path) from error
+            raise _access_denied(descriptor, name, relative) from error
         if len(data) <= marker.max_bytes and marker.recognizes(data):
             budget.add_file_bytes(len(data))
             return (
@@ -1508,7 +1457,7 @@ def _verify_snapshot(
         relative: str,
         marker: _OpaqueMarkerRecord,
     ) -> None:
-        metadata = os.stat(marker.name, dir_fd=descriptor, follow_symlinks=False)
+        metadata = _lookup(descriptor, marker.name, relative)
         observed = _stat_signature(metadata)
         if marker.data is None:
             if _entry_kind(observed[2]) != _entry_kind(marker.identity[2]):
@@ -1516,15 +1465,16 @@ def _verify_snapshot(
         else:
             if observed != marker.identity:
                 raise _TreeChanged
-            if (
-                _read_file(
+            try:
+                data = _read_file(
                     descriptor,
                     marker.name,
                     marker.identity,
                     max_bytes=marker.max_bytes,
                 )
-                != marker.data
-            ):
+            except PermissionError as error:
+                raise _access_denied(descriptor, marker.name, relative) from error
+            if data != marker.data:
                 raise _TreeChanged
         marker_relative = f"{relative}/{marker.name}" if relative else marker.name
         expected_entry = expected_entries.get(marker_relative)
@@ -1560,7 +1510,7 @@ def _verify_snapshot(
             raise _TreeChanged
         for name in names:
             child_relative = f"{relative}/{name}" if relative else name
-            metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            metadata = _lookup(descriptor, name, relative)
             directory = expected_directories.get(child_relative)
             if directory is None:
                 entry = expected_entries.get(child_relative)
@@ -1582,16 +1532,17 @@ def _verify_snapshot(
                 raise _TreeChanged
             child_descriptor: int | None = None
             try:
-                child_descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=descriptor)
+                try:
+                    child_descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=descriptor)
+                except PermissionError as error:
+                    raise _access_denied(descriptor, name, relative) from error
                 opened_identity = _stat_signature(os.fstat(child_descriptor))
                 if _stable_entry_identity(opened_identity) != _stable_entry_identity(
                     directory.identity
                 ):
                     raise _TreeChanged
                 verify_directory(child_descriptor, child_relative)
-                final_identity = _stat_signature(
-                    os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-                )
+                final_identity = _stat_signature(_lookup(descriptor, name, relative))
                 if _stable_entry_identity(final_identity) != _stable_entry_identity(
                     directory.identity
                 ):
@@ -1618,33 +1569,10 @@ def _verify_snapshot(
         raise _TreeChanged
 
 
-def _verify_captured_children(
-    directories: list[_DirectoryRecord],
-    entries: list[_EntryRecord],
-    expected_children: dict[str, tuple[int, int]],
-) -> None:
-    if not expected_children:
-        return
-    root_children = [
-        (record.relative, record.identity[:2])
-        for record in [*directories, *entries]
-        if record.relative and "/" not in record.relative
-    ]
-    for name, identity in expected_children.items():
-        matches = [
-            (actual, observed_identity)
-            for actual, observed_identity in root_children
-            if _normalized_name(actual) == _normalized_name(name)
-        ]
-        if len(matches) != 1 or matches[0][1] != identity:
-            raise _TreeChanged
-
-
 def _capture_portable(
     root: Path,
     *,
     expected_identity: tuple[int, int] | None = None,
-    expected_children: dict[str, tuple[int, int]] | None = None,
     selection: TreeSelection,
 ) -> TreeSnapshot:
     """Best-effort double-captured fallback for read-only non-POSIX clients.
@@ -1666,8 +1594,6 @@ def _capture_portable(
         or (expected_identity is not None and root_identity != expected_identity)
     ):
         raise TreeSnapshotError("directory tree cannot be inspected safely")
-    required_children = expected_children or {}
-    observed_children: set[str] = set()
     directories: list[str] = [""]
     files: list[tuple[str, bytes]] = []
     symlinks: list[tuple[str, str]] = []
@@ -1726,16 +1652,6 @@ def _capture_portable(
             child_relative = f"{relative}/{name}" if relative else name
             path = directory / name
             metadata = os.lstat(path)
-            if relative == "":
-                folded = _normalized_name(name)
-                for required_name, required_identity in required_children.items():
-                    if folded != _normalized_name(required_name):
-                        continue
-                    if (metadata.st_dev, metadata.st_ino) != required_identity:
-                        raise TreeChangedError(
-                            "directory tree changed while it was captured"
-                        )
-                    observed_children.add(required_name)
             relative_path = PurePosixPath(child_relative)
             if stat.S_ISDIR(metadata.st_mode) and not _is_reparse_point(metadata):
                 if not selection.descend(relative_path):
@@ -1803,8 +1719,7 @@ def _capture_portable(
     visit(root, "", 0)
     root_after = os.lstat(root)
     if (
-        observed_children != set(required_children)
-        or _stat_signature(root_before) != _stat_signature(root_after)
+        _stat_signature(root_before) != _stat_signature(root_after)
         or _portable_directory_identities(root) != path_identities
     ):
         raise TreeChangedError("directory tree changed while it was captured")

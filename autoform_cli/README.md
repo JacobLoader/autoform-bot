@@ -195,7 +195,16 @@ commit, `--force` to overwrite, and `--json` for machine-readable output.
 An existing root `.gitignore` must be a bounded single-link regular file;
 missing Autoform rules are appended through one retained descriptor. If an
 append cannot be fully reverified, the error says it may be partial and the
-file must be inspected before retrying.
+file must be inspected before retrying. Before writing anything, even with
+`--force`, `init` refuses an existing entry that differs from a path it manages
+only in letter case or Unicode form, such as a `Blueprint/` Lean library or
+`MkDocs.yml`: Git and Linux CI see only the exact spelling, while a
+case-insensitive filesystem resolves the managed path to the variant. `init`
+also refuses when it cannot list a directory on a path it manages. A root
+`Readme.md` or `readme.md` is refused, not skipped like an existing `README.md`.
+The vault is always `blueprint/`, so a Lean library named `Blueprint` needs a
+different library name (its lakefile `lean_lib`, root module and imports), not
+a lowercase rename.
 
 Create or inspect a Lean project and list Autoform's bundled known-good release pairs:
 
@@ -778,6 +787,55 @@ or sandbox. It compares elaborated types and values; changes to notation,
 attributes, instance priority, or unreported generated declarations still
 require human review.
 
+Report the coordination and review scope of an import edit without forbidding
+the edit:
+
+```bash
+autoform work import-impact SELECTOR MODULE [TARGET] --lean-root PATH [--json] [--timeout SECONDS]
+```
+
+`import-impact` is advisory and does not edit authored roadmap or Lean source;
+its Lake freshness check may refresh build hash sidecars. `SELECTOR` identifies
+the working article and `MODULE` the module whose effective header would change.
+Lean supplies the loaded module graph; Autoform binds every node to its captured
+root source and configured root-package artifact so dependencies cannot shadow
+it. The probe imports project modules, so run it only in a trusted checkout or
+sandbox. The command refuses a loaded root-package module whose source the
+captured inventory lacks, and a module an `M.*` or `M.+` glob finds that the
+inventory lacks, which Lake builds even when nothing imports it; the inventory
+skips nested Git checkouts, ignored directories such as `build`, and symlinked
+directories. `affected_modules` is therefore complete over the root libraries'
+loaded Lake roots/globs, not dormant source files outside that build boundary.
+It holds `MODULE` and every loaded module that imports it, directly or
+transitively, which covers what an added import can affect. Removing an import
+can also drop modules from the build: roots and single-module globs bring in
+only what they import, transitively, so a module only the removed import
+reached is no longer built. The report does not list such modules.
+
+JSON uses `autoform-module-import-impact/v1` and binds the graph with
+`module_graph_revision`; `module_scope` is `loaded-root-library-graph`.
+Required `claim_targets` contain only the selected article and a stable
+`module_claim_target` resource, `lean-module/<lowercase-slug>-<sha256[:16]>`.
+`affected_claim_targets` are downstream warnings, not pre-emptive ownership
+requirements; `claim_keys` and `affected_claim_keys` match the JSON from
+`autoform claim list --worker-id WORKER`. `unresolved_articles` reports local
+declarations absent from the loaded environment without globally blocking
+unrelated edits, while every `affected_unowned_helpers` entry includes its own
+claim target and key.
+
+`article` is the selected article (`id`, `article_id`, `claim_target`), and
+`module_claim_key` is the claim key of `module_claim_target`.
+`affected_articles` lists each article that names, or owns through the parent
+chain, a declaration in an affected module, with those `modules`;
+`selected_affected` says whether the selected article is one of them.
+`article_local` holds only when it is, `affected_claim_targets` is empty, and
+no other article has unresolved declarations, like `contained` in
+`work impact`.
+
+Imports are allowed regardless of reported breadth. Follow the
+[Formalize import workflow](../skills/formalize/SKILL.md#import-edits) for
+baseline evidence, conflict checks, claim lifecycle, and post-build review.
+
 Ask whether the blueprint already holds a result before adding an article or
 a Lean helper:
 
@@ -896,6 +954,26 @@ Automatically detected Git permalinks are emitted only for captured files whose
 bytes equal the blob at the stable detected commit. Dirty, untracked, missing,
 or concurrently checked-out files keep local declaration locations but receive
 no URL. An explicitly supplied ref remains a caller attestation.
+
+Lean indexing reads the whole Lean root or nothing. It stops with an error,
+rather than indexing what it could, when an entry it must read cannot be read
+safely: a `.lean` file that cannot be read, a folder that cannot be listed or
+searched, a `.lean` entry that is a symbolic link or a special file (editor
+lock links named `.#*.lean` are skipped), or an unreadable `manifest.json`
+below the root, which is read to recognize skeleton output folders. `render`
+also stops at an unreadable `publication.json` below the root, which it reads
+to recognize rendered sites. These stops apply in every folder the walk
+enters, so an unreadable folder of unrelated files inside the Lean root stops
+indexing too; other files are never read. `render` without `--lean-root` uses
+the blueprint's parent folder as the Lean root. To clear a stop, fix the
+permissions, or move the entry out of the Lean root or into a folder the walk
+skips: `.direnv`, `.git`, `.lake`, `.obsidian`, `.trash`, `.venv`,
+`lake-packages`, `build`, a folder below the root that holds a `.git` entry, a
+recognized skeleton output folder, or, for `render`, a rendered site. There is
+no command-line option to exclude other folders. The skipped folder names and
+the `manifest.json`, `publication.json` and `.git` names match in any letter
+case, except `build`, which must be lowercase. The `.lean` suffix must match
+exactly, so `A.LEAN` is not indexed.
 
 The Markdown files are the source of truth. Graphs and sites are derived views
 that may be regenerated at any time.
@@ -1148,7 +1226,8 @@ what to change, and ends with `root-package declarations failed the
 open-statement audit`.
 
 Both audits check two more things. A `lean:` name outside the root package, as
-a Mathlib article's is, must be safe and use no axiom beyond `propext`,
+a Mathlib article's is, must be neither unsafe nor partial (a `partial def`
+counts as partial) and use no axiom beyond `propext`,
 `Classical.choice`, and `Quot.sound`; otherwise it fails with `NAME [ID] is
 outside the root package and is unsafe or partial` or `NAME [ID] is outside the
 root package and depends on unexpected axiom AX`. The open-statement audit
@@ -1164,6 +1243,16 @@ audit logs `kernel replay of the root package skipped: it runs once every other
 check passes`. A declaration the kernel rejects fails with `kernel replay of the
 root package failed: ...`, which names the first one; the workflow's scan for
 the kernel-check bypass option is only lexical.
+
+Both audits refuse an unsafe or partial root-package declaration with `unsafe
+or partial declaration: NAME`, and report a `partial def` under its own name.
+For every computable recursive definition, structural, well-founded, or
+`partial`, Lean adds a partial copy `NAME._unsafe_rec` for the compiler to run.
+The audits skip these copies: the kernel refuses a safe declaration that refers
+to one, and the kernel replay skips them too, so it refuses such a declaration
+added with kernel checking off. A `lean:` name that is one still fails, with
+`NAME [ID] is Lean's compiled copy of a recursive definition; name the
+definition itself`.
 
 The probe runs no project code. Its header imports only the toolchain's Lean,
 and the workflow runs it with plain `lean`, not `lake env lean`, passing the
@@ -1411,8 +1500,11 @@ graph counts, reference invariants, roadmap audit, and optional local Lean
 targets. It exits zero only when every required check passes. Omitting
 `--lean-root` records an explicit advisory pass; supplying it performs only a
 lexical local-source check, not a Lean build, kernel check, or proof-honesty
-review. The bundled example intentionally exits nonzero while its declared
-coverage still holds `MAPPED` rows.
+review. Only the `lean targets` check reads Lean sources, once. It holds every
+finding that needs the Lean root, including `node-too-large`, and an unusable
+Lean root or unreadable source fails only that check. The bundled example
+intentionally exits nonzero while its declared coverage still holds `MAPPED`
+rows.
 
 This command is strictly read-only and local. It does not invoke Git, GitHub,
 subprocesses, network services, claims, queues, reviews, recovery state,
@@ -1446,6 +1538,12 @@ fields. Temporary claims and local dashboard hooks may fall back to the path ID,
 but durable execution records and routes must require `article_id` until the
 path-move migration is complete. Operational state remains private and excluded
 from runtime snapshots and publication.
+
+Projection fails when an article's bytes no longer match the digest recorded
+when the graph was loaded, so a source revision never labels node data parsed
+from older bytes. A hand-built node without a digest makes no snapshot claim:
+its `source_sha256` stays null and the revision covers whatever bytes its
+article holds at projection time.
 
 ## Publication contract
 

@@ -9,7 +9,7 @@ orchestration and diagnostics remain in :mod:`autoform_cli.project.inspect`.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .catalog import canonical_git_url
 
@@ -17,6 +17,7 @@ _TARGET_KINDS = ("lean_lib", "lean_exe", "input_file", "input_dir")  # the kinds
 _MATHLIB_NAME = (("str", "mathlib"),)
 _LAKE_VERSION = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)(?:-[^ \t\r\n]+)?")  # Lake's StdVer
 _URL_CREDENTIALS = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*://)[^/@]*@")
+_URL_QUERY_OR_FRAGMENT = re.compile(r"([?#]).*", re.S)
 _LEAN_ID_BEGIN_ESCAPE = "«"
 _LEAN_ID_END_ESCAPE = "»"
 
@@ -59,10 +60,14 @@ class _Requirements:
 
 @dataclass(frozen=True, slots=True)
 class _LockedPackages:
-    """The package names a manifest or package-overrides file records, and its Mathlib entry."""
+    """The package names a manifest or package-overrides file records, and its Mathlib entry.
+
+    ``raw_url`` is that entry's Git URL before redaction. Only the staleness check reads it; it is never reported.
+    """
 
     names: frozenset[tuple[tuple[str, str | int], ...]]
     mathlib: MathlibLock | None
+    raw_url: str | None = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,8 +377,12 @@ def _reject_json_constant(constant: str) -> None:
     raise ValueError(f"Lake's JSON parser rejects {constant}")
 
 
-def _is_stale(requirement: dict, locked: MathlibLock) -> bool:
-    """Whether lakefile.toml asks for a different Mathlib source than the lock records."""
+def _is_stale(requirement: dict, locked: MathlibLock, locked_url: str | None) -> bool:
+    """Whether lakefile.toml asks for a different Mathlib source than the lock records.
+
+    ``locked_url`` is the lock's Git URL before redaction, so credentials, a query or a fragment take part in the
+    comparison, as they do in Lake's.
+    """
 
     kind, git, revision = _requirement_source(requirement)
     if kind is None:
@@ -382,7 +391,7 @@ def _is_stale(requirement: dict, locked: MathlibLock) -> bool:
         return True
     return locked.type == "git" and (
         revision != locked.input_rev
-        or (git is not None and canonical_git_url(_redact(git)) != canonical_git_url(locked.url))
+        or (git is not None and canonical_git_url(git) != canonical_git_url(locked_url))
     )
 
 
@@ -408,9 +417,20 @@ def _requirement_source(requirement: dict) -> tuple[str | None, str | None, str 
 
 
 def _redact(url: str | None) -> str | None:
-    """Hide credentials embedded in a Git URL, since reports end up in logs."""
+    """Hide a Git URL's embedded credentials, query, and fragment, since reports end up in logs.
 
-    return None if url is None else _URL_CREDENTIALS.sub(r"\1***@", url)
+    The ``***@``, ``?***`` or ``#***`` marker stays, so a redacted URL never matches a catalog URL. When a ``?``
+    or ``#`` comes before the credentials' ``@``, everything after ``scheme://`` becomes ``***``, which still never
+    matches a catalog URL.
+    """
+
+    if url is None:
+        return None
+    credentials = _URL_CREDENTIALS.match(url)
+    marker = _URL_QUERY_OR_FRAGMENT.search(url)
+    if credentials and marker and marker.start() < credentials.end():
+        return credentials.group(1) + "***"
+    return _URL_QUERY_OR_FRAGMENT.sub(r"\1***", _URL_CREDENTIALS.sub(r"\1***@", url))
 
 
 def _is_name(value: object) -> bool:
