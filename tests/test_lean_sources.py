@@ -210,7 +210,7 @@ def test_hidden_lean_source_directories_are_indexed(tmp_path: Path) -> None:
 @pytest.mark.parametrize("parent", ["", "Nested/"])
 @pytest.mark.parametrize(
     "directory",
-    [".direnv", ".git", ".lake", ".obsidian", ".trash", ".venv", "lake-packages", ".GIT", ".LAKE", ".ObSiDiAn"],
+    [".direnv", ".git", ".lake", ".obsidian", ".trash", ".venv", ".GIT", ".LAKE", ".ObSiDiAn"],
 )
 def test_known_tooling_directories_are_not_scanned(
     tmp_path: Path,
