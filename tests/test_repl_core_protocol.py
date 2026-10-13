@@ -1254,6 +1254,7 @@ def test_failed_repl_start_names_both_remedies_only_for_an_unknown_package(lake_
     error = repl.run_disposable("#check Nat", timeout=30)["repl_error"]
 
     assert lake_error in error
+    assert error.startswith("Lake could not find the REPL package: ") is hinted
     assert ("name the project's REPL require `repl`" in error) is hinted
     assert ('set LEAN_REPL_CMD="lake exe @<name>/repl"' in error) is hinted
     assert repl.is_clean()

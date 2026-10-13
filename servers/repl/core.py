@@ -632,14 +632,15 @@ def _without_process_handles(response: dict[str, Any]) -> dict[str, Any]:
 
 
 def _with_repl_require_hint(message: str) -> str:
-    """Name both remedies when Lake found no package for the REPL command.
+    """Lead with both remedies when Lake found no package for the REPL command.
 
     A child that fails this way reaches the caller as a process exit or an
-    unknown outcome whose message carries the child's stderr tail.
+    unknown outcome whose message gives the child's stderr tail only after
+    its own diagnosis, so the remedies go first.
     """
     if _LAKE_UNKNOWN_PACKAGE not in message:
         return message
-    return f"{message.rstrip()}; {_REPL_REQUIRE_HINT}"
+    return f"{_REPL_REQUIRE_HINT}. Details: {message.rstrip()}"
 
 
 def format_message(msg: dict) -> str:
