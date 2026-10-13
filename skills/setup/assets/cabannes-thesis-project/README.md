@@ -32,4 +32,5 @@ mathematics through Roadmap, merge existing ignore/workflow files, and keep
 the recommended release from `autoform project versions` unless another Lean
 version is needed. Refresh the default branch,
 repository URL, and immutable Autoform/Action pins rather than copying them
-blindly.
+blindly; for another Lean version, also move the REPL pin as the setup skill
+describes and regenerate `lake-manifest.json` with `lake update`.
