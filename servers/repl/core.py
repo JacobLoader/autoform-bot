@@ -452,7 +452,7 @@ class _LeanHeaderAnalysis:
 
 
 def _decode_header_analysis(stdout: bytes) -> _LeanHeaderAnalysis:
-    """Decode the ``lean --deps-json`` schemas printed by the header parser."""
+    """Decode the JSON that parse_header.lean prints."""
     try:
         payload = _decode_repl_json(stdout)
         if not isinstance(payload, dict) or set(payload) != {"imports"}:
@@ -471,26 +471,17 @@ def _decode_header_analysis(stdout: bytes) -> _LeanHeaderAnalysis:
         if errors:
             raise ValueError(errors[0])
 
-        has_result = "result" in entry
-        has_imports = "imports" in entry
-        if has_result == has_imports:
+        if set(entry) != {"errors", "result"}:
             raise ValueError
-        is_module: bool | None = None
-        is_prelude: bool | None = None
-        if has_result:
-            result = entry["result"]
-            if not isinstance(result, dict):
-                raise ValueError
-            imports = result.get("imports")
-            is_module = result.get("isModule")
-            if is_module is not None and type(is_module) is not bool:
-                raise ValueError
-            is_prelude = result.get("isPrelude")
-            if is_prelude is not None and type(is_prelude) is not bool:
-                raise ValueError
-        else:
-            imports = entry["imports"]
+        result = entry["result"]
+        if not isinstance(result, dict):
+            raise ValueError
+        imports = result.get("imports")
         if not isinstance(imports, list):
+            raise ValueError
+        is_module = result.get("isModule")
+        is_prelude = result.get("isPrelude")
+        if type(is_module) is not bool or type(is_prelude) is not bool:
             raise ValueError
 
         modules: list[str] = []
@@ -511,21 +502,16 @@ def _decode_header_analysis(stdout: bytes) -> _LeanHeaderAnalysis:
                 raise ValueError(
                     "Lean header imports must use plain, nonempty module components"
                 )
-            if has_result:
-                is_meta = item.get("isMeta")
-                if is_meta is not None and type(is_meta) is not bool:
-                    raise ValueError
+            is_meta = item.get("isMeta")
+            if is_meta is not None and type(is_meta) is not bool:
+                raise ValueError
             if module != "Init":
                 modules.append(module)
         # Imports can go in front only of a header that starts with neither
-        # ``module`` nor ``prelude``. Lean's implicit Init entries cannot say
-        # which: before v4.30 an ordinary header and ``prelude`` followed by
-        # ``import Init`` both report one plain Init. Output without both
-        # flags, such as plain ``lean --deps-json``, remains valid for allowlist
-        # checks but sends the validated frame exact.
+        # ``module`` nor ``prelude``.
         return _LeanHeaderAnalysis(
             modules=tuple(modules),
-            accepts_leading_imports=is_module is False and is_prelude is False,
+            accepts_leading_imports=not is_module and not is_prelude,
         )
     except (ReplProtocolError, TypeError, KeyError, json.JSONDecodeError):
         raise ValueError("unrecognized output from the Lean header parser") from None

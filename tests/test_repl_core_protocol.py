@@ -1119,26 +1119,10 @@ def _header_modules(command: list[str], *, timeout: float = 10, **config) -> lis
         repl.close()
 
 
-def test_header_check_accepts_current_and_legacy_lean_schemas():
-    current = _fake_header_command(_header_json("Init", "Mathlib.Tactic"))
-    legacy = _fake_header_command(
-        json.dumps(
-            {
-                "imports": [
-                    {
-                        "errors": [],
-                        "imports": [
-                            {"module": "Init", "importAll": False},
-                            {"module": "Mathlib.Tactic", "importAll": False},
-                        ],
-                    }
-                ]
-            }
-        )
-    )
+def test_header_check_accepts_the_header_parser_schema():
+    command = _fake_header_command(_header_json("Init", "Mathlib.Tactic"))
 
-    assert _header_modules(current) == ["Mathlib.Tactic"]
-    assert _header_modules(legacy) == ["Mathlib.Tactic"]
+    assert _header_modules(command) == ["Mathlib.Tactic"]
 
 
 def test_default_header_parser_selects_lean_from_the_lake_toolchain():
@@ -1181,6 +1165,29 @@ def test_header_parser_launcher_ignores_a_path_shadow(tmp_path):
     assert modules == ["Mathlib"]
 
 
+# Plain ``lean --deps-json`` output, in its older and current schemas. Its fast
+# parser can miss imports that the REPL loads.
+_LEGACY_INIT_ONLY = json.dumps(
+    {"imports": [{"errors": [], "imports": [{"module": "Init", "importAll": False}]}]}
+)
+_FAST_PARSER_ORDINARY = json.dumps(
+    {
+        "imports": [
+            {
+                "errors": [],
+                "result": {
+                    "imports": [
+                        {"importAll": False, "isExported": True, "isMeta": False, "module": "Init"},
+                        {"importAll": False, "isExported": True, "isMeta": True, "module": "Init"},
+                    ],
+                    "isModule": False,
+                },
+            }
+        ]
+    }
+)
+
+
 @pytest.mark.parametrize(
     ("command", "message"),
     [
@@ -1203,18 +1210,20 @@ def test_header_parser_launcher_ignores_a_path_shadow(tmp_path):
         (_fake_header_command("not json"), "unrecognized output"),
         (
             _fake_header_command(
-                '{"imports":[{"errors":[],"result":{"isModule":false,'
+                '{"imports":[{"errors":[],"result":{"isModule":false,"isPrelude":false,'
                 '"imports":[{"module":"Unsafe","isMeta":false}],"imports":[]}}]}'
             ),
             "unrecognized output",
         ),
         (
             _fake_header_command(
-                '{"imports":[{"errors":[],"result":{"isModule":false,'
+                '{"imports":[{"errors":[],"result":{"isModule":false,"isPrelude":false,'
                 '"imports":[{"module":"Mathlib","isMeta":false,"importAll":NaN}]}}]}'
             ),
             "unrecognized output",
         ),
+        (_fake_header_command(_LEGACY_INIT_ONLY), "unrecognized output"),
+        (_fake_header_command(_FAST_PARSER_ORDINARY), "unrecognized output"),
     ],
 )
 def test_header_check_fails_closed_on_rejected_or_unknown_output(command, message):
@@ -1370,31 +1379,11 @@ def test_failed_repl_start_names_both_remedies_only_for_an_unknown_package(lake_
     assert repl.is_clean()
 
 
-_LEGACY_INIT_ONLY = json.dumps(
-    {"imports": [{"errors": [], "imports": [{"module": "Init", "importAll": False}]}]}
-)
 # The header parser on Lean v4.27.0 reports one plain Init import both for an
 # ordinary header and for ``prelude`` followed by ``import Init``.
 _V4_27_INIT_ONLY = (
     '{"imports":[{"errors":[],"result":{"imports":[{"importAll":false,"isExported":true,'
     '"isMeta":false,"module":"Init"}],"isModule":false,"isPrelude":%s}}]}'
-)
-# Plain ``lean --deps-json`` output says nothing about ``prelude``.
-_FAST_PARSER_ORDINARY = json.dumps(
-    {
-        "imports": [
-            {
-                "errors": [],
-                "result": {
-                    "imports": [
-                        {"importAll": False, "isExported": True, "isMeta": False, "module": "Init"},
-                        {"importAll": False, "isExported": True, "isMeta": True, "module": "Init"},
-                    ],
-                    "isModule": False,
-                },
-            }
-        ]
-    }
 )
 
 
@@ -1424,9 +1413,6 @@ _FAST_PARSER_ORDINARY = json.dumps(
             "prelude\nimport Init\n#check Nat",
             "prelude\nimport Init\n#check Nat",
         ),
-        # Output that cannot prove an ordinary header gets nothing prefixed.
-        (_LEGACY_INIT_ONLY, "#check Nat", "#check Nat"),
-        (_FAST_PARSER_ORDINARY, "#check Nat", "#check Nat"),
     ],
 )
 def test_disposable_call_prefixes_warmup_only_onto_proven_ordinary_headers(monkeypatch, header_output, code, frame):
