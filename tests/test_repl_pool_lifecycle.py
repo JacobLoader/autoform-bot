@@ -132,7 +132,7 @@ def test_request_timeout_includes_waiting_for_an_idle_worker(monkeypatch):
     pool = repl_pool.LeanReplPool(repl_pool.LeanReplPoolConfig(num_repls=1))
     borrowed = pool._idle.get_nowait()
     try:
-        with pytest.raises(TimeoutError, match="waiting for an idle Lean REPL"):
+        with pytest.raises(TimeoutError, match=r"timed out after 0\.01 seconds waiting for an idle Lean REPL slot"):
             pool.run("#check Nat", timeout=0.01)
     finally:
         pool._idle.put(borrowed)

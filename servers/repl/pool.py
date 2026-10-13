@@ -133,13 +133,13 @@ class LeanReplPool:
             remaining = None if deadline is None else deadline - time.monotonic()
             if remaining is not None and remaining <= 0:
                 raise TimeoutError(
-                    f"timed out after {timeout:g}s waiting for an idle Lean REPL"
+                    f"timed out after {timeout:g} seconds waiting for an idle Lean REPL slot"
                 )
             try:
                 candidate = self._idle.get(timeout=remaining)
             except queue.Empty as error:
                 raise TimeoutError(
-                    f"timed out after {timeout:g}s waiting for an idle Lean REPL"
+                    f"timed out after {timeout:g} seconds waiting for an idle Lean REPL slot"
                 ) from error
             if candidate is _SHUTDOWN:
                 # Hand the wakeup to the next waiter.
@@ -158,7 +158,7 @@ class LeanReplPool:
             remaining = None if deadline is None else deadline - time.monotonic()
             if remaining is not None and remaining <= 0:
                 raise TimeoutError(
-                    f"timed out after {timeout:g}s waiting for an idle Lean REPL"
+                    f"timed out after {timeout:g} seconds waiting for an idle Lean REPL slot"
                 )
             try:
                 return repl.run_disposable(code, timeout=remaining, budget=timeout)
