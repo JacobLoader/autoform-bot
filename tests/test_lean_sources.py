@@ -149,6 +149,37 @@ def test_sections_do_not_add_to_the_namespace(tmp_path: Path) -> None:
     assert index.find("Outer.Helpers.beta") is None
 
 
+def test_every_scope_closes_at_its_own_end(tmp_path: Path) -> None:
+    source = "\n".join(
+        [
+            "namespace Outer",
+            "noncomputable section",
+            "theorem a : True := trivial",
+            "end",
+            "theorem b : True := trivial",
+            "@[expose] public section",
+            "theorem c : True := trivial",
+            "end",
+            "public meta section",
+            "end",
+            "mutual",
+            "def even : Nat → Bool",
+            "  | 0 => true",
+            "  | n + 1 => odd n",
+            "def odd : Nat → Bool",
+            "  | 0 => false",
+            "  | n + 1 => even n",
+            "end",
+            "theorem d : True := trivial",
+            "end Outer",
+        ]
+    )
+    index = _index(tmp_path, source)
+
+    names = ["Outer.a", "Outer.b", "Outer.c", "Outer.even", "Outer.odd", "Outer.d"]
+    assert sorted(index.declarations) == sorted(names)
+
+
 def test_attributes_and_modifiers_do_not_hide_a_declaration(tmp_path: Path) -> None:
     assert _index(tmp_path).find("Outer.Inner.gamma") is not None
 
