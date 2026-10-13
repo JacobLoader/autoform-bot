@@ -1216,6 +1216,9 @@ def lean_libraries(lean_root: str | Path) -> tuple[LeanLibrary, ...]:
     workflow reads the root package name, so both manifest languages are
     handled without a second parser for Lean syntax. When both exist, Lake
     builds from ``lakefile.lean``, so that is the one read here too.
+
+    As in Lake, a library's ``srcDir`` is relative to the package's ``srcDir``,
+    which is also the source directory of a package without library targets.
     """
 
     root = Path(lean_root).expanduser().resolve()
@@ -1234,12 +1237,13 @@ def lean_libraries(lean_root: str | Path) -> tuple[LeanLibrary, ...]:
             [f"cannot safely parse the Lake configuration of {root}: it exceeds the parser's limits"]
         ) from exc
 
+    package_src = root / str(config.get("srcDir", "."))
     libraries: list[LeanLibrary] = []
     for entry in config.get("lean_lib", []) or []:
         if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
             continue
         name = entry["name"]
-        src_dir = root / str(entry.get("srcDir", "."))
+        src_dir = package_src / str(entry.get("srcDir", "."))
         roots = entry.get("roots")
         if not isinstance(roots, list) or not all(isinstance(item, str) for item in roots):
             roots = [name]
@@ -1254,7 +1258,7 @@ def lean_libraries(lean_root: str | Path) -> tuple[LeanLibrary, ...]:
     if not libraries:
         package = config.get("name")
         if isinstance(package, str) and package:
-            libraries.append(LeanLibrary(name=package, src_dir=root, roots=(package,)))
+            libraries.append(LeanLibrary(name=package, src_dir=package_src.resolve(), roots=(package,)))
     if not libraries:
         raise SkeletonError([f"the Lake configuration of {root} declares no library"])
     return tuple(libraries)
