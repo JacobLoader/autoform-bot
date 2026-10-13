@@ -310,6 +310,7 @@ srcDir = "app-src"
     probe.write_text(helper.render_probe(modules), encoding="utf-8")
     audited = _run_probe(project, probe)
     assert audited.returncode == 0, audited.stdout + audited.stderr
+    assert _ends_with_the_success_line(audited.stdout), audited.stdout
 
 
 @pytest.mark.skipif(shutil.which("lake") is None, reason="Lake is not installed")
@@ -412,6 +413,7 @@ lean_lib «PublicApi» where
     probe.write_text(helper.render_probe(modules), encoding="utf-8")
     audited = _run_probe(project, probe)
     assert audited.returncode == 0, audited.stdout + audited.stderr
+    assert _ends_with_the_success_line(audited.stdout), audited.stdout
 
 
 def test_example_and_template_helpers_are_identical(repo_root: Path) -> None:
@@ -1340,7 +1342,9 @@ def test_strict_probe_requires_every_target_and_checks_non_root_ones(
     helper: ModuleType, open_projects: dict[str, tuple[Path, Path]]
 ) -> None:
     # Without targets the strict audit passes: every sorry it can see is gone.
-    assert _strict_audit(helper, open_projects["strict"], None).returncode == 0
+    passed = _strict_audit(helper, open_projects["strict"], None)
+    assert passed.returncode == 0, passed.stdout + passed.stderr
+    assert _ends_with_the_success_line(passed.stdout), passed.stdout
     audited = _strict_audit(
         helper,
         open_projects["strict"],
