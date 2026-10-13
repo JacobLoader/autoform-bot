@@ -12,6 +12,7 @@ and deliberately reports nothing it cannot see rather than guessing.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -38,9 +39,11 @@ from ._tree_snapshot import (
 )
 
 _NAMESPACE = re.compile(r"^\s*namespace\s+(.+)$")
+#: ``section`` in every form that opens one, e.g. ``@[expose] public section``.
 _SECTION = re.compile(
-    r"^\s*(?:(?:public|private|noncomputable|unsafe|local)\s+)*section\b\s*(\S*)"
+    r"^\s*(?:@\[[^\]]*\]\s*)*(?:(?:public|private|meta|noncomputable)\s+)*section\b\s*(\S*)"
 )
+_MUTUAL = re.compile(r"^\s*mutual\s*$")
 _END = re.compile(r"^\s*end\b\s*(\S*)")
 _DECLARATION = re.compile(
     r"^\s*(?:@\[[^\]]*\]\s*)*"
@@ -55,7 +58,6 @@ _IGNORED_DIRECTORIES = frozenset(
         ".obsidian",
         ".trash",
         ".venv",
-        "lake-packages",
     }
 )
 # ``Build`` can be a Lean namespace directory, so only this spelling is ignored.
@@ -159,18 +161,47 @@ def index_failure_message(error: OSError) -> str:
     return "Lean sources could not be indexed"
 
 
+def resolve_lean_root(lean_root: str | Path) -> Path:
+    """Resolve *lean_root* to the directory it names.
+
+    Raises :class:`LeanSourceError` naming why the root cannot be used, for
+    example when it does not exist or lies under a folder that cannot be
+    searched.
+    """
+
+    try:
+        root = directory_binding.lexical_absolute_path(lean_root).resolve()
+        metadata = os.stat(root)
+    except RuntimeError as error:
+        # An unknown ~user, or before Python 3.13 a symbolic link loop.
+        raise LeanSourceError("Lean root cannot be resolved") from error
+    except (FileNotFoundError, NotADirectoryError) as error:
+        raise LeanSourceError("Lean root does not exist or is not a directory") from error
+    except PermissionError as error:
+        raise LeanSourceError("permission denied while resolving the Lean root") from error
+    except (OSError, ValueError) as error:
+        if getattr(error, "errno", None) == errno.ELOOP:
+            # Python 3.13 and later resolve a symbolic link loop without raising.
+            raise LeanSourceError("Lean root cannot be resolved") from error
+        raise LeanSourceError("Lean root cannot be inspected") from error
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise LeanSourceError("Lean root does not exist or is not a directory")
+    return root
+
+
 def index_project(
     root: str | Path,
     *,
     exclude_roots: Iterable[str | Path] = (),
     names: Iterable[str] | None = None,
 ) -> SourceIndex:
-    """Scan ``*.lean`` beneath *root* and index declarations by full name."""
+    """Scan ``*.lean`` beneath *root* and index declarations by full name.
+
+    Raises :class:`LeanSourceError` when the root cannot be used or its
+    sources cannot be read.
+    """
+    root_path = resolve_lean_root(root)
     requested_root = directory_binding.lexical_absolute_path(root)
-    root_path = requested_root.resolve()
-    if not root_path.is_dir():
-        digest = hashlib.sha256(b"autoform-lean-source-index/v1\0").hexdigest()
-        return SourceIndex(root=root_path, declarations={}, source_digest=digest)
     remapped_exclusions = tuple(
         _remap_resolved_root_exclusion(requested_root, root_path, value)
         for value in exclude_roots
@@ -500,14 +531,19 @@ def _lean_snapshot_includes(
 ) -> bool:
     if _lean_path_is_excluded(relative, excluded):
         return False
+    # The suffix is compared exactly, as Lake's module globs, skeleton and the
+    # servers do, so ``A.LEAN`` is not a Lean source even on a case-insensitive
+    # volume where ``import A`` could open it.
     if stat.S_ISLNK(mode):
+        # Editor lock links (``.#Name.lean``) are never read, so they are skipped;
+        # any other ``.lean`` link, live or dangling, is captured and refused.
         return (
-            relative.suffix.casefold() == ".lean"
+            relative.suffix == ".lean"
             and not relative.name.startswith(".#")
         )
     return (
         stat.S_ISDIR(mode)
-        or relative.suffix.casefold() == ".lean"
+        or relative.suffix == ".lean"
         or (
             len(relative.parts) > 1
             and _is_managed_output_manifest_name(relative.name)
@@ -595,25 +631,11 @@ def _indexed_source_snapshot(
     def in_ignored_root(relative_text: str) -> bool:
         return _path_is_within_roots(PurePosixPath(relative_text), ignored_roots)
 
-    # Editor lock links (``.#Name.lean``) are never read, so they are skipped;
-    # any other ``.lean`` link, live or dangling, is refused.
-    tolerated_links = frozenset(
-        relative
-        for relative, kind in (
-            *((relative, "symlink") for relative, _target in snapshot.symlinks),
-            *snapshot.omitted,
-        )
-        if kind == "symlink"
-        and PurePosixPath(relative).suffix.casefold() == ".lean"
-        and not in_ignored_root(relative)
-        and PurePosixPath(relative).name.startswith(".#")
-    )
     unsupported = [
         (relative, reason)
         for relative, reason in snapshot.unsupported_entries()
         if not in_ignored_root(relative)
-        and PurePosixPath(relative).suffix.casefold() == ".lean"
-        and relative not in tolerated_links
+        and PurePosixPath(relative).suffix == ".lean"
     ]
     if unsupported:
         relative, reason = unsupported[0]
@@ -630,7 +652,7 @@ def _indexed_source_snapshot(
     )
     for relative_text, data in snapshot.files:
         relative = PurePosixPath(relative_text)
-        if relative.suffix.casefold() != ".lean" or _lean_path_is_excluded(
+        if relative.suffix != ".lean" or _lean_path_is_excluded(
             relative,
             excluded,
         ):
@@ -658,7 +680,7 @@ def _indexed_source_snapshot(
             line_counts=line_counts,
         ),
         source_digest,
-        _lean_generation_revision(snapshot, ignored_roots, tolerated_links),
+        _lean_generation_revision(snapshot, ignored_roots),
         tuple(source_files),
     )
 
@@ -689,29 +711,27 @@ def _short_name(name: str) -> str:
 def _lean_generation_revision(
     snapshot: TreeSnapshot,
     ignored_roots: set[PurePosixPath],
-    tolerated_links: frozenset[str],
 ) -> str:
     """Hash only effective Lean inputs and their ancestor directories."""
 
     def retained_entry(relative_text: str) -> bool:
         relative = PurePosixPath(relative_text)
-        return relative.suffix.casefold() == ".lean" and not _path_is_within_roots(
+        return relative.suffix == ".lean" and not _path_is_within_roots(
             relative,
             ignored_roots,
         )
 
     files = tuple(entry for entry in snapshot.files if retained_entry(entry[0]))
-    symlinks = tuple(
-        entry
-        for entry in snapshot.symlinks
-        if retained_entry(entry[0]) and entry[0] not in tolerated_links
-    )
+    symlinks = tuple(entry for entry in snapshot.symlinks if retained_entry(entry[0]))
     special = tuple(entry for entry in snapshot.special if retained_entry(entry[0]))
     placeholders = tuple(path for path in snapshot.placeholders if retained_entry(path))
+    # The capture leaves editor lock links (``.#Name.lean``) out, and the omitted
+    # entry each one leaves behind must not change the revision either.
     omitted = tuple(
         entry
         for entry in snapshot.omitted
-        if retained_entry(entry[0]) and entry[0] not in tolerated_links
+        if retained_entry(entry[0])
+        and not (entry[1] == "symlink" and PurePosixPath(entry[0]).name.startswith(".#"))
     )
     retained_paths = {
         PurePosixPath(relative)
@@ -801,8 +821,7 @@ def _scan(text: str, relative: Path) -> list[Declaration]:
             scopes.append(name)
             continue
 
-        section_match = _SECTION.match(line)
-        if section_match:
+        if _SECTION.match(line) or _MUTUAL.match(line):
             scopes.append(None)
             continue
 
@@ -936,6 +955,8 @@ class SourceLinker:
     repository_url: str | None = None
     ref: str | None = None
     linkable_paths: frozenset[Path] | None = None
+    indexed: bool = True
+    """False when the sources were not read, so no name was looked up."""
 
     def location(self, name: str) -> Declaration | None:
         return self.index.find(name)
@@ -976,12 +997,8 @@ def build_linker(
     A supplied source snapshot never inherits a live Git ref; callers must bind
     that ref explicitly if they want permalinks.
     """
-    try:
-        requested_root = directory_binding.lexical_absolute_path(lean_root)
-        resolved_root = requested_root.resolve()
-    except RuntimeError as error:
-        # An unknown ~user, or before Python 3.13 a symbolic link loop.
-        raise LeanSourceError("Lean root cannot be resolved") from error
+    resolved_root = resolve_lean_root(lean_root)
+    requested_root = directory_binding.lexical_absolute_path(lean_root)
     remapped_exclusions = tuple(
         _remap_resolved_root_exclusion(requested_root, resolved_root, value)
         for value in exclude_roots
@@ -1353,6 +1370,7 @@ __all__ = [
     "index_failure_message",
     "index_project",
     "project_source_revision",
+    "resolve_lean_root",
     "snapshot_project_sources",
     "strip_lean_comments",
     "verify_repository_snapshot",

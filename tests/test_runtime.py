@@ -243,6 +243,22 @@ def test_revision_tracks_exact_articles_and_is_location_independent(tmp_path: Pa
     assert changed.source_revision != first.source_revision
 
 
+def test_runtime_refuses_an_article_edited_after_graph_load(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    graph = load_graph(project / "blueprint")
+    article = project / "blueprint" / "roadmap" / "chapter" / "section" / "result.md"
+    article.write_text(article.read_text(encoding="utf-8").replace("# Result", "# Edited"), encoding="utf-8")
+
+    with pytest.raises(RuntimeProjectionError) as error:
+        build_runtime_graph(graph, project_root=project)
+
+    assert error.value.issues == (
+        "chapter/section/result: the article changed after the graph was loaded; "
+        "load the graph again, or retry after the project is idle",
+    )
+    assert load_runtime_graph(project).get("chapter/section/result").title == "Edited"  # type: ignore[union-attr]
+
+
 def test_loading_is_read_only_and_never_creates_graph_json(tmp_path: Path) -> None:
     project = _project(tmp_path)
     before = {path.relative_to(project): path.read_bytes() for path in project.rglob("*") if path.is_file()}

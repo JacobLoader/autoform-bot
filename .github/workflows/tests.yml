@@ -122,10 +122,11 @@ jobs:
         run: timeout --signal=TERM --kill-after=30s 10m uv run pytest -q tests/test_lake_artifact_audit.py tests/test_contract.py
         env:
           AUTOFORM_REQUIRE_REAL_LEAN_TESTS: "1"
-      - name: Run the LSP lifecycle checks against real Lean
+      - name: Run the LSP lifecycle and diagnostics checks against real Lean
         run: timeout --signal=TERM --kill-after=30s 10m uv run pytest -q tests/test_lsp_protocol.py -k real_lean
         env:
           AUTOFORM_REQUIRE_REAL_LEAN_TESTS: "1"
+          AUTOFORM_REAL_LEAN_MATHLIB_PROJECT: ${{ runner.temp }}/autoform-created-project
 
   windows-hardening:
     name: Windows capability, inspection, subprocess, and publication hardening
@@ -147,6 +148,7 @@ jobs:
           tests/test_project_inspect.py
           tests/test_scaffold.py::test_scaffold_merges_autoform_rules_into_lake_gitignore
           tests/test_scaffold.py::test_windows_cross_interface_gitignore_identity_ignores_ctime_only
+          tests/test_scaffold.py::test_scaffold_refuses_case_variants_of_managed_paths
           tests/test_skeleton.py::test_bounded_command_rejects_excess_output
           tests/test_skeleton.py::test_bounded_command_caps_stdout_and_stderr_together
           tests/test_skeleton.py::test_bounded_command_rejects_invalid_utf8

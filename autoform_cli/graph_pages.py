@@ -88,6 +88,8 @@ def write_graph_pages(
 
     project = project_view(graph, statuses)
     project_item_count = sum(node.item_count for node in project.nodes)
+    # Like the project lead, chapter leads count formalization targets, so notes are left out.
+    chapter_item_counts = {node.id: node.item_count for node in project.nodes}
     project_book_links = node_links(project_page, _article_link_ids(project))
     project_links = {
         view_node.id: (
@@ -144,6 +146,7 @@ def write_graph_pages(
             ("Dependency explorer", _markdown_link(project_page, chapter_page)),
             ("Open textbook chapter", _markdown_link(book_page, chapter_page)),
         )
+        item_count = chapter_item_counts[f"scope:{group or 'roadmap'}"]
         written.append(
             _write_page(
                 chapter_page,
@@ -152,7 +155,7 @@ def write_graph_pages(
                 links=links,
                 heading=_dependency_heading(view),
                 lead=(
-                    f"This view contains {len(groups[group])} roadmap entries in this chapter. "
+                    f"This map covers {item_count} item{'s' if item_count != 1 else ''} in this chapter. "
                     "Collapsed chapter nodes stand for external prerequisites or dependents."
                 ),
                 navigation=navigation,

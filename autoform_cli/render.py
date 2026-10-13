@@ -38,6 +38,7 @@ from ._tree_snapshot import (
     TreeSnapshotError,
     _update_digest,
     bind_directory_tree,
+    descriptor_capture_supported,
 )
 from .coverage import (
     COVERAGE_DISPOSITIONS,
@@ -47,11 +48,15 @@ from .coverage import (
 )
 from .graph import Graph, GraphValidationError, Node, _implementation_note_issues, load_graph
 from .lean import (
+    IndexedSourceSnapshot,
+    LeanSourceError,
+    SourceIndex,
     SourceLinker,
     declaration_names,
     detect_ref,
     detect_repository_url,
     index_failure_message,
+    resolve_lean_root,
     snapshot_project_sources,
     verify_repository_snapshot,
 )
@@ -305,6 +310,8 @@ class RenderReport:
     nodes: int = 0
     linked: int = 0
     unresolved: list[str] = field(default_factory=list)
+    unchecked: bool = False
+    """A published declaration was not looked up because the sources were not read."""
     warnings: list[str] = field(default_factory=list)
 
 
@@ -353,7 +360,10 @@ def render_site(
     # The repository root, not the vault's parent. A blueprint nested at
     # <repo>/docs/blueprint would otherwise be described as <repo>/blueprint,
     # and every generated permalink would 404.
-    repo_root = Path(lean_root).expanduser().resolve() if lean_root is not None else blueprint.parent
+    try:
+        repo_root = resolve_lean_root(lean_root) if lean_root is not None else blueprint.parent
+    except LeanSourceError as error:
+        raise PublicationError([index_failure_message(error)]) from error
     # Everything below reads a private copy of the captured bytes. The copy keeps
     # the blueprint's place in the repository, so a path below the copy's root is
     # the repository path it had when render read the vault.
@@ -382,15 +392,24 @@ def render_site(
                 for name in declaration_names(node.lean or "")
             )
         )
+        # Without descriptor capture every Lean capture fails closed. The implicit
+        # root is then not read and the site has no code links; an explicit Lean
+        # root asks for links, so it still fails.
+        indexed = lean_root is not None or descriptor_capture_supported()
         try:
-            lean = snapshot_project_sources(
-                repo_root,
-                exclude_roots=(copy_root,),
-                opaque_markers=(_PUBLICATION_MARKER,),
-                names=lean_names,
+            lean = (
+                snapshot_project_sources(
+                    repo_root,
+                    exclude_roots=(copy_root,),
+                    opaque_markers=(_PUBLICATION_MARKER,),
+                    names=lean_names,
+                )
+                if indexed
+                else IndexedSourceSnapshot(SourceIndex(repo_root, {}, ""), revision="")
             )
         except OSError as error:
-            raise PublicationError([index_failure_message(error)]) from error
+            hint = "" if descriptor_capture_supported() else "; run without --lean-root to publish without code links"
+            raise PublicationError([index_failure_message(error) + hint]) from error
         repository_url = repository_url if repository_url is not None else detect_repository_url(repo_root)
         ref = ref if ref is not None else detect_ref(repo_root)
         sources = SOURCES_DIR in snapshot.directories
@@ -407,7 +426,7 @@ def render_site(
                 reasons=reasons,
             )
         # Links name the verified commit, never the requested ref.
-        linker = SourceLinker(lean.index, repository_url, commit)
+        linker = SourceLinker(lean.index, repository_url, commit, indexed=indexed)
         source_revision = _source_revision(snapshot)
         report = _publish(
             destination,
@@ -472,6 +491,20 @@ def _render_pages(
     # anchor so every cross-reference still lands on the statement itself.
     containers = _containers(graph)
     groups = _group_nodes(graph)
+    if not linker.indexed:
+        # Only the declarations a page would link are lost. A blueprint that
+        # names none publishes the same pages as a host that read the sources.
+        report.unchecked = any(
+            declaration_names(graph.nodes[node_id].lean or "")
+            for node_ids in groups.values()
+            for node_id in node_ids
+        )
+        if report.unchecked:
+            report.warnings.append(
+                "code links were skipped because this platform cannot capture Lean "
+                "sources safely (directory-descriptor traversal is unavailable); "
+                "render on Linux or macOS to link declarations"
+            )
     # An inventory-only chapter still needs its authored landing page decorated
     # with the neutral inventory metric, even though it has no theorem
     # environments to consolidate.
@@ -636,10 +669,14 @@ def _render_pages(
 
 
 def _capture_blueprint(blueprint: Path) -> TreeSnapshot:
-    """Read the blueprint once, through descriptors, refusing what must not be published."""
+    """Read the blueprint once, refusing what must not be published.
+
+    Through descriptors where the host has them; elsewhere (Windows) as two
+    pathname captures that must agree.
+    """
     try:
         selection = _PUBLICATION_SELECTION
-        with bind_directory_tree(blueprint, selection=selection, require_descriptor=True) as tree:
+        with bind_directory_tree(blueprint, selection=selection) as tree:
             snapshot = tree.capture()
     except TreeSnapshotError as error:
         if not blueprint.is_dir():
@@ -822,7 +859,7 @@ def _destination_state(path: Path) -> _State | None:
         raise PublicationError(["publication manifest has no valid file inventory"])
     expected = {name: digest for name, digest in expected.items() if not _is_os_metadata(name)}
     try:
-        with bind_directory_tree(path, expected_identity=identity, require_descriptor=True) as tree:
+        with bind_directory_tree(path, expected_identity=identity) as tree:
             snapshot = tree.capture()
     except TreeSnapshotError as error:
         raise PublicationError([f"could not inspect the output directory: {error}"]) from error
@@ -905,10 +942,14 @@ def _publish(
 def _locked_parent(parent: Path) -> Iterator[None]:
     """Hold the output parent's lock, waiting while another render commits beside this one.
 
-    A filesystem without advisory locks (NFS without lockd) proceeds unlocked;
-    the commit still re-checks the output it replaces.
+    A filesystem without advisory locks (NFS without lockd) or a host without
+    them (Windows) proceeds unlocked; the commit still re-checks the output it
+    replaces.
     """
-    import fcntl  # POSIX only; native Windows stops at blueprint capture
+    if os.name == "nt":
+        yield
+        return
+    import fcntl
 
     try:
         descriptor = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
@@ -970,6 +1011,8 @@ def _commit(stage: Path, destination: Path, backup: Path, *, replace: bool) -> N
 
 def _exchange(first: Path, second: Path) -> None:
     """Swap two names in one step: RENAME_SWAP on macOS, RENAME_EXCHANGE on Linux."""
+    if os.name == "nt":
+        raise OSError(errno.ENOSYS, "atomic exchange is unavailable", str(second))
     library = ctypes.CDLL(None, use_errno=True)
     first_bytes, second_bytes = os.fsencode(first), os.fsencode(second)
     try:
@@ -1041,7 +1084,15 @@ def _identity(path: Path) -> tuple[int, int] | None:
 
 
 def _fsync(path: Path) -> None:
-    """Flush one file or directory; some network filesystems cannot sync a directory."""
+    """Flush one file or directory; some network filesystems cannot sync a directory.
+
+    Windows cannot open a directory to sync it, and flushes only a writable handle.
+    """
+    if os.name == "nt":
+        if path.is_file():
+            with open(path, "r+b") as handle:
+                os.fsync(handle.fileno())
+        return
     descriptor = os.open(path, os.O_RDONLY)
     try:
         os.fsync(descriptor)
@@ -2433,7 +2484,10 @@ def _lean_presentation(
         url = linker.url(name)
         location = linker.location(name)
         code = f"<code>{html.escape(name)}</code>"
-        if url:
+        if not linker.indexed:
+            # The sources were not read, so "not found" would be false.
+            fallback.append(code)
+        elif url:
             label = html.escape(f"View {name} in Lean source", quote=True)
             icons.append(
                 f'<a class="bp-code-link" href="{html.escape(url, quote=True)}" '
