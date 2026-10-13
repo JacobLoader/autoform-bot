@@ -855,20 +855,8 @@ class LeanRepl:
                 raise TimeoutError(f"REPL startup timed out after {timeout:g} seconds")
             return value
 
-        env = _inherit_clean_env()
-        env.update(self.config.env)
-
         try:
-            self.process = subprocess.Popen(
-                self.config.repl_command,
-                cwd=self.cwd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=env,
-                start_new_session=True,
-            )
-            self._process_group_id = self.process.pid
+            self._spawn(self.config.repl_command)
             self._retire_pending = False
             self._stderr_bytes = 0
             self._stderr_tail.clear()
@@ -990,6 +978,26 @@ class LeanRepl:
         """Return whether this wrapper owns no process generation."""
         return self.process is None and self._process_group_id is None
 
+    def _spawn(self, command: list[str]) -> subprocess.Popen:
+        """Start ``command`` as this wrapper's process generation.
+
+        The child leads its own session, and close() retires that whole
+        process group through the id published here.
+        """
+        env = _inherit_clean_env()
+        env.update(self.config.env)
+        self.process = subprocess.Popen(
+            command,
+            cwd=self.cwd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            start_new_session=True,
+        )
+        self._process_group_id = self.process.pid
+        return self.process
+
     def _check_header(self, code: str, deadline: float) -> _LeanHeaderAnalysis:
         """Analyze the submitted header with the selected toolchain's Lean parser.
 
@@ -1003,19 +1011,7 @@ class LeanRepl:
         """
         if deadline <= time.monotonic():
             raise TimeoutError("timed out checking the Lean header")
-        env = _inherit_clean_env()
-        env.update(self.config.env)
-        self.process = subprocess.Popen(
-            self.config.header_command,
-            cwd=self.cwd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
-            start_new_session=True,
-        )
-        process = self.process
-        self._process_group_id = process.pid
+        process = self._spawn(self.config.header_command)
         stdout, stderr = _communicate_bounded(
             process,
             code.encode(),
