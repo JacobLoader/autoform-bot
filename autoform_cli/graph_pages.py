@@ -71,6 +71,8 @@ def write_graph_pages(
 
     project = project_view(graph, statuses)
     project_item_count = sum(node.item_count for node in project.nodes)
+    # Like the project lead, chapter leads count formalization targets, so notes are left out.
+    chapter_item_counts = {node.id: node.item_count for node in project.nodes}
     project_book_links = node_links(project_page)
     project_links = {
         view_node.id: (
@@ -121,6 +123,7 @@ def write_graph_pages(
             ("Full theorem DAG", _markdown_link(full_page, chapter_page)),
             ("Open textbook chapter", _markdown_link(book_page, chapter_page)),
         )
+        item_count = chapter_item_counts[f"scope:{group or 'roadmap'}"]
         written.append(
             _write_page(
                 chapter_page,
@@ -129,7 +132,7 @@ def write_graph_pages(
                 links=links,
                 heading=view.title,
                 lead=(
-                    f"This map contains the {len(groups[group])} decomposed items in this chapter. "
+                    f"This map covers {item_count} item{'s' if item_count != 1 else ''} in this chapter. "
                     "Dashed chapter boxes stand for external prerequisites or dependents."
                 ),
                 navigation=navigation,

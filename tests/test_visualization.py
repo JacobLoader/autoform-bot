@@ -171,6 +171,19 @@ def test_the_legend_explains_readiness_without_naming_a_policy(tmp_path: Path) -
     assert "Nothing it needs is blocked, so the statement can be written in Lean." in legend
 
 
+def test_the_exported_legend_leaves_out_containers(tmp_path: Path) -> None:
+    """The roadmap and the chapter are drawn as scope boxes, so only the theorem has a legend row."""
+    blueprint = tmp_path / "blueprint"
+    _write_node(blueprint / "roadmap" / "README.md", "Roadmap")
+    _write_node(blueprint / "roadmap" / "chapter" / "README.md", "Chapter")
+    _write_node(blueprint / "roadmap" / "chapter" / "result.md", "Result", declaration="theorem")
+
+    document = export_graph(blueprint).read_text(encoding="utf-8")
+
+    assert document.count('class="bp-legend-count"') == 1
+    assert '<span class="bp-legend-count">1</span>' in document
+
+
 def test_cli_writes_only_the_graph_by_default(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

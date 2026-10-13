@@ -200,3 +200,50 @@ def test_render_preserves_fragment_on_container_article_link(tmp_path: Path) -> 
     assert "roadmap/chapter/README.md#details" in rendered
     assert "[Jump](#details)" in rendered_chapter
     assert "##details" not in rendered_chapter
+
+
+def test_dependency_leads_count_targets_not_notes(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    roadmap = blueprint / "roadmap"
+    chapter = roadmap / "chapter"
+    chapter.mkdir(parents=True)
+    (blueprint / "README.md").write_text("# Book\n\n- [Chapter](roadmap/chapter/README.md)\n", encoding="utf-8")
+    (roadmap / "README.md").write_text("# Roadmap\n\n- [Chapter](chapter/README.md)\n", encoding="utf-8")
+    (chapter / "README.md").write_text("# Chapter\n\n- [Result](result.md)\n- [Note](note.md)\n", encoding="utf-8")
+    (chapter / "result.md").write_text(
+        "---\ndeclaration: theorem\n---\n\n# Result\n\nStatement.\n\n## Depends on\n\nNo prerequisites.\n",
+        encoding="utf-8",
+    )
+    # The note declares nothing, so it is not a formalization target.
+    (chapter / "note.md").write_text("# Note\n\nProse only.\n", encoding="utf-8")
+
+    output = tmp_path / "site-src"
+    _render(blueprint, output)
+
+    project_map = (output / "dependencies.md").read_text(encoding="utf-8")
+    chapter_map = (output / "dependencies/chapters/chapter.md").read_text(encoding="utf-8")
+    assert "1 item across 1 chapter." in project_map
+    assert "This map covers 1 item in this chapter." in chapter_map
+
+
+def test_dependency_map_legends_leave_out_containers(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    roadmap = blueprint / "roadmap"
+    chapter = roadmap / "chapter"
+    chapter.mkdir(parents=True)
+    (blueprint / "README.md").write_text("# Book\n\n- [Chapter](roadmap/chapter/README.md)\n", encoding="utf-8")
+    (roadmap / "README.md").write_text("# Roadmap\n\n- [Chapter](chapter/README.md)\n", encoding="utf-8")
+    (chapter / "README.md").write_text("# Chapter\n\n- [Result](result.md)\n", encoding="utf-8")
+    (chapter / "result.md").write_text(
+        "---\ndeclaration: theorem\n---\n\n# Result\n\nStatement.\n\n## Depends on\n\nNo prerequisites.\n",
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "site-src"
+    _render(blueprint, output)
+
+    # The roadmap and the chapter are drawn as scope boxes, so only the theorem has a legend row.
+    for page in ("dependencies.md", "dependencies/full.md"):
+        rendered = (output / page).read_text(encoding="utf-8")
+        assert rendered.count('class="bp-legend-count"') == 1
+        assert '<span class="bp-legend-count">1</span>' in rendered
