@@ -466,10 +466,11 @@ def test_shutdown_refuses_a_call_that_already_took_a_slot(monkeypatch):
             pool._stop_admission_locked()
         return slot
 
-    monkeypatch.setattr(pool._idle, "get", take_slot_as_shutdown_begins)
-
-    with pytest.raises(RuntimeError) as refused:
-        pool.run("#check Nat", timeout=1)
+    # The patch ends with the call: shutdown drains the queue through get too.
+    with monkeypatch.context() as patch:
+        patch.setattr(pool._idle, "get", take_slot_as_shutdown_begins)
+        with pytest.raises(RuntimeError) as refused:
+            pool.run("#check Nat", timeout=1)
 
     assert str(refused.value) == _SHUTDOWN_REFUSAL
     assert calls == []
