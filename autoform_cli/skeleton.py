@@ -2709,26 +2709,6 @@ def _remove_output(path: Path) -> None:
         path.unlink(missing_ok=True)
 
 
-def _write_stage_manifest(stage: Path, payload: str) -> None:
-    """Write a stage's manifest whole, so a capture sees no marker or the complete one.
-
-    The temporary name neither folds to the marker name nor ends in ``.lean``,
-    so a capture that lists the stage meanwhile neither trusts nor indexes it.
-    """
-
-    temporary = stage / f".{PACKET_MANIFEST}.autoform-stage-{secrets.token_hex(8)}"
-    # Created exclusively before the cleanup below owns it, so a name collision never removes a foreign path.
-    stream = temporary.open("x", encoding="utf-8")
-    try:
-        with stream:
-            stream.write(payload)
-        os.replace(temporary, stage / PACKET_MANIFEST)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            temporary.unlink()
-        raise
-
-
 def _rename_no_replace(source: Path, destination: Path) -> None:
     """Atomically rename ``source`` only when ``destination`` is absent."""
 
@@ -3036,7 +3016,9 @@ def write_packets(
         ):
             if stage is not None:
                 payload = json.dumps({"kind": kind, kind: entries, "schema": schema}, indent=2, sort_keys=True)
-                _write_stage_manifest(stage, payload + "\n")
+                # Staged under a name that is neither the marker nor Lean source, then
+                # renamed: a capture sees no marker or the whole one, never a partial file.
+                os.replace(_stage_output(stage / PACKET_MANIFEST, payload + "\n"), stage / PACKET_MANIFEST)
         for path, content in files:
             path.parent.mkdir(parents=True, exist_ok=True)
             if isinstance(content, bytes):

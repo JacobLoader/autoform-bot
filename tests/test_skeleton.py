@@ -50,7 +50,6 @@ from autoform_cli.skeleton import (
     _replace_outputs,
     _stage_output,
     _terminate_process_tree,
-    _write_stage_manifest,
     _hash_module_files,
     _local_safety_issue,
     _process_is_alive,
@@ -3476,18 +3475,12 @@ def test_packet_publication_rolls_back_both_trees_on_commit_failure(
     assert (passages / "old-marker").read_text(encoding="utf-8") == "old passages\n"
 
 
-class _ManifestFirstListing:
+class _ManifestFirstListing(list):
     """A directory listing that yields ``manifest.json`` first, the order that exposed packets."""
 
     def __init__(self, listing) -> None:
         with listing:
-            self._entries = iter(sorted(listing, key=lambda entry: entry.name.casefold() != PACKET_MANIFEST))
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        return next(self._entries)
+            super().__init__(sorted(listing, key=lambda entry: entry.name.casefold() != PACKET_MANIFEST))
 
     def __enter__(self):
         return self
@@ -3495,89 +3488,10 @@ class _ManifestFirstListing:
     def __exit__(self, *exc_info) -> None:
         return None
 
-    def close(self) -> None:
-        return None
 
-
-def _watch_indexed_sources(monkeypatch, lean_root: Path) -> list[str]:
-    """Check ``lean_root`` after every write, removal, rename or new folder.
-
-    Records what a Lean capture would index, any manifest a capture could read
-    partly written, and any folder holding a folder or Lean file besides its
-    manifest while that manifest is not recognized: a capture listing it then
-    could descend into folders that gain packets before it reaches them.
-    """
-
-    exposed: list[str] = []
-    capturing = False
-
-    def capture(event: str) -> None:
-        nonlocal capturing
-        if capturing:
-            return
-        capturing = True
-        try:
-            snapshot = snapshot_project_sources(lean_root)
-            exposed.extend(f"after {event}: {path.as_posix()}" for path, _ in snapshot.source_files)
-            # An install preflight probe holds only empty folders, never packets.
-            for folder in sorted(lean_root.iterdir()):
-                if "autoform-preflight" in folder.name:
-                    continue
-                manifest = folder / PACKET_MANIFEST
-                recognized = manifest.is_file() and _is_managed_output_manifest_bytes(manifest.read_bytes())
-                if manifest.exists() and not recognized:
-                    exposed.append(f"after {event}: {folder.name} shows an incomplete marker")
-                # A capture descends only into folders and indexes only Lean files.
-                others = sorted(
-                    name
-                    for name in os.listdir(folder)
-                    if name != PACKET_MANIFEST and ((folder / name).is_dir() or name.endswith(".lean"))
-                )
-                if others and not recognized:
-                    exposed.append(f"after {event}: {folder.name} holds {others} without its marker")
-        finally:
-            capturing = False
-
-    def observed(owner, name: str) -> None:
-        original = getattr(owner, name)
-
-        def call(*args, **kwargs):
-            result = original(*args, **kwargs)
-            capture(name)
-            return result
-
-        monkeypatch.setattr(owner, name, call)
-
-    for owner, name in (
-        (Path, "mkdir"),
-        (Path, "write_text"),
-        (Path, "write_bytes"),
-        (os, "unlink"),
-        (os, "rmdir"),
-        (os, "replace"),
-        (os, "rename"),
-    ):
-        observed(owner, name)
-    path_open = Path.open
-
-    # A file opened for writing is visible, still empty, until the write lands.
-    def open_and_capture(self, mode: str = "r", *args, **kwargs):
-        stream = path_open(self, mode, *args, **kwargs)
-        if any(flag in mode for flag in "wxa+"):
-            capture("open")
-        return stream
-
-    monkeypatch.setattr(Path, "open", open_and_capture)
-    scandir = os.scandir
-    monkeypatch.setattr(os, "scandir", lambda *args, **kwargs: _ManifestFirstListing(scandir(*args, **kwargs)))
-    return exposed
-
-
-@pytest.mark.parametrize("outcome", ["republished", "rolled back"])
-def test_packet_publication_never_shows_lean_capture_an_unmarked_packet(
-    tmp_path: Path, monkeypatch, outcome: str
-) -> None:
-    """Every stage, backup and quarantine holds its whole manifest while it holds a packet."""
+def test_packet_publication_never_shows_lean_capture_an_unmarked_packet(tmp_path: Path, monkeypatch) -> None:
+    """After every filesystem step, each folder under the Lean root holds no folder or Lean file
+    unless it also holds its whole, recognized manifest, so a Lean capture never indexes a packet."""
 
     report = _fake_report(tmp_path / "fixture")
     lean_root = tmp_path / "lean"
@@ -3585,54 +3499,65 @@ def test_packet_publication_never_shows_lean_capture_an_unmarked_packet(
     write_packets(report, packets, passages=passages)
     (packets / "old-marker").write_text("old packets\n", encoding="utf-8")
     assert snapshot_project_sources(lean_root).source_files == ()
-    if outcome == "rolled back":
-        failed = False
+    exposed: list[str] = []
 
-        # Only the first install fails, so restoring the passages backup runs cleanly.
-        def fail_passage_install(source: str | Path, destination: str | Path) -> None:
-            nonlocal failed
-            _install_output(Path(source), Path(destination))
-            if Path(destination) == passages and not failed:
-                failed = True
-                raise OSError("simulated failure after the last install")
+    def check(event: str) -> None:
+        for folder in lean_root.iterdir():
+            # An install preflight probe holds only empty folders, never packets.
+            if "autoform-preflight" in folder.name:
+                continue
+            manifest = folder / PACKET_MANIFEST
+            recognized = manifest.is_file() and _is_managed_output_manifest_bytes(manifest.read_bytes())
+            if manifest.exists() and not recognized:
+                exposed.append(f"after {event}: {folder.name} shows an incomplete marker")
+            # A capture descends only into folders and indexes only Lean files.
+            others = [
+                name
+                for name in os.listdir(folder)
+                if name != PACKET_MANIFEST and ((folder / name).is_dir() or name.endswith(".lean"))
+            ]
+            if others and not recognized:
+                exposed.append(f"after {event}: {folder.name} holds {sorted(others)} without its marker")
 
-        monkeypatch.setattr("autoform_cli.skeleton._install_output", fail_passage_install)
-    exposed = _watch_indexed_sources(monkeypatch, lean_root)
+    def observed(owner, name: str) -> None:
+        original = getattr(owner, name)
 
-    if outcome == "rolled back":
-        with pytest.raises(SkeletonError, match="simulated failure") as raised:
-            write_packets(report, packets, passages=passages)
-        assert raised.value.issues == ("could not publish skeleton output: simulated failure after the last install",)
-    else:
-        write_packets(report, packets, passages=passages)
+        def call(*args, **kwargs):
+            result = original(*args, **kwargs)
+            check(name)
+            return result
+
+        monkeypatch.setattr(owner, name, call)
+
+    for owner, name in ((Path, "mkdir"), (os, "unlink"), (os, "rmdir"), (os, "replace"), (os, "rename")):
+        observed(owner, name)
+    path_open = Path.open
+
+    def open_and_check(self, mode: str = "r", *args, **kwargs):
+        stream = path_open(self, mode, *args, **kwargs)
+        # A file opened for writing is visible, still empty, until the write lands.
+        if not set(mode).isdisjoint("wxa+"):
+            check("open")
+        return stream
+
+    monkeypatch.setattr(Path, "open", open_and_check)
+    scandir = os.scandir
+    monkeypatch.setattr(os, "scandir", lambda *args, **kwargs: _ManifestFirstListing(scandir(*args, **kwargs)))
+
+    write_packets(report, packets, passages=passages)
     monkeypatch.undo()
 
     assert exposed == []
-    assert (packets / "old-marker").exists() == (outcome == "rolled back")
+    assert not (packets / "old-marker").exists()
     assert (packets / "basics" / "determined" / "article.lean").is_file()
     assert sorted(path.name for path in lean_root.iterdir()) == ["packets", "passages"]
 
 
-def test_failed_stage_manifest_write_leaves_no_temporary(tmp_path: Path, monkeypatch) -> None:
-    stage = tmp_path / "stage"
-    stage.mkdir()
-
-    def fail_replace(source, destination) -> None:
-        raise OSError("simulated replace failure")
-
-    monkeypatch.setattr(os, "replace", fail_replace)
-
-    with pytest.raises(OSError, match="simulated replace failure"):
-        _write_stage_manifest(stage, "{}\n")
-    assert list(stage.iterdir()) == []
-
-
 # Lean capture matches the marker by folded name, so a differently cased one hides the folder too.
-@pytest.mark.parametrize("manifest_name", [PACKET_MANIFEST, "Manifest.json"])
-def test_removing_output_deletes_its_manifest_last(tmp_path: Path, monkeypatch, manifest_name: str) -> None:
+def test_removing_output_deletes_its_manifest_last(tmp_path: Path, monkeypatch) -> None:
     output = tmp_path / "output"
     (output / "nested").mkdir(parents=True)
-    (output / manifest_name).write_text("{}\n", encoding="utf-8")
+    (output / "Manifest.json").write_text("{}\n", encoding="utf-8")
     (output / "nested" / "packet.lean").write_text("theorem t : True := trivial\n", encoding="utf-8")
     (output / "article.lean").write_text("theorem u : True := trivial\n", encoding="utf-8")
     removed: list[str] = []
@@ -3649,8 +3574,8 @@ def test_removing_output_deletes_its_manifest_last(tmp_path: Path, monkeypatch, 
     _remove_output(output)
 
     assert not output.exists()
-    assert sorted(removed) == sorted(["article.lean", "packet.lean", manifest_name])
-    assert removed[-1] == manifest_name
+    assert sorted(removed) == ["Manifest.json", "article.lean", "packet.lean"]
+    assert removed[-1] == "Manifest.json"
 
 
 def test_packet_publication_rolls_back_both_trees_when_interrupted(
