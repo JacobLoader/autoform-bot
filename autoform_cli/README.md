@@ -912,8 +912,8 @@ permissions, or move the entry out of the Lean root or into a folder the walk
 skips: `.direnv`, `.git`, `.lake`, `.obsidian`, `.trash`, `.venv`,
 `lake-packages`, `build`, a folder below the root that holds a `.git` entry, a
 recognized skeleton output folder, or, for `render`, a rendered site. There is
-no command-line option to exclude other folders. File and folder names here,
-and the `.lean` suffix, match in any letter case except `build`.
+no command-line option to exclude other folders. File and folder names here
+match in any letter case except `build`.
 
 The Markdown files are the source of truth. Graphs and sites are derived views
 that may be regenerated at any time.
