@@ -17,9 +17,14 @@ subagent, that is its own worktree. Start by running `autoform work list
 `autoform work context <NODE> <PROJECT> --lean-root <PROJECT> --json`. The
 returned phase is derived from typed dependencies and verified assertions; never
 author ready, running, retrying, failed, or blocked scheduler states. If `work
-list` refuses because unfinished leaves lack `article_id`, add the IDs planned
-by `autoform migrate article-ids <PROJECT>/blueprint --json` to those articles'
-frontmatter, validate, and commit that change before claiming anything.
+list` refuses because unfinished leaves lack `article_id`, run `autoform
+migrate article-ids <PROJECT>/blueprint --write`, validate, and commit that
+change before claiming anything. If a command refuses because an
+implementation note names no roadmap article, find out why. When an article
+that still exists lost its `article_id` line, restore the line. When the
+article was deleted or merged, often by a parallel branch that Git merged
+without a conflict, move anything still useful into the surviving article's
+note, delete the orphan, and commit. Any worker may make this repair.
 
 For a direct formalization request, use a compatible native persistent Goal
 when available and complete one useful frontier pass. Native subagents may work
@@ -59,11 +64,14 @@ as the first read and, for a subagent, the same `phase`, `article_revision`,
 `open_statements`, `assumes`, and `revision` it was dispatched with. Unrelated
 parallel articles may legitimately change the graph-wide source revision.
 
-Read the complete article, cited sources, dependency articles, and existing Lean
-target. Preserve the exact mathematical statement. Work only on the selected
-phase: do not modify another article or its Lean declarations, or weaken a
-public statement. The one exception is revising a declaration other articles'
-Lean uses: start from `autoform work impact` and make only the edits the
+Read the complete article, its `blueprint/.implementation-notes/<article_id>.md`
+when present, cited sources, dependency articles, and existing Lean target.
+Preserve the exact mathematical statement. Work only on the selected phase: do
+not modify another article or its Lean declarations, or weaken a public
+statement. The exceptions are deleting stale implementation notes and repairing
+orphaned ones, as this skill describes, and revising a declaration other
+articles' Lean uses: start from
+`autoform work impact` and make only the edits the
 [revision contract](../../autoform_cli/README.md#revision-contract) requires,
 under the claims it requires. A work item flagged `revision`, whose article
 records `statement: retracted`, is such a revision; restating it replaces
@@ -74,8 +82,19 @@ path. Finish with the focused Lake target. Declare the result in a module the
 library root imports, or that the lakefile's globs cover, because the default
 build is the only one CI compiles and audits. Check the recorded declaration
 with `#print axioms`; do not accept `sorry`, new axioms, unsafe shortcuts, a
-weaker theorem, unused hypotheses, or an unrelated declaration, except as the
-open-statement policy below allows.
+weaker theorem, unused hypotheses (see below), or an unrelated declaration,
+except as the open-statement policy below allows.
+
+Before adding a helper, also run `autoform search` over the blueprint of
+`<PROJECT>` for it, as the
+[search contract](../../autoform_cli/README.md#search-contract) describes. Read
+each hit's statement. Matching is literal, so no article states the helper only
+when retries with fewer words, and under other usual names, also show none. A
+refusal (exit 2) is not an empty result: retry one that asks for it, otherwise
+add no helper and report the refusal as the leaf's blocker. Use the declaration
+of a hit that states the helper only when the claimed article's dependencies
+reach that hit's article, and as the open-statement policy below allows. A hit
+they do not reach is a missing prerequisite; never restate a hit as a helper.
 
 `roadmap/README.md` sets the project's policy. Under the default strict policy,
 project CI rejects `sorry`: the statement phase writes the declaration and, for
@@ -105,6 +124,22 @@ a passing summary. An open statement the Markdown does not declare as a
 dependency fails CI: send the missing dependency to Roadmap or stop using it.
 Never describe a conditional proof as complete, fully proved, or sorry-free.
 
+Treat Lean's `unusedVariables` and `unusedSectionVars` warnings on the
+article's theorems as findings, and never silence one by renaming the
+hypothesis to `_`. Once the proof is complete and its focused build passes, also
+run `autoform unused-hypotheses <PROJECT>/blueprint --lean-root <PROJECT> --node
+<ID>`, which also sees unnamed and `_` hypotheses. A `hypothesis-unused` finding
+means the proof never needs that hypothesis. If the statement assumes something
+the source derives, such as a supremum the source obtains from boundedness,
+restate it to conclude what the source concludes. If a section `variable`
+brings it in, add `omit [C] in` for an instance or `omit h in` for an
+`include h`. If the source states the hypothesis and Lean does not need it,
+such as `y n ≠ 0` where `x / 0 = 0`, keep it. If the theorem genuinely holds
+without it, such as a limsup result that holds in the extended reals, keep the
+source's statement for the article and prove the general one as a separate
+lemma that it follows from. For a hypothesis you keep, add one sentence to the
+article saying why, so a later reviewer sees the decision beside the finding.
+
 After the focused build passes, require an independent Agent Review of every
 changed statement or proof for source faithfulness, dependency correctness, and
 proof integrity. The reviewer does not edit the candidate. Record progress only
@@ -113,9 +148,17 @@ score instead.
 
 On acceptance, update only the claimed article with the exact compiled
 declaration and truthful assertions: `statement: formalized`, plus `proof:
-formalized` once the proof is complete. On a useful failed route, record only
-distilled reusable evidence under `## Execution notes`—the remaining goal,
-checked lemmas, and next route—never a transcript or retry counter. A missing
+formalized` once the proof is complete. The article keeps only frontmatter and
+mathematics. Write notes only in the claimed article's
+`blueprint/.implementation-notes/<article_id>.md`: Lean names, Mathlib gaps,
+prior art, friction, partial progress, and, after a useful failed route,
+distilled reusable evidence (the remaining goal, checked lemmas, and next
+route), never a transcript or retry counter, and never a secret or machine-local
+path. The durable ID keeps the note with an article when its roadmap path moves,
+and one file per claimed article avoids cross-worker merge hotspots. Move
+still-useful notes already in the article there and drop the rest. Delete the
+file once the article is proved; an empty file fails `autoform check`. Never
+link the hidden note from an article, because publication omits it. A missing
 prerequisite, an incorrect decomposition, a change another article needs, or a
 proof recorded without its statement returns to Roadmap instead of silently
 changing the DAG.
@@ -124,12 +167,17 @@ Run `autoform check <PROJECT>/blueprint --lean-root <PROJECT>` and `autoform
 audit <PROJECT>/blueprint --lean-root <PROJECT>`. Resolve every finding this
 work introduced on the claimed article, except `lean-target-deprecated` for a
 superseded declaration that an expand, migrate, contract revision keeps in the
-revised article's `lean:` until it is deleted; report unrelated pre-existing
-findings instead of fixing them.
+revised article's `lean:` until it is deleted. Delete every note the audit
+reports as `stale-implementation-note`, including a container's note that this
+proof completed or that an earlier commit left behind, even though it belongs
+to another article; the audit fails until they are all gone. Report other
+pre-existing findings instead of fixing them.
 
 Commit the verified result in its worktree, renew the claim, and rebase onto or
-merge the current shared branch. On the result, run the default `lake build`,
-confirm that dependency readiness is unchanged, and confirm that the claimed
+merge the current shared branch. On the result, run the default `lake build`
+and `autoform audit`, delete every note the audit now reports as stale in a
+follow-up commit, confirm that dependency readiness is unchanged, and confirm
+that the claimed
 article differs from its starting `article_revision` only by this worker's
 edits; if integration changed the candidate, repeat the review, check, and
 audit. For a revision, also re-run `autoform work impact` on the rebuilt result;

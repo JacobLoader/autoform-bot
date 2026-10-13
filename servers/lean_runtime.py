@@ -331,7 +331,7 @@ class _CacheEntry(Generic[T]):
 @dataclass
 class _RetiringEntry(Generic[T]):
     resource: T
-    active: bool = False
+    claimed: bool = False
 
 
 class ProjectResourceCache(Generic[T]):
@@ -395,14 +395,10 @@ class ProjectResourceCache(Generic[T]):
             with self._condition:
                 self._reapers_stopped = True
                 self._condition.notify_all()
-            if (
-                self._sweeper is not None
-                and self._sweeper.ident is not None
-                and self._sweeper is not threading.current_thread()
-            ):
+            if self._sweeper is not None and self._sweeper.ident is not None:
                 self._sweeper.join()
             for worker in self._reapers:
-                if worker.ident is not None and worker is not threading.current_thread():
+                if worker.ident is not None:
                     worker.join()
             raise
 
@@ -473,8 +469,8 @@ class ProjectResourceCache(Generic[T]):
         finally:
             if resource is not None:
                 with self._condition:
-                    # Observation pins ownership but never refreshes or
-                    # changes lifecycle state.
+                    # Observation never refreshes the TTL; the last unpin only
+                    # completes a retirement deferred by invalidate() or close().
                     entry = self._entries.get(root)
                     if entry is None or entry.resource is not resource:
                         raise RuntimeError("observed project resource is no longer registered")
@@ -523,9 +519,7 @@ class ProjectResourceCache(Generic[T]):
     def evict_idle(self) -> int:
         """Begin retiring every inactive entry older than the configured TTL."""
         with self._condition:
-            if self._idle_seconds <= 0:
-                return 0
-            if self._closed:
+            if self._idle_seconds <= 0 or self._closed:
                 return 0
             now = self._clock()
             victims = [
@@ -535,8 +529,6 @@ class ProjectResourceCache(Generic[T]):
             ]
             for root in victims:
                 self._retire_resident_locked(root)
-            if victims:
-                self._condition.notify_all()
         return len(victims)
 
     def close(self) -> None:
@@ -544,9 +536,7 @@ class ProjectResourceCache(Generic[T]):
         self.begin_close()
         reapers: list[threading.Thread]
         with self._condition:
-            while self._creating or self._entries:
-                self._condition.wait(timeout=0.5)
-            while self._retiring:
+            while self._creating or self._entries or self._retiring:
                 self._condition.wait(timeout=0.5)
             self._reapers_stopped = True
             self._condition.notify_all()
@@ -613,12 +603,9 @@ class ProjectResourceCache(Generic[T]):
                         deadline=deadline,
                         creation_budget=creation_budget,
                     )
-                    if entry.active:
-                        wait = True
-                    else:
+                    if not entry.active:
                         self._retire_resident_locked(root)
-                        entry = None
-                        wait = True
+                    wait = True
 
                 if not wait and entry is not None:
                     if deadline is not None and self._clock() >= deadline:
@@ -639,18 +626,17 @@ class ProjectResourceCache(Generic[T]):
                         deadline=deadline,
                         creation_budget=creation_budget,
                     )
-                    occupied = (
-                        len(self._entries)
-                        + len(self._creating)
-                        + len(self._retiring)
-                    )
-                    if occupied >= self._max_entries:
+                    resident = len(self._entries) + len(self._creating)
+                    if resident + len(self._retiring) >= self._max_entries:
                         inactive = [
                             (candidate.last_used, path)
                             for path, candidate in self._entries.items()
                             if candidate.active == 0
                         ]
-                        if inactive:
+                        # A retiring slot frees itself. Choose a victim only
+                        # when no retirement is already freeing one, or every
+                        # wake-up of this waiter would retire another project.
+                        if inactive and resident >= self._max_entries:
                             _, victim = min(inactive)
                             self._retire_resident_locked(victim)
                         wait = True
@@ -685,36 +671,29 @@ class ProjectResourceCache(Generic[T]):
                 with self._condition:
                     self._ensure_unleased_resource_retiring_locked(root, owned)
                     retirement_finalized = True
-                raise result.cause.with_traceback(result.cause.__traceback__) from None
+                raise result.cause
 
             created = result
             owned = created
-            startup_expired = False
-            closed_during_startup = False
             with self._condition:
                 self._creating.discard(root)
                 if self._closed:
-                    closed_during_startup = True
                     self._retire_locked(root, created)
                     retirement_finalized = True
-                elif deadline is not None and self._clock() >= deadline:
-                    startup_expired = True
+                    raise RuntimeError("project resource cache closed during startup")
+                if deadline is not None and self._clock() >= deadline:
                     self._retire_locked(root, created)
                     retirement_finalized = True
-                else:
-                    self._entries[root] = _CacheEntry(
-                        resource=created,
-                        fingerprint=fingerprint,
-                        last_used=self._clock(),
-                        active=1,
+                    raise ProjectResourceBusyError(
+                        f"shared Lean project startup exceeded its response budget: {root}"
                     )
-                self._condition.notify_all()
-            if startup_expired:
-                raise ProjectResourceBusyError(
-                    f"shared Lean project startup exceeded its response budget: {root}"
+                self._entries[root] = _CacheEntry(
+                    resource=created,
+                    fingerprint=fingerprint,
+                    last_used=self._clock(),
+                    active=1,
                 )
-            if closed_during_startup:
-                raise RuntimeError("project resource cache closed during startup")
+                self._condition.notify_all()
             return created
         except BaseException:
             with self._condition:
@@ -761,25 +740,19 @@ class ProjectResourceCache(Generic[T]):
         entry = self._entries[root]
         if entry.active:
             raise RuntimeError("cannot retire an actively leased project resource")
-        removed = True
+        del self._entries[root]
         try:
-            self._entries.pop(root)
             self._retire_locked(root, entry.resource)
         except BaseException:
-            if removed and root not in self._entries and root not in self._retiring:
+            if root not in self._retiring:
                 self._entries[root] = entry
             raise
-        finally:
-            self._condition.notify_all()
 
     def _retire_locked(self, root: Path, resource: T) -> None:
         if root in self._entries or root in self._creating or root in self._retiring:
             raise RuntimeError("project root already has an owned resource generation")
-        entry = _RetiringEntry(resource)
-        try:
-            self._retiring[root] = entry
-        finally:
-            self._condition.notify_all()
+        self._retiring[root] = _RetiringEntry(resource)
+        self._condition.notify_all()
 
     def _ensure_unleased_resource_retiring_locked(
         self, root: Path, resource: T
@@ -801,27 +774,27 @@ class ProjectResourceCache(Generic[T]):
 
     def _reaper_loop(self) -> None:
         while True:
-            claimed: tuple[Path, _RetiringEntry[T]] | None = None
+            claim: tuple[Path, _RetiringEntry[T]] | None = None
             try:
                 with self._condition:
-                    while claimed is None:
+                    while claim is None:
                         if self._reapers_stopped:
                             return
                         for root, entry in self._retiring.items():
-                            if not entry.active:
-                                claimed = (root, entry)
-                                entry.active = True
+                            if not entry.claimed:
+                                claim = (root, entry)
+                                entry.claimed = True
                                 break
-                        if claimed is None:
+                        if claim is None:
                             self._condition.wait()
-                self._reap(*claimed)
+                self._reap(*claim)
             except BaseException:
                 logger.exception("Lean project retirement worker failed; rescheduling")
-                if claimed is not None:
-                    root, entry = claimed
+                if claim is not None:
+                    root, entry = claim
                     with self._condition:
                         if self._retiring.get(root) is entry:
-                            entry.active = False
+                            entry.claimed = False
                             self._condition.notify_all()
 
     def _reap(self, root: Path, entry: _RetiringEntry[T]) -> None:

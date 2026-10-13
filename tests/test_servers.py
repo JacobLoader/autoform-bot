@@ -78,6 +78,18 @@ class TestProjectResolution:
 # ---------------------------------------------------------------------------
 
 
+class _FailFirstShutdownPool:
+    """A pool whose first shutdown fails and whose retry succeeds."""
+
+    def __init__(self):
+        self.close_calls = 0
+
+    def shutdown(self):
+        self.close_calls += 1
+        if self.close_calls == 1:
+            raise RuntimeError("injected shutdown failure")
+
+
 class TestReplServer:
     """Contracts for the persistent Lean REPL server."""
 
@@ -137,17 +149,8 @@ class TestReplServer:
     def test_project_router_retains_a_pool_whose_shutdown_failed(self, tmp_path):
         from servers.repl.projects import LeanReplProjects
 
-        class FakePool:
-            def __init__(self):
-                self.close_calls = 0
-
-            def shutdown(self):
-                self.close_calls += 1
-                if self.close_calls == 1:
-                    raise RuntimeError("injected close failure")
-
         project = make_lake_project(tmp_path, "failed-shutdown")
-        pool = FakePool()
+        pool = _FailFirstShutdownPool()
         projects = LeanReplProjects(lambda root: pool)
         assert projects.get(str(project)) is pool
 
@@ -161,17 +164,8 @@ class TestReplServer:
         from servers.repl.pool import LeanReplPoolStartupError
         from servers.repl.projects import LeanReplProjects
 
-        class PartialPool:
-            def __init__(self):
-                self.close_calls = 0
-
-            def shutdown(self):
-                self.close_calls += 1
-                if self.close_calls == 1:
-                    raise RuntimeError("injected cleanup failure")
-
         project = make_lake_project(tmp_path, "failed-startup")
-        partial = PartialPool()
+        partial = _FailFirstShutdownPool()
         calls = 0
 
         def factory(root):

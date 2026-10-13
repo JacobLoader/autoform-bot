@@ -150,6 +150,10 @@ def test_close_kills_descendant_after_repl_wrapper_already_exited():
     finally:
         if wrapper.returncode is None:
             repl.close()
+        try:
+            os.kill(child_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 def test_close_retains_process_handle_until_cleanup_succeeds(monkeypatch):

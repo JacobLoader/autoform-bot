@@ -299,7 +299,7 @@ def test_probe_spells_names_without_trusting_lean_to_parse_them() -> None:
     )
 
     assert probe.startswith("import Skel.Defs\nimport Skel.Main\n")
-    assert 'Name.str (Name.str (Name.anonymous) "Skel") "observation_determined"' in probe
+    assert _requested(probe) == [["Skel.observation_determined", ["Skel", "observation_determined"]]]
     assert f'"{PROBE_MARKER}' in probe
     assert "def probeOutputLimit : Nat := 67108864" in probe
     assert 'Name.str (Name.anonymous) "Init"' in probe
@@ -310,13 +310,24 @@ def test_probe_spells_names_without_trusting_lean_to_parse_them() -> None:
 def test_probe_transports_quoted_and_numeric_name_components_structurally() -> None:
     probe = render_probe(
         imports=("Skel.Main",),
-        roots=("Skel.«quoted.name with space».2",),
-        project_roots=("Skel",),
+        roots=("Skel.«quoted.name with space».2", "Skel.«2»", "Skel.٢"),
+        project_roots=("Skel.«quoted».2",),
     )
 
-    assert '"Skel.«quoted.name with space».2"' in probe
-    assert 'Name.str (Name.str (Name.anonymous) "Skel") "quoted.name with space"' in probe
-    assert "Name.num (Name.str" in probe
+    assert 'Name.num (Name.str (Name.str (Name.anonymous) "Skel") "quoted") 2' in probe
+    assert _requested(probe) == [
+        ["Skel.«quoted.name with space».2", ["Skel", "quoted.name with space", 2]],
+        ["Skel.«2»", ["Skel", "2"]],
+        ["Skel.٢", ["Skel", "٢"]],
+    ]
+
+
+def _requested(probe: str) -> object:
+    """The JSON roots a rendered probe requests."""
+
+    literal = re.search(r'requestedRoots ("(?:[^"\\]|\\.)*")', probe)
+    assert literal is not None
+    return json.loads(json.loads(literal.group(1)))
 
 
 def test_probe_refuses_to_render_nothing() -> None:
@@ -1051,6 +1062,60 @@ def test_lake_toml_parser_limits_fail_closed(tmp_path: Path) -> None:
 
     with pytest.raises(SkeletonError, match="cannot safely parse.*exceeds the parser's limits"):
         lean_libraries(project)
+
+
+def _project_with_both_lakefiles(tmp_path: Path) -> Path:
+    """lakefile.toml builds ``Skel`` from ``src``; lakefile.lean builds a differently laid out library."""
+
+    project = _project(tmp_path, src_dir="src")
+    (project / "lakefile.lean").write_text(
+        "import Lake\nopen Lake DSL\n\npackage fromlean\n\n"
+        'lean_lib FromLean where\n  srcDir := "lean-src"\n  roots := #[`LeanRoot]\n',
+        encoding="utf-8",
+    )
+    return project
+
+
+def test_lakefile_lean_wins_when_both_lakefiles_exist(tmp_path: Path, monkeypatch) -> None:
+    project = _project_with_both_lakefiles(tmp_path)
+    translated: list[Path] = []
+
+    def translate(root: Path) -> bytes:
+        translated.append(root)
+        return b'name = "fromlean"\n\n[[lean_lib]]\nname = "FromLean"\nsrcDir = "lean-src"\nroots = ["LeanRoot"]\n'
+
+    monkeypatch.setattr("autoform_cli.skeleton._translate_lakefile", translate)
+
+    (library,) = lean_libraries(project)
+
+    # Lake builds from lakefile.lean when both exist, so its libraries are the project's.
+    assert translated == [project.resolve()]
+    assert (library.name, library.src_dir, library.roots) == ("FromLean", project.resolve() / "lean-src", ("LeanRoot",))
+
+
+def test_a_project_with_both_lakefiles_is_refused_without_lake(tmp_path: Path, monkeypatch) -> None:
+    project = _project_with_both_lakefiles(tmp_path)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+
+    # Lake ignores lakefile.toml here, so reading it instead would describe the wrong build.
+    with pytest.raises(SkeletonError, match="lake is not on PATH"):
+        lean_libraries(project)
+
+
+def test_a_failed_translation_reports_the_error_rather_than_lakes_info_line(tmp_path: Path, monkeypatch) -> None:
+    project = _project_with_both_lakefiles(tmp_path)
+    error = f"error: {project / 'lakefile.lean'}:7:12: Unknown identifier `nonsense`"
+    stderr = "info: [root]: lakefile.lean and lakefile.toml are both present; using lakefile.lean\n" + error + "\n"
+    monkeypatch.setattr(shutil, "which", lambda _name: "lake")
+    monkeypatch.setattr(
+        "autoform_cli.skeleton._run_bounded_command",
+        lambda command, **_options: subprocess.CompletedProcess(command, 1, "", stderr),
+    )
+
+    with pytest.raises(SkeletonError) as caught:
+        lean_libraries(project)
+
+    assert caught.value.issues == (f"lake translate-config failed: {error}",)
 
 
 def test_a_project_without_a_lakefile_is_refused(tmp_path: Path) -> None:
@@ -2161,6 +2226,15 @@ def _lean_toolchain_available() -> bool:
     return available or unavailable(f"{pinned} is not installed")
 
 
+@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+def test_lakefile_lean_wins_through_lake_translate_config(tmp_path: Path) -> None:
+    project = _project_with_both_lakefiles(tmp_path)
+
+    (library,) = lean_libraries(project)
+
+    assert (library.name, library.src_dir, library.roots) == ("FromLean", project.resolve() / "lean-src", ("LeanRoot",))
+
+
 def test_required_real_lean_tests_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AUTOFORM_REQUIRE_REAL_LEAN_TESTS", "1")
     monkeypatch.setattr(shutil, "which", lambda _name: None)
@@ -2835,6 +2909,24 @@ def _probe_records(
 ) -> dict[str, dict[str, object]]:
     probe = render_probe(imports=(module,), roots=roots, project_roots=(project_root or module,))
     return parse_probe_output(run_probe(probe, project))
+
+
+@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+def test_probe_reads_more_roots_than_lean_compiles_in_a_list(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    _build(project, "Skel.Semantics")
+    # Found roots with a quoted, a needlessly quoted and a numeric component;
+    # absent ones with characters a Lean string literal must escape.
+    found = (
+        "Skel.Semantics.«quoted.helper»",
+        "Skel.Semantics.«usesQuoted»",
+        "_private.Skel.Semantics.0.Skel.Semantics.privateUnsafeValue",
+    )
+    absent = ("Skel.«a\\b\"c»", "Skel.𝔸", *(f"Skel.Semantics.absent{i}" for i in range(3000)))
+
+    records = _probe_records(project, (*found, *absent))
+
+    assert [records[root]["found"] for root in (*found, *absent)] == [True] * 3 + [False] * 3002
 
 
 def _declaration_of(project: Path, record: dict[str, object]):

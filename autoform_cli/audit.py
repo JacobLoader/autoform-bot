@@ -16,7 +16,13 @@ from pathlib import Path
 
 from . import status
 from .coverage import CoverageSummary, load_coverage
-from .graph import Graph, GraphValidationError, Node, load_graph
+from .graph import (
+    IMPLEMENTATION_NOTES_DIR,
+    Graph,
+    GraphValidationError,
+    Node,
+    load_graph,
+)
 from .lean import (
     _DECLARATION,
     Declaration,
@@ -26,12 +32,16 @@ from .lean import (
     index_failure_message,
     snapshot_project_sources,
 )
-from .markdown import FENCE as _FENCE
+from .markdown import article_parts as _article_parts
+from .markdown import content_lines as _content_lines
+from .markdown import first_unclosed_fence as _first_unclosed_fence
 from .markdown import frontmatter_end as _frontmatter_end
+from .markdown import has_substance as _has_substance
 from .markdown import HEADING as _HEADING
-from .markdown import HTML_COMMENT as _HTML_COMMENT
+from .markdown import is_placeholder as _is_placeholder
 from .markdown import local_target_issue as _local_target_issue
 from .markdown import markdown_links as _markdown_links
+from .markdown import visible_prose as _visible_prose
 
 #: More siblings than this at one level is a table of contents, not a chapter.
 _MAX_DIRECT_CHILDREN = 24
@@ -70,6 +80,16 @@ _DECLARATION_HEADER = re.compile(
 )
 _STRING_LITERAL = re.compile(r'"(?:[^"\\]|\\.)*"')
 _DEPRECATED_ATTRIBUTE = re.compile(r"(?:\[|,)\s*(?:(?:scoped|local)\s+)?deprecated\b")
+_IMPLEMENTATION_NOTE_ISSUE_MARKERS = (
+    ": noncanonical implementation notes directory",
+    ": implementation notes directory",
+    ": implementation notes path",
+    ": cannot read directory",
+    ": implementation note must",
+    ": implementation note names",
+    ": cannot read implementation note",
+    ": empty implementation note",
+)
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -161,11 +181,55 @@ def audit_graph(
         if node.parent is not None:
             contained.setdefault(node.parent, []).append(node.id)
 
+    scope_has_formalizable: dict[str, bool] = {}
+    scope_fully_implemented: dict[str, bool] = {}
+    for node_id in sorted(
+        graph.nodes, key=lambda candidate: graph.nodes[candidate].depth, reverse=True
+    ):
+        has_formalizable = False
+        fully_implemented = True
+        for child_id in contained.get(node_id, ()):
+            child = graph.nodes[child_id]
+            if child.formalizable:
+                has_formalizable = True
+                fully_implemented = fully_implemented and derived[child_id].proved
+            if scope_has_formalizable[child_id]:
+                has_formalizable = True
+                fully_implemented = (
+                    fully_implemented and scope_fully_implemented[child_id]
+                )
+        scope_has_formalizable[node_id] = has_formalizable
+        scope_fully_implemented[node_id] = fully_implemented
+
     for node_id in sorted(graph.nodes):
         node = graph.nodes[node_id]
         article_path = _relative_path(node.path, graph.blueprint_dir)
         children = contained.get(node_id, ())
         article = _read_article(node.path)
+
+        implementation_done = derived[node_id].proved or (
+            scope_has_formalizable[node_id] and scope_fully_implemented[node_id]
+        )
+        if node.article_id is not None and implementation_done:
+            note = graph.blueprint_dir / IMPLEMENTATION_NOTES_DIR / f"{node.article_id}.md"
+            if note.is_file():
+                findings.append(
+                    AuditFinding(
+                        article_path,
+                        "stale-implementation-note",
+                        "completed implementation scope still has "
+                        f"{IMPLEMENTATION_NOTES_DIR}/{node.article_id}.md; delete it",
+                    )
+                )
+
+        if article.unclosed_fence is not None:
+            findings.append(
+                AuditFinding(
+                    article_path,
+                    "unclosed-code-fence",
+                    f"code fence opened on line {article.unclosed_fence} never closes",
+                )
+            )
 
         if node.formalizable:
             if children:
@@ -176,14 +240,9 @@ def audit_graph(
                         "formalizable article has contained articles; declaration-sized articles must be leaves",
                     )
                 )
-            if not article.statement_text:
-                findings.append(
-                    AuditFinding(
-                        article_path,
-                        "missing-statement-text",
-                        "formalizable article has no statement text between its H1 and first H2 section",
-                    )
-                )
+            statement_finding = _statement_finding(article.statement)
+            if statement_finding is not None:
+                findings.append(AuditFinding(article_path, *statement_finding))
             if not article.has_depends_section:
                 findings.append(
                     AuditFinding(
@@ -250,52 +309,48 @@ def audit_graph(
 
 @dataclass(frozen=True, slots=True)
 class _ArticleShape:
-    statement_text: bool
+    statement: str
     has_depends_section: bool
+    #: The one-based source line of the first fence that never closes.
+    unclosed_fence: int | None = None
 
 
 def _read_article(path: Path) -> _ArticleShape:
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
-        return _ArticleShape(False, False)
+        return _ArticleShape(statement="", has_depends_section=False)
 
+    parts = _article_parts(text)
     lines = text.splitlines()
     start = _frontmatter_end(lines)
-    body = _HTML_COMMENT.sub("", "\n".join(lines[start:]))
-    seen_h1 = False
-    before_first_h2 = True
-    statement_text = False
-    has_depends_section = False
-    fence: tuple[str, int] | None = None
+    unclosed = _first_unclosed_fence(lines[start:])
+    return _ArticleShape(
+        statement=parts.statement,
+        has_depends_section=any(section.title.casefold() == "depends on" for section in parts.sections),
+        unclosed_fence=None if unclosed is None else start + unclosed + 1,
+    )
 
-    for line in body.splitlines():
-        fence_match = _FENCE.match(line)
-        if fence_match:
-            marker = fence_match.group(1)
-            if fence is None:
-                fence = (marker[0], len(marker))
-            elif marker[0] == fence[0] and len(marker) >= fence[1]:
-                fence = None
-            continue
-        if fence is not None:
-            continue
 
-        heading = _HEADING.match(line)
-        if heading:
-            level = len(heading.group(1))
-            title = heading.group(2).strip().casefold()
-            if level == 1:
-                seen_h1 = True
-            elif level == 2:
-                before_first_h2 = False
-                if title == "depends on":
-                    has_depends_section = True
-            continue
-        if seen_h1 and before_first_h2 and line.strip():
-            statement_text = True
+def _statement_finding(statement: str) -> tuple[str, str] | None:
+    """Return the code and reason for what is wrong with a statement's text, if anything.
 
-    return _ArticleShape(statement_text, has_depends_section)
+    The text is judged as the site publishes it, so a hidden element, an image
+    or a bare rule states nothing however much source it takes.
+    """
+
+    prose = _visible_prose(statement)
+    if not _has_substance(prose):
+        # A subheading names what follows; alone it states nothing.
+        if not any(line.strip() and not _HEADING.match(line) for line in _content_lines(statement)):
+            return "missing-statement-text", "formalizable article has no statement text outside its H2 sections"
+        return "empty-statement-text", "formalizable article's statement has no prose with a letter or digit"
+    if _is_placeholder(prose):
+        return (
+            "placeholder-statement-text",
+            "formalizable article's statement is a placeholder, or opens with one used as a marker",
+        )
+    return None
 
 
 def _source_findings(graph: Graph, node: Node, article_path: str) -> list[AuditFinding]:
@@ -367,8 +422,12 @@ def _coverage_findings(
 
 
 def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
-    root = Path(lean_root).expanduser().resolve()
-    if not root.is_dir():
+    try:
+        root = Path(lean_root).expanduser().resolve()
+        valid = root.is_dir()
+    except (OSError, RuntimeError, ValueError):
+        valid = False
+    if not valid:
         return [
             AuditFinding(
                 ".",
@@ -530,6 +589,13 @@ def _stable_validation_reason(blueprint: Path, issue: str) -> str:
 
 
 def _validation_article_path(blueprint: Path, issue: str) -> str:
+    issue_root = issue.split("/", 1)[0].split(":", 1)[0]
+    if issue_root.casefold() == IMPLEMENTATION_NOTES_DIR.casefold():
+        for marker in _IMPLEMENTATION_NOTE_ISSUE_MARKERS:
+            boundary = issue.rfind(marker)
+            if boundary >= 0:
+                return issue[:boundary]
+
     node_id = issue.split(":", 1)[0]
     if not node_id or " " in node_id or node_id in {"dependency cycle", "rolled-up dependency cycle"}:
         return "."

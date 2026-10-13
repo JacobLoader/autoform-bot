@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import socket
 import subprocess
@@ -25,6 +26,7 @@ from servers.lean_runtime import (
     ProjectResourceCache,
     ProjectResourceBusyError,
 )
+from servers.lsp.server import LeanLspSession, LspConfig
 from servers.repl.core import LEAN_HEADER_LAUNCHER, LEAN_HEADER_PARSER
 
 
@@ -82,9 +84,6 @@ class FakeLsp:
         self.closed = False
 
     def close(self):
-        self.closed = True
-
-    def abort(self):
         self.closed = True
 
     def retire(self):
@@ -544,13 +543,16 @@ def test_service_close_starts_lsp_retirement_before_blocked_repl_cleanup_finishe
         {"project_dir": str(project), "file_path": "Main.lean"},
     )
 
-    thread = threading.Thread(target=lambda: (services.close(), services_closed.set()))
+    thread = threading.Thread(
+        target=lambda: (services.close(), services_closed.set()), daemon=True
+    )
     thread.start()
-    assert repl_close_started.wait(timeout=1)
-    assert lsp_closed.wait(timeout=1)
-    assert not services_closed.is_set()
-
-    release_repl_close.set()
+    try:
+        assert repl_close_started.wait(timeout=1)
+        assert lsp_closed.wait(timeout=1)
+        assert not services_closed.is_set()
+    finally:
+        release_repl_close.set()
     thread.join(timeout=2)
     assert not thread.is_alive()
     assert services_closed.is_set()
@@ -726,6 +728,11 @@ def test_project_startup_that_misses_its_budget_is_discarded(tmp_path):
 
     assert closed_event.wait(timeout=1)
     assert closed == [project.resolve()]
+    # close_resource returns before the reaper releases the slot.
+    deadline = time.monotonic() + 1
+    while cache.stats()["retiring"]:
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
     with cache.observe(str(project)) as (resource, state):
         assert resource is None and state == "cold"
     cache.close()
@@ -876,14 +883,118 @@ def test_lru_retirement_never_blocks_the_request_thread_past_its_deadline(tmp_pa
     with pytest.raises(ProjectResourceBusyError, match="shared Lean project slot"):
         with cache.lease(str(second), acquisition_timeout=0.05):
             pytest.fail("LRU cleanup ran synchronously or freed capacity early")
-    assert time.monotonic() - started < 0.5
-    assert close_started.is_set()
+    # A synchronous close would block on release_close for its full 2s.
+    assert time.monotonic() - started < 1.5
+    assert close_started.wait(timeout=1)
     assert created == [first.resolve()]
 
     release_close.set()
     with cache.lease(str(second), acquisition_timeout=1.0):
         pass
     assert created == [first.resolve(), second.resolve()]
+    cache.close()
+
+
+def test_lru_waiter_retires_one_victim_while_its_cleanup_is_slow(tmp_path):
+    first = make_lake_project(tmp_path, "lru-one-victim-first")
+    second = make_lake_project(tmp_path, "lru-one-victim-second")
+    third = make_lake_project(tmp_path, "lru-one-victim-third")
+    closed = []
+    close_started = threading.Event()
+    release_close = threading.Event()
+    admitted = threading.Event()
+
+    def close_resource(resource):
+        close_started.set()
+        assert release_close.wait(timeout=5)
+        closed.append(resource)
+
+    cache = ProjectResourceCache(
+        lambda root: root,
+        close_resource,
+        max_entries=2,
+        idle_seconds=1800,
+        start_sweeper=False,
+    )
+    with cache.lease(str(first)):
+        pass
+    with cache.lease(str(second)):
+        pass
+
+    def acquire_third():
+        with cache.lease(str(third), acquisition_timeout=5.0):
+            admitted.set()
+
+    waiter = threading.Thread(target=acquire_third, daemon=True)
+    try:
+        waiter.start()
+        assert close_started.wait(timeout=1)
+        # Wake the waiter while its victim is still retiring: once through
+        # another lease's release, then through its own 0.5s poll.
+        with cache.lease(str(second), acquisition_timeout=1.0):
+            pass
+        time.sleep(0.6)
+        assert [entry["project_dir"] for entry in cache.stats()["resident"]] == [
+            str(second.resolve())
+        ]
+    finally:
+        release_close.set()
+    waiter.join(timeout=5)
+    assert admitted.is_set()
+    assert closed == [first.resolve()]
+    cache.close()
+
+
+def test_lru_waiter_lets_an_idle_retirement_in_flight_free_its_slot(tmp_path):
+    first = make_lake_project(tmp_path, "inflight-retirement-first")
+    second = make_lake_project(tmp_path, "inflight-retirement-second")
+    third = make_lake_project(tmp_path, "inflight-retirement-third")
+    clock = {"now": 0.0}
+    closed = []
+    close_started = threading.Event()
+    release_close = threading.Event()
+    admitted = threading.Event()
+
+    def close_resource(resource):
+        close_started.set()
+        assert release_close.wait(timeout=5)
+        closed.append(resource)
+
+    cache = ProjectResourceCache(
+        lambda root: root,
+        close_resource,
+        max_entries=2,
+        idle_seconds=10,
+        start_sweeper=False,
+        clock=lambda: clock["now"],
+    )
+    with cache.lease(str(first)):
+        pass
+    clock["now"] = 5.0
+    with cache.lease(str(second)):
+        pass
+    clock["now"] = 12.0
+    assert cache.evict_idle() == 1
+    assert close_started.wait(timeout=1)
+
+    def acquire_third():
+        with cache.lease(str(third), acquisition_timeout=5.0):
+            admitted.set()
+
+    waiter = threading.Thread(target=acquire_third, daemon=True)
+    try:
+        waiter.start()
+        time.sleep(0.6)
+        # The idle retirement already frees a slot, so the waiter must not
+        # retire the second project as well.
+        assert [entry["project_dir"] for entry in cache.stats()["resident"]] == [
+            str(second.resolve())
+        ]
+    finally:
+        release_close.set()
+    waiter.join(timeout=5)
+    assert admitted.is_set()
+    assert closed == [first.resolve()]
     cache.close()
 
 
@@ -935,6 +1046,8 @@ def test_failed_retirement_retries_without_parallel_reapers(tmp_path):
             maximum_active = max(maximum_active, active)
             attempt = attempts
         try:
+            # Hold each attempt open long enough to overlap a second reaper.
+            time.sleep(0.05)
             if attempt < 3:
                 raise RuntimeError("injected cleanup failure")
             retired.set()
@@ -942,10 +1055,11 @@ def test_failed_retirement_retries_without_parallel_reapers(tmp_path):
             with lock:
                 active -= 1
 
+    # Two reapers, so only the claim flag keeps them off the one entry.
     cache = ProjectResourceCache(
         lambda root: root,
         close_resource,
-        max_entries=1,
+        max_entries=2,
         idle_seconds=1,
         start_sweeper=False,
         clock=lambda: clock["now"],
@@ -1007,7 +1121,7 @@ def test_late_startup_moves_directly_to_retirement(tmp_path):
     created = []
 
     def factory(root):
-        time.sleep(0.03)
+        time.sleep(0.6)
         resource = object()
         created.append(resource)
         return resource
@@ -1024,7 +1138,7 @@ def test_late_startup_moves_directly_to_retirement(tmp_path):
         start_sweeper=False,
     )
     with pytest.raises(ProjectResourceBusyError, match="startup exceeded"):
-        with cache.lease(str(project), acquisition_timeout=0.01):
+        with cache.lease(str(project), acquisition_timeout=0.5):
             pytest.fail("late startup entered a request")
     assert close_started.wait(timeout=1)
     assert cache.stats()["retiring"] == [str(project.resolve())]
@@ -1139,7 +1253,7 @@ def test_partial_lsp_startup_transfers_cleanup_without_masking_the_error(
             pass
 
     class Process:
-        pid = 43210
+        pid = 999_999_999  # no kernel allocates it, so group probes find nothing
         returncode = None
         stdin = Stream()
         stdout = Stream()
@@ -1179,7 +1293,8 @@ def test_partial_lsp_startup_transfers_cleanup_without_masking_the_error(
                 {"project_dir": str(project), "file_path": "Main.lean"},
             )
         assert raised.value is startup_error
-        assert time.monotonic() - started < 0.5
+        # Cleanup on the request thread would block on its release event.
+        assert time.monotonic() - started < 1.5
         assert cleanup_started.wait(timeout=1)
         assert services.lsp_projects.stats()["retiring"] == [str(project.resolve())]
 
@@ -1199,6 +1314,7 @@ def test_cache_close_waits_for_retirement_before_returning(tmp_path):
     close_started = threading.Event()
     release_close = threading.Event()
     close_finished = threading.Event()
+
     def close_resource(resource):
         close_started.set()
         assert release_close.wait(timeout=2)
@@ -1213,11 +1329,13 @@ def test_cache_close_waits_for_retirement_before_returning(tmp_path):
     with cache.lease(str(project)):
         pass
 
-    thread = threading.Thread(target=lambda: (cache.close(), close_finished.set()))
+    thread = threading.Thread(target=lambda: (cache.close(), close_finished.set()), daemon=True)
     thread.start()
-    assert close_started.wait(timeout=1)
-    assert not close_finished.wait(timeout=0.1)
-    release_close.set()
+    try:
+        assert close_started.wait(timeout=1)
+        assert not close_finished.wait(timeout=0.1)
+    finally:
+        release_close.set()
     thread.join(timeout=2)
 
     assert not thread.is_alive()
@@ -1272,13 +1390,12 @@ def test_cache_constructor_drains_started_reapers_on_start_failure(
     def fail_second_reaper(worker):
         if worker.name == "autoform-project-retirement-2":
             if failure_point == "after":
-                result = real_start(worker)
+                real_start(worker)
                 started.append(worker)
                 raise RuntimeError("injected post-start interruption")
             raise RuntimeError("injected thread-start failure")
-        result = real_start(worker)
+        real_start(worker)
         started.append(worker)
-        return result
 
     monkeypatch.setattr(threading.Thread, "start", fail_second_reaper)
     with pytest.raises(RuntimeError, match="injected"):
@@ -1299,11 +1416,10 @@ def test_cache_constructor_drains_reapers_when_sweeper_start_is_interrupted(monk
     started = []
 
     def interrupt_sweeper(worker):
-        result = real_start(worker)
+        real_start(worker)
         started.append(worker)
         if worker.name == "autoform-project-eviction":
             raise RuntimeError("injected sweeper-start interruption")
-        return result
 
     monkeypatch.setattr(threading.Thread, "start", interrupt_sweeper)
     with pytest.raises(RuntimeError, match="sweeper-start"):
@@ -1332,9 +1448,8 @@ def test_service_constructor_closes_first_cache_when_second_cache_start_fails(
             retirement_starts += 1
             if retirement_starts == 3:
                 raise RuntimeError("injected second-cache start failure")
-        result = real_start(worker)
+        real_start(worker)
         started.append(worker)
-        return result
 
     monkeypatch.setattr(threading.Thread, "start", fail_in_second_cache)
     with pytest.raises(RuntimeError, match="second-cache start"):
@@ -1635,6 +1750,63 @@ def test_connected_send_failure_is_never_retried(runtime_dir, monkeypatch):
         client.request("repl.run", {"project_dir": "/lean", "code": "#check Nat"})
 
 
+def test_non_utf8_response_is_a_protocol_error(runtime_dir, monkeypatch):
+    from servers import lean_client
+
+    class NonUtf8Socket:
+        def settimeout(self, timeout):
+            pass
+
+        def connect(self, path):
+            pass
+
+        def sendall(self, payload):
+            pass
+
+        def recv(self, size):
+            return b"\xff\n"
+
+        def close(self):
+            pass
+
+    client = LeanRuntimeClient(socket_path=runtime_dir / "fake.sock")
+    monkeypatch.setattr(lean_client.socket, "socket", lambda *args: NonUtf8Socket())
+
+    with pytest.raises(lean_client.LeanRuntimeProtocolError, match="invalid JSON"):
+        client.request("repl.run", {"project_dir": "/lean", "code": "#check Nat"})
+
+
+def test_response_timeout_is_never_retried(runtime_dir, monkeypatch):
+    from servers import lean_client
+
+    class TimeoutSocket:
+        def settimeout(self, timeout):
+            pass
+
+        def connect(self, path):
+            pass
+
+        def sendall(self, payload):
+            pass
+
+        def recv(self, size):
+            raise socket.timeout
+
+        def close(self):
+            pass
+
+    client = LeanRuntimeClient(socket_path=runtime_dir / "fake.sock")
+    monkeypatch.setattr(lean_client.socket, "socket", lambda *args: TimeoutSocket())
+    monkeypatch.setattr(
+        client,
+        "ensure_running",
+        lambda: pytest.fail("an ambiguously dispatched request must not be retried"),
+    )
+
+    with pytest.raises(LeanRuntimeError, match="timed out waiting for Lean runtime response"):
+        client.request("repl.run", {"project_dir": "/lean", "code": "#check Nat"})
+
+
 @pytest.mark.parametrize(
     ("name", "value", "match"),
     [
@@ -1818,7 +1990,8 @@ def test_failed_lsp_request_returns_while_verified_cleanup_runs(tmp_path):
                 "lsp.diagnostics",
                 {"project_dir": str(project), "file_path": "Main.lean"},
             )
-        assert time.monotonic() - started < 0.5
+        # Cleanup on the request thread would block on its release event.
+        assert time.monotonic() - started < 1.5
         assert close_started.wait(timeout=1)
         assert services.lsp_projects.stats()["retiring"] == [str(project.resolve())]
 
@@ -1870,6 +2043,56 @@ def test_hover_input_os_error_does_not_retire_healthy_session(tmp_path):
         assert len(resident) == 1 and resident[0]["valid"] is True
     finally:
         services.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="native LSP backend requires POSIX groups")
+@pytest.mark.parametrize("method", ["lsp.diagnostics", "lsp.hover"])
+def test_lsp_timeout_with_a_live_process_retires_the_session(tmp_path, method):
+    project = make_lake_project(tmp_path, "lsp-live-timeout")
+    # Larger than a pipe buffer, so didOpen cannot finish against a server
+    # that never reads: the call times out while its process is still alive.
+    (project / "Main.lean").write_text("-- padding\n" * 50_000)
+    sessions = []
+
+    def factory(root):
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            start_new_session=True,
+        )
+        session = LeanLspSession(LspConfig(cwd=str(root), timeout=0.5))
+        session.process = process
+        session._process_group_id = process.pid
+        sessions.append(session)
+        return session
+
+    services = LeanRuntimeServices(
+        runtime_config(),
+        repl_factory=FakePool,
+        lsp_factory=factory,
+        start_sweepers=False,
+    )
+    try:
+        params = {"project_dir": str(project), "file_path": str(project / "Main.lean")}
+        if method == "lsp.hover":
+            params.update(line=0, character=0)
+        with pytest.raises(TimeoutError):
+            services.dispatch(method, params)
+
+        # Only the failed call's retire flag tells dispatch that this live
+        # process can no longer share its stream.
+        assert services.lsp_projects.stats()["resident"] == []
+        deadline = time.monotonic() + 10
+        while sessions[0].process is not None:
+            if time.monotonic() >= deadline:
+                pytest.fail("the timed-out LSP session was never retired")
+            time.sleep(0.05)
+    finally:
+        services.close()
+        for session in sessions:
+            if session.process is not None:
+                session.abort()
 
 
 def test_successful_lsp_result_retires_a_session_poisoned_by_did_close(tmp_path):

@@ -62,6 +62,7 @@ _REQUIRED_TEMPLATE_PATHS = frozenset(
         "blueprint/javascripts/mathjax.js",
         "blueprint/roadmap/README.md",
         "blueprint/sources/README.md",
+        "github/CODEOWNERS.autoform.example",
         "github/autoform_audit.py",
         "github/workflows/autoform-verify.yml",
         "github/workflows/blueprint-pages.yml",
@@ -70,7 +71,6 @@ _REQUIRED_TEMPLATE_PATHS = frozenset(
         "theme/main.html",
     }
 )
-
 #: Where `claude plugin install` records the marketplace each plugin came from.
 _PLUGIN_REGISTRY = Path.home() / ".claude" / "plugins" / "known_marketplaces.json"
 
@@ -92,7 +92,7 @@ def _git(*args: str, root: Path | None = None) -> str | None:
             timeout=10,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, UnicodeError):
         return None
     value = done.stdout.strip()
     return value if done.returncode == 0 and value else None
@@ -355,9 +355,7 @@ def _committed_scaffold_entries(
 
 
 def _git_blob_id(content: bytes, length: int) -> str | None:
-    algorithm = {40: "sha1", 64: "sha256"}.get(length)
-    if algorithm is None:
-        return None
+    algorithm = {40: "sha1", 64: "sha256"}[length]
     try:
         digest = hashlib.new(algorithm, usedforsecurity=False)
     except ValueError:
@@ -485,6 +483,16 @@ def plugin_pin(
     return source, ref
 
 
+def _checkout_pin(templates: tuple[tuple[str, bytes, int], ...]) -> tuple[str, str]:
+    """`plugin_pin` reduced to a safe source and lowercase commit, else the default source and no commit."""
+
+    pinned_source, pinned_ref = plugin_pin(templates)
+    safe_source = _normalize_autoform_source(pinned_source, allow_github_scp=True)
+    if safe_source is None or not _FULL_SHA.fullmatch(pinned_ref.lower()):
+        return DEFAULT_AUTOFORM_SOURCE, ""
+    return safe_source, pinned_ref.lower()
+
+
 class ScaffoldError(ValueError):
     """The project could not be scaffolded safely."""
 
@@ -577,6 +585,20 @@ def _is_link(metadata: os.stat_result) -> bool:
     return stat.S_ISLNK(metadata.st_mode) or bool(attributes & reparse)
 
 
+def _read_at_most(descriptor: int, size: int) -> bytes:
+    """Read from *descriptor* until end of file or *size* bytes, whichever is first."""
+
+    chunks: list[bytes] = []
+    remaining = size
+    while remaining:
+        chunk = os.read(descriptor, min(64 * 1024, remaining))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
 def _read_bounded_regular_file(
     path: Path,
     *,
@@ -611,15 +633,7 @@ def _read_bounded_regular_file(
         ):
             raise ScaffoldError([f"the {label} changed while it was being read"])
 
-        chunks: list[bytes] = []
-        remaining = limit + 1
-        while remaining:
-            chunk = os.read(descriptor, min(64 * 1024, remaining))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        content = b"".join(chunks)
+        content = _read_at_most(descriptor, limit + 1)
         after_identity = _node_identity(os.fstat(descriptor))
         named_identity = _node_identity(os.stat(path, follow_symlinks=False))
         if (
@@ -773,7 +787,11 @@ def _scaffold_plan(
     skipped: list[str] = []
     for relative, template_content, template_mode in templates:
         destination = _destination(relative)
-        if not autoform_ref and relative.startswith("github/"):
+        if (
+            not autoform_ref
+            and relative.startswith("github/")
+            and relative != "github/CODEOWNERS.autoform.example"
+        ):
             skipped.append(destination)
             continue
         if Path(relative).suffix in {".js", ".html"} or relative.endswith("gitignore"):
@@ -816,18 +834,11 @@ def _read_gitignore_descriptor(
             [f"refusing to merge .gitignore larger than {_MAX_GITIGNORE_BYTES} bytes"]
         )
     os.lseek(descriptor, 0, os.SEEK_SET)
-    chunks: list[bytes] = []
-    total = 0
-    while True:
-        chunk = os.read(descriptor, min(64 * 1024, _MAX_GITIGNORE_BYTES - total + 1))
-        if not chunk:
-            break
-        chunks.append(chunk)
-        total += len(chunk)
-        if total > _MAX_GITIGNORE_BYTES:
-            raise ScaffoldError(
-                [f"refusing to merge .gitignore larger than {_MAX_GITIGNORE_BYTES} bytes"]
-            )
+    content = _read_at_most(descriptor, _MAX_GITIGNORE_BYTES + 1)
+    if len(content) > _MAX_GITIGNORE_BYTES:
+        raise ScaffoldError(
+            [f"refusing to merge .gitignore larger than {_MAX_GITIGNORE_BYTES} bytes"]
+        )
     after = os.fstat(descriptor)
     named = os.stat(path, follow_symlinks=False)
     opened_identity = _node_identity(opened)
@@ -842,7 +853,7 @@ def _read_gitignore_descriptor(
         != _cross_interface_identity(opened_identity)
     ):
         raise ScaffoldError([f".gitignore changed while it was being inspected: {path}"])
-    return b"".join(chunks), named_identity
+    return content, named_identity
 
 
 def _gitignore_suffix(existing: bytes, required: bytes) -> bytes | None:
@@ -1046,18 +1057,12 @@ def scaffold_project(
     # from the commit named by the workflows.
     templates = _read_templates(_TEMPLATES)
     _require_complete_templates(templates)
-    pinned_source, pinned_ref = ("", "") if given_source else plugin_pin(templates)
-    safe_pinned_source = _normalize_autoform_source(pinned_source, allow_github_scp=True)
-    if safe_pinned_source is None or not _FULL_SHA.fullmatch(pinned_ref.lower()):
-        pinned_source, pinned_ref = "", ""
-    else:
-        pinned_source, pinned_ref = safe_pinned_source, pinned_ref.lower()
-    source = given_source or pinned_source or DEFAULT_AUTOFORM_SOURCE
     # A ref identifies a commit in one repository. Naming a different source
     # while inheriting this checkout's HEAD produces `git+other.git@our-sha`,
     # which does not resolve there, so an explicit source carries its own ref
     # or none at all.
-    ref = given_ref or ("" if given_source else pinned_ref)
+    source, pinned_ref = (given_source, "") if given_source else _checkout_pin(templates)
+    ref = given_ref or pinned_ref
     # CI installs Autoform from a Git ref. Where Autoform lives is a fixed fact
     # worth defaulting; which commit is not, and a guessed one publishes a
     # project whose first CI step fails for a reason no file in it explains. So

@@ -54,6 +54,25 @@ replacement. External research is read-only, and contacting people requires
 permission. Read [Setup's Zulip workflow](../setup/references/zulip.md) only for
 requested Zulip work.
 
+Before adding a formalizable article, run `autoform search` over the blueprint
+for its result, by a few distinctive words of the statement and by a Lean name
+when one is known; the
+[search contract](../../autoform_cli/README.md#search-contract) says what is
+matched. Read each hit's statement, and narrow a query whose listing the limit
+cut short. Matching is literal, so the result is new only when retries with
+fewer words, and under other usual names for its objects, also show no article
+stating it. A refusal (exit 2) is not an empty result: resolve what it reports
+without adding the article, and search again. A dependency link to a page not
+yet written causes one, so search for a batch of articles before writing the
+first.
+When another formalizable article already states the result, link to it from
+each article that needs it, under `## Depends on` or `## Proof depends on`, and
+from the coverage row, instead of adding a node. A hit that is more general, a
+special case, or only similar does not replace the result: add the article,
+depending on the hit where it is used. Search reads only the checkout it is
+given, so the owner of global consistency repeats it for what parallel agents
+added.
+
 Enumerate the entire adopted boundary in `blueprint/coverage/README.md`.
 `MAPPED` is unfinished, `DECOMPOSED` links to roadmap nodes, `DEFERRED` records
 an explicit user decision or concrete external blocker, and `OUT` explains an
@@ -65,9 +84,21 @@ Write milestone pages under `blueprint/roadmap/` by mathematical significance,
 then one fine article per coherent unit with one unique main result. Ground each
 statement and proof sketch in the source. Put genuine statement prerequisites
 under `## Depends on` and proof-only prerequisites under `## Proof depends on`.
-Assign durable `article_id` metadata to new articles; use
-`autoform migrate article-ids blueprint --json` to obtain deterministic IDs
-after creating the pages.
+Assign durable `article_id` metadata to new articles; run
+`autoform migrate article-ids blueprint --write` after creating the pages to
+add deterministic IDs.
+Articles hold only frontmatter and informal mathematics; put Lean-side findings
+such as Mathlib gaps, prior art, and declaration names in
+`blueprint/.implementation-notes/<article_id>.md`, never a transcript, a secret,
+or a machine-local path. The hidden per-article file
+stays out of the mathematical wiki and remains valid when the article moves.
+Never link it from an article. Delete it when the article is proved or marked
+`mathlib: true`; delete a container's note when every formalizable descendant
+is proved and there is at least one. When a commit deletes or merges an article,
+move anything still useful from its note into a surviving article's note and
+delete the note in that commit; an orphaned note blocks every command that loads
+the graph, and any worker may repair one the same way, or by restoring the
+`article_id` line of an article that still exists but lost it.
 Assert formalization or `mathlib: true` only after exact verification. Before
 revising a formalizable leaf, acquire the `claim_target` that `autoform work
 context` reports for it, passing your own `--worker-id`; renew it while editing
@@ -86,12 +117,12 @@ an open statement, so whatever rests on it stays conditionally proved. Retract
 only that article and the dependents whose Markdown text the revision rewrites,
 claiming them all in one acquire; the Lean-side impact decides every other
 dependent. For a Lean revision requested in Human Review, record the decision in
-the article and retract it the same way, so it returns to the frontier as a
-statement phase flagged as a revision, and leave the Lean change to Formalize,
-which follows the [revision
-contract](../../autoform_cli/README.md#revision-contract); this skill edits
-only Markdown. For a large source, divide independent sections among available
-agents while retaining one owner for global coverage and dependency
+the article's `blueprint/.implementation-notes/<article_id>.md` and retract the
+article the same way, so it returns to the frontier as a statement phase flagged
+as a revision, and leave the Lean change to Formalize, which follows the
+[revision contract](../../autoform_cli/README.md#revision-contract); this skill
+edits only Markdown. For a large source, divide independent sections among
+available agents while retaining one owner for global coverage and dependency
 consistency.
 
 `open_statements` in `roadmap/README.md` is a project policy; absent means

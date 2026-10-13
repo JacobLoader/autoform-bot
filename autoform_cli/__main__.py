@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from . import status
-from .article_identity import plan_article_ids
+from .article_identity import ArticleIdWriteError, plan_article_ids, write_article_ids
 from .audit import audit_blueprint
 from .claims import CLAIM_TTL_S, ClaimBoard, ClaimTransportError, author_claim_key
 from .doctor import diagnose_project
@@ -27,6 +27,7 @@ from .project import ProjectCatalogError, ProjectCreateError, create_project, in
 from .render import PublicationError, render_site
 from .runtime import RuntimeProjectionError, load_runtime_graph, resolve_runtime_paths
 from .scaffold import ScaffoldError, scaffold_project
+from .search import SearchError, search_blueprint, statement_preview
 from .skeleton import (
     DEFAULT_PROBE_TIMEOUT,
     SkeletonError,
@@ -36,6 +37,7 @@ from .skeleton import (
     write_packets,
     write_skeleton_report,
 )
+from .unused_hypotheses import find_unused_hypotheses, format_unused_hypotheses
 from .work import WORK_SCHEMA, WorkError, assumption_contract, list_ready_work, work_context
 
 
@@ -204,6 +206,40 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=f"seconds the Lean probe may run (default {DEFAULT_PROBE_TIMEOUT:g}); "
         "the Lake freshness check before it has its own budget",
     )
+    search = subparsers.add_parser(
+        "search", help="find articles by title, Lean name, or statement text before adding one"
+    )
+    search.add_argument("target", help="project root or blueprint directory")
+    search.add_argument(
+        "query",
+        help="one quoted argument; every word, with filler such as 'of' dropped and common endings cut, "
+        "must occur in an article's title, Lean name, path, or statement, or in a containing article's title; "
+        "put -- before one starting with -",
+    )
+    search.add_argument("--lean-root", type=Path, help="resolve local Lean declaration targets")
+    search.add_argument(
+        "--state",
+        action="append",
+        default=[],
+        dest="states",
+        choices=[state.key for state in status.STATES],
+        metavar="KEY",
+        help="keep articles in exactly this derived state (repeatable): "
+        + ", ".join(state.key for state in status.STATES),
+    )
+    search.add_argument(
+        "--declaration",
+        action="append",
+        default=[],
+        dest="declarations",
+        metavar="KIND",
+        help="keep articles whose frontmatter declaration is KIND: theorem, lemma, def, ... (repeatable)",
+    )
+    search.add_argument(
+        "--limit", type=int, default=20, metavar="N", help="show at most N articles (default 20)"
+    )
+    search.add_argument("--json", action="store_true", help="write stable machine-readable output")
+
     claim = subparsers.add_parser("claim", help="coordinate temporary node ownership through Git refs")
     claim_subparsers = claim.add_subparsers(dest="claim_command", required=True)
     for operation in ("acquire", "renew", "release"):
@@ -219,17 +255,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     claim_cleanup = claim_subparsers.add_parser("cleanup")
     _add_claim_board_arguments(claim_cleanup)
 
-    migrate = subparsers.add_parser("migrate", help="inspect authored migration contracts")
+    migrate = subparsers.add_parser("migrate", help="plan or apply authored migrations")
     migrate_subparsers = migrate.add_subparsers(dest="migrate_command", required=True)
     article_ids = migrate_subparsers.add_parser(
         "article-ids",
-        help="plan durable roadmap article identifiers without writing files",
+        help="plan durable roadmap article identifiers, or add them with --write",
     )
     article_ids.add_argument("blueprint_dir")
-    article_ids.add_argument(
+    article_ids_mode = article_ids.add_mutually_exclusive_group()
+    article_ids_mode.add_argument(
         "--check",
         action="store_true",
         help="fail when an article is missing article_id frontmatter",
+    )
+    article_ids_mode.add_argument(
+        "--write",
+        action="store_true",
+        help="add each planned article_id to the frontmatter of the article missing one",
     )
     article_ids.add_argument("--json", action="store_true", help="write stable machine-readable output")
 
@@ -278,6 +320,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         "the Lake freshness check before it has its own budget",
     )
 
+    unused = subparsers.add_parser(
+        "unused-hypotheses",
+        help="report the hypotheses that the proof of each theorem the blueprint names never uses",
+    )
+    unused.add_argument("blueprint_dir")
+    unused.add_argument(
+        "--lean-root",
+        type=Path,
+        required=True,
+        help="built Lean project whose declarations the blueprint names",
+    )
+    unused.add_argument(
+        "--node",
+        action="append",
+        dest="nodes",
+        metavar="ID",
+        help="restrict to one article id (repeatable)",
+    )
+    unused.add_argument("--json", action="store_true", help="write stable machine-readable output")
+    unused.add_argument(
+        "--timeout",
+        type=_positive_seconds,
+        metavar="SECONDS",
+        help=f"seconds the Lean probe may run (default {DEFAULT_PROBE_TIMEOUT:g}); "
+        "the Lake freshness check before it has its own budget",
+    )
+
     render = subparsers.add_parser("render", help="build the publishable blueprint")
     render.add_argument("blueprint_dir")
     render.add_argument("-o", "--output", default="site-src", help="output directory")
@@ -306,12 +375,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _project(args)
     if args.command == "work":
         return _work(args)
+    if args.command == "search":
+        return _search(args)
     if args.command == "claim":
         return _claim(args)
     if args.command == "migrate":
         return _migrate(args)
     if args.command == "skeleton":
         return _skeleton(args)
+    if args.command == "unused-hypotheses":
+        return _unused_hypotheses(args)
     if args.command == "render":
         return _render(args)
     return 2
@@ -352,7 +425,8 @@ def _init(args: argparse.Namespace) -> int:
     for path in result.written:
         print(f"  + {path}")
     for path in result.skipped:
-        note = "no Autoform ref to pin" if result.unpinned and ".github" in path else "exists, left alone"
+        needs_pin = result.unpinned and path != ".github/CODEOWNERS.autoform.example" and ".github" in path
+        note = "no Autoform ref to pin" if needs_pin else "exists, left alone"
         print(f"  = {path} ({note})")
     print("Next: describe the project in blueprint/README.md, then add chapters "
           "as roadmap/<chapter>/README.md.")
@@ -659,6 +733,59 @@ def _work(args: argparse.Namespace) -> int:
     return 0
 
 
+def _search(args: argparse.Namespace) -> int:
+    # Only reading the blueprint can fail on the project's paths; printing the
+    # result stays outside, so an output error is not reported as one.
+    try:
+        result = search_blueprint(
+            args.target,
+            args.query,
+            lean_root=args.lean_root,
+            states=args.states,
+            declarations=args.declarations,
+            limit=args.limit,
+        )
+    except (GraphValidationError, RuntimeProjectionError) as error:
+        for issue in error.issues:
+            print(f"error: {_human_text(issue)}", file=sys.stderr)
+        return 2
+    except SearchError as error:
+        print(f"error: {_human_text(error)}", file=sys.stderr)
+        return 2
+    except (OSError, RuntimeError, ValueError):
+        print("error: project, blueprint, or Lean root path cannot be read", file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(result.to_json())
+        return 0
+    if not result.hits:
+        print("No matching articles.")
+        return 0
+    for hit in result.hits:
+        durable = f" [{hit.article_id}]" if hit.article_id else ""
+        print(_human_text(f"{hit.title} ({hit.node_id}){durable}"))
+        summary = [
+            hit.declaration or "no declaration",
+            hit.state,
+            f"used by {hit.used_by_count}",
+        ]
+        if hit.shared_title:
+            summary.append("title shared with another article")
+        print(_human_text("  " + ", ".join(summary)))
+        for target in hit.lean_targets:
+            location = f" ({target.source_file}:{target.line})" if target.source_file else ""
+            print(_human_text(f"  Lean: {target.declaration}{location}"))
+        if hit.mathlib_declarations:
+            print(_human_text("  Mathlib: " + ", ".join(hit.mathlib_declarations)))
+        preview = statement_preview(hit)
+        if preview:
+            print(_human_text(f"  Statement: {preview}"))
+        print("  Matched: " + ", ".join(hit.matched_fields))
+    print(f"{len(result.hits)} of {result.total_matches} matching article(s) shown.")
+    return 0
+
+
 def _work_assumptions(args: argparse.Namespace) -> int:
     # As in `_work`, only loading the roadmap is reported as a path error.
     try:
@@ -851,7 +978,20 @@ def _migrate(args: argparse.Namespace) -> int:
     if args.migrate_command != "article-ids":
         return 2
     try:
+        if args.write:
+            # Beside --json, stdout carries only the plan, so the writes go to stderr.
+            stream = sys.stderr if args.json else sys.stdout
+            for entry in write_article_ids(args.blueprint_dir):
+                print(f"{entry.article_path}: added article_id {entry.article_id}", file=stream)
         plan = plan_article_ids(args.blueprint_dir)
+    except ArticleIdWriteError as error:
+        for entry in error.written:
+            print(f"{entry.article_path}: added article_id {entry.article_id}", file=sys.stderr)
+        for issue in error.issues:
+            print(f"error: {issue}", file=sys.stderr)
+        if error.written:
+            print(f"error: added {len(error.written)} article_id(s) before stopping", file=sys.stderr)
+        return 2
     except GraphValidationError as error:
         for issue in error.issues:
             print(f"error: {issue}", file=sys.stderr)
@@ -925,6 +1065,22 @@ def _skeleton(args: argparse.Namespace) -> int:
         print(report.to_json())
     else:
         print(format_report(report, lean_root=args.lean_root), end="")
+    return 0 if report.clean else 1
+
+
+def _unused_hypotheses(args: argparse.Namespace) -> int:
+    try:
+        report = find_unused_hypotheses(
+            args.blueprint_dir,
+            lean_root=args.lean_root,
+            node_ids=tuple(args.nodes) if args.nodes else None,
+            timeout=args.timeout or DEFAULT_PROBE_TIMEOUT,
+        )
+    except SkeletonError as exc:
+        for issue in exc.issues:
+            print(f"error: {issue}", file=sys.stderr)
+        return 2
+    print(report.to_json() if args.json else format_unused_hypotheses(report), end="\n" if args.json else "")
     return 0 if report.clean else 1
 
 

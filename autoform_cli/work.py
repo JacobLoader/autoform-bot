@@ -151,29 +151,19 @@ def list_ready_work(
     lean_root: str | Path | None = None,
 ) -> WorkFrontier:
     runtime = load_runtime_graph(project_or_blueprint, lean_root=lean_root)
-    missing = tuple(
-        node.id
+    unfinished = [
+        node
         for node in runtime.nodes
-        if node.dispatchable
-        and not node.mathlib
-        and not node.status.proved
-        and node.article_id is None
-    )
+        if node.dispatchable and not node.mathlib and not node.status.proved
+    ]
+    missing = tuple(node.id for node in unfinished if node.article_id is None)
     if missing:
         raise WorkError(
             "formalizable leaves need durable article_id metadata: "
             + ", ".join(missing)
-            + " (plan IDs with `autoform migrate article-ids <blueprint> --json`, then"
-            " add each article_id to its article's frontmatter)"
+            + " (add them with `autoform migrate article-ids <blueprint> --write`)"
         )
-    unversioned = tuple(
-        node.id
-        for node in runtime.nodes
-        if node.dispatchable
-        and not node.mathlib
-        and not node.status.proved
-        and node.source_sha256 is None
-    )
+    unversioned = tuple(node.id for node in unfinished if node.source_sha256 is None)
     if unversioned:
         raise WorkError(
             "formalizable leaves need durable article revision metadata: "

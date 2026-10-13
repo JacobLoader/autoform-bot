@@ -17,6 +17,7 @@ from .graph import Graph
 from .graph_views import (
     GraphView,
     chapter_view,
+    container_nodes,
     focus_views,
     full_view,
     group_nodes,
@@ -44,7 +45,10 @@ def write_graph_pages(
     """
     destination = Path(destination).resolve()
     groups = group_nodes(graph)
-    local_views = focus_views(graph, statuses)
+    container_boxes = container_nodes(graph, statuses)
+    # Containers are drawn as scope boxes, so they have no row in the legend.
+    drawn = {node_id: state for node_id, state in statuses.items() if node_id not in container_boxes}
+    local_views = focus_views(graph, statuses, containers=container_boxes)
     project_page = destination / "dependencies.md"
     full_page = destination / "dependencies/full.md"
     chapter_pages = {group: destination / "dependencies/chapters" / f"{group or 'roadmap'}.md" for group in groups}
@@ -66,7 +70,7 @@ def write_graph_pages(
     written: list[Path] = []
 
     project = project_view(graph, statuses)
-    project_item_count = sum(len(node_ids) for node_ids in groups.values())
+    project_item_count = sum(node.item_count for node in project.nodes)
     project_book_links = node_links(project_page)
     project_links = {
         view_node.id: (
@@ -86,7 +90,7 @@ def write_graph_pages(
         _write_page(
             project_page,
             view=project,
-            statuses=statuses,
+            statuses=drawn,
             links=project_links,
             heading="Dependency maps",
             lead=(
@@ -164,12 +168,12 @@ def write_graph_pages(
                 ),
             )
         )
-    complete = full_view(graph, statuses)
+    complete = full_view(graph, statuses, containers=container_boxes)
     written.append(
         _write_page(
             full_page,
             view=complete,
-            statuses=statuses,
+            statuses=drawn,
             links=node_links(full_page),
             heading=complete.title,
             lead=(
@@ -196,7 +200,7 @@ def write_graph_pages(
             _write_page(
                 focus_page,
                 view=view,
-                statuses=_selected_statuses(statuses, view),
+                statuses=_selected_statuses(drawn, view),
                 links=focus_links,
                 heading=view.title,
                 lead=(
@@ -253,7 +257,7 @@ def _selected_statuses(
     statuses: dict[str, NodeStatus],
     view: GraphView,
 ) -> dict[str, NodeStatus]:
-    return {node_id: statuses[node_id] for node_id in view.member_ids}
+    return {node_id: statuses[node_id] for node_id in view.member_ids if node_id in statuses}
 
 
 def _navigation(*items: tuple[str, str]) -> str:

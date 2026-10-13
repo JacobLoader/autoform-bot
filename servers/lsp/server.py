@@ -29,12 +29,18 @@ from servers.repl.core import (
 )
 
 logger = getLogger(__name__)
+# Bound at import: tests swap subprocess.Popen for factories, and non-Popen
+# fakes skip the psutil liveness probe.
 _POPEN_TYPE = subprocess.Popen
 T = TypeVar("T")
 
 DEFAULT_LSP_TIMEOUT = 60
 MAX_LSP_HEADER_BYTES = 16 * 1024
 MAX_LSP_MESSAGE_BYTES = 16 * 1024 * 1024
+# How long Lean's watchdog gets to stop its file workers once its pipes close.
+LSP_EOF_GRACE_SECONDS = 2.0
+# How long close() waits for Lean to leave after shutdown and exit.
+LSP_SHUTDOWN_GRACE_SECONDS = 5.0
 
 
 class LspProtocolError(RuntimeError):
@@ -121,10 +127,10 @@ class LeanLspSession:
                 self.process = process
                 self._process_group_id = process.pid
                 self._group_retired = False
-            self._retire_pending = True
             try:
                 self._retire_once()
             except BaseException as cleanup_error:
+                logger.exception("failed to retire Lean LSP process after startup failure")
                 raise LeanLspStartupError(self, error) from cleanup_error
             raise
 
@@ -146,6 +152,22 @@ class LeanLspSession:
                         "refusing to signal an LSP process group after its leader was reaped"
                     )
             else:
+                # Lean's watchdog starts each file worker in its own session
+                # and stops every worker group when its stdin closes. A TERM
+                # first would kill the watchdog and orphan workers the group
+                # signal cannot reach. Close stdout too: the watchdog writes
+                # during that shutdown and handles a closed pipe, but would
+                # block on a full one. The leader stays unreaped while the
+                # watchdog exits, so the PGID cannot be reused meanwhile.
+                for stream in (process.stdin, process.stdout):
+                    if stream is not None:
+                        try:
+                            stream.close()
+                        except OSError:
+                            logger.warning("failed to close a Lean LSP pipe", exc_info=True)
+                _wait_for_live_process_group_exit(
+                    process_group_id, time.monotonic() + LSP_EOF_GRACE_SECONDS
+                )
                 _terminate_process_group(process_group_id)
             # Publish this before any operation that can reap the leader. A
             # retry must never signal a reused numeric PGID.
@@ -176,10 +198,12 @@ class LeanLspSession:
             if self.is_alive():
                 try:
                     self._send_request("shutdown", {})
-                    self._send_notification("exit", {})
+                    # Lean leaves after shutdown only on an exit without params.
+                    self._send_notification("exit", None)
                     if self._process_group_id is not None:
                         _wait_for_live_process_group_exit(
-                            self._process_group_id, time.monotonic() + 5
+                            self._process_group_id,
+                            time.monotonic() + LSP_SHUTDOWN_GRACE_SECONDS,
                         )
                 except Exception:
                     logger.warning("graceful Lean LSP shutdown failed", exc_info=True)
@@ -211,7 +235,7 @@ class LeanLspSession:
             status = psutil.Process(process.pid).status()
         except psutil.NoSuchProcess:
             return False
-        except (psutil.AccessDenied, psutil.Error):
+        except psutil.Error:
             return True
         return status not in {psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD}
 
@@ -278,13 +302,10 @@ class LeanLspSession:
             )
         finally:
             try:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError("no LSP operation budget remains for didClose")
                 self._send_notification(
                     "textDocument/didClose",
                     {"textDocument": {"uri": uri}},
-                    timeout=remaining,
+                    timeout=self._remaining(deadline, operation_timeout),
                 )
             except Exception:
                 self._retire_pending = True
@@ -340,13 +361,10 @@ class LeanLspSession:
             )
         finally:
             try:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError("no LSP operation budget remains for didClose")
                 self._send_notification(
                     "textDocument/didClose",
                     {"textDocument": {"uri": uri}},
-                    timeout=remaining,
+                    timeout=self._remaining(deadline, timeout),
                 )
             except Exception:
                 self._retire_pending = True
@@ -378,16 +396,14 @@ class LeanLspSession:
     def _send_notification(
         self,
         method: str,
-        params: dict,
+        params: dict | None,
         *,
         timeout: float = 30,
     ) -> None:
         """Send a JSON-RPC notification (no response expected)."""
-        msg = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        }
+        msg: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+        if params is not None:
+            msg["params"] = params
         self._write_message(msg, timeout=timeout)
 
     def _write_message(self, msg: dict, *, timeout: float = 30) -> None:
@@ -544,7 +560,7 @@ class LeanLspSession:
 
         try:
             message = json.loads(bytes(body).decode("utf-8"))
-        except ValueError as error:
+        except (ValueError, RecursionError) as error:
             raise LspProtocolError("LSP emitted an invalid JSON body") from error
         if not isinstance(message, dict):
             raise LspProtocolError("LSP JSON-RPC message is not an object")

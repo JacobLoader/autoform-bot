@@ -69,7 +69,7 @@ def test_formalize_replaces_custom_orchestration_with_the_markdown_frontier(
         "claim_target",
         "separate Git worktrees",
         "shared Lean LSP and REPL",
-        "## Execution notes",
+        "`blueprint/.implementation-notes/<article_id>.md`",
         "returns to Roadmap",
     ):
         assert required in skill
@@ -87,6 +87,73 @@ def test_formalize_replaces_custom_orchestration_with_the_markdown_frontier(
     assert "$formalize" in metadata
     assert "Formalize the ready Markdown roadmap frontier" in codex
     assert '"id": "formalize"' in muse
+
+
+def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path) -> None:
+    """Notes written into articles crept into published books as Lean commentary.
+
+    One hidden file per durable article keeps implementation work out of the
+    mathematical wiki without creating a shared merge hotspot.
+    """
+
+    def read(relative: str) -> str:
+        return " ".join((repo_root / relative).read_text(encoding="utf-8").split())
+
+    formalize = read("skills/formalize/SKILL.md")
+    roadmap = read("skills/roadmap/SKILL.md")
+    reference = read("autoform_cli/README.md")
+    guidance = read("AGENTS.md")
+    rubric = read("skills/agent-review/references/roadmap-quality.md")
+
+    assert "Read the complete article, its `blueprint/.implementation-notes/<article_id>.md`" in formalize
+    assert "The article keeps only frontmatter and mathematics." in formalize
+    assert "Write notes only in the claimed article's `blueprint/.implementation-notes/<article_id>.md`" in formalize
+    assert "one file per claimed article avoids cross-worker merge hotspots" in formalize
+    assert "Delete the file once the article is proved" in formalize
+    assert "Delete every note the audit reports as `stale-implementation-note`" in formalize
+    assert "even though it belongs to another article" in formalize
+    assert "delete every note the audit now reports as stale in a follow-up commit" in formalize
+    assert '"stale-implementation-note"' in read("autoform_cli/audit.py")
+    assert "never a secret or machine-local path" in formalize
+    assert "Never link the hidden note from an article" in formalize
+    assert "Articles hold only frontmatter and informal mathematics" in roadmap
+    assert "`blueprint/.implementation-notes/<article_id>.md`" in roadmap
+    assert "Delete it when the article is proved or marked `mathlib: true`" in roadmap
+    assert (
+        "delete a container's note when every formalizable descendant is proved and there is at least one"
+        in roadmap
+    )
+    assert "an orphaned note blocks every command that loads the graph" in roadmap
+    assert "any worker may repair one the same way" in roadmap
+    assert "never a transcript, a secret, or a machine-local path" in roadmap
+    assert (
+        "containers have no claims, and any worker may delete a note that `autoform audit` reports as stale"
+        in reference
+    )
+    assert "When an article that still exists lost its `article_id` line, restore the line" in formalize
+    assert "delete the orphan, and commit. Any worker may make this repair" in formalize
+    assert "The exceptions are deleting stale implementation notes and repairing orphaned ones" in formalize
+    assert "Parallel branches can orphan a note without a Git conflict" in reference
+    assert "reports as stale or repair an orphaned one" in reference
+    assert "When the article still exists but lost its `article_id` line, restore the line instead" in reference
+    assert "Versioned implementation notes live outside the mathematical roadmap" in reference
+    assert "delete it once every formalizable descendant is proved and there is at least one" in reference
+    assert "Record what happened in the revision commit and report" in reference
+    assert (
+        "Use an implementation note only until [its deletion rule](#articles-and-containment) applies"
+        in reference
+    )
+    assert "Markdown under `blueprint/roadmap/` is the authored roadmap" in guidance
+    assert "files under `blueprint/.implementation-notes/`" in guidance
+    assert "with its hidden `blueprint/.implementation-notes/<article_id>.md` when present" in rubric
+    assert "Uncertainty, Mathlib candidates, and unresolved source questions are explicit" in rubric
+    assert (
+        "Mathlib candidates and other Lean-side findings are in the article's implementation note, "
+        "never in the article"
+    ) in rubric
+    for text in (formalize, roadmap, reference, rubric):
+        assert "Execution notes" not in text
+        assert "`agents.md`" not in text
 
 
 def test_development_guidance_requires_fail_closed_local_safety(repo_root: Path) -> None:
@@ -141,6 +208,18 @@ def test_root_agent_guidance_routes_to_owning_documents(repo_root: Path) -> None
     for relative in ("CONTRIBUTING.md", "skills/develop-plugin/SKILL.md"):
         assert f"]({relative})" in guidance
         assert (repo_root / relative).is_file()
+
+    normalized_guidance = " ".join(guidance.split()).lower()
+    assert "identify the concrete user outcome or maintenance burden" in normalized_guidance
+    assert "review blockers does not prove that the proposal belongs" in normalized_guidance
+    assert "validate their own planning state" in normalized_guidance
+    assert "only when authorized" in normalized_guidance
+    assert "repository quality" in normalized_guidance
+    assert "line count" in normalized_guidance
+    assert "pr count" in normalized_guidance
+    assert all(word in normalized_guidance for word in ("closing", "deleting", "replacing"))
+    assert "otherwise recommend" in normalized_guidance
+    assert "success" in normalized_guidance
 
 
 def test_agent_review_treats_skeleton_hashes_as_advisory(repo_root: Path) -> None:
@@ -221,6 +300,13 @@ def test_setup_guidance_uses_the_offline_atomic_project_creator(repo_root: Path)
     assert "--lean-toolchain" in normalized
     assert "lake update" in normalized
     assert "v4.27.0" in normalized
+    assert "the project will depend on a Lean library, create the project on that library's Lean and Mathlib" in normalized
+    # Lean alone does not pick the release: a library may lock a Mathlib commit that is not the tag.
+    assert "the Mathlib `rev` its `lake-manifest.json` locks, at the revision the user plans to require" in normalized
+    assert "Pass both, as `--lean-toolchain` and `--mathlib-rev`" in normalized
+    assert "ask the user instead of guessing" in normalized
+    assert "Say which pair you chose and why in the setup report" in normalized
+    assert "Adding the `require` stays the user's decision" in normalized
     assert (
         "appending only missing Autoform rules through a retained bounded regular root"
         in normalized
@@ -818,7 +904,7 @@ def test_cli_reference_documents_only_commands_that_exist(repo_root: Path) -> No
 
     reference = (repo_root / "autoform_cli/README.md").read_text(encoding="utf-8")
     documented = _documented_invocations(reference)
-    assert {("check",), ("audit",), ("render",), ("claim", "acquire")} <= documented
+    assert {("check",), ("audit",), ("render",), ("search",), ("claim", "acquire")} <= documented
 
     for invocation in sorted(documented):
         with pytest.raises(SystemExit) as exit_info:
@@ -846,6 +932,78 @@ def test_skills_delegate_the_command_line_to_the_reference(repo_root: Path) -> N
         if "autoform_cli/README.md" in text:
             citing += 1
     assert citing >= 3
+
+
+def test_skill_links_into_the_cli_reference_land_on_a_section(repo_root: Path) -> None:
+    """A skill that cites a reference section must not point at a renamed one.
+
+    Skills hold no command line of their own, so a link whose fragment no
+    longer matches a heading leaves the agent at the top of a long file with no
+    contract to read.
+    """
+    reference_path = repo_root / "autoform_cli/README.md"
+    sections: set[str] = set()
+    fenced = False
+    for line in reference_path.read_text(encoding="utf-8").splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        elif not fenced and (heading := re.fullmatch(r"#{1,6} +(.+?) *", line)):
+            sections.add(re.sub(r"[^\w -]", "", heading[1].lower()).replace(" ", "-"))
+
+    cited = 0
+    for page in sorted((repo_root / "skills").rglob("*.md")):
+        where = page.relative_to(repo_root)
+        links = re.findall(r"\(([^)\s]*autoform_cli/README\.md)(?:#([^)\s]+))?\)", page.read_text(encoding="utf-8"))
+        for target, fragment in links:
+            assert (page.parent / target).resolve() == reference_path, f"{where} links past the reference: {target}"
+            if fragment:
+                assert fragment in sections, f"{where} links to a missing section: #{fragment}"
+                cited += 1
+    assert cited
+
+
+def test_skills_search_the_blueprint_before_adding_a_result(repo_root: Path) -> None:
+    """`autoform search` prevents a duplicate only if an agent runs it first.
+
+    Matching is literal, so the rule that matters most is that an empty result
+    is not yet an answer: without it an agent searches once with a full
+    sentence, finds nothing, and adds the result a second time.
+    """
+
+    def read(relative: str) -> str:
+        return " ".join((repo_root / relative).read_text(encoding="utf-8").split())
+
+    def rule(relative: str) -> str:
+        """The paragraph or list item that names the command."""
+
+        blocks = (repo_root / relative).read_text(encoding="utf-8").split("\n\n")
+        named = [" ".join(block.split()) for block in blocks if "`autoform search`" in block]
+        assert len(named) == 1, f"{relative}: the search rule is spread over {len(named)} paragraphs"
+        return named[0]
+
+    def sentence(text: str, phrase: str) -> str:
+        """The sentence of ``text`` that holds ``phrase``."""
+
+        found = [part for part in re.split(r"(?<=[.:]) ", text) if phrase in part]
+        assert len(found) <= 1, f"{phrase!r} is in {len(found)} sentences of the search rule"
+        return found[0] if found else ""
+
+    roadmap = rule("skills/roadmap/SKILL.md")
+    formalize = rule("skills/formalize/SKILL.md")
+    rubric = rule("skills/agent-review/references/roadmap-quality.md")
+
+    for text in (roadmap, formalize, rubric):
+        assert "README.md#search-contract)" in text
+        # One query that finds nothing does not show the result is new.
+        assert "fewer words" in text
+    for skill in (roadmap, formalize):
+        assert "refusal (exit 2) is not an empty result" in skill
+    # What to do with a hit, which is the point of searching: these check that
+    # each instruction is present, in one sentence, not how it is worded.
+    assert "instead of adding" in sentence(roadmap, "## Depends on")
+    assert "dependencies reach" in sentence(formalize, "Use the declaration")
+    assert "never restate" in sentence(formalize, "missing prerequisite")
+    assert "duplicate" in rubric and "not proof" in rubric
 
 
 def test_roadmap_reconciles_the_pages_setup_wrote(repo_root: Path) -> None:
@@ -889,6 +1047,11 @@ def test_example_workflows_match_the_scaffold_templates(repo_root: Path) -> None
     assert (
         repo_root / "autoform_cli/templates/github/autoform_audit.py"
     ).read_bytes() == (repo_root / _EXAMPLE / ".github/autoform_audit.py").read_bytes()
+    assert (
+        repo_root / "autoform_cli/templates/github/CODEOWNERS.autoform.example"
+    ).read_bytes() == (
+        repo_root / _EXAMPLE / ".github/CODEOWNERS.autoform.example"
+    ).read_bytes()
 
     for name in ("autoform-verify.yml", "blueprint-pages.yml"):
         expected = (template_dir / name).read_text(encoding="utf-8")
