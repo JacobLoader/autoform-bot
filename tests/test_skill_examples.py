@@ -19,6 +19,10 @@ from servers.repl.core import ALLOWED_IMPORTS
 
 _HREF = re.compile(r'href="([^"]+)"')
 _EXAMPLE = Path("skills/setup/assets/cabannes-thesis-project")
+# Upstream tag v4.32.0 of leanprover-community/repl points at this commit:
+# `git ls-remote --tags https://github.com/leanprover-community/repl.git`
+# lists refs/tags/v4.32.0 at it.
+_REPL_V4_32_0_COMMIT = "68a3b3a059787a7db44fb1e6281e4a657efee470"
 
 
 def test_root_readme_uses_the_canonical_repository(repo_root: Path) -> None:
@@ -317,15 +321,25 @@ def test_setup_example_pins_the_repl_that_the_real_repl_job_tests(repo_root: Pat
     fixture = repo_root / "tests/fixtures/repl-smoke"
     example = repo_root / _EXAMPLE
 
-    def repl_rev(project: Path) -> str:
+    def repl_revs(project: Path) -> tuple[str, str]:
         lakefile = tomllib.loads((project / "lakefile.toml").read_text(encoding="utf-8"))
-        return next(entry["rev"] for entry in lakefile["require"] if entry["name"] == "repl")
+        manifest = json.loads((project / "lake-manifest.json").read_text(encoding="utf-8"))
+        required = next(entry["rev"] for entry in lakefile["require"] if entry["name"] == "repl")
+        locked = next(entry["rev"] for entry in manifest["packages"] if entry["name"] == "repl")
+        return required, locked
 
     def toolchain(project: Path) -> str:
         return (project / "lean-toolchain").read_text(encoding="utf-8").strip()
 
-    assert repl_rev(example) == repl_rev(fixture)
+    for project in (example, fixture):
+        assert repl_revs(project) == (_REPL_V4_32_0_COMMIT, _REPL_V4_32_0_COMMIT), project
     assert toolchain(example) == toolchain(fixture)
+    # The docs name the tag rather than the commit, so they hold only while
+    # every pin above is that tag's commit.
+    setup = " ".join((repo_root / "skills/setup/SKILL.md").read_text(encoding="utf-8").split())
+    readme = " ".join((example / "README.md").read_text(encoding="utf-8").split())
+    assert "the bundled example pins the commit of tag `v4.32.0`" in setup
+    assert "the upstream REPL commit tagged `v4.32.0`" in readme
 
 
 def test_setup_guidance_uses_the_offline_atomic_project_creator(repo_root: Path) -> None:
