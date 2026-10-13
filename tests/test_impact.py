@@ -2136,8 +2136,9 @@ def test_unselected_source_with_a_quoted_module_name_stays_local(tmp_path: Path,
     # local, and the module's constants are located by its source file.
     (call,) = calls
     assert str(call["probe"]).startswith("import Demo\n-- Autoform impact probe.")
-    assert 'Name.str (Name.str (Name.anonymous) "Demo") "Basic copy"' in str(call["probe"])
-    assert 'Name.str (Name.str (Name.anonymous) "Demo") "."' in str(call["probe"])
+    # Each quoted stem reaches the probe as one string component of the JSON list.
+    assert '[\\"Demo\\", \\"Basic copy\\"]' in str(call["probe"])
+    assert '[\\"Demo\\", \\".\\"]' in str(call["probe"])
     assert "x»y" not in str(call["probe"])
     helpers = {helper["name"]: helper["path"] for helper in json.loads(output.out)["helpers"]}
     assert helpers["Demo.copied"] == "Demo/Basic copy.lean"

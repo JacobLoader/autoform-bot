@@ -196,7 +196,8 @@ def test_a_declaration_two_articles_name_is_read_once(tmp_path: Path) -> None:
     blueprint = _blueprint(tmp_path, lean={"a": "Skel.heavy_of_weight", "b": "Skel.heavy_of_weight"})
 
     def runner(probe: str, root: Path) -> str:
-        assert probe.count('"Skel.heavy_of_weight"') == 1
+        # The requested root appears once in the probe's JSON roots.
+        assert probe.count('\\"Skel.heavy_of_weight\\"') == 1
         return _theorem("Skel.heavy_of_weight", (3, "h", "0 < y", False))
 
     report = find_unused_hypotheses(blueprint, lean_root=project, runner=runner)
