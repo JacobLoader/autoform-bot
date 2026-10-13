@@ -44,11 +44,14 @@ LEAN_HEADER_LAUNCHER = (
     "lean = os.path.join(os.environ['LEAN_SYSROOT'], 'bin', 'lean'); "
     "os.execv(lean, [lean, '--run', sys.argv[1]])"
 )
-# Lake's error for ``lake exe @<package>/<target>`` when no package in the
-# workspace has that name, as when the REPL is required under another name.
+# Lake's error for ``lake exe @<package>/<target>`` when no package in
+# the workspace has that name: the REPL is required under another name,
+# or not at all.
 _LAKE_UNKNOWN_PACKAGE = "unknown package `"
 _REPL_REQUIRE_HINT = (
-    "Lake could not find the REPL package: rename the require to `repl`, "
+    "Lake could not find the REPL package: if the project has no REPL require, add "
+    "`leanprover-community/repl` as a require named `repl` as the Autoform setup skill "
+    "describes; for a require under another name, rename the require to `repl`, "
     'or restart the runtime with LEAN_REPL_CMD="lake exe @<name>/repl" for a require '
     "named <name>, which applies to every project the runtime serves"
 )
@@ -633,7 +636,7 @@ def _without_process_handles(response: dict[str, Any]) -> dict[str, Any]:
 
 
 def _with_repl_require_hint(message: str) -> str:
-    """Lead with both remedies when Lake found no package for the REPL command.
+    """Lead with the remedies when Lake found no package for the REPL command.
 
     A child that fails this way reaches the caller as a process exit or an
     unknown outcome whose message gives the child's stderr tail only after
