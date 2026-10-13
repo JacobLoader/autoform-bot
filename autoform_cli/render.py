@@ -373,7 +373,8 @@ def render_site(
                 else IndexedSourceSnapshot(SourceIndex(repo_root, {}, ""), revision="")
             )
         except OSError as error:
-            raise PublicationError([index_failure_message(error)]) from error
+            hint = "" if descriptor_capture_supported() else "; run without --lean-root to publish without code links"
+            raise PublicationError([index_failure_message(error) + hint]) from error
         repository_url = repository_url if repository_url is not None else detect_repository_url(repo_root)
         ref = ref if ref is not None else detect_ref(repo_root)
         sources = SOURCES_DIR in snapshot.directories
