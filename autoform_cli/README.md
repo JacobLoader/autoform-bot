@@ -1365,6 +1365,12 @@ but durable execution records and routes must require `article_id` until the
 path-move migration is complete. Operational state remains private and excluded
 from runtime snapshots and publication.
 
+Projection fails when an article's bytes no longer match the digest recorded
+when the graph was loaded, so a source revision never labels node data parsed
+from older bytes. A hand-built node without a digest makes no snapshot claim:
+its `source_sha256` stays null and the revision covers whatever bytes its
+article holds at projection time.
+
 ## Publication contract
 
 `autoform render` publishes the book, derived progress, and dependency maps at

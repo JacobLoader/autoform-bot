@@ -294,6 +294,11 @@ def build_runtime_graph(
         except OSError:
             issues.append(f"{node.id}: article cannot be read")
             continue
+        # The source revision hashes these bytes, so they must be the bytes the
+        # node was parsed from. A hand-built node without a digest makes no
+        # snapshot claim, and the revision covers whatever bytes are read here.
+        if node.source_sha256 is not None and hashlib.sha256(content).hexdigest() != node.source_sha256:
+            issues.append(f"{node.id}: article changed after graph load")
         article_path = relative_project.as_posix()
         if article_path in seen_article_paths:
             issues.append(f"{node.id}: article path is duplicated")
