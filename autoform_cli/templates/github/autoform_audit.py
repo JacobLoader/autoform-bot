@@ -245,7 +245,8 @@ def _module_parts(module: str, display_path: str) -> tuple[str, ...]:
             index = end
         if (
             not part
-            or any(ord(character) < 32 or character in "/\\«»" for character in part)
+            or not _printable(part)
+            or any(character in "/\\«»" for character in part)
             or part in {".", ".."}
         ):
             raise AuditInputError(f"ILean metadata has an invalid module name: {display_path}")
@@ -918,7 +919,9 @@ run_cmd do
 def _lean_name(module: str) -> str:
     result = "Name.anonymous"
     for part in _module_parts(module, module):
-        result = f"Name.str ({result}) {json.dumps(part)}"
+        # Lean reads a JSON surrogate pair as two NUL characters, so characters
+        # outside the Basic Multilingual Plane must stay as they are.
+        result = f"Name.str ({result}) {json.dumps(part, ensure_ascii=False)}"
     return result
 
 
