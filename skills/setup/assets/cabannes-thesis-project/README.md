@@ -8,8 +8,9 @@ slice as a handoff example.
 
 Developed with [AutoformBot](https://github.com/facebookresearch/autoform-bot).
 
-- `lean-toolchain`, `lakefile.toml`, and `CabannesThesis/` pin matching stable
-  Lean and Mathlib `v4.32.2` releases plus the compatible upstream REPL commit.
+- `lean-toolchain`, `lakefile.toml`, and `lake-manifest.json` pin matching
+  stable Lean and Mathlib `v4.32.2` releases plus the upstream REPL commit
+  tagged `v4.32.0`; the Lean sources are in `src/`.
 - `blueprint/` is an Obsidian-compatible Markdown vault with roadmap, coverage,
   sources, and a seven-node theorem DAG spanning two formalization chapters.
 - `mkdocs.yml` builds the `autoform render` output as a leanblueprint-styled
