@@ -78,9 +78,13 @@ jobs:
           cd "$RUNNER_TEMP/autoform-created-project"
           lake pack "$archive"
           python3 "$helper" GeneratedProject "$archive" "$probe"
-          AUTOFORM_AUDIT_LEAN_PATH="$(lake env printenv LEAN_PATH)" LEAN_ABORT_ON_PANIC=1 \
+          lean_path="$(lake env printenv LEAN_PATH)"
+          AUTOFORM_AUDIT_LEAN_PATH="$lean_path" LEAN_ABORT_ON_PANIC=1 \
             timeout --signal=TERM --kill-after=30s 15m lean "$probe" | tee "$output"
-          tail -n 1 "$output" | grep -Eq '^kernel trust clean \('
+          if ! tail -n 1 "$output" | grep -Eq '^kernel trust clean \('; then
+            echo "the audit probe did not end with its success line" >&2
+            exit 1
+          fi
       - name: Run the skeleton suite against real Lean
         run: >-
           timeout --signal=TERM --kill-after=30s 25m uv run pytest -q
