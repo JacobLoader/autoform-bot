@@ -1696,6 +1696,26 @@ def test_cli_import_impact_matches_module_names_by_component(
     assert 'Name.str (Name.str (Name.anonymous) "H") "1"' in calls[0]["probe"]
 
 
+def test_cli_import_impact_accepts_another_spelling_of_the_lean_root(tmp_path: Path, monkeypatch, capsys) -> None:
+    # On a case-insensitive file system `--lean-root` may differ in case from
+    # the on-disk path Lean reports; a symbolic link gives the same two
+    # spellings of one file on any file system.
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _stub_lean_root(tmp_path)
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(lean_root, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+    _stub_probe(monkeypatch, modules=(ModuleEvidence("Demo", str(alias / "Demo.lean")),))
+
+    code = cli.main(["work", "import-impact", _BASE_ID, "Demo", str(project), "--lean-root", str(lean_root), "--json"])
+
+    output = capsys.readouterr()
+    assert code == 0, output.err
+    assert json.loads(output.out)["affected_modules"] == ["Demo"]
+
+
 def test_cli_import_impact_rejects_an_unknown_module(tmp_path: Path, monkeypatch, capsys) -> None:
     project = _blueprint_project(tmp_path, "Demo")
     lean_root = _stub_lean_root(tmp_path)

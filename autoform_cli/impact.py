@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
@@ -441,7 +442,7 @@ def _validated_module_evidence(
                 [f"the impact probe loaded {module} without a captured root-project source"]
             )
         expected = root.joinpath(*Path(relative).parts)
-        if Path(record.source_path) != expected:
+        if not _same_file(Path(record.source_path), expected):
             raise SkeletonError(
                 [
                     f"project module {module} resolved to {record.source_path}, "
@@ -449,7 +450,7 @@ def _validated_module_evidence(
                 ]
             )
         expected_artifact = expected_artifacts[key]
-        if Path(record.olean_path) != expected_artifact:
+        if not _same_file(Path(record.olean_path), expected_artifact):
             raise SkeletonError(
                 [
                     f"project module {module} loaded artifact {record.olean_path}, "
@@ -457,6 +458,21 @@ def _validated_module_evidence(
                 ]
             )
     return evidence
+
+
+def _same_file(found: Path, expected: Path) -> bool:
+    """Whether Lean's real path ``found`` names the file at ``expected``.
+
+    ``expected`` keeps the spelling of ``--lean-root``, so on a case-insensitive
+    file system it can differ from the on-disk spelling Lean reports.
+    """
+
+    if found == expected:
+        return True
+    try:
+        return os.path.samefile(found, expected)
+    except OSError:
+        return False
 
 
 def _module_artifact_paths(
