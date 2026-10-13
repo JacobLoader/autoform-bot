@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Generic, TypeVar
 
 from servers import resolve_lean_file, resolve_lean_project_dir
+from servers.batch_diagnostics import batch_diagnostics
 from servers.lean_client import (
     BUILD_GENERATION,
     INSTALL_ID,
@@ -66,6 +67,7 @@ DEFAULT_MAX_REPL_REQUEST_SECONDS = 240.0
 DEFAULT_RPC_READ_TIMEOUT = 10.0
 DEFAULT_MAX_CONNECTIONS = 64
 RUNTIME_SAFETY_SECONDS = 30.0
+DEFAULT_DIAGNOSTICS_COMMAND = ("lake", "--no-build", "lean")
 # Conservative bounds for cleanup/startup work that surrounds one tool call.
 # They keep the daemon's work inside the client's response deadline even when
 # an inactive project must be replaced first.
@@ -151,6 +153,10 @@ class LeanRuntimeConfig:
     rpc_read_timeout: float
     max_connections: int
     response_timeout: float
+    # Diagnostics come from one `lake lean` run per call. LEAN_DIAGNOSTICS_BACKEND=lsp
+    # restores the language-server path for one release.
+    diagnostics_command: tuple[str, ...] = DEFAULT_DIAGNOSTICS_COMMAND
+    diagnostics_backend: str = "lake"
 
     @classmethod
     def from_environment(cls) -> "LeanRuntimeConfig":
@@ -222,6 +228,17 @@ class LeanRuntimeConfig:
             raise ValueError(
                 "LEAN_LSP_TIMEOUT cannot exceed AUTOFORM_MAX_LSP_REQUEST_SECONDS"
             )
+        # Diagnostics use the same Lake as LEAN_LSP_CMD ("<lake> serve").
+        diagnostics_command = (
+            (*lsp_command[:-1], "--no-build", "lean")
+            if lsp_command[-1] == "serve"
+            else DEFAULT_DIAGNOSTICS_COMMAND
+        )
+        diagnostics_backend = os.environ.get("LEAN_DIAGNOSTICS_BACKEND") or "lake"
+        if diagnostics_backend not in ("lake", "lsp"):
+            raise ValueError(
+                f"LEAN_DIAGNOSTICS_BACKEND must be 'lake' or 'lsp', got {diagnostics_backend!r}"
+            )
         response_timeout = _positive_float(
             "AUTOFORM_RUNTIME_RESPONSE_TIMEOUT",
             DEFAULT_RESPONSE_TIMEOUT,
@@ -270,6 +287,8 @@ class LeanRuntimeConfig:
                 DEFAULT_MAX_CONNECTIONS,
             ),
             response_timeout=response_timeout,
+            diagnostics_command=diagnostics_command,
+            diagnostics_backend=diagnostics_backend,
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -289,6 +308,8 @@ class LeanRuntimeConfig:
             "rpc_read_timeout": self.rpc_read_timeout,
             "max_connections": self.max_connections,
             "response_timeout": self.response_timeout,
+            "diagnostics_command": list(self.diagnostics_command),
+            "diagnostics_backend": self.diagnostics_backend,
         }
 
 
@@ -872,6 +893,9 @@ class LeanRuntimeServices:
         except BaseException:
             self.repl_projects.close()
             raise
+        # At most max_projects batch diagnostics runs at once, like the old
+        # bound of one resident language server per project.
+        self._batch_slots = threading.BoundedSemaphore(self.config.max_projects)
 
     def dispatch(self, method: str, params: dict[str, Any]) -> Any:
         if method == "daemon.ping":
@@ -932,10 +956,13 @@ class LeanRuntimeServices:
             project_dir = self._string_param(params, "project_dir")
             file_path = self._string_param(params, "file_path")
             root, path = resolve_lean_file(project_dir, file_path)
-            diagnostics = self._lsp_operation(
-                root,
-                lambda session: session.get_diagnostics(str(path)),
-            )
+            if self.config.diagnostics_backend == "lsp":
+                diagnostics = self._lsp_operation(
+                    root,
+                    lambda session: session.get_diagnostics(str(path)),
+                )
+            else:
+                diagnostics = self._batch_diagnostics(root, path)
             return format_lsp_diagnostics(diagnostics)
         if method == "lsp.hover":
             project_dir = self._string_param(params, "project_dir")
@@ -995,6 +1022,25 @@ class LeanRuntimeServices:
         self.lsp_projects.begin_close()
         self.repl_projects.close()
         self.lsp_projects.close()
+
+    def _batch_diagnostics(self, root: Path, path: Path) -> list[dict[str, Any]]:
+        """Check one file with ``lake lean``; LEAN_LSP_TIMEOUT bounds the wait and the run."""
+        limit = self.config.lsp_timeout
+        deadline = time.monotonic() + limit
+        if not self._batch_slots.acquire(timeout=limit):
+            raise TimeoutError(
+                f"no free Lean slot within {limit:g}s (LEAN_LSP_TIMEOUT); "
+                f"{self.config.max_projects} checks are already running"
+            )
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"no time left in LEAN_LSP_TIMEOUT ({limit:g}s) to check {path.name}")
+            return batch_diagnostics(
+                root, path, command=self.config.diagnostics_command, timeout=remaining
+            )
+        finally:
+            self._batch_slots.release()
 
     def _acquisition_timeout(self, operation_timeout: float) -> float:
         """Reserve enough of the RPC deadline for the admitted tool operation."""

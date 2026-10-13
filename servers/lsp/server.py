@@ -732,10 +732,12 @@ def create_lsp_server(runtime: LeanRuntimeClient) -> FastMCP:
     def lean_diagnostic_messages(project_dir: str, file_path: str) -> str:
         """Return Lean diagnostics for an in-project file.
 
-        Waits until Lean has finished checking the file. The runtime's
-        LEAN_LSP_TIMEOUT (60 seconds by default) bounds the call, including time
-        spent behind other LSP calls on the same project; a file that needs
-        longer fails instead of returning partial diagnostics.
+        Checks the file with one `lake --no-build lean` run and waits until Lean
+        has finished. The runtime's LEAN_LSP_TIMEOUT (60 seconds by default)
+        bounds the call, including time spent waiting for a free Lean slot; a
+        file that needs longer fails instead of returning partial diagnostics.
+        Imports that are not built are reported rather than built: build the
+        modules it lists and call again.
 
         Args:
             project_dir: Absolute path to the Lake project root.

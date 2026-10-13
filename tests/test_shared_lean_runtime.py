@@ -84,6 +84,9 @@ def runtime_config(**overrides):
         "rpc_read_timeout": 1.0,
         "max_connections": 8,
         "response_timeout": 900.0,
+        # These tests drive the language-server session through diagnostics;
+        # tests/test_batch_diagnostics.py covers the default batch path.
+        "diagnostics_backend": "lsp",
     }
     values.update(overrides)
     return LeanRuntimeConfig(**values)

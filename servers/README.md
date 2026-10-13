@@ -51,16 +51,23 @@ uv run autoform-lean-runtime stop
 `stop` is graceful: it waits for admitted tool calls and Lean children to
 finish shutting down before a subsequent `start` can replace the runtime.
 
-`lean_diagnostic_messages` waits until Lean says it has finished checking the
-file (`textDocument/waitForDiagnostics`). `LEAN_LSP_TIMEOUT` (60 seconds by
-default) bounds each call, including time spent behind other LSP calls on the
-same project. A call that runs out fails rather than returning partial
-diagnostics, and the project's Lean server restarts. The value must not exceed
-`AUTOFORM_MAX_LSP_REQUEST_SECONDS` (600 seconds by default) or the runtime
-refuses to start, and raising that maximum past 745 seconds also needs
-`AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` raised. Like the limits below, it is read
-when the runtime starts: run `uv run autoform-lean-runtime stop` after changing
-it.
+`lean_diagnostic_messages` checks the file with one `lake --no-build lean` run
+per call and waits until Lean exits. Imports that are not built or are out of
+date are reported with the modules to build, not built inside the call. At most
+`AUTOFORM_MAX_LEAN_PROJECTS` checks run at once. `LEAN_DIAGNOSTICS_BACKEND=lsp`
+restores the previous language-server path, which builds imports, for one
+release, after which it will be removed. `lean_hover` still uses the project's
+Lean server and waits until Lean says it has finished.
+
+`LEAN_LSP_TIMEOUT` (60 seconds by default) bounds each call, including time
+spent waiting for a free Lean slot or behind other LSP calls on the same
+project. A call that runs out fails rather than returning partial results; a
+language-server call that runs out also restarts the project's Lean server. The
+value must not exceed `AUTOFORM_MAX_LSP_REQUEST_SECONDS` (600 seconds by
+default) or the runtime refuses to start, and raising that maximum past 745
+seconds also needs `AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` raised. Like the limits
+below, both variables are read when the runtime starts: run
+`uv run autoform-lean-runtime stop` after changing them.
 
 The private socket lives below `$XDG_RUNTIME_DIR/autoform`, falling back to a
 uid-specific directory in `/tmp`; the rotating runtime log is beside it.

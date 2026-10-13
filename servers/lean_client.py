@@ -34,6 +34,7 @@ INSTALL_PATH_ID = hashlib.sha256(os.fsencode(PACKAGE_ROOT)).hexdigest()[:10]
 _RUNTIME_SOURCES = (
     Path(__file__).resolve(),
     PACKAGE_ROOT / "servers" / "lean_runtime.py",
+    PACKAGE_ROOT / "servers" / "batch_diagnostics.py",
     PACKAGE_ROOT / "servers" / "lsp" / "server.py",
     PACKAGE_ROOT / "servers" / "repl" / "core.py",
     PACKAGE_ROOT / "servers" / "repl" / "pool.py",

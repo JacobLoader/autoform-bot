@@ -118,6 +118,11 @@ jobs:
         env:
           AUTOFORM_REQUIRE_REAL_LEAN_TESTS: "1"
           AUTOFORM_REAL_LEAN_MATHLIB_PROJECT: ${{ runner.temp }}/autoform-created-project
+      - name: Run batch diagnostics against real Lean
+        run: timeout --signal=TERM --kill-after=30s 10m uv run pytest -q tests/test_batch_diagnostics.py -k real_lean
+        env:
+          AUTOFORM_REQUIRE_REAL_LEAN_TESTS: "1"
+          AUTOFORM_REAL_LEAN_MATHLIB_PROJECT: ${{ runner.temp }}/autoform-created-project
 
   real-repl:
     name: real REPL (fixture toolchain)
