@@ -83,9 +83,6 @@ class FakeLsp:
     def close(self):
         self.closed = True
 
-    def abort(self):
-        self.closed = True
-
     def retire(self):
         self.closed = True
 
@@ -1285,6 +1282,7 @@ def test_cache_close_waits_for_retirement_before_returning(tmp_path):
     close_started = threading.Event()
     release_close = threading.Event()
     close_finished = threading.Event()
+
     def close_resource(resource):
         close_started.set()
         assert release_close.wait(timeout=2)
@@ -1360,13 +1358,12 @@ def test_cache_constructor_drains_started_reapers_on_start_failure(
     def fail_second_reaper(worker):
         if worker.name == "autoform-project-retirement-2":
             if failure_point == "after":
-                result = real_start(worker)
+                real_start(worker)
                 started.append(worker)
                 raise RuntimeError("injected post-start interruption")
             raise RuntimeError("injected thread-start failure")
-        result = real_start(worker)
+        real_start(worker)
         started.append(worker)
-        return result
 
     monkeypatch.setattr(threading.Thread, "start", fail_second_reaper)
     with pytest.raises(RuntimeError, match="injected"):
@@ -1387,11 +1384,10 @@ def test_cache_constructor_drains_reapers_when_sweeper_start_is_interrupted(monk
     started = []
 
     def interrupt_sweeper(worker):
-        result = real_start(worker)
+        real_start(worker)
         started.append(worker)
         if worker.name == "autoform-project-eviction":
             raise RuntimeError("injected sweeper-start interruption")
-        return result
 
     monkeypatch.setattr(threading.Thread, "start", interrupt_sweeper)
     with pytest.raises(RuntimeError, match="sweeper-start"):
@@ -1420,9 +1416,8 @@ def test_service_constructor_closes_first_cache_when_second_cache_start_fails(
             retirement_starts += 1
             if retirement_starts == 3:
                 raise RuntimeError("injected second-cache start failure")
-        result = real_start(worker)
+        real_start(worker)
         started.append(worker)
-        return result
 
     monkeypatch.setattr(threading.Thread, "start", fail_in_second_cache)
     with pytest.raises(RuntimeError, match="second-cache start"):

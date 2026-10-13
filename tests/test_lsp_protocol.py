@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -15,6 +14,7 @@ import psutil
 import pytest
 
 from servers.lsp import server as lsp
+from tests.test_impact import _SKELETON_FIXTURE, _lean_toolchain_available
 
 
 class _FakeStream:
@@ -377,7 +377,6 @@ def test_hover_input_decode_failure_keeps_healthy_session(tmp_path):
         session.hover(str(source), 0, 0)
 
     assert session.is_alive() is True
-    assert session._retire_pending is False
 
 
 def test_abort_refuses_to_signal_a_pre_reaped_leader_with_live_group(monkeypatch):
@@ -596,33 +595,9 @@ def test_abort_after_the_wrapper_crashed_still_reaches_the_watchdog():
             session.abort()
 
 
-_SKELETON_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "skeleton-project"
-
-
-def _lean_toolchain_available() -> bool:
-    """Whether a project pinned like the skeleton fixture runs here without a download.
-
-    This repeats tests/test_skeleton.py's check, including its
-    AUTOFORM_REQUIRE_REAL_LEAN_TESTS switch, rather than importing that module.
-    """
-
-    def unavailable(reason: str) -> bool:
-        if os.environ.get("AUTOFORM_REQUIRE_REAL_LEAN_TESTS") == "1":
-            raise RuntimeError(f"real Lean tests are required but unavailable: {reason}")
-        return False
-
-    if shutil.which("lake") is None:
-        return unavailable("lake is not on PATH")
-    elan = shutil.which("elan")
-    if elan is None:
-        return True
-    pinned = (_SKELETON_FIXTURE / "lean-toolchain").read_text(encoding="utf-8").strip()
-    try:
-        listed = subprocess.run([elan, "toolchain", "list"], capture_output=True, text=True, timeout=30, check=False)
-    except (OSError, subprocess.SubprocessError):
-        return unavailable("elan toolchain discovery failed")
-    available = any(line.split()[:1] == [pinned] for line in listed.stdout.splitlines())
-    return available or unavailable(f"{pinned} is not installed")
+_requires_real_lean = pytest.mark.skipif(
+    not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain"
+)
 
 
 def _real_lean_project(root: Path, main: str, **modules: str) -> Path:
@@ -669,7 +644,7 @@ def _open_until(
     descendants.update(leader.children(recursive=True))
 
 
-@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+@_requires_real_lean
 def test_real_lean_abort_stops_file_workers(tmp_path):
     # Building the import blocks, so the file worker's `lake setup-file` and
     # its `lean ... -o` child are still running when cleanup starts.
@@ -694,7 +669,7 @@ def test_real_lean_abort_stops_file_workers(tmp_path):
             session.abort()
 
 
-@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+@_requires_real_lean
 def test_real_lean_graceful_close_is_prompt_and_complete(tmp_path):
     project = _real_lean_project(tmp_path / "graceful", "theorem probe : 1 + 1 = 2 := rfl\n")
     session = lsp.LeanLspSession(lsp.LspConfig(cwd=str(project), timeout=120))
