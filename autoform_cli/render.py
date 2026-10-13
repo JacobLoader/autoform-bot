@@ -290,8 +290,8 @@ class RenderReport:
     nodes: int = 0
     linked: int = 0
     unresolved: list[str] = field(default_factory=list)
-    unchecked: list[str] = field(default_factory=list)
-    """Published declarations not looked up because the sources were not read."""
+    unchecked: bool = False
+    """A published declaration was not looked up because the sources were not read."""
     warnings: list[str] = field(default_factory=list)
 
 
@@ -448,12 +448,11 @@ def _render_pages(
     if not linker.indexed:
         # Only the declarations a page would link are lost. A blueprint that
         # names none publishes the same site as a host that read the sources.
-        report.unchecked = [
-            f"{node_id}: {name}"
+        report.unchecked = any(
+            declaration_names(graph.nodes[node_id].lean or "")
             for node_ids in groups.values()
             for node_id in node_ids
-            for name in declaration_names(graph.nodes[node_id].lean or "")
-        ]
+        )
         if report.unchecked:
             report.warnings.append(
                 "code links were skipped because this platform cannot capture Lean "
