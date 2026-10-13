@@ -210,6 +210,7 @@ def test_wheel_contains_only_the_minimal_runtime(repo_root, tmp_path):
             "servers/lean_runtime.py",
             "servers/lsp/server.py",
             "servers/repl/core.py",
+            "servers/repl/parse_header.lean",
             "servers/repl/server.py",
         } <= names
         assert "autoform_cli/lake.py" not in names
