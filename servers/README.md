@@ -19,7 +19,9 @@ reports is validated, and a rejected or
 unrecognized parser response fails closed. Allowlisted imports require
 plain, nonempty canonical module components; names that remain quoted or
 path-like after Lean parsing are refused instead of being reduced to a
-misleading allowlisted root. Execution names the
+misleading allowlisted root. The header check runs as one extra short Lean
+process per call and counts toward the same request budget as the rest of
+the call. Execution names the
 package-qualified `@repl/repl` target so a project target cannot shadow it.
 Closing the session that started it does not stop it; after a crash, the next
 tool call starts it again. Runtime sockets include a code fingerprint, so an
