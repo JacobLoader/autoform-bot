@@ -83,6 +83,12 @@ def test_fixture_exposes_escaped_module_traversal_without_policy_validation():
             "import Mathlib.«..».Secret\n#check escapedTraversalMarker",
             "plain, nonempty module components",
         ),
+        # Name.toString leaves these unescaped, so each root would read as Mathlib or Aesop.
+        ((), "import «Mathlib.Unsafe».«x✝»\n#check Nat", "plain, nonempty module components"),
+        ((), "import «Mathlib.Unsafe»._hyg\n#check Nat", "plain, nonempty module components"),
+        ((), "import «Mathlib.Unsafe».«_inaccessible»\n#check Nat", "plain, nonempty module components"),
+        ((), "import «Mathlib.Unsafe✝»\n#check Nat", "plain, nonempty module components"),
+        ((), "import «Aesop.Unsafe».«x✝»\n#check Nat", "plain, nonempty module components"),
         ((), "import REPL.Frontend\n#check Nat", None),
         ((), '#eval "--/"', None),
         ((), "--/ harmless line comment\n#check Nat", None),

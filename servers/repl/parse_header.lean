@@ -18,9 +18,15 @@ def main : IO Unit := do
       errors := errors.push s!"{message.pos.line}:{message.pos.column}: {← message.data.toString}"
   let mut entry := Json.mkObj [("errors", toJson errors)]
   if errors.isEmpty then
+    let moduleHeader := HeaderSyntax.toModuleHeader header
+    -- `toJson` prints a module with `Name.toString`, which does not escape names such as
+    -- `«Mathlib.Unsafe».«x✝»` or `«Mathlib.Unsafe»._hyg`, so their root would read as
+    -- `Mathlib`. Escape each component that needs it instead.
+    let imports := moduleHeader.imports.map fun imp =>
+      (toJson imp).setObjVal! "module" (toJson (Name.toStringWithSep "." true imp.module))
     -- Before v4.30 an ordinary header and `prelude` followed by `import Init`
     -- both report one plain `Init` import, so also say whether `prelude` is there.
-    let result := (toJson (HeaderSyntax.toModuleHeader header)).setObjVal! "isPrelude"
-      (toJson !header.raw[1].isNone)
+    let result := (toJson moduleHeader).setObjVal! "imports" (toJson imports)
+      |>.setObjVal! "isPrelude" (toJson !header.raw[1].isNone)
     entry := entry.setObjVal! "result" result
   IO.println (Json.mkObj [("imports", Json.arr #[entry])]).compress

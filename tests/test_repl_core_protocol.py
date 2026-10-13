@@ -1189,6 +1189,12 @@ def test_header_parser_launcher_ignores_a_path_shadow(tmp_path):
             _fake_header_deps(_deps_json("Mathlib.«..».Secret")),
             "plain, nonempty module components",
         ),
+        # parse_header.lean prints this name escaped. Unescaped, as Name.toString
+        # prints it, its root would read as the allowlisted Mathlib.
+        (
+            _fake_header_deps(_deps_json("«Mathlib.Unsafe».«x✝»")),
+            "plain, nonempty module components",
+        ),
         (_fake_header_deps("", returncode=1, stderr="unknown package\n"), "unknown package"),
         (_fake_header_deps("not json"), "unrecognized output"),
         (
