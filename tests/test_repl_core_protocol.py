@@ -549,10 +549,6 @@ def test_disposable_call_uses_one_decreasing_phase_budget(monkeypatch):
 
     monkeypatch.setattr(repl_core.time, "monotonic", lambda: clock["now"])
 
-    def close(**kwargs):
-        repl.process = None
-        repl._process_group_id = None
-
     def check_header(code, deadline):
         assert deadline == 10
         clock["now"] = 2
@@ -566,7 +562,6 @@ def test_disposable_call_uses_one_decreasing_phase_budget(monkeypatch):
         budgets.append(("command", timeout, code))
         return {"env": 1, "messages": []}
 
-    monkeypatch.setattr(repl, "close", close)
     monkeypatch.setattr(repl, "_check_header", check_header)
     monkeypatch.setattr(repl, "start", start)
     monkeypatch.setattr(repl, "_run", run)
@@ -601,10 +596,6 @@ def test_disposable_timeout_names_the_expired_phase(monkeypatch, expired_phase, 
 
     monkeypatch.setattr(repl_core.time, "monotonic", lambda: clock["now"])
 
-    def close(**kwargs):
-        repl.process = None
-        repl._process_group_id = None
-
     def check_header(code, deadline):
         if expired_phase == "header":
             raise TimeoutError("timed out checking the Lean header")
@@ -621,7 +612,6 @@ def test_disposable_timeout_names_the_expired_phase(monkeypatch, expired_phase, 
             pytest.fail("expired budget dispatched the command")
         raise repl_core.ReplOutcomeUnknown("transport failed") from TimeoutError()
 
-    monkeypatch.setattr(repl, "close", close)
     monkeypatch.setattr(repl, "_check_header", check_header)
     monkeypatch.setattr(repl, "start", start)
     monkeypatch.setattr(repl, "_run", run)
@@ -637,11 +627,6 @@ def test_disposable_backlog_adjusts_prefixed_positions(monkeypatch):
         )
     )
 
-    def close(**kwargs):
-        repl.process = None
-        repl._process_group_id = None
-
-    monkeypatch.setattr(repl, "close", close)
     monkeypatch.setattr(repl, "start", lambda **kwargs: None)
     monkeypatch.setattr(
         repl,
@@ -722,11 +707,6 @@ def test_unvalidated_disposable_composes_only_proven_ordinary_headers(
         )
     )
 
-    def close(**kwargs):
-        repl.process = None
-        repl._process_group_id = None
-
-    monkeypatch.setattr(repl, "close", close)
     monkeypatch.setattr(repl, "start", lambda **kwargs: None)
     monkeypatch.setattr(repl, "_check_header", lambda code, deadline: analysis)
     frames = []
@@ -1281,7 +1261,7 @@ _V4_27_INIT_ONLY = (
 def test_disposable_call_prefixes_warmup_only_onto_proven_ordinary_headers(monkeypatch, header_output, code, frame):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(
-            allowed_imports=frozenset({"Mathlib", "REPL", "Init"}),
+            allowed_imports=frozenset({"Mathlib", "REPL"}),
             warmup_imports=frozenset({"Mathlib"}),
             header_command=_fake_header_command(header_output),
         )
@@ -1349,11 +1329,11 @@ def test_header_check_reaps_descendants_after_success(tmp_path):
     process_record = tmp_path / "processes.json"
     script = (
         "import json, os, subprocess, sys; "
-        "child = subprocess.Popen([sys.executable, '-c', "
+        "subprocess.Popen([sys.executable, '-c', "
         "'import time; time.sleep(30)'], stdout=subprocess.DEVNULL, "
         "stderr=subprocess.DEVNULL); "
         f"open({str(process_record)!r}, 'w').write(json.dumps("
-        "{'child': child.pid, 'group': os.getpgrp()})); "
+        "{'group': os.getpgrp()})); "
         "sys.stdin.read(); "
         f"sys.stdout.write({_header_json('Mathlib')!r})"
     )

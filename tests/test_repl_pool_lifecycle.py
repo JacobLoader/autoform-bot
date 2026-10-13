@@ -65,9 +65,6 @@ def test_shutdown_retains_failed_workers_for_a_retry(monkeypatch):
             self.close_calls = 0
             workers.append(self)
 
-        def start(self):
-            pass
-
         def close(self):
             self.close_calls += 1
             if self is workers[0] and self.close_calls == 1:
@@ -158,9 +155,6 @@ def test_pool_subtracts_queue_time_from_the_disposable_call(monkeypatch):
         def close(self):
             pass
 
-        def get_memory_usage(self):
-            return 0.0
-
     monkeypatch.setattr(repl_pool, "LeanRepl", FakeRepl)
     monkeypatch.setattr(repl_pool.time, "monotonic", lambda: next(times))
     pool = repl_pool.LeanReplPool(repl_pool.LeanReplPoolConfig(num_repls=1))
@@ -185,7 +179,6 @@ def test_queued_call_timeout_states_the_callers_budget(monkeypatch):
         command_timeouts.append(timeout)
         raise repl_core.ReplOutcomeUnknown("transport failed") from TimeoutError()
 
-    monkeypatch.setattr(repl, "close", lambda **kwargs: None)
     monkeypatch.setattr(repl, "start", lambda **kwargs: None)
     monkeypatch.setattr(repl, "_run", run)
     # The wait for an idle slot takes 2 of the caller's 10 seconds.
@@ -220,9 +213,6 @@ def test_pool_runs_each_call_disposably_and_reuses_only_a_clean_slot(monkeypatch
         def close(self):
             pass
 
-        def get_memory_usage(self):
-            return 0.0
-
     monkeypatch.setattr(repl_pool, "LeanRepl", FakeRepl)
     pool = repl_pool.LeanReplPool(repl_pool.LeanReplPoolConfig(num_repls=1))
     try:
@@ -255,9 +245,6 @@ def test_dirty_result_poisoning_transfers_cleanup_to_shutdown(monkeypatch):
             self.close_calls += 1
             self.dirty = False
 
-        def get_memory_usage(self):
-            return 0.0
-
     monkeypatch.setattr(repl_pool, "LeanRepl", FakeRepl)
     pool = repl_pool.LeanReplPool(repl_pool.LeanReplPoolConfig(num_repls=1))
 
@@ -288,9 +275,6 @@ def test_request_cancellation_keeps_precedence_and_poisons_a_dirty_pool(monkeypa
         def close(self):
             self.dirty = False
 
-        def get_memory_usage(self):
-            return 0.0
-
     monkeypatch.setattr(repl_pool, "LeanRepl", FakeRepl)
     pool = repl_pool.LeanReplPool(repl_pool.LeanReplPoolConfig(num_repls=1))
 
@@ -318,9 +302,6 @@ def test_capacity_one_waiters_keep_arrival_order(monkeypatch):
 
         def close(self):
             pass
-
-        def get_memory_usage(self):
-            return 0.0
 
     monkeypatch.setattr(repl_pool, "LeanRepl", FakeRepl)
     pool = repl_pool.LeanReplPool(repl_pool.LeanReplPoolConfig(num_repls=1))
@@ -370,9 +351,6 @@ def test_shutdown_waits_for_the_request_owned_cleanup(monkeypatch):
                 assert allow_cleanup.wait(timeout=2)
                 self.dirty = False
 
-        def get_memory_usage(self):
-            return 0.0
-
     monkeypatch.setattr(repl_pool, "LeanRepl", FakeRepl)
     pool = repl_pool.LeanReplPool(repl_pool.LeanReplPoolConfig(num_repls=1))
     results = []
@@ -403,14 +381,8 @@ def test_shutdown_unblocks_a_call_waiting_for_a_cold_slot(monkeypatch):
         def __init__(self, config):
             pass
 
-        def is_clean(self):
-            return True
-
         def close(self):
             pass
-
-        def get_memory_usage(self):
-            return 0.0
 
     monkeypatch.setattr(repl_pool, "LeanRepl", FakeRepl)
     pool = repl_pool.LeanReplPool(repl_pool.LeanReplPoolConfig(num_repls=1))
@@ -457,9 +429,6 @@ def test_shutdown_waits_for_checked_out_worker_before_closing_or_draining(monkey
 
         def close(self):
             close_started.set()
-
-        def get_memory_usage(self):
-            return 0.0
 
     monkeypatch.setattr(repl_pool, "LeanRepl", FakeRepl)
     pool = repl_pool.LeanReplPool(repl_pool.LeanReplPoolConfig(num_repls=1))
