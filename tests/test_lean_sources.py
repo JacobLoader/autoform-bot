@@ -674,8 +674,6 @@ def test_unsearchable_directory_is_blamed_instead_of_its_children(tmp_path: Path
     lookup of one fails; the folder is at fault, not its entries."""
 
     _require_descriptor_capture()
-    if os.name == "nt":
-        pytest.skip("chmod sets only the read-only flag on Windows")
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         pytest.skip("root bypasses directory permissions")
     _index(tmp_path, "def canonical : Nat := 0\n")
@@ -747,6 +745,36 @@ def test_search_permission_revoked_at_any_lookup_or_open_blames_the_folder(
         with pytest.raises(lean_module.LeanSourceError) as caught:
             snapshot_project_sources(tmp_path)
         assert str(caught.value) == f"permission denied: {folders[revoked]}", revoke_at
+
+
+def test_entry_vanishing_after_a_refused_open_is_retried_as_a_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Telling who refused an open repeats the lookup; if the entry is gone
+    by then, nothing was refused for good and the capture is retried."""
+
+    _require_descriptor_capture()
+    _index(tmp_path, "def canonical : Nat := 0\n")
+    failures = [
+        ("open", PermissionError(errno.EACCES, "refused")),
+        ("stat", FileNotFoundError(errno.ENOENT, "vanished")),
+    ]
+
+    def failing(name):
+        original = getattr(os, name)
+
+        def operation(path, *args, dir_fd=None, **kwargs):
+            if dir_fd is not None and path == "Basic.lean" and failures[:1] and failures[0][0] == name:
+                raise failures.pop(0)[1]
+            return original(path, *args, dir_fd=dir_fd, **kwargs)
+
+        return operation
+
+    for name in ("open", "stat"):
+        monkeypatch.setattr(os, name, failing(name))
+    snapshot_project_sources(tmp_path)
+    assert failures == []
 
 
 def test_unsupported_entry_name_is_reported_without_retrying(

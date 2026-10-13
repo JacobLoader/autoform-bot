@@ -1408,15 +1408,14 @@ def _access_denied(descriptor: int, name: str, relative: str) -> _PermissionDeni
 
     Either the directory denies search permission or the entry denies access.
     Repeating only the lookup tells which: if that is refused too, the
-    directory is at fault.
+    directory is at fault. Any other lookup failure propagates, so an entry
+    that vanished in between reads as a change.
     """
 
     try:
         _lookup(descriptor, name, relative)
     except _PermissionDenied as denied:
         return denied
-    except OSError:
-        pass
     return _PermissionDenied(f"{relative}/{name}" if relative else name)
 
 
