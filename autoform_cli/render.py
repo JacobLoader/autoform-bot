@@ -37,7 +37,7 @@ from .coverage import (
     load_coverage,
     validate_coverage_roles,
 )
-from .graph import Graph, Node, load_graph
+from .graph import Graph, GraphValidationError, Node, _implementation_note_issues, load_graph
 from .lean import SourceLinker, build_linker, declaration_names, index_failure_message
 from .markdown import article_parts
 from .status import is_definition
@@ -332,6 +332,12 @@ def _render_captured_site(
     """Render exclusively from one captured blueprint generation."""
 
     graph = load_graph(blueprint)
+    # The capture leaves hidden files out, so the vault's implementation notes
+    # are checked in place, as load_graph checks them for every other command.
+    # Nothing is published or hashed from them.
+    article_ids = {node.article_id: node.id for node in graph.nodes.values() if node.article_id is not None}
+    if issues := _implementation_note_issues(authored_blueprint, article_ids):
+        raise GraphValidationError(issues)
     coverage, coverage_issues = load_coverage(blueprint)
     if coverage_issues:
         raise PublicationError(

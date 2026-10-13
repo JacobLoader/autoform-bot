@@ -245,7 +245,8 @@ def _module_parts(module: str, display_path: str) -> tuple[str, ...]:
             index = end
         if (
             not part
-            or any(ord(character) < 32 or character in "/\\«»" for character in part)
+            or not _printable(part)
+            or any(character in "/\\«»" for character in part)
             or part in {".", ".."}
         ):
             raise AuditInputError(f"ILean metadata has an invalid module name: {display_path}")
@@ -465,13 +466,14 @@ _IMPORT_BUILD = """  -- `lake env` puts the project's libraries ahead of the too
         unless holders.contains real do
           holders := holders.push real
     if holders.size > 1 then
-      throwError "root module {moduleName} shares its first component {root} with another library on the search path; rename the module so the audit can run"
+      let listed := ", ".intercalate (holders.toList.map (·.toString))
+      throwError "root module {moduleName} shares its first component {root} with another library on the search path ({listed}); rename the module so the audit can run"
   searchPathRef.set (libDir :: projectEntries)
   -- Without extensions no `initialize` block of the build runs. `Init` comes
   -- along even when the build never imports it, so a build that declares a
   -- core name of its own, such as `propext`, clashes with the toolchain's on
-  -- import, repeats it exactly, or is refused below, instead of passing the
-  -- allowlist by name.
+  -- import, is merged with it when it is an identical theorem or Prop-valued
+  -- axiom, or is refused below, instead of passing the allowlist by name.
   let env ← importModules (#[({ module := `Init } : Import)] ++ targetModules.toArray.map ({ module := · }))
     {} (loadExts := false)
   -- Lean keeps one of two same-named theorems, for the equation lemmas several
@@ -918,7 +920,9 @@ run_cmd do
 def _lean_name(module: str) -> str:
     result = "Name.anonymous"
     for part in _module_parts(module, module):
-        result = f"Name.str ({result}) {json.dumps(part)}"
+        # Lean reads a JSON surrogate pair as two NUL characters, so characters
+        # outside the Basic Multilingual Plane must stay as they are.
+        result = f"Name.str ({result}) {json.dumps(part, ensure_ascii=False)}"
     return result
 
 

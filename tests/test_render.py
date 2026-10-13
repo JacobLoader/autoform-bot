@@ -13,7 +13,7 @@ import pytest
 from autoform_cli import _directory_binding as directory_binding
 from autoform_cli import render as render_module
 from autoform_cli.coverage import COVERAGE_DISPOSITIONS
-from autoform_cli.graph import load_graph
+from autoform_cli.graph import GraphValidationError, load_graph
 from autoform_cli.lean import LeanSourceError, _normalize_remote
 from autoform_cli.render import (
     PUBLICATION_MANIFEST,
@@ -1634,6 +1634,54 @@ def test_render_omits_benign_hidden_files(tmp_path: Path) -> None:
     assert not (tmp_path / "out/.gitignore").exists()
 
 
+def test_implementation_notes_stay_out_of_the_published_wiki(tmp_path: Path) -> None:
+    """Notes are for the next worker, not the reader.
+
+    Editing them changes nothing a reader can see, so it must not mark the
+    published site stale either.
+    """
+    project = _project(tmp_path)
+    blueprint = project / "blueprint"
+    article_id = "af_0123456789abcdef01234567"
+    top = blueprint / "roadmap/top.md"
+    top.write_text(
+        top.read_text(encoding="utf-8").replace(
+            "---\n", f"---\narticle_id: {article_id}\n", 1
+        ),
+        encoding="utf-8",
+    )
+    before = publication_source_revision(blueprint)
+    (blueprint / "agents.md").write_text("# Agents in the source material\n", encoding="utf-8")
+    with_public_page = publication_source_revision(blueprint)
+    assert with_public_page != before
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{article_id}.md").write_text("Mathlib gap.\n", encoding="utf-8")
+
+    render_site(blueprint, tmp_path / "out", lean_root=project)
+
+    assert not (tmp_path / "out/.implementation-notes").exists()
+    assert (tmp_path / "out/agents.md").is_file()
+    assert ".implementation-notes" not in (tmp_path / "out/structure.md").read_text(
+        encoding="utf-8"
+    )
+    assert publication_source_revision(blueprint) == with_public_page
+
+
+def test_an_orphaned_implementation_note_stops_the_render(tmp_path: Path) -> None:
+    """Render reads a capture without hidden files, but still checks the notes."""
+    project = _project(tmp_path)
+    blueprint = project / "blueprint"
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / "af_0123456789abcdef01234567.md").write_text("Mathlib gap.\n", encoding="utf-8")
+
+    with pytest.raises(GraphValidationError, match="names no roadmap article"):
+        render_site(blueprint, tmp_path / "out", lean_root=project)
+
+    assert not (tmp_path / "out").exists()
+
+
 @pytest.mark.parametrize(
     ("remote", "expected"),
     [
@@ -2134,7 +2182,7 @@ def test_a_statement_written_below_a_section_is_still_published(tmp_path: Path) 
     project = _project(tmp_path)
     (project / "blueprint/roadmap/top.md").write_text(
         "---\ndeclaration: theorem\nlean: Project.top\n---\n\n"
-        "## Depends on\n\n- [Base](base.md)\n\n# Top\n\nThe main result.\n",
+        "## Sources\n\nA citation.\n\n# Top\n\nThe main result.\n\n## Depends on\n\n- [Base](base.md)\n",
         encoding="utf-8",
     )
     render_site(project / "blueprint", tmp_path / "out", lean_root=project)

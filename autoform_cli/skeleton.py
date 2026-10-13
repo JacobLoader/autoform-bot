@@ -1337,7 +1337,7 @@ def render_probe(
         output_env=PROBE_OUTPUT_ENV,
         output_limit=DEFAULT_PROBE_OUTPUT_LIMIT,
         project_roots=", ".join(_lean_name(name) for name in sorted(set(project_roots))),
-        roots=", ".join(f"({json.dumps(name, ensure_ascii=False)}, {_lean_name(name)})" for name in roots),
+        roots=_lean_requests(roots),
     )
 
 
@@ -1345,12 +1345,32 @@ def _lean_name(name: str) -> str:
     """Spell a Lean name as a term without trusting Lean to parse it."""
 
     result = "Name.anonymous"
-    for part, quoted in _lean_name_parts(name):
-        if not quoted and part.isascii() and part.isdigit():
-            result = f"Name.num ({result}) {int(part)}"
+    for component in _lean_name_components(name):
+        if isinstance(component, int):
+            result = f"Name.num ({result}) {component}"
         else:
-            result = f"Name.str ({result}) {json.dumps(part, ensure_ascii=False)}"
+            result = f"Name.str ({result}) {json.dumps(component, ensure_ascii=False)}"
     return result
+
+
+def _lean_requests(roots: tuple[str, ...]) -> str:
+    """Spell the requested roots as a Lean string of JSON the probe decodes.
+
+    The probe would compile a list literal of names, and Lean's code generator
+    gives up on one longer than about 1,500 entries.
+    """
+
+    payload = [[name, list(_lean_name_components(name))] for name in roots]
+    return json.dumps(json.dumps(payload, ensure_ascii=False), ensure_ascii=False)
+
+
+def _lean_name_components(name: str) -> tuple[str | int, ...]:
+    """The components of a Lean name: unquoted ASCII digits are numeric."""
+
+    return tuple(
+        int(part) if not quoted and part.isascii() and part.isdigit() else part
+        for part, quoted in _lean_name_parts(name)
+    )
 
 
 _LEAN_NAME_PART = r"«([^»]+)»|([^.\s«»]+)"
@@ -2041,18 +2061,11 @@ def extract_skeletons(
         graph = load_graph(blueprint_dir)
     except GraphValidationError as exc:
         raise SkeletonError(exc.issues) from exc
-    try:
-        root = Path(lean_root).expanduser().resolve()
-    except RuntimeError as error:
-        # An unknown ~user, or before Python 3.13 a symbolic link loop.
-        raise SkeletonError([f"Lean root {lean_root} cannot be resolved: {error}"]) from error
-    graph_snapshot = _graph_snapshot(graph)
-    control_snapshot = _project_control_snapshot(root)
+    root = resolve_lean_root(lean_root)
+    activity = "skeletons were being extracted"
+    inputs = snapshot_inputs(graph, root)
     libraries = lean_libraries(root)
-    if _project_control_snapshot(root) != control_snapshot:
-        raise SkeletonError(
-            ["Lean project configuration changed while skeletons were being extracted; retry after the project is idle"]
-        )
+    check_configuration_unchanged(root, inputs, activity=activity)
     try:
         index = index_project(root)
     except OSError as error:
@@ -2065,24 +2078,7 @@ def extract_skeletons(
         runner=runner or run_probe,
         node_ids=node_ids,
     )
-    try:
-        current_index = index_project(root)
-    except OSError as error:
-        raise SkeletonError([index_failure_message(error)]) from error
-    if current_index.source_digest != index.source_digest:
-        raise SkeletonError(["Lean sources changed while skeletons were being extracted; retry after the build is idle"])
-    if _project_control_snapshot(root) != control_snapshot:
-        raise SkeletonError(
-            ["Lean project configuration changed while skeletons were being extracted; retry after the project is idle"]
-        )
-    try:
-        current_graph: Graph | None = load_graph(graph.blueprint_dir)
-    except GraphValidationError:
-        current_graph = None
-    if current_graph is None or _graph_snapshot(current_graph) != graph_snapshot:
-        raise SkeletonError(
-            ["the blueprint changed while skeletons were being extracted; retry after the project is idle"]
-        )
+    current_graph = check_inputs_unchanged(graph, root, index, inputs, activity=activity)
     for node in report.nodes:
         current = current_graph.nodes.get(node.node_id)
         if current is None or source_passage(current, current_graph.blueprint_dir) != (
@@ -2095,16 +2091,69 @@ def extract_skeletons(
     return report
 
 
-def extract_graph_skeletons(
-    graph: Graph,
-    *,
-    lean_root: Path,
-    libraries: tuple[LeanLibrary, ...],
-    index: SourceIndex,
-    runner: ProbeRunner,
-    node_ids: tuple[str, ...] | None = None,
-) -> SkeletonReport:
-    """Extract skeletons for an already loaded graph."""
+@dataclass(frozen=True, slots=True)
+class InputsSnapshot:
+    """The blueprint and the project configuration, as they were before Lean ran."""
+
+    graph: object
+    configuration: object
+
+
+def snapshot_inputs(graph: Graph, lean_root: Path) -> InputsSnapshot:
+    """Record the inputs a Lean run is about, to refuse its answer if they change."""
+
+    return InputsSnapshot(graph=_graph_snapshot(graph), configuration=_project_control_snapshot(lean_root))
+
+
+def check_configuration_unchanged(lean_root: Path, snapshot: InputsSnapshot, *, activity: str) -> None:
+    """Refuse when the Lake configuration changed since ``snapshot``."""
+
+    if _project_control_snapshot(lean_root) != snapshot.configuration:
+        raise SkeletonError(
+            [f"Lean project configuration changed while {activity}; retry after the project is idle"]
+        )
+
+
+def check_inputs_unchanged(
+    graph: Graph, lean_root: Path, index: SourceIndex, snapshot: InputsSnapshot, *, activity: str
+) -> Graph:
+    """Refuse an answer whose Lean sources, Lake configuration or blueprint changed
+    while Lean ran, and return the blueprint as it is now.
+
+    ``activity`` names what was running, as in "skeletons were being extracted".
+    """
+
+    try:
+        current_index = index_project(lean_root)
+    except OSError as error:
+        raise SkeletonError([index_failure_message(error)]) from error
+    if current_index.source_digest != index.source_digest:
+        raise SkeletonError([f"Lean sources changed while {activity}; retry after the build is idle"])
+    check_configuration_unchanged(lean_root, snapshot, activity=activity)
+    try:
+        current_graph: Graph | None = load_graph(graph.blueprint_dir)
+    except GraphValidationError:
+        current_graph = None
+    if current_graph is None or _graph_snapshot(current_graph) != snapshot.graph:
+        raise SkeletonError([f"the blueprint changed while {activity}; retry after the project is idle"])
+    return current_graph
+
+
+def resolve_lean_root(lean_root: str | Path) -> Path:
+    """The absolute Lean project root, or a ``SkeletonError`` saying why there is none."""
+
+    try:
+        return Path(lean_root).expanduser().resolve()
+    except RuntimeError as error:
+        # An unknown ~user, or before Python 3.13 a symbolic link loop.
+        raise SkeletonError([f"Lean root {lean_root} cannot be resolved: {error}"]) from error
+
+
+def select_lean_targets(
+    graph: Graph, node_ids: tuple[str, ...] | None = None
+) -> tuple[list[tuple[Node, tuple[str, ...]]], list[tuple[Node, tuple[str, ...]]], str]:
+    """Every article's ``lean:`` targets in id order, the ones ``node_ids`` selects,
+    and ``all`` or ``filtered`` for whether it narrowed them."""
 
     targets: list[tuple[Node, tuple[str, ...]]] = []
     target_issues: list[str] = []
@@ -2124,25 +2173,50 @@ def extract_graph_skeletons(
             targets.append((node, names))
     if target_issues:
         raise SkeletonError(target_issues)
-    target_ids = {node.id for node, _ in targets}
-    selected = targets
-    selection = "all"
-    if node_ids is not None:
-        if not node_ids:
-            raise SkeletonError(["no articles selected"])
-        if len(node_ids) != len(set(node_ids)):
-            raise SkeletonError(["duplicate article selection"])
-        wanted = set(node_ids)
-        unknown = sorted(wanted - set(graph.nodes))
-        if unknown:
-            raise SkeletonError([f"unknown article: {node_id}" for node_id in unknown])
-        untargeted = sorted(wanted - target_ids)
-        if untargeted:
-            raise SkeletonError(
-                [f"{node_id}: article has no Lean declaration targets" for node_id in untargeted]
-            )
-        selected = [(node, names) for node, names in selected if node.id in wanted]
-        selection = "filtered"
+    if node_ids is None:
+        return targets, targets, "all"
+    if not node_ids:
+        raise SkeletonError(["no articles selected"])
+    if len(node_ids) != len(set(node_ids)):
+        raise SkeletonError(["duplicate article selection"])
+    wanted = set(node_ids)
+    unknown = sorted(wanted - set(graph.nodes))
+    if unknown:
+        raise SkeletonError([f"unknown article: {node_id}" for node_id in unknown])
+    untargeted = sorted(wanted - {node.id for node, _ in targets})
+    if untargeted:
+        raise SkeletonError(
+            [f"{node_id}: article has no Lean declaration targets" for node_id in untargeted]
+        )
+    return targets, [(node, names) for node, names in targets if node.id in wanted], "filtered"
+
+
+def locate_declaration(
+    name: str, *, index: SourceIndex, libraries: tuple[LeanLibrary, ...], lean_root: Path
+) -> tuple[str | None, str | None]:
+    """The module that builds ``name``, or ``None`` and the reason no module does."""
+
+    location = index.find(name)
+    if location is None:
+        return None, "declaration not found in the Lean sources"
+    module = module_of(lean_root / location.path, libraries)
+    if module is None:
+        return None, f"source {location.path.as_posix()} is not built by any library target"
+    return module, None
+
+
+def extract_graph_skeletons(
+    graph: Graph,
+    *,
+    lean_root: Path,
+    libraries: tuple[LeanLibrary, ...],
+    index: SourceIndex,
+    runner: ProbeRunner,
+    node_ids: tuple[str, ...] | None = None,
+) -> SkeletonReport:
+    """Extract skeletons for an already loaded graph."""
+
+    targets, selected, selection = select_lean_targets(graph, node_ids)
     passages: dict[str, tuple[str | None, str | None]] = {}
     # An article whose cited passage cannot be found cannot be judged for
     # faithfulness, so its declarations are unresolved rather than shown alone.
@@ -2162,21 +2236,9 @@ def extract_graph_skeletons(
             if node.id in broken_passages:
                 unresolved.append(UnresolvedTarget(node.id, name, broken_passages[node.id]))
                 continue
-            location = index.find(name)
-            module = None if location is None else module_of(lean_root / location.path, libraries)
-            if location is None:
-                unresolved.append(
-                    UnresolvedTarget(node.id, name, "declaration not found in the Lean sources")
-                )
-                continue
+            module, reason = locate_declaration(name, index=index, libraries=libraries, lean_root=lean_root)
             if module is None:
-                unresolved.append(
-                    UnresolvedTarget(
-                        node.id,
-                        name,
-                        f"source {location.path.as_posix()} is not built by any library target",
-                    )
-                )
+                unresolved.append(UnresolvedTarget(node.id, name, reason or ""))
                 continue
             imports.add(module)
             if name not in roots:
@@ -2987,6 +3049,7 @@ __all__ = [
     "SEMANTIC_SCHEMA",
     "SKELETON_SCHEMA",
     "DeclarationSkeleton",
+    "InputsSnapshot",
     "LeanLibrary",
     "NodeSkeleton",
     "PACKET_MANIFEST",
@@ -2994,16 +3057,22 @@ __all__ = [
     "SkeletonError",
     "SkeletonReport",
     "TrustedDeclaration",
+    "check_configuration_unchanged",
+    "check_inputs_unchanged",
     "extract_graph_skeletons",
     "extract_skeletons",
     "format_report",
     "lean_libraries",
     "load_skeleton_report",
+    "locate_declaration",
     "module_of",
     "parse_probe_output",
     "path_of",
     "render_probe",
+    "resolve_lean_root",
     "run_probe",
+    "select_lean_targets",
+    "snapshot_inputs",
     "source_excerpt",
     "source_passage",
     "write_packets",
