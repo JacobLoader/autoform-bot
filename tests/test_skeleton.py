@@ -24,7 +24,9 @@ from autoform_cli.lean import (
     Declaration,
     LeanSourceError,
     SourceIndex,
+    _is_managed_output_manifest_bytes,
     index_project,
+    snapshot_project_sources,
 )
 from autoform_cli.skeleton import (
     DeclarationSkeleton,
@@ -1035,6 +1037,31 @@ def test_a_package_without_library_targets_is_its_own_library(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(
+    ("lakefile", "src_dir"),
+    [
+        pytest.param(
+            'name = "proj"\nsrcDir = "pkgsrc"\n\n[[lean_lib]]\nname = "Proj"\nsrcDir = "lib"\n',
+            "pkgsrc/lib",
+            id="library",
+        ),
+        pytest.param('name = "Proj"\nsrcDir = "pkgsrc"\n', "pkgsrc", id="package-only"),
+    ],
+)
+def test_libraries_nest_under_the_package_source_directory(tmp_path: Path, lakefile: str, src_dir: str) -> None:
+    project = tmp_path / "project"
+    (project / src_dir).mkdir(parents=True)
+    (project / "lakefile.toml").write_text(lakefile, encoding="utf-8")
+    (project / src_dir / "Proj.lean").write_text("", encoding="utf-8")
+
+    libraries = lean_libraries(project)
+
+    # Lake joins a library's srcDir onto the package's srcDir, not onto the project root.
+    assert libraries[0].src_dir == (project / src_dir).resolve()
+    assert module_of(project / src_dir / "Proj.lean", libraries) == "Proj"
+    assert path_of("Proj", libraries, project) == f"{src_dir}/Proj.lean"
+
+
+@pytest.mark.parametrize(
     "toml_11",
     [
         pytest.param('leanOptions = { autoImplicit = false, }\n', id="inline-trailing-comma"),
@@ -1116,6 +1143,31 @@ def test_a_failed_translation_reports_the_error_rather_than_lakes_info_line(tmp_
         lean_libraries(project)
 
     assert caught.value.issues == (f"lake translate-config failed: {error}",)
+
+
+def _project_with_a_package_source_directory(tmp_path: Path) -> Path:
+    """lakefile.lean puts the package's sources under ``pkgsrc`` and gives its library no srcDir of its own."""
+
+    project = tmp_path / "project"
+    project.mkdir()
+    shutil.copy(_FIXTURE / "lean-toolchain", project / "lean-toolchain")
+    (project / "lakefile.lean").write_text(
+        'import Lake\nopen Lake DSL\n\npackage proj where\n  srcDir := "pkgsrc"\n\nlean_lib Proj\n', encoding="utf-8"
+    )
+    return project
+
+
+def test_lakefile_lean_libraries_nest_under_the_package_source_directory(tmp_path: Path, monkeypatch) -> None:
+    project = _project_with_a_package_source_directory(tmp_path)
+    # lake translate-config writes the package's srcDir as a top-level key.
+    monkeypatch.setattr(
+        "autoform_cli.skeleton._translate_lakefile",
+        lambda _root: b'name = "proj"\nsrcDir = "pkgsrc"\n\n[[lean_lib]]\nname = "Proj"\n',
+    )
+
+    (library,) = lean_libraries(project)
+
+    assert (library.name, library.src_dir) == ("Proj", project.resolve() / "pkgsrc")
 
 
 def test_a_project_without_a_lakefile_is_refused(tmp_path: Path) -> None:
@@ -1938,7 +1990,7 @@ def test_cli_reports_extraction_failures_on_stderr(tmp_path: Path, capsys) -> No
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err.startswith("error: no lakefile.toml or lakefile.lean in ")
+    assert captured.err == "error: Lean root does not exist or is not a directory\n"
 
 
 def test_cli_reports_an_invalid_report_output_without_a_traceback(
@@ -2233,6 +2285,15 @@ def test_lakefile_lean_wins_through_lake_translate_config(tmp_path: Path) -> Non
     (library,) = lean_libraries(project)
 
     assert (library.name, library.src_dir, library.roots) == ("FromLean", project.resolve() / "lean-src", ("LeanRoot",))
+
+
+@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+def test_package_source_directory_nests_libraries_through_lake_translate_config(tmp_path: Path) -> None:
+    project = _project_with_a_package_source_directory(tmp_path)
+
+    (library,) = lean_libraries(project)
+
+    assert (library.name, library.src_dir) == ("Proj", project.resolve() / "pkgsrc")
 
 
 def test_required_real_lean_tests_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3471,6 +3532,119 @@ def test_packet_publication_rolls_back_both_trees_on_commit_failure(
 
     assert (packets / "old-marker").read_text(encoding="utf-8") == "old packets\n"
     assert (passages / "old-marker").read_text(encoding="utf-8") == "old passages\n"
+
+
+class _ManifestFirstListing:
+    """A directory listing that yields ``manifest.json`` first, the order that exposed packets."""
+
+    def __init__(self, listing) -> None:
+        with listing:
+            self._entries = iter(sorted(listing, key=lambda entry: entry.name.casefold() != PACKET_MANIFEST))
+
+    # Iterated with ``next`` by ``os.walk``, which ``shutil.rmtree`` uses without descriptor functions.
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._entries)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        return None
+
+
+def test_packet_publication_never_shows_lean_capture_an_unmarked_packet(tmp_path: Path, monkeypatch) -> None:
+    """After every filesystem step, each folder under the Lean root holds no folder or Lean file
+    unless it also holds its whole, recognized manifest, so a Lean capture never indexes a packet."""
+
+    report = _fake_report(tmp_path / "fixture")
+    # Each node gets a passage, so the passage stage also holds folders that need its manifest.
+    report = replace(report, nodes=tuple(replace(node, passage="source") for node in report.nodes))
+    lean_root = tmp_path / "lean"
+    packets, passages = lean_root / "packets", lean_root / "passages"
+    write_packets(report, packets, passages=passages)
+    (packets / "old-marker").write_text("old packets\n", encoding="utf-8")
+    assert snapshot_project_sources(lean_root).source_files == ()
+    exposed: list[str] = []
+
+    def check(event: str) -> None:
+        for folder in lean_root.iterdir():
+            # An install preflight probe holds only empty folders, never packets.
+            if "autoform-preflight" in folder.name:
+                continue
+            manifest = folder / PACKET_MANIFEST
+            recognized = manifest.is_file() and _is_managed_output_manifest_bytes(manifest.read_bytes())
+            if manifest.exists() and not recognized:
+                exposed.append(f"after {event}: {folder.name} shows an incomplete marker")
+            # A capture descends only into folders and indexes only Lean files.
+            others = [
+                name
+                for name in os.listdir(folder)
+                if name != PACKET_MANIFEST and ((folder / name).is_dir() or name.endswith(".lean"))
+            ]
+            if others and not recognized:
+                exposed.append(f"after {event}: {folder.name} holds {sorted(others)} without its marker")
+
+    def observed(owner, name: str) -> None:
+        original = getattr(owner, name)
+
+        def call(*args, **kwargs):
+            result = original(*args, **kwargs)
+            check(name)
+            return result
+
+        monkeypatch.setattr(owner, name, call)
+
+    for owner, name in ((Path, "mkdir"), (os, "unlink"), (os, "rmdir"), (os, "replace"), (os, "rename")):
+        observed(owner, name)
+    path_open = Path.open
+
+    def open_and_check(self, mode: str = "r", *args, **kwargs):
+        stream = path_open(self, mode, *args, **kwargs)
+        # A file opened for writing is visible, still empty, until the write lands.
+        if not set(mode).isdisjoint("wxa+"):
+            check("open")
+        return stream
+
+    monkeypatch.setattr(Path, "open", open_and_check)
+    scandir = os.scandir
+    monkeypatch.setattr(os, "scandir", lambda *args, **kwargs: _ManifestFirstListing(scandir(*args, **kwargs)))
+
+    write_packets(report, packets, passages=passages)
+    monkeypatch.undo()
+
+    assert exposed == []
+    assert not (packets / "old-marker").exists()
+    assert (packets / "basics" / "determined" / "article.lean").is_file()
+    assert (passages / "basics" / "determined" / "passage.txt").is_file()
+    assert sorted(path.name for path in lean_root.iterdir()) == ["packets", "passages"]
+
+
+# Lean capture matches the marker by folded name, so a differently cased one hides the folder too.
+def test_removing_output_deletes_its_manifest_last(tmp_path: Path, monkeypatch) -> None:
+    output = tmp_path / "output"
+    (output / "nested").mkdir(parents=True)
+    (output / "Manifest.json").write_text("{}\n", encoding="utf-8")
+    (output / "nested" / "packet.lean").write_text("theorem t : True := trivial\n", encoding="utf-8")
+    (output / "article.lean").write_text("theorem u : True := trivial\n", encoding="utf-8")
+    removed: list[str] = []
+    unlink = os.unlink
+
+    def record(path, *args, **kwargs) -> None:
+        removed.append(Path(os.fsdecode(path)).name)
+        unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "unlink", record)
+    scandir = os.scandir
+    monkeypatch.setattr(os, "scandir", lambda *args, **kwargs: _ManifestFirstListing(scandir(*args, **kwargs)))
+
+    _remove_output(output)
+
+    assert not output.exists()
+    assert sorted(removed) == ["Manifest.json", "article.lean", "packet.lean"]
+    assert removed[-1] == "Manifest.json"
 
 
 def test_packet_publication_rolls_back_both_trees_when_interrupted(

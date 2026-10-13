@@ -21,7 +21,13 @@ from .claims import CLAIM_TTL_S, ClaimBoard, ClaimTransportError, author_claim_k
 from .doctor import diagnose_project
 from .dashboard import publication_bound_live_state, serve_dashboard
 from .graph import GraphValidationError, load_graph
-from .impact import ImpactError, format_impact, revision_impact
+from .impact import (
+    ImpactError,
+    format_impact,
+    format_module_import_impact,
+    module_import_impact,
+    revision_impact,
+)
 from .lean import build_linker, declaration_names, index_failure_message
 from .project import ProjectCatalogError, ProjectCreateError, create_project, inspect_project, load_release_catalog
 from .render import PublicationError, render_site
@@ -206,6 +212,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=f"seconds the Lean probe may run (default {DEFAULT_PROBE_TIMEOUT:g}); "
         "the Lake freshness check before it has its own budget",
     )
+    work_import_impact = work_subparsers.add_parser(
+        "import-impact",
+        help="report the claim and review scope of editing a Lean module's imports: what an added import can "
+        "affect, not the modules a removed import can drop from the build",
+    )
+    work_import_impact.add_argument("selector", help="path-derived node id or durable article_id")
+    work_import_impact.add_argument("module", help="project module whose imports may change")
+    work_import_impact.add_argument(
+        "target", nargs="?", default=".", help="project root or blueprint directory"
+    )
+    work_import_impact.add_argument(
+        "--lean-root", type=Path, required=True, metavar="PATH", help="the built Lean project"
+    )
+    work_import_impact.add_argument("--json", action="store_true", help="write stable machine-readable output")
+    work_import_impact.add_argument(
+        "--timeout",
+        type=_positive_seconds,
+        metavar="SECONDS",
+        help=f"seconds the Lean probe may run (default {DEFAULT_PROBE_TIMEOUT:g}); "
+        "the Lake freshness check before it has its own budget",
+    )
     search = subparsers.add_parser(
         "search", help="find articles by title, Lean name, or statement text before adding one"
     )
@@ -360,7 +387,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     render.add_argument(
         "--require-declarations",
         action="store_true",
-        help="fail when a 'lean:' declaration is not found in the Lean sources",
+        help="fail when a 'lean:' declaration is not found in the Lean sources "
+        "or cannot be looked up because the sources cannot be read",
     )
 
     args = parser.parse_args(argv)
@@ -650,7 +678,7 @@ def _project(args: argparse.Namespace) -> int:
 def _work(args: argparse.Namespace) -> int:
     if args.work_command == "assumptions":
         return _work_assumptions(args)
-    if args.work_command == "impact":
+    if args.work_command in {"impact", "import-impact"}:
         return _work_impact(args)
     # Only loading the roadmap can fail on the project's paths; printing the
     # result stays outside, so an output error is not reported as one.
@@ -823,13 +851,22 @@ def _work_assumptions(args: argparse.Namespace) -> int:
 
 def _work_impact(args: argparse.Namespace) -> int:
     try:
-        report = revision_impact(
-            args.target,
-            args.selector,
-            lean_root=args.lean_root,
-            declarations=args.declarations,
-            timeout=args.timeout,
-        )
+        if args.work_command == "impact":
+            report = revision_impact(
+                args.target,
+                args.selector,
+                lean_root=args.lean_root,
+                declarations=args.declarations,
+                timeout=args.timeout,
+            )
+        else:
+            report = module_import_impact(
+                args.target,
+                args.selector,
+                args.module,
+                lean_root=args.lean_root,
+                timeout=args.timeout,
+            )
     except (GraphValidationError, RuntimeProjectionError) as error:
         for issue in error.issues:
             print(f"error: {_human_text(issue)}", file=sys.stderr)
@@ -850,7 +887,8 @@ def _work_impact(args: argparse.Namespace) -> int:
     if args.json:
         print(report.to_json())
         return 0
-    for line in format_impact(report):
+    lines = format_impact(report) if args.work_command == "impact" else format_module_import_impact(report)
+    for line in lines:
         print(_human_text(line))
     return 0
 
@@ -867,7 +905,8 @@ def _print_project_inspection(result) -> None:
         print(f"Lean: {_human_text(result.lean_toolchain)}")
     if result.mathlib is not None:
         mathlib = result.mathlib
-        where = mathlib.dir if mathlib.type == "path" else f"{mathlib.input_rev} @ {mathlib.rev} ({mathlib.url})"
+        revision = mathlib.rev if mathlib.input_rev is None else f"{mathlib.input_rev} @ {mathlib.rev}"
+        where = mathlib.dir if mathlib.type == "path" else f"{revision} ({mathlib.url})"
         print(f"Mathlib: {_human_text(where)} [{mathlib.source}]")
     if result.autoform_paths:
         print(f"Autoform: {', '.join(result.autoform_paths)}")
@@ -1146,7 +1185,8 @@ def _render(args: argparse.Namespace) -> int:
         print(f"warning: declaration not found in the Lean sources: {issue}")
     for issue in report.warnings:
         print(f"warning: {issue}")
-    if report.unresolved and args.require_declarations:
+    # A declaration that was never looked up is not known to exist.
+    if (report.unresolved or report.unchecked) and args.require_declarations:
         return 1
     return 0
 

@@ -16,6 +16,7 @@ from pathlib import Path
 
 from . import status
 from .coverage import CoverageSummary, load_coverage
+from .elaboration_limits import limits_in_force
 from .graph import (
     IMPLEMENTATION_NOTES_DIR,
     Graph,
@@ -26,10 +27,12 @@ from .graph import (
 from .lean import (
     _DECLARATION,
     Declaration,
+    LeanSourceError,
     SourceIndex,
     _without_lean_comments,
     declaration_names,
     index_failure_message,
+    resolve_lean_root,
     snapshot_project_sources,
 )
 from .markdown import article_parts as _article_parts
@@ -423,18 +426,9 @@ def _coverage_findings(
 
 def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
     try:
-        root = Path(lean_root).expanduser().resolve()
-        valid = root.is_dir()
-    except (OSError, RuntimeError, ValueError):
-        valid = False
-    if not valid:
-        return [
-            AuditFinding(
-                ".",
-                "invalid-lean-root",
-                "Lean root does not exist or is not a directory",
-            )
-        ]
+        root = resolve_lean_root(lean_root)
+    except LeanSourceError as error:
+        return [AuditFinding(".", "invalid-lean-root", str(error))]
 
     findings: list[AuditFinding] = []
     try:
@@ -478,6 +472,9 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
                         f"lean target {declaration.name} is deprecated; point lean: at its replacement",
                     )
                 )
+
+        for declaration in resolved:
+            findings.extend(_limit_findings(article_path, declaration, sources))
 
         expected = _DECLARATION_KEYWORDS.get((node.declaration or "").casefold())
         if expected and resolved and not any(declaration.keyword in expected for declaration in resolved):
@@ -538,6 +535,47 @@ def _declared_deprecated(declaration: Declaration, sources: dict[Path, list[str]
         _DEPRECATED_ATTRIBUTE.search(_STRING_LITERAL.sub('""', attributes))
         for attributes in re.findall(_ATTRIBUTE_LIST, header.group(1))
     )
+
+
+def _limit_findings(
+    article_path: str,
+    declaration: Declaration,
+    sources: dict[Path, list[str] | None],
+) -> list[AuditFinding]:
+    """Flag a target with no elaboration limit, or a raised one it only inherits.
+
+    A raised limit put on the declaration itself is the accepted Mathlib
+    practice and is not reported; one inherited from a file- or section-wide
+    ``set_option`` also covers every neighbour, needed or not.
+    """
+
+    lines = sources.get(declaration.path)
+    if lines is None:
+        return []
+    location = declaration.path.as_posix()
+    findings: list[AuditFinding] = []
+    for setting in limits_in_force(lines, declaration.line):
+        option = f"set_option {setting.option} {setting.value}"
+        if setting.unbounded:
+            findings.append(
+                AuditFinding(
+                    article_path,
+                    "lean-target-unbounded-limit",
+                    f"lean target {declaration.name} has no {setting.option} limit: "
+                    f"`{option}` at {location}:{setting.line}; set a finite limit",
+                )
+            )
+        elif setting.raised and setting.scope in {"file", "section"}:
+            findings.append(
+                AuditFinding(
+                    article_path,
+                    "lean-target-unscoped-limit",
+                    f"lean target {declaration.name} inherits the {setting.scope}-wide "
+                    f"`{option}` at {location}:{setting.line}; put "
+                    f"`set_option {setting.option} N in` on the declarations that need it",
+                )
+            )
+    return findings
 
 
 def _source_spans(index: SourceIndex) -> dict[str, int]:

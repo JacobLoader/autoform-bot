@@ -12,6 +12,7 @@ and deliberately reports nothing it cannot see rather than guessing.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -38,7 +39,11 @@ from ._tree_snapshot import (
 )
 
 _NAMESPACE = re.compile(r"^\s*namespace\s+(.+)$")
-_SECTION = re.compile(r"^\s*section\b\s*(\S*)")
+#: ``section`` in every form that opens one, e.g. ``@[expose] public section``.
+_SECTION = re.compile(
+    r"^\s*(?:@\[[^\]]*\]\s*)*(?:(?:public|private|meta|noncomputable)\s+)*section\b\s*(\S*)"
+)
+_MUTUAL = re.compile(r"^\s*mutual\s*$")
 _END = re.compile(r"^\s*end\b\s*(\S*)")
 _DECLARATION = re.compile(
     r"^\s*(?:@\[[^\]]*\]\s*)*"
@@ -53,7 +58,6 @@ _IGNORED_DIRECTORIES = frozenset(
         ".obsidian",
         ".trash",
         ".venv",
-        "lake-packages",
     }
 )
 # ``Build`` can be a Lean namespace directory, so only this spelling is ignored.
@@ -148,15 +152,44 @@ def index_failure_message(error: OSError) -> str:
     return "Lean sources could not be indexed"
 
 
+def resolve_lean_root(lean_root: str | Path) -> Path:
+    """Resolve *lean_root* to the directory it names.
+
+    Raises :class:`LeanSourceError` naming why the root cannot be used, for
+    example when it does not exist or lies under a folder that cannot be
+    searched.
+    """
+
+    try:
+        root = directory_binding.lexical_absolute_path(lean_root).resolve()
+        metadata = os.stat(root)
+    except RuntimeError as error:
+        # An unknown ~user, or before Python 3.13 a symbolic link loop.
+        raise LeanSourceError("Lean root cannot be resolved") from error
+    except (FileNotFoundError, NotADirectoryError) as error:
+        raise LeanSourceError("Lean root does not exist or is not a directory") from error
+    except PermissionError as error:
+        raise LeanSourceError("permission denied while resolving the Lean root") from error
+    except (OSError, ValueError) as error:
+        if getattr(error, "errno", None) == errno.ELOOP:
+            # Python 3.13 and later resolve a symbolic link loop without raising.
+            raise LeanSourceError("Lean root cannot be resolved") from error
+        raise LeanSourceError("Lean root cannot be inspected") from error
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise LeanSourceError("Lean root does not exist or is not a directory")
+    return root
+
+
 def index_project(
     root: str | Path, *, exclude_roots: Iterable[str | Path] = ()
 ) -> SourceIndex:
-    """Scan ``*.lean`` beneath *root* and index declarations by full name."""
+    """Scan ``*.lean`` beneath *root* and index declarations by full name.
+
+    Raises :class:`LeanSourceError` when the root cannot be used or its
+    sources cannot be read.
+    """
+    root_path = resolve_lean_root(root)
     requested_root = directory_binding.lexical_absolute_path(root)
-    root_path = requested_root.resolve()
-    if not root_path.is_dir():
-        digest = hashlib.sha256(b"autoform-lean-source-index/v1\0").hexdigest()
-        return SourceIndex(root=root_path, declarations={}, source_digest=digest)
     remapped_exclusions = tuple(
         _remap_resolved_root_exclusion(requested_root, root_path, value)
         for value in exclude_roots
@@ -485,6 +518,8 @@ def _lean_snapshot_includes(
     # servers do, so ``A.LEAN`` is not a Lean source even on a case-insensitive
     # volume where ``import A`` could open it.
     if stat.S_ISLNK(mode):
+        # Editor lock links (``.#Name.lean``) are never read, so they are skipped;
+        # any other ``.lean`` link, live or dangling, is captured and refused.
         return (
             relative.suffix == ".lean"
             and not relative.name.startswith(".#")
@@ -570,21 +605,11 @@ def _indexed_source_snapshot(
     def in_ignored_root(relative_text: str) -> bool:
         return _path_is_within_roots(PurePosixPath(relative_text), ignored_roots)
 
-    # Editor lock links (``.#Name.lean``) are never read, so they are skipped;
-    # any other ``.lean`` link, live or dangling, is refused.
-    tolerated_links = frozenset(
-        relative
-        for relative, _target in snapshot.symlinks
-        if PurePosixPath(relative).suffix == ".lean"
-        and not in_ignored_root(relative)
-        and PurePosixPath(relative).name.startswith(".#")
-    )
     unsupported = [
         (relative, reason)
         for relative, reason in snapshot.unsupported_entries()
         if not in_ignored_root(relative)
         and PurePosixPath(relative).suffix == ".lean"
-        and relative not in tolerated_links
     ]
     if unsupported:
         relative, reason = unsupported[0]
@@ -622,7 +647,7 @@ def _indexed_source_snapshot(
             line_counts=line_counts,
         ),
         source_digest,
-        _lean_generation_revision(snapshot, ignored_roots, tolerated_links),
+        _lean_generation_revision(snapshot, ignored_roots),
         tuple(source_files),
     )
 
@@ -630,7 +655,6 @@ def _indexed_source_snapshot(
 def _lean_generation_revision(
     snapshot: TreeSnapshot,
     ignored_roots: set[PurePosixPath],
-    tolerated_links: frozenset[str],
 ) -> str:
     """Hash only effective Lean inputs and their ancestor directories."""
 
@@ -642,11 +666,7 @@ def _lean_generation_revision(
         )
 
     files = tuple(entry for entry in snapshot.files if retained_entry(entry[0]))
-    symlinks = tuple(
-        entry
-        for entry in snapshot.symlinks
-        if retained_entry(entry[0]) and entry[0] not in tolerated_links
-    )
+    symlinks = tuple(entry for entry in snapshot.symlinks if retained_entry(entry[0]))
     special = tuple(entry for entry in snapshot.special if retained_entry(entry[0]))
     placeholders = tuple(path for path in snapshot.placeholders if retained_entry(path))
     omitted = tuple(entry for entry in snapshot.omitted if retained_entry(entry[0]))
@@ -738,8 +758,7 @@ def _scan(text: str, relative: Path) -> list[Declaration]:
             scopes.append(name)
             continue
 
-        section_match = _SECTION.match(line)
-        if section_match:
+        if _SECTION.match(line) or _MUTUAL.match(line):
             scopes.append(None)
             continue
 
@@ -870,6 +889,8 @@ class SourceLinker:
     repository_url: str | None = None
     ref: str | None = None
     linkable_paths: frozenset[Path] | None = None
+    indexed: bool = True
+    """False when the sources were not read, so no name was looked up."""
 
     def location(self, name: str) -> Declaration | None:
         return self.index.find(name)
@@ -894,64 +915,22 @@ class SourceLinker:
         return f"{self.repository_url}/blob/{self.ref}/{path}#L{declaration.line}"
 
 
-def build_linker(
-    lean_root: str | Path,
-    *,
-    repository_url: str | None = None,
-    ref: str | None = None,
-    exclude_roots: Iterable[str | Path] = (),
-    source_index: SourceIndex | None = None,
-    detect_missing: bool = True,
-) -> SourceLinker:
-    """Index *lean_root* and resolve repository coordinates.
-
-    A supplied source snapshot never inherits a live Git ref; callers must bind
-    that ref explicitly if they want permalinks.
-    """
-    try:
-        requested_root = directory_binding.lexical_absolute_path(lean_root)
-        resolved_root = requested_root.resolve()
-    except RuntimeError as error:
-        # An unknown ~user, or before Python 3.13 a symbolic link loop.
-        raise LeanSourceError("Lean root cannot be resolved") from error
-    remapped_exclusions = tuple(
-        _remap_resolved_root_exclusion(requested_root, resolved_root, value)
-        for value in exclude_roots
-    )
-    if source_index is not None and source_index.root != resolved_root:
-        raise ValueError("captured source index belongs to a different Lean root")
-    resolved_repository_url = repository_url
-    resolved_ref = ref
-    linkable_paths: frozenset[Path] | None = None
-    index = source_index
-    if source_index is None:
-        if detect_missing and ref is None:
-            snapshot, detected_url, detected_ref, linkable_paths = _capture_link_state(
-                resolved_root,
-                remapped_exclusions,
-            )
-            index = snapshot.index
-            resolved_repository_url = repository_url or detected_url
-            resolved_ref = detected_ref
-        else:
-            index = index_project(
-                resolved_root,
-                exclude_roots=remapped_exclusions,
-            )
-    if detect_missing and resolved_repository_url is None:
-        resolved_repository_url = detect_repository_url(resolved_root)
-    assert index is not None
+def build_linker(lean_root: str | Path) -> SourceLinker:
+    """Index *lean_root* and resolve repository coordinates."""
+    resolved_root = resolve_lean_root(lean_root)
+    snapshot, repository_url, ref, linkable_paths = _capture_link_state(resolved_root)
+    if repository_url is None:
+        repository_url = detect_repository_url(resolved_root)
     return SourceLinker(
-        index=index,
-        repository_url=resolved_repository_url,
-        ref=resolved_ref,
+        index=snapshot.index,
+        repository_url=repository_url,
+        ref=ref,
         linkable_paths=linkable_paths,
     )
 
 
 def _capture_link_state(
     root: Path,
-    exclude_roots: Iterable[str | Path],
 ) -> tuple[
     IndexedSourceSnapshot,
     str | None,
@@ -960,7 +939,6 @@ def _capture_link_state(
 ]:
     """Capture source bytes and prove which ones belong to one stable commit."""
 
-    exclusions = tuple(exclude_roots)
     last_snapshot: IndexedSourceSnapshot | None = None
     last_url: str | None = None
     for attempt in range(_SNAPSHOT_ATTEMPTS):
@@ -968,7 +946,7 @@ def _capture_link_state(
             time.sleep(_SNAPSHOT_RETRY_DELAY_SECONDS * attempt)
         before_url = detect_repository_url(root)
         before_ref = detect_ref(root)
-        snapshot = snapshot_project_sources(root, exclude_roots=exclusions)
+        snapshot = snapshot_project_sources(root)
         last_snapshot = snapshot
         last_url = before_url
         after_url = detect_repository_url(root)
@@ -1276,6 +1254,7 @@ __all__ = [
     "index_failure_message",
     "index_project",
     "project_source_revision",
+    "resolve_lean_root",
     "snapshot_project_sources",
     "strip_lean_comments",
     "verify_repository_snapshot",

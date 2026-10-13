@@ -15,6 +15,7 @@ from pathlib import Path, PureWindowsPath
 
 from .audit import AuditFinding, _lean_findings, audit_graph
 from .graph import GraphValidationError, load_graph
+from .lean import LeanSourceError, resolve_lean_root
 from .runtime import (
     RUNTIME_AUTHORITY,
     RUNTIME_SCHEMA,
@@ -138,8 +139,13 @@ def diagnose_project(
     if lean_root is None:
         checks.append(DoctorCheck("lean targets", True, "not checked; no Lean root supplied"))
     else:
-        lean_findings = tuple(_lean_findings(graph, lean_root))
-        checks.append(_finding_check("lean targets", lean_findings, "all asserted local Lean targets resolve"))
+        try:
+            root = resolve_lean_root(lean_root)
+        except LeanSourceError as error:
+            checks.append(DoctorCheck("lean targets", False, str(error)))
+        else:
+            lean_findings = tuple(_lean_findings(graph, root))
+            checks.append(_finding_check("lean targets", lean_findings, "all asserted local Lean targets resolve"))
     return _result(checks)
 
 
