@@ -913,8 +913,10 @@ changing while they were indexed; changed: Proj/A.lean`. A capture is not one
 atomic filesystem generation: a `.lean` file or marker that exists at a path
 only after the walk last looked at that path and before the final check
 reached it is not seen, and the final check lists each folder once, before it
-checks that folder's contents. Coordinated moves across folders between
-those checks can therefore yield a set of sources that no single state had.
+checks that folder's contents, so a `.lean` file or marker that appears in a
+folder after that listing is not seen either. Coordinated moves across folders
+between those checks can therefore yield a set of sources that no single state
+had.
 
 Automatically detected Git permalinks are emitted only for captured files whose
 bytes equal the blob at the stable detected commit. Dirty, untracked, missing,

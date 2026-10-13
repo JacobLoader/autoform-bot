@@ -1642,9 +1642,10 @@ def _recheck_scanned_directory(
     Its recorded names must still be present and, if it recorded any, it
     must not have become hidden by a recognized marker; a folder that kept
     nothing may.  Every other name must still be the entry the scan saw and did
-    not keep, by ``(dev, ino, file type)``, or must now hold no selected entry
-    or marker; names that appeared since the scan's listing and names the
-    scan dropped as vanished have no recorded identity.
+    not keep, by ``(dev, ino, file type)``, or must now be gone, be hidden by a
+    recognized marker, or hold no selected entry; names that appeared since the
+    scan's listing and names the scan dropped as vanished have no recorded
+    identity.
     This is the selected-mode form of the strict end-of-folder relist, and
     like it bounds the undetected window of this folder to the time between
     this relist and its verification.
