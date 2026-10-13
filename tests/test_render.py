@@ -2029,12 +2029,14 @@ def test_render_accepts_an_ancestor_that_grants_search_but_not_read(tmp_path: Pa
         ("Publication.json", PUBLICATION_MANIFEST),
         ("Assets/logo.svg", "assets"),
         ("Stylesheets/site.css", "stylesheets"),
+        ("stylesheets/Blueprint.css", "stylesheets/blueprint.css"),
+        ("assets/Autoform.svg", "assets/autoform.svg"),
         ("Progress.md", None),
         ("Graph.html", None),
         ("roadmap/dependencies.md", None),
     ],
 )
-def test_only_root_names_that_collide_with_generated_output_are_refused(
+def test_only_names_that_collide_with_generated_output_are_refused(
     tmp_path: Path, name: str, generated: str | None
 ) -> None:
     project = _project(tmp_path)

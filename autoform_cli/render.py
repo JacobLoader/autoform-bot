@@ -151,6 +151,8 @@ STYLESHEET = "stylesheets/blueprint.css"
 MERMAID_SCRIPT = "javascripts/blueprint-mermaid.js"
 LIVE_SCRIPT = "javascripts/blueprint-live.js"
 LOGO = "assets/autoform.svg"
+#: Paths render writes at fixed places; an authored path differing only in case would collide.
+_GENERATED_PATHS = _GENERATED_ROOT_ENTRIES | {STYLESHEET, MERMAID_SCRIPT, LIVE_SCRIPT, LOGO}
 _ASSET_DIR = Path(__file__).resolve().parent / "assets"
 
 
@@ -595,8 +597,8 @@ def _capture_blueprint(blueprint: Path) -> TreeSnapshot:
     omitted, symlinks = dict(snapshot.omitted), dict(snapshot.symlinks)
     unsupported = dict(snapshot.unsupported_entries())
     # Published names that differ only in case or Unicode form would merge on a
-    # case-insensitive filesystem. The generated root entries claim theirs first.
-    spellings = {name.casefold(): name for name in _GENERATED_ROOT_ENTRIES}
+    # case-insensitive filesystem. The generated paths claim theirs first.
+    spellings = {name.casefold(): name for name in _GENERATED_PATHS}
     issues: list[str] = []
     for raw in sorted({*snapshot.directories, *dict(snapshot.files), *unsupported, *omitted} - {""}):
         relative = PurePosixPath(raw)
@@ -611,9 +613,9 @@ def _capture_blueprint(blueprint: Path) -> TreeSnapshot:
             issues.append(f"refusing non-regular blueprint publication input: {raw}: {unsupported[raw]}")
         elif (prior := spellings.setdefault(folded, raw)) == raw:
             continue
-        elif prior in _GENERATED_ROOT_ENTRIES:
+        elif prior in _GENERATED_PATHS:
             issues.append(
-                f"refusing blueprint root entry {raw}: it differs only in case from the generated "
+                f"refusing blueprint path {raw}: it differs only in case from the generated "
                 f"{prior}, and the two would collide; rename it"
             )
         else:
