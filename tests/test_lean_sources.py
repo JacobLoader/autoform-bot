@@ -22,7 +22,6 @@ from autoform_cli._tree_snapshot import (
     TreeSnapshot,
     TreeSnapshotError,
     bind_directory_tree,
-    capture_directory_descriptor,
 )
 from autoform_cli.lean import (
     SourceLinker,
@@ -844,56 +843,6 @@ def test_descriptor_and_portable_capture_have_identical_order(
         descriptor_snapshot.generation_revision
         == portable_snapshot.generation_revision
     )
-
-
-def test_expected_child_identity_is_checked_during_descriptor_capture(
-    tmp_path: Path,
-) -> None:
-    _require_directory_descriptors()
-    root = tmp_path / "tree"
-    child = root / "child"
-    child.mkdir(parents=True)
-    (child / "Original.lean").write_text("def original : Nat := 0\n")
-    expected = (child.stat().st_dev, child.stat().st_ino)
-    displaced = tmp_path / "displaced"
-    replacement = tmp_path / "replacement"
-    replacement.mkdir()
-    (replacement / "Replacement.lean").write_text("def replacement : Nat := 0\n")
-    binding = directory_binding_module.open_directory(root)
-    try:
-        child.rename(displaced)
-        replacement.rename(child)
-        with pytest.raises(TreeSnapshotError, match="changed while it was captured"):
-            capture_directory_descriptor(
-                binding.descriptor,
-                expected_children={"child": expected},
-            )
-    finally:
-        binding.close()
-
-
-def test_expected_child_rejects_a_case_colliding_entry(tmp_path: Path) -> None:
-    _require_directory_descriptors()
-    root = tmp_path / "tree"
-    child = root / "child"
-    child.mkdir(parents=True)
-    collision = root / "CHILD"
-    try:
-        collision.mkdir()
-    except FileExistsError:
-        pytest.skip("filesystem does not permit case-colliding directory names")
-    if collision.samefile(child):
-        pytest.skip("filesystem does not permit case-colliding directory names")
-    expected = (child.stat().st_dev, child.stat().st_ino)
-    binding = directory_binding_module.open_directory(root)
-    try:
-        with pytest.raises(TreeSnapshotError, match="changed while it was captured"):
-            capture_directory_descriptor(
-                binding.descriptor,
-                expected_children={"child": expected},
-            )
-    finally:
-        binding.close()
 
 
 def test_portable_binding_rejects_a_symlinked_ancestor(
