@@ -463,13 +463,15 @@ def _locked_mathlib(
             raise ValueError(relative)
         if layout == "legacy":
             if relative == _MANIFEST:
+                code = "unsupported-lake-manifest"
                 message = (
                     f"Lake still reads the legacy layout of {relative}, but Autoform does not; "
                     "`lake update` rewrites it."
                 )
             else:
+                code = "unsupported-package-overrides"
                 message = f"Lake still reads the legacy layout of {relative}, but Autoform does not decode it."
-            diagnostics.append(ProjectDiagnostic("warning", "unsupported-lake-manifest", message, relative))
+            diagnostics.append(ProjectDiagnostic("warning", code, message, relative))
             return False, None
         if relative == _MANIFEST:
             _validate_manifest_root(payload)
@@ -480,8 +482,9 @@ def _locked_mathlib(
         decoded = [_decode_package_entry(item, relative) for item in packages]
     except (AttributeError, RecursionError, ValueError):
         kind = "Lake manifest" if relative == _MANIFEST else "Lake package-overrides file"
+        code = "invalid-lake-manifest" if relative == _MANIFEST else "invalid-package-overrides"
         diagnostics.append(
-            ProjectDiagnostic("error", "invalid-lake-manifest", f"{relative} is not a {kind} Autoform reads.", relative)
+            ProjectDiagnostic("error", code, f"{relative} is not a {kind} Autoform reads.", relative)
         )
         return False, None
     # Lake inserts entries into a NameMap in order, so the last duplicate wins.

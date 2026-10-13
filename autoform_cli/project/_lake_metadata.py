@@ -17,6 +17,7 @@ _TARGET_KINDS = ("lean_lib", "lean_exe", "input_file", "input_dir")  # the kinds
 _MATHLIB_NAME = (("str", "mathlib"),)
 _LAKE_VERSION = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)(?:-[^ \t\r\n]+)?")  # Lake's StdVer
 _URL_CREDENTIALS = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*://)[^/@]*@")
+_URL_QUERY_OR_FRAGMENT = re.compile(r"([?#]).*", re.S)
 _LEAN_ID_BEGIN_ESCAPE = "«"
 _LEAN_ID_END_ESCAPE = "»"
 
@@ -408,9 +409,12 @@ def _requirement_source(requirement: dict) -> tuple[str | None, str | None, str 
 
 
 def _redact(url: str | None) -> str | None:
-    """Hide credentials embedded in a Git URL, since reports end up in logs."""
+    """Hide a Git URL's embedded credentials, query, and fragment, since reports end up in logs.
 
-    return None if url is None else _URL_CREDENTIALS.sub(r"\1***@", url)
+    The ``***@``, ``?***`` or ``#***`` marker stays, so a redacted URL never matches a catalog URL.
+    """
+
+    return None if url is None else _URL_QUERY_OR_FRAGMENT.sub(r"\1***", _URL_CREDENTIALS.sub(r"\1***@", url))
 
 
 def _is_name(value: object) -> bool:
