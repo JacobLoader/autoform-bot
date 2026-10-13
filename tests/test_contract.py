@@ -28,7 +28,14 @@ from autoform_cli.runtime import load_runtime_graph
 from autoform_cli.status import STATES, derive
 from autoform_cli.work import WorkError, assumption_contract, list_ready_work
 from tests.test_impact import _lean_toolchain_available
-from tests.test_lake_artifact_audit import _TEMPLATE, _load_helper, _run, _run_probe, _write
+from tests.test_lake_artifact_audit import (
+    _TEMPLATE,
+    _ends_with_the_success_line,
+    _load_helper,
+    _run,
+    _run_probe,
+    _write,
+)
 
 
 _SEEDS = range(30)
@@ -453,6 +460,7 @@ def test_the_site_never_claims_more_than_the_audit_of_a_real_build(repo_root: Pa
     output = audited.stdout + audited.stderr
     assert audited.returncode == 0, output
     assert "kernel trust clean except declared open statements (" in output
+    assert _ends_with_the_success_line(audited.stdout), audited.stdout
 
     reported: dict[str, set[str]] = {}
     for verdict, declaration, article in _AUDIT_LINE.findall(output):

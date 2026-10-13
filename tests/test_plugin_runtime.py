@@ -163,6 +163,7 @@ def test_copied_plugin_project_entrypoints_need_no_autoform_on_path(repo_root, t
         ".lake/",
         "site/",
         "site-src/",
+        ".autoform-publication-*/",
         "*.log",
         ".claude/worktrees/",
     ]
@@ -195,6 +196,7 @@ def test_wheel_contains_only_the_minimal_runtime(repo_root, tmp_path):
             "autoform_cli/__main__.py",
             "autoform_cli/graph.py",
             "autoform_cli/probes/skeleton_probe.lean",
+            "autoform_cli/probes/unused_hypotheses.lean",
             "autoform_cli/project/README.md",
             "autoform_cli/project/_lake_metadata.py",
             "autoform_cli/project/_snapshot.py",

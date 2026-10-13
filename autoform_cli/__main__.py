@@ -25,7 +25,7 @@ from .impact import ImpactError, format_impact, revision_impact
 from .lean import build_linker, declaration_names, index_failure_message
 from .project import ProjectCatalogError, ProjectCreateError, create_project, inspect_project, load_release_catalog
 from .render import PublicationError, render_site
-from .runtime import RuntimeProjectionError, load_runtime_graph, resolve_runtime_paths
+from .runtime import RuntimeProjectionError, resolve_runtime_paths
 from .scaffold import ScaffoldError, scaffold_project
 from .search import SearchError, search_blueprint, statement_preview
 from .skeleton import (
@@ -37,6 +37,7 @@ from .skeleton import (
     write_packets,
     write_skeleton_report,
 )
+from .unused_hypotheses import find_unused_hypotheses, format_unused_hypotheses
 from .work import WORK_SCHEMA, WorkError, assumption_contract, list_ready_work, work_context
 
 
@@ -212,7 +213,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     search.add_argument(
         "query",
         help="one quoted argument; every word, with filler such as 'of' dropped and common endings cut, "
-        "must occur in an article's title, Lean name, path, or statement; put -- before one starting with -",
+        "must occur in an article's title, Lean name, path, or statement, or in a containing article's title; "
+        "put -- before one starting with -",
     )
     search.add_argument("--lean-root", type=Path, help="resolve local Lean declaration targets")
     search.add_argument(
@@ -318,12 +320,43 @@ def main(argv: Sequence[str] | None = None) -> int:
         "the Lake freshness check before it has its own budget",
     )
 
+    unused = subparsers.add_parser(
+        "unused-hypotheses",
+        help="report the hypotheses that the proof of each theorem the blueprint names never uses",
+    )
+    unused.add_argument("blueprint_dir")
+    unused.add_argument(
+        "--lean-root",
+        type=Path,
+        required=True,
+        help="built Lean project whose declarations the blueprint names",
+    )
+    unused.add_argument(
+        "--node",
+        action="append",
+        dest="nodes",
+        metavar="ID",
+        help="restrict to one article id (repeatable)",
+    )
+    unused.add_argument("--json", action="store_true", help="write stable machine-readable output")
+    unused.add_argument(
+        "--timeout",
+        type=_positive_seconds,
+        metavar="SECONDS",
+        help=f"seconds the Lean probe may run (default {DEFAULT_PROBE_TIMEOUT:g}); "
+        "the Lake freshness check before it has its own budget",
+    )
+
     render = subparsers.add_parser("render", help="build the publishable blueprint")
     render.add_argument("blueprint_dir")
     render.add_argument("-o", "--output", default="site-src", help="output directory")
     render.add_argument("--lean-root", type=Path, help="Lean project to link code from")
     render.add_argument("--repository-url", help="project URL, e.g. https://github.com/owner/repo")
-    render.add_argument("--ref", help="commit or branch the code links should pin")
+    render.add_argument(
+        "--ref",
+        help="commit or branch to link; links appear only if its local commit "
+        "holds the exact rendered inputs",
+    )
     render.add_argument(
         "--require-declarations",
         action="store_true",
@@ -355,6 +388,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _migrate(args)
     if args.command == "skeleton":
         return _skeleton(args)
+    if args.command == "unused-hypotheses":
+        return _unused_hypotheses(args)
     if args.command == "render":
         return _render(args)
     return 2
@@ -497,7 +532,6 @@ def _dashboard(args: argparse.Namespace) -> int:
         def run(scratch: Path) -> None:
             claims = ClaimBoard(repo, "dashboard-readonly", scratch)
             state = publication_bound_live_state(
-                lambda: load_runtime_graph(paths.project_root),
                 claims,
                 blueprint_dir=paths.blueprint_dir,
                 site_dir=site,
@@ -1038,6 +1072,22 @@ def _skeleton(args: argparse.Namespace) -> int:
     return 0 if report.clean else 1
 
 
+def _unused_hypotheses(args: argparse.Namespace) -> int:
+    try:
+        report = find_unused_hypotheses(
+            args.blueprint_dir,
+            lean_root=args.lean_root,
+            node_ids=tuple(args.nodes) if args.nodes else None,
+            timeout=args.timeout or DEFAULT_PROBE_TIMEOUT,
+        )
+    except SkeletonError as exc:
+        for issue in exc.issues:
+            print(f"error: {issue}", file=sys.stderr)
+        return 2
+    print(report.to_json() if args.json else format_unused_hypotheses(report), end="\n" if args.json else "")
+    return 0 if report.clean else 1
+
+
 def _claim_board(args: argparse.Namespace) -> ClaimBoard:
     worker_id = args.worker_id
     if not worker_id:
@@ -1095,8 +1145,8 @@ def _render(args: argparse.Namespace) -> int:
     print(f"{report.output_dir}: {report.pages} pages, {report.nodes} nodes, {report.linked} code links")
     for issue in report.unresolved:
         print(f"warning: declaration not found in the Lean sources: {issue}")
-    for warning in report.warnings:
-        print(f"warning: {warning}")
+    for issue in report.warnings:
+        print(f"warning: {issue}")
     # A declaration that was never looked up is not known to exist.
     if (report.unresolved or report.unchecked) and args.require_declarations:
         return 1

@@ -8,15 +8,9 @@ from pathlib import Path
 import pytest
 
 from autoform_cli import _directory_binding as directory_binding_module
-from autoform_cli import _tree_snapshot as tree_snapshot_module
 from autoform_cli.__main__ import main
-from autoform_cli.lean import (
-    LeanSourceError,
-    index_project,
-    snapshot_project_sources,
-    source_capture_supported,
-    unindexed_linker,
-)
+from autoform_cli._tree_snapshot import descriptor_capture_supported
+from autoform_cli.lean import index_project, snapshot_project_sources
 from autoform_cli.render import PUBLICATION_MANIFEST
 
 
@@ -118,26 +112,33 @@ def test_render_without_descriptor_capture_publishes_without_code_links(
     require_declarations: bool,
 ) -> None:
     _without_descriptor_capture(monkeypatch)
+    for variable in ("GITHUB_WORKSPACE", "GITHUB_REPOSITORY", "GITHUB_SHA"):
+        monkeypatch.delenv(variable, raising=False)
     project = _project(tmp_path)
+    commit = _commit_checkout(project)
     output = tmp_path / "site-src"
 
     def unreachable(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("the implicit Lean root must not be read without descriptor capture")
 
-    monkeypatch.setattr("autoform_cli.render.build_linker", unreachable)
+    monkeypatch.setattr("autoform_cli.render.snapshot_project_sources", unreachable)
     arguments = ["render", str(project / "blueprint"), "--output", str(output)]
     if require_declarations:
         arguments.append("--require-declarations")
 
-    status = main(arguments)
-
-    stdout = capsys.readouterr().out
-    assert status == (1 if require_declarations else 0)
-    assert [line for line in stdout.splitlines() if line.startswith("warning:")] == [_SKIPPED_LINKS]
+    # The second render replaces the first site.
+    for _ in range(2):
+        status = main(arguments)
+        stdout = capsys.readouterr().out
+        assert status == (1 if require_declarations else 0)
+        assert [line for line in stdout.splitlines() if line.startswith("warning:")] == [_SKIPPED_LINKS]
     assert "0 code links" in stdout
     published = _published_text(output)
     assert "<code>Project.top</code>" in published
     assert "not found in the Lean sources" not in published
+    # Links to the Markdown sources still pin the verified commit.
+    assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["git_ref"] == commit
+    assert f"https://github.com/owner/repo/blob/{commit}/blueprint/roadmap/top.md" in published
 
 
 @pytest.mark.parametrize("require_declarations", [False, True])
@@ -162,26 +163,6 @@ def test_render_without_descriptor_capture_is_quiet_when_no_declaration_is_named
     assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["complete"]
 
 
-def test_render_without_descriptor_capture_keeps_repository_links(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _without_descriptor_capture(monkeypatch)
-    for variable in ("GITHUB_WORKSPACE", "GITHUB_REPOSITORY", "GITHUB_SHA"):
-        monkeypatch.delenv(variable, raising=False)
-    project = _project(tmp_path)
-    commit = _commit_checkout(project)
-    output = tmp_path / "site-src"
-
-    assert main(["render", str(project / "blueprint"), "--output", str(output)]) == 0
-
-    manifest = json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))
-    assert manifest["git_ref"] == commit
-    assert f"https://github.com/owner/repo/blob/{commit}/blueprint/roadmap/top.md" in (
-        _published_text(output)
-    )
-
-
 def test_render_explicit_lean_root_fails_closed_without_descriptor_capture(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -203,42 +184,11 @@ def test_render_explicit_lean_root_fails_closed_without_descriptor_capture(
     assert not output.exists()
 
 
-@pytest.mark.skipif(os.name == "nt", reason="Windows guesses a home for an unknown ~user")
-def test_unindexed_linker_reports_an_unresolvable_root_like_build_linker() -> None:
-    with pytest.raises(LeanSourceError, match="^Lean root cannot be resolved$"):
-        unindexed_linker("~autoform-no-such-user/project")
-
-
-@pytest.mark.parametrize(
-    "missing", [None, "DIRECTORY_BINDING_SUPPORTED", "_DESCRIPTOR_CAPTURE_SUPPORTED"]
-)
-def test_source_capture_capability_matches_capture_enforcement(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    missing: str | None,
-) -> None:
-    if missing is not None:
-        module = (
-            directory_binding_module
-            if missing == "DIRECTORY_BINDING_SUPPORTED"
-            else tree_snapshot_module
-        )
-        monkeypatch.setattr(module, missing, False)
-    (tmp_path / "A.lean").write_text("theorem a : True := trivial\n", encoding="utf-8")
-
-    if source_capture_supported():
-        assert "a" in snapshot_project_sources(tmp_path).index.declarations
-    else:
-        with pytest.raises(OSError, match="safe directory traversal is unavailable"):
-            snapshot_project_sources(tmp_path)
-        assert missing is not None or os.name == "nt"
-
-
 def test_render_with_descriptor_capture_still_links_the_implicit_root(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    if not source_capture_supported():
+    if not descriptor_capture_supported():
         pytest.skip("directory descriptor capture is unavailable")
     project = _project(tmp_path)
     output = tmp_path / "site-src"
