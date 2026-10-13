@@ -756,10 +756,9 @@ class ReplOutcomeUnknown(RuntimeError):
 class ReplStderrBacklog(RuntimeError):
     """Raised when a response was captured but process stderr is no longer safe.
 
-    The response data is valid and travels on ``response`` so a caller need not
-    recompute it, but any ``env`` belongs to the process being retired and must
-    not escape. stderr is unframed process output rather than command output, so
-    an over-budget or undrainable process must not serve another request.
+    stderr exceeded its ceiling or could not be drained, so the process is
+    retired before this is raised. The decoded response travels on
+    ``response`` and still answers the request.
     """
 
     def __init__(self, message: str, response: Any) -> None:
@@ -986,11 +985,16 @@ class LeanRepl:
                     command = f"{prefix}\n{code}" if prefix else code
                     remaining("disposable child startup")
                     self.start()
-                    response = self._run(
-                        code=command,
-                        env_id=None,
-                        timeout=remaining("combined command execution"),
-                    )
+                    command_timeout = remaining("combined command execution")
+                    try:
+                        response = self._run(
+                            code=command,
+                            env_id=None,
+                            timeout=command_timeout,
+                        )
+                    except ReplStderrBacklog as error:
+                        # _run_io already retired the process.
+                        response = error.response
                     _validate_command_response(
                         response,
                         context="the requested command",
@@ -998,24 +1002,6 @@ class LeanRepl:
                     )
                     _adjust_line_numbers(response, -len(added_imports))
                     result = _without_process_handles(response)
-            except ReplStderrBacklog as error:
-                try:
-                    _validate_command_response(
-                        error.response,
-                        context="the requested command",
-                        require_environment=True,
-                    )
-                except ReplCommandError as command_error:
-                    result = {"repl_error": str(command_error)}
-                except ReplProtocolError as protocol_error:
-                    result = {
-                        "repl_error": str(protocol_error),
-                        "outcome_unknown": True,
-                    }
-                else:
-                    response = _without_process_handles(error.response)
-                    _adjust_line_numbers(response, -len(added_imports))
-                    result = response
             except ReplCommandError as error:
                 result = {"repl_error": str(error)}
             except (ReplProtocolError, ReplOutcomeUnknown) as error:
