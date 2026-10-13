@@ -1242,6 +1242,56 @@ def test_header_check_fails_closed_when_the_parser_fails(command, message):
         _header_modules(command)
 
 
+_NO_IMPORTS = {"imports": [], "isModule": False, "isPrelude": False}
+
+
+# Each payload breaks one rule of parse_header.lean's schema.
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        {"imports": [{"errors": [], "result": _NO_IMPORTS}], "errors": []},
+        {"imports": {}},
+        {"imports": []},
+        {"imports": [{"errors": [], "result": _NO_IMPORTS}] * 2},
+        {"imports": [[]]},
+        {"imports": [{"result": _NO_IMPORTS}]},
+        {"imports": [{"errors": "bad header", "result": _NO_IMPORTS}]},
+        {"imports": [{"errors": [""]}]},
+        {"imports": [{"errors": [1]}]},
+        {"imports": [{"errors": []}]},
+        {"imports": [{"errors": [], "imports": []}]},
+        {"imports": [{"errors": [], "result": _NO_IMPORTS, "imports": []}]},
+        {"imports": [{"errors": [], "result": []}]},
+        {"imports": [{"errors": [], "result": {"isModule": False, "isPrelude": False}}]},
+        {"imports": [{"errors": [], "result": {**_NO_IMPORTS, "imports": {}}}]},
+        {"imports": [{"errors": [], "result": {"imports": [], "isPrelude": False}}]},
+        {"imports": [{"errors": [], "result": {**_NO_IMPORTS, "isModule": 0}}]},
+        {"imports": [{"errors": [], "result": {"imports": [], "isModule": False}}]},
+        {"imports": [{"errors": [], "result": {**_NO_IMPORTS, "isPrelude": None}}]},
+        {"imports": [{"errors": [], "result": {**_NO_IMPORTS, "imports": ["Mathlib"]}}]},
+        {"imports": [{"errors": [], "result": {**_NO_IMPORTS, "imports": [{"isMeta": False}]}}]},
+        {"imports": [{"errors": [], "result": {**_NO_IMPORTS, "imports": [{"module": ""}]}}]},
+        {"imports": [{"errors": [], "result": {**_NO_IMPORTS, "imports": [{"module": 1}]}}]},
+        {"imports": [{"errors": [], "result": {**_NO_IMPORTS, "imports": [{"module": "Mathlib", "isMeta": 1}]}}]},
+    ],
+)
+def test_header_decoder_fails_closed_on_unrecognized_output(payload):
+    with pytest.raises(RuntimeError, match="Lean header check failed: unrecognized output"):
+        repl_core._decode_header_analysis(json.dumps(payload).encode())
+
+
+def test_header_decoder_fails_closed_on_invalid_utf8():
+    with pytest.raises(RuntimeError, match="Lean header check failed: unrecognized output"):
+        repl_core._decode_header_analysis(b"\xff")
+
+
+@pytest.mark.parametrize("module", ["Mathlib/X", "Mathlib\\X", "Mathlib..X"])
+def test_header_decoder_refuses_path_like_or_empty_module_components(module):
+    with pytest.raises(ValueError, match="plain, nonempty module components"):
+        repl_core._decode_header_analysis(_header_json(module).encode())
+
+
 @pytest.mark.parametrize(
     ("header_output", "expected_error"),
     [
