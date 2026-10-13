@@ -1155,7 +1155,7 @@ class LeanRepl:
             raise ReplProcessExited(
                 f"REPL process-generation stderr became unsafe before the request "
                 f"frame was fully sent ({reason}; {stderr_bytes} bytes observed); "
-                f"the process was recycled. Tail: {stderr_tail!r}"
+                f"the process was retired. Tail: {stderr_tail!r}"
             )
 
         def reject_unsolicited_stdout() -> None:
@@ -1173,7 +1173,7 @@ class LeanRepl:
             if chunk:
                 raise ReplProcessExited(
                     "Lean REPL emitted unsolicited stdout before the request frame "
-                    "was fully sent; the process was recycled"
+                    "was fully sent; the process was retired"
                 )
             # A child that exits before reading the frame, as Lake does when it
             # cannot find the REPL package, says why only on stderr.
@@ -1381,22 +1381,19 @@ class LeanRepl:
                     response_bytes = bytes(response_buffer[:separator]).strip()
                     # The frame is complete, so this command's remaining queued
                     # stderr can be drained without starving stdout. Leaving it in
-                    # the pipe would let a command exceed the stderr ceiling
-                    # unnoticed, misattribute diagnostics to the next command, and
-                    # eventually block the child on a full stderr pipe.
+                    # the pipe would let a command exceed the stderr ceiling unnoticed.
                     stderr_drained = drain_stderr(after_response=True)
                     break
 
         if not stderr_drained:
             stderr_bytes, stderr_tail = stderr_details()
             stderr_reason = stderr_poison_reason or "stderr could not be drained"
-            # stderr is accounted to the process generation, never to whichever
-            # command happened to observe it. Once that generation exceeds its
-            # quota or cannot be drained, retire it before another request.
+            # stderr is accounted to the process generation. Once that generation
+            # exceeds its quota or cannot be drained, retire it.
             self.close(deadline=end_time)
 
         # Retire a desynchronized process before parsing. Malformed JSON must not
-        # bypass the stream-safety invariant and leave stale stderr reusable.
+        # bypass the stream-safety invariant.
         try:
             response = _decode_repl_json(response_bytes)
         except (json.JSONDecodeError, ReplProtocolError) as error:
@@ -1412,7 +1409,7 @@ class LeanRepl:
             raise ReplStderrBacklog(
                 f"REPL process-generation stderr became unsafe ({stderr_reason}; "
                 f"{stderr_bytes} bytes observed); "
-                f"the process was recycled. Tail: {stderr_tail!r}",
+                f"the process was retired. Tail: {stderr_tail!r}",
                 response,
             )
         return response

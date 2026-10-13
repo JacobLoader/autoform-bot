@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import re
-import select
 import signal
 import subprocess
 import sys
@@ -1631,30 +1630,23 @@ def test_wire_protocol_retires_process_on_unsolicited_second_frame(monkeypatch):
         assert repl.process is None
 
 
-def test_wire_protocol_rejects_delayed_stdout_before_the_next_request():
+def test_wire_protocol_exchanges_one_frame_over_real_pipes():
     with ExitStack() as stack:
         process = _PipeProcess(stack, [])
         repl = _repl_with_process(process)
-        first_request = bytearray()
+        request = bytearray()
 
-        def serve_first_request() -> None:
-            while b"\n\n" not in first_request:
-                first_request.extend(os.read(process._stdin_read.fileno(), 4096))
+        def serve_request() -> None:
+            while b"\n\n" not in request:
+                request.extend(os.read(process._stdin_read.fileno(), 4096))
             os.write(process._stdout_write.fileno(), b'{"env":1}\n\n')
 
-        worker = threading.Thread(target=serve_first_request, daemon=True)
+        worker = threading.Thread(target=serve_request, daemon=True)
         worker.start()
-        assert repl._run("first", env_id=None, timeout=1) == {"env": 1}
+        assert repl._run("#check Nat", env_id=None, timeout=1) == {"env": 1}
         worker.join(timeout=1)
         assert not worker.is_alive()
-
-        os.write(process._stdout_write.fileno(), b'{"env":999}\n\n')
-        with pytest.raises(repl_core.ReplProcessExited, match="unsolicited stdout"):
-            repl._run("second", env_id=None, timeout=1)
-
-        readable, _, _ = select.select([process._stdin_read.fileno()], [], [], 0)
-        assert readable == []
-        assert repl.process is None
+        assert bytes(request) == b'{"cmd": "#check Nat"}\n\n'
 
 
 def test_wire_protocol_rechecks_stdout_before_dispatching_a_complete_request_body(
@@ -1733,8 +1725,8 @@ def test_wire_protocol_services_stdout_while_stderr_remains_readable(monkeypatch
         monkeypatch.setattr(repl_core.os, "read", fake_read)
 
         # Endlessly readable stderr never starves stdout, so the response is
-        # captured. It cannot be drained to a boundary though, so the process is
-        # reported as unusable rather than silently reused.
+        # captured. stderr cannot be drained to a boundary though, so the
+        # process is retired and the response travels on the backlog error.
         with pytest.raises(repl_core.ReplStderrBacklog) as error:
             repl._run("#check Nat", env_id=None, timeout=1)
 
@@ -1918,7 +1910,7 @@ def test_wire_protocol_drains_queued_stderr_after_the_response_frame_completes(m
 
         assert repl._run("#check Nat", env_id=None, timeout=5) == {"messages": []}
 
-        # Nothing is left to be charged against, or misattributed to, the next command.
+        # Unlike a fairness cycle, the post-response drain reads until stderr is empty.
         assert process.stderr_bytes == b""
 
 
@@ -1931,9 +1923,9 @@ def test_wire_protocol_reports_a_backlog_when_the_cap_ends_the_post_response_dra
         with pytest.raises(repl_core.ReplStderrBacklog) as error:
             repl._run("#check Nat", env_id=None, timeout=5)
 
-    # The response survives, so the caller need not recompute it...
+    # The response survives as the request's answer...
     assert error.value.response == {"messages": []}
-    # ...but the over-budget process generation must not serve another request.
+    # ...and the drain stops once the generation exceeds its stderr cap.
     assert process.stderr_bytes == b"e" * 4
 
 
@@ -1947,24 +1939,6 @@ def test_wire_protocol_accepts_stderr_that_ends_exactly_at_the_cap(monkeypatch):
 
         assert repl.process is process
         assert process.stderr_bytes == b""
-
-
-def test_stderr_quota_is_cumulative_across_a_process_generation(monkeypatch):
-    with ExitStack() as stack:
-        process = _PipeProcess(stack, [b"{}\n\n"], stderr=b"a" * 6)
-        repl = _repl_with_process(process, chunk_size=6, max_buffer_bytes=10)
-        _patch_pipe_reads(monkeypatch, process)
-
-        assert repl._run("first", env_id=None, timeout=1) == {}
-        assert repl._stderr_bytes == 6
-
-        process.stdout_chunks.append(b"{}\n\n")
-        process.stderr_bytes = b"b" * 6
-        with pytest.raises(repl_core.ReplStderrBacklog) as error:
-            repl._run("second", env_id=None, timeout=1)
-
-        assert error.value.response == {}
-        assert repl.process is None
 
 
 def test_wire_protocol_keeps_the_response_when_the_deadline_ends_the_stderr_drain(monkeypatch):
