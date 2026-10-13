@@ -19,6 +19,11 @@ scope against the sources, then inspect the fine DAG and its coarse roadmap.
    second article stating the same result is a duplicate. Finding none, even
    after a retry with fewer words, is not proof, because matching is literal:
    also compare the statements read for item 3.
+   Include the project's usable shared libraries, as the
+   [library search rules](../../formalize/references/library-search.md)
+   describe, searching by the words of the result, since a library names it
+   differently; a library hit is not a duplicate of an article. List any
+   library refused.
 
 ## Source fidelity and coverage — 40%
 

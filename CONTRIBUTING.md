@@ -24,9 +24,12 @@ pinned upstream REPL, also checking the header parser on the oldest Lean release
 Autoform supports. Locally, tests that need Lean skip when
 `lake` is not on `PATH`. The `tests/test_skeleton.py` ones also skip when the
 toolchain pinned in `tests/fixtures/skeleton-project/lean-toolchain` is
-missing; the others let elan download it. Run `lake build` in
-`skills/setup/assets/cabannes-thesis-project` when you change the example's
-Lean sources or declarations.
+missing; the others let elan download it. The `tests/test_library_generate.py`
+ones that run Lean build a fixture that clones Batteries from GitHub, so they
+run only when `AUTOFORM_REQUIRE_REAL_LIBRARY_TESTS=1` is set, as the same CI
+job does; a missing toolchain or a failed download then fails them. Run
+`lake build` in `skills/setup/assets/cabannes-thesis-project` when you change
+the example's Lean sources or declarations.
 
 `tests/test_real_repl.py` skips unless `AUTOFORM_RUN_REAL_REPL_TESTS=1`. To run
 it locally, build its fixture and install the oldest supported toolchain first:
