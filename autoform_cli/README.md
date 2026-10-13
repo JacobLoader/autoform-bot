@@ -58,7 +58,9 @@ State the intended result and proof sketch here.
 ```
 
 An article's statement is its body from the end of the frontmatter to the first
-`##` heading, without the H1 line. A deeper heading does not end it, and neither
+`##` heading, without the H1 line. The article's first H1 (its title), if
+written below a `##` section, ends that section and resumes the statement; a
+later H1 stays in its section. No heading deeper than `##` ends it, and neither
 does a `##` line inside a fenced code block or an HTML comment. `autoform audit`
 and the published theorem box both read that span. A fence closes only on a
 bare fence line. A fence that never closes is read as plain text when its
@@ -71,6 +73,13 @@ exact length and indent, so close each fence with its own line. The page can
 also pair an unclosed backtick fence line with a later backtick run in the same
 paragraph and show the text between them as inline code; a link there is not a
 link on the page but is still read as a dependency.
+
+An HTML comment that never closes, even one opened by a `<!--` in inline code
+or an indented code block, hides every heading and dependency link after it:
+the graph loses those edges, and the part of the article the comment opens in
+keeps the rest, so one opened in the statement puts the later sections,
+dependency list included, in the theorem box. Nothing reports the comment
+itself.
 
 `## Depends on` lists what the article needs in order to be *stated*;
 `## Proof depends on` lists what only its *proof* needs. Both are graph edges.
@@ -91,6 +100,24 @@ target, `bridged` for a result introduced between source targets, and
 
 Frontmatter is optional. A container article that only supplies prose and
 placement needs none at all; only checked facts are recorded.
+
+Versioned implementation notes live outside the mathematical roadmap at
+`blueprint/.implementation-notes/<article_id>.md`, one file per article. The
+durable ID survives article moves. Claims keep independent workers from editing
+the same leaf's note; containers have no claims, and any worker may delete a
+note that `autoform audit` reports as stale or repair an orphaned one. Every
+command that loads the graph, including `autoform check`, rejects malformed,
+empty, symlinked, or orphaned notes; assign the article ID before creating its
+note. Parallel branches can orphan a note without a Git conflict, when one
+deletes or merges an article while another writes its note; a worker repairs
+that by moving anything still useful into the surviving article's note and
+deleting the orphan. When the article still exists but lost its `article_id`
+line, restore the line instead.
+Delete the file once its article is proved; for a container, delete it once
+every formalizable descendant is proved and there is at least one. The
+directory is hidden, so current and older renderers omit it from the site and
+publication hash without requiring an `AUTOFORM_REF` migration; `autoform
+audit` reports a note left behind after that point.
 
 ## Assertions and derived status
 
@@ -595,6 +622,50 @@ This is failure atomicity, not simultaneous visibility across paths: each
 rename is atomic, but a reader opening several outputs during publication can
 briefly observe different generations.
 
+Report the hypotheses that a theorem's proof never uses:
+
+```bash
+autoform unused-hypotheses blueprint --lean-root .
+autoform unused-hypotheses blueprint --lean-root . --node chapter/main-result --json
+```
+
+A theorem can compile and be true while one of its hypotheses plays no part.
+Either the source states a hypothesis it does not need, or the formal statement
+says less than the source, so the hypothesis has nothing left to do, as when a
+statement assumes the supremum that the source derives from boundedness, or
+when a library convention such as `x / 0 = 0` covers a case the source excludes.
+
+For every theorem a `lean:` line names, the command reads its proof term and
+lists each propositional hypothesis that could be deleted, with its binder
+position and whether the proof uses it. A hypothesis the proof term never
+mentions can be deleted, and the same term proves what remains, so a
+`hypothesis-unused` finding is certain; a tactic that names the hypothesis,
+such as `simp [h]` or `clear h`, has to drop the name too. A hypothesis the proof does use may
+still be unnecessary, and a proof that is just another theorem counts as using
+every hypothesis it passes on. A hypothesis that the conclusion or a later
+binder mentions cannot be deleted and is not listed. A proof that itself
+contains `sorry` is not read; a complete proof that uses an open statement is.
+Findings are for a reviewer and never fail the run, since the source may state
+a hypothesis its theorem does not need; the command exits 1 only when a `lean:`
+name cannot be found. `--json` writes the `autoform-unused-hypotheses/v1`
+report.
+
+`lake build` already warns about some of these: Lean's `unusedVariables`
+linter names a hypothesis the proof never references, and `unusedSectionVars`
+names a section variable a theorem includes without needing. Neither reports a
+hypothesis named with a leading `_`, an unnamed instance argument of the
+theorem itself, the antecedent of `p → q`, or a binder such as `∀ n > 0`; this
+command does, so renaming a hypothesis to `_h` does not hide it. It also reports per article,
+for the reviewer of that article.
+
+Like `autoform skeleton`, it runs a small program with `lake env lean` after the
+same Lake freshness check, over the modules that hold the named theorems, and
+the same trust caveats apply: run it in a trusted checkout or a sandbox whose
+build is current. `--timeout SECONDS` sets the Lean run's budget, as for
+`autoform skeleton`. Nothing it reports enters the skeleton report,
+its packets, or their hashes, and findings name Lean hypotheses, so they stay
+out of the blind read-back route.
+
 Inspect the current Markdown-derived formalization frontier without creating a
 queue or scheduler state:
 
@@ -883,9 +954,11 @@ A formalizable article must state its result in prose a reader sees. At most
 one of three findings reports a statement that does not, checked in this order:
 
 - `missing-statement-text`: the statement has no prose outside code blocks, HTML
-  comments, and headings.
+  comments, and lines that hold only a heading written with `#` marks, such as
+  `### Setting`.
 - `empty-statement-text`: the published prose has no letter or digit, as with a
-  hidden element, a horizontal rule, an image, or a link with no text.
+  hidden element, a horizontal rule, an image, a link with no text, or a heading
+  that is underlined, quoted, or in a list item.
 - `placeholder-statement-text`: every word is one of `pending`, `placeholder`,
   `todo`, `tbd`, `unknown`, or the statement opens with one of them followed by
   a colon or a dash, as in `TODO: state it`. A single hyphen or en dash counts
@@ -936,7 +1009,7 @@ last component of the path ID);
 `statement_text`; `ancestors` (titles of containing articles below the roadmap
 root); `qualified_names` (the path ID and Lean names in full, which is where a
 namespace alone matches). A title is
-matched as the page shows it, without its Markdown markup. The statement is
+matched without its Markdown markup. The statement is
 matched as the site publishes it, without headings, code blocks, diagrams,
 comments, and elements carrying `hidden`; inline code and mathematics count,
 and published mathematics is delimited `\(...\)`, so search for a formula's
@@ -946,7 +1019,9 @@ matches `roadmap`, `unambiguous` does not match `non-ambiguous`, and one
 absent term means no hit, so query with a few distinctive words or one exact
 Lean name, and retry with fewer words before treating a result as new.
 A symbol such as `ℝ` folds to its plain letter, and a one-letter term matches
-nearly every article.
+nearly every article. A superscript or subscript digit folds to the digit while
+`^` and `_` stay, so `S^1` and `S¹`, or `H_0` and `H₀`, do not find each other;
+search for each spelling.
 
 Hits sort by the best field any term matched. Among hits with the same best
 field, those that contain every word as typed, in any field, come before those
@@ -1273,9 +1348,10 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
      proof that cannot be repaired becomes exactly `sorry` under the open
      policy; otherwise delete the declaration and remove its article's
      `lean:`, `statement`, and `proof`, which works only when nothing else
-     uses it. When neither applies, the
-     revision is blocked: release the claims and report it. Record what
-     happened under `## Execution notes` of each touched article.
+     uses it. When neither applies, the revision is blocked: release the claims
+     and report it. Record what happened in the revision commit and report. Use
+     an implementation note only until [its deletion
+     rule](#articles-and-containment) applies.
 
    An unused statement dependency, which rules out the contained route, is
    re-reviewed under the revised meaning, X' on the expand route and X's new
@@ -1369,10 +1445,11 @@ from runtime snapshots and publication.
 
 `autoform render` publishes the book, derived progress, and dependency maps at
 project, chapter, nested-scope, local, and full-graph scales. It never reads a
-`graph.json` or an operational queue. Hidden files are omitted, while symlinks,
-credentials, logs, provider state, and agent/task state inside the blueprint
-cause the render to fail rather than silently leak them. Source and output
-directories must be disjoint.
+`graph.json` or an operational queue. Hidden files, including
+`.implementation-notes`, are omitted, while symlinks, credentials, logs,
+provider state, and agent/task state inside the blueprint cause the render to
+fail rather than silently leak them. Source and output directories must be
+disjoint.
 
 Every render writes `publication.json` with the source-content hash, Git ref,
 article and dependency counts, and available views. It contains no timestamp or
