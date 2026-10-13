@@ -1451,7 +1451,6 @@ def test_disposable_timeout_after_full_write_is_not_retried(monkeypatch):
     )
     calls = []
     monkeypatch.setattr(repl, "start", lambda **kwargs: setattr(repl, "process", object()))
-    monkeypatch.setattr(repl, "close", lambda **kwargs: setattr(repl, "process", None))
 
     def fail_after_send(code, env_id, timeout, mark_sent):
         calls.append((code, env_id))
