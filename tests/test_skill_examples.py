@@ -271,7 +271,10 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
         "which applies to every project the runtime serves"
     ) in servers
     assert "header validation reuses that executable without the command's other arguments" in servers
-    assert "both commands are node-wide and read only when the runtime starts" in servers
+    assert (
+        "`LEAN_REPL_CMD` and `LEAN_REPL_HEADER_CMD` are node-wide and read only "
+        "when the runtime starts"
+    ) in servers
     assert "after changing either, run `uv run autoform-lean-runtime stop`" in servers
     assert "one total post-admission budget" in servers
     assert "it and its cap default to 240 seconds" in servers

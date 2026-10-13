@@ -27,9 +27,8 @@ that remain quoted or path-like after Lean parsing are refused instead of being
 reduced to a misleading allowlisted root. The allowlist is a policy check, not a
 sandbox: each call runs with the runtime user's privileges, and `Init` alone
 provides file and process IO, for example `#eval IO.Process.run`. The header
-check runs as one extra short Lean process per call and counts toward the same
-request budget as the rest of the call. Execution names the package-qualified
-`@repl/repl` target so a project target cannot shadow it.
+check runs as one extra short Lean process per call. Execution names the
+package-qualified `@repl/repl` target so a project target cannot shadow it.
 
 REPL children and LSP processes remain lazy. A tool call stays pending while
 Lean starts, so no `/repl-start`, `/lsp-start`, or model-side sleep is needed.
@@ -59,6 +58,7 @@ by `AUTOFORM_REPL_TOTAL_WORKERS`, `AUTOFORM_REPL_WORKERS_PER_PROJECT`,
 `AUTOFORM_MAX_LEAN_PROJECTS`, and `AUTOFORM_LEAN_IDLE_SECONDS`. A REPL worker is
 one concurrent call slot; an idle slot holds no Lean process. The first process
 to start the runtime supplies those settings until it is stopped.
+
 `LEAN_REPL_CMD` selects the disposable child command. Its default,
 `lake exe @repl/repl`, finds the REPL only through a require named `repl`. For a
 require with any other name, rename the require to `repl`, or restart the
@@ -68,15 +68,18 @@ starts with a `lake` executable, absolute or not, header validation reuses that
 executable without the command's other arguments. A container or other wrapper
 must also set `LEAN_REPL_HEADER_CMD` to a command that runs
 `servers/repl/parse_header.lean` with the matching toolchain's `lean --run`,
-passing the source on standard input. Like the limits above, both commands are
-node-wide and read only when the runtime starts; after changing either, run
-`uv run autoform-lean-runtime stop`. `AUTOFORM_MAX_REPL_REQUEST_SECONDS` caps
-the REPL `timeout`; when `AUTOFORM_REPL_REQUEST_TIMEOUT` is unset, the default
-`timeout` is the lower of 240 seconds and that cap. If `LEAN_REPL_CMD` does not
-start with a `lake` executable and `LEAN_REPL_HEADER_CMD` is unset, if an
-explicit `AUTOFORM_REPL_REQUEST_TIMEOUT` exceeds that cap, or if that cap does
-not fit the response budget below, the runtime refuses to start, so the LSP
-tools are unavailable as well.
+passing the source on standard input. Like the limits above, `LEAN_REPL_CMD` and
+`LEAN_REPL_HEADER_CMD` are node-wide and read only when the runtime starts;
+after changing either, run `uv run autoform-lean-runtime stop`.
+
+`AUTOFORM_MAX_REPL_REQUEST_SECONDS` caps the REPL `timeout`; when
+`AUTOFORM_REPL_REQUEST_TIMEOUT` is unset, the default `timeout` is the lower of
+240 seconds and that cap. If `LEAN_REPL_CMD` does not start with a `lake`
+executable and `LEAN_REPL_HEADER_CMD` is unset, if an explicit
+`AUTOFORM_REPL_REQUEST_TIMEOUT` exceeds that cap, or if that cap does not fit
+the response budget below, the runtime refuses to start, so the LSP tools are
+unavailable as well.
+
 `AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` (default 15 minutes) bounds project
 admission, the tool operation, and a safety margin. Failed cleanup transfers to
 a retained background reaper and may continue past that response budget rather
