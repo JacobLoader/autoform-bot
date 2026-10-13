@@ -496,16 +496,19 @@ Module inventory counts are reported separately from formalization-target
 completion. The target denominator, readiness count, declaration-kind totals,
 and the progress-state breakdowns in the book and in `autoform check` use
 non-container articles carrying `declaration`; a `catalog: module` record
-contributes only to the separate module-inventory count. A scope's status ring
-and item count, and the legend beside each dependency map, also count a leaf
-marked `not_ready` that declares nothing yet, so deferred work holds its scope
-open; the ring and item count add each checked catalog as `inventory checked`.
+counts toward none of them. A scope's status ring and item count, and the
+legend beside each dependency map, also count a leaf marked `not_ready` that
+declares nothing yet, so deferred work holds its scope open. The ring and item
+count also include every catalog beneath the scope, under a neutral status:
+`inventory checked` once the catalog is fully proved, `inventory pending` until
+then. Neither status changes the scope's rolled-up status or completion.
 The coverage `counts` object always includes an integer
 `INVENTORIED` key, including zero when no row uses it. Status assertions on a
 catalog remain accepted. The presentation calls a fully checked catalog
-`inventory checked`, not a completed definition or result. The rendered site
-and `autoform check` show the module-inventory count separately from those
-target metrics.
+`inventory checked`, not a completed definition or result, and the dependency
+explorer calls any other catalog `inventory pending`, whatever its derived
+state. The rendered site and `autoform check` show the module-inventory count
+separately from those target metrics.
 
 For an existing blueprint, migrate a catalog-only `DECOMPOSED` row to
 `INVENTORIED`. If the same source also has declaration articles, keep that

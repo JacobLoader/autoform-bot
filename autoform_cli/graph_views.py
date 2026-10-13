@@ -25,6 +25,8 @@ _ScopedRelation = tuple[str, str, bool, str | None, str | None]
 
 _H1 = re.compile(r"^ {0,3}#[ \t]+(.+?)[ \t]*#*[ \t]*$")
 INVENTORY_CHECKED_STATUS = "inventory_checked"
+INVENTORY_PENDING_STATUS = "inventory_pending"
+INVENTORY_STATUSES = (INVENTORY_CHECKED_STATUS, INVENTORY_PENDING_STATUS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -565,11 +567,8 @@ def _edges(counts: dict[tuple[str, str], list[int]]) -> tuple[ViewEdge, ...]:
 
 
 def _theorem_node(node: Node, node_status: NodeStatus) -> ViewNode:
-    display_status = (
-        INVENTORY_CHECKED_STATUS
-        if node.catalog == "module" and node_status.fully_proved
-        else node_status.key
-    )
+    inventory = _inventory_status(node, node_status)
+    display_status = inventory or node_status.key
     return ViewNode(
         id=node.id,
         title=node.title,
@@ -578,9 +577,9 @@ def _theorem_node(node: Node, node_status: NodeStatus) -> ViewNode:
         status_counts=((display_status, 1),),
         declaration=node.declaration,
         catalog=node.catalog,
-        # A checked inventory is deliberately neutral: it records source
-        # accounting, not completion of a mathematical target.
-        status_key="planned" if display_status == INVENTORY_CHECKED_STATUS else display_status,
+        # An inventory is deliberately neutral, checked or not: it records
+        # source accounting, not progress on a mathematical target.
+        status_key="planned" if inventory else display_status,
         summary=node.summary,
         lean=node.lean,
         area=node.area,
@@ -595,6 +594,16 @@ def is_scope_target(node: Node) -> bool:
     catalog is inventory evidence, never a target.
     """
     return node.catalog is None and (node.formalizable or node.not_ready)
+
+
+def _inventory_status(node: Node, node_status: NodeStatus) -> str | None:
+    """Return a module catalog's neutral status, or None for any other node.
+
+    A catalog is checked once it is fully proved and pending until then.
+    """
+    if node.catalog != "module":
+        return None
+    return INVENTORY_CHECKED_STATUS if node_status.fully_proved else INVENTORY_PENDING_STATUS
 
 
 def _scope_node(
@@ -612,8 +621,8 @@ def _scope_node(
     """Summarize a container by the formalization targets beneath it.
 
     The targets are the scope's members. Its status counts, and so its items,
-    are those targets by state plus the checked catalogs beneath it, which
-    count apart as module inventories. In a node-level view the box stands for
+    are those targets by state plus every catalog beneath it, which counts
+    apart as a module inventory. In a node-level view the box stands for
     the container itself, so *members* is the container, while its counts
     still describe what lies beneath it.
     """
@@ -664,27 +673,26 @@ def _status_counts(
     node_ids: Iterable[str],
     statuses: dict[str, NodeStatus],
 ) -> tuple[tuple[str, int], ...]:
-    """Count scope targets by state, and checked inventories apart.
+    """Count scope targets by state, and module inventories apart.
 
-    Only a scope target colours a ring, so a prose or note leaf colours none.
-    A catalog counts only as a checked inventory, never under its target state.
+    Only a scope target colours a ring by state, so a prose or note leaf
+    colours none. A catalog counts as a checked or pending inventory, never
+    under its target state.
     """
     counts = {state.key: 0 for state in STATES}
-    inventories = 0
+    inventories = dict.fromkeys(INVENTORY_STATUSES, 0)
     for node_id in node_ids:
         node = graph.nodes[node_id]
         node_status = statuses[node_id]
-        if node.catalog == "module":
-            if node_status.fully_proved:
-                inventories += 1
+        inventory = _inventory_status(node, node_status)
+        if inventory is not None:
+            inventories[inventory] += 1
         elif is_scope_target(node):
             counts[node_status.key] += 1
     state_counts = tuple(
         (state.key, counts[state.key]) for state in STATES if counts[state.key]
     )
-    if inventories:
-        return (*state_counts, (INVENTORY_CHECKED_STATUS, inventories))
-    return state_counts
+    return (*state_counts, *((key, count) for key, count in inventories.items() if count))
 
 
 def _internal_dependency_counts(
@@ -719,7 +727,7 @@ def _rollup_status_key(
     """Use the least-complete descendant as a container's honest status."""
     counts = _status_counts(graph, node_ids, statuses)
     target_counts = tuple(
-        (key, count) for key, count in counts if key != INVENTORY_CHECKED_STATUS
+        (key, count) for key, count in counts if key not in INVENTORY_STATUSES
     )
     return target_counts[-1][0] if target_counts else "planned"
 

@@ -782,6 +782,59 @@ def test_an_unclassified_catalog_warning_names_the_contract_once(tmp_path: Path)
     ]
 
 
+def test_a_topic_of_unchecked_catalogs_counts_each_as_a_pending_inventory(tmp_path: Path) -> None:
+    """The atlas counts every catalog that the hero above it counts.
+
+    Scope items counted only checked catalogs, so a topic made of catalogs not
+    yet checked read "0 items" under a hero that counted three: a blank ring,
+    the smallest bubble, and catalog nodes that presented as ready to state.
+    """
+    blueprint = tmp_path / "blueprint"
+    library = blueprint / "roadmap/library"
+    library.mkdir(parents=True)
+    (blueprint / "README.md").write_text("# Book\n\n- [Roadmap](roadmap/README.md)\n", encoding="utf-8")
+    (blueprint / "roadmap/README.md").write_text("# Roadmap\n\n- [Library](library/README.md)\n", encoding="utf-8")
+    (library / "README.md").write_text("# Library\n", encoding="utf-8")
+    (blueprint / "sources").mkdir()
+    (blueprint / "sources/library.md").write_text("# Library declarations\n", encoding="utf-8")
+    for name in ("a", "b", "c"):
+        (library / f"{name}.md").write_text(
+            f"---\ncatalog: module\n---\n\n# Module {name.upper()}\n\n"
+            "## Sources\n\n- [Declaration ledger](../../sources/library.md)\n",
+            encoding="utf-8",
+        )
+    coverage = blueprint / "coverage/README.md"
+    coverage.parent.mkdir()
+    coverage.write_text(
+        "# Coverage\n\n| Area | Coverage | Evidence |\n| --- | --- | --- |\n"
+        "| Library | INVENTORIED | [Library](../roadmap/library/README.md) |\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+
+    render_site(blueprint, out)
+
+    overview = (out / "README.md").read_text(encoding="utf-8")
+    assert (
+        '<div class="bp-figure-value">3</div>'
+        '<div class="bp-figure-label">Module inventories</div>'
+    ) in overview
+    topic = json.loads((out / "dependencies.json").read_text(encoding="utf-8"))["nodes"][0]
+    assert topic["id"] == "scope:library"
+    assert topic["status_counts"] == {"inventory_pending": 3}
+    assert topic["member_count"] == 3
+    # An inventory never sets a scope's own status.
+    assert topic["status"] == "planned"
+    # round(72 + 11 * log2(3 + 1)); a topic with no items is the 92 px minimum.
+    assert topic["layout"]["width"] == 94
+    assert "3 items across 1 chapter." in (out / "dependencies.md").read_text(encoding="utf-8")
+    chapter = json.loads((out / "dependencies/chapters/library.json").read_text(encoding="utf-8"))
+    assert {node["id"]: node["status"] for node in chapter["nodes"]} == dict.fromkeys(
+        ("library/a", "library/b", "library/c"), "inventory_pending"
+    )
+    assert chapter["palette"]["inventory_pending"]["label"] == "inventory pending"
+
+
 def test_the_landing_page_is_the_hero_and_project_explorer_and_nothing_else(
     tmp_path: Path,
 ) -> None:

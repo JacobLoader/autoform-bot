@@ -377,6 +377,32 @@ def test_vault_views_label_checked_catalogs_as_module_inventories(tmp_path: Path
     )
 
 
+def test_vault_maps_count_every_catalog_as_an_inventory(tmp_path: Path) -> None:
+    """A scope box counts a catalog that is not yet checked, as a pending inventory.
+
+    It used to count only checked catalogs, so a scope of unchecked ones read
+    as empty on the vault map and on the full Mermaid page.
+    """
+    blueprint = tmp_path / "blueprint"
+    ledger = blueprint / "sources/catalog.md"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text("# Catalog declarations\n", encoding="utf-8")
+    _write_node(blueprint / "roadmap" / "README.md", "Roadmap")
+    _write_node(blueprint / "roadmap" / "modules" / "README.md", "Modules")
+    checked = blueprint / "roadmap/modules/checked.md"
+    pending = blueprint / "roadmap/modules/pending.md"
+    _write_node(checked, "Checked module", catalog="module", statement="formalized", proof="formalized")
+    _write_node(pending, "Pending module", catalog="module")
+    for catalog in (checked, pending):
+        with catalog.open("a", encoding="utf-8") as stream:
+            stream.write("\n## Sources\n\n- [Ledger](../../sources/catalog.md)\n")
+    box = '["Modules<br/><small>2 items · 1 inventory checked · 1 inventory pending</small>"]:::scope'
+
+    assert box in export_graph(blueprint).read_text(encoding="utf-8")
+    graph = load_graph(blueprint)
+    assert box in mermaid.render_page(graph, derive(graph), tmp_path / "dependencies.md")
+
+
 def test_the_vault_structure_page_leaves_implementation_notes_out(tmp_path: Path) -> None:
     """The page is the shape of the book, and notes are not part of the book."""
     blueprint = tmp_path / "blueprint"

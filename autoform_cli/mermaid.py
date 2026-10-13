@@ -15,7 +15,7 @@ from urllib.parse import quote
 from typing import TYPE_CHECKING
 
 from .graph_views import container_nodes, is_scope_target
-from .status import STATES, State, is_definition
+from .status import INVENTORY_STATES, STATES, State, is_definition
 
 if TYPE_CHECKING:
     from .graph import Graph, Node
@@ -304,10 +304,7 @@ _MEANINGS = {
     "planned": "Described in the blueprint only.",
 }
 
-_STATE_LABELS = {
-    **{state.key: state.label for state in STATES},
-    "inventory_checked": "inventory checked",
-}
+_STATE_LABELS = {state.key: state.label for state in (*STATES, *INVENTORY_STATES)}
 
 
 def render_page(

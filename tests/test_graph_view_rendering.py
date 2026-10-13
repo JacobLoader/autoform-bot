@@ -162,7 +162,49 @@ def test_full_view_payload_is_deterministic_layout_ready_and_data_only(tmp_path:
     assert 'window.addEventListener("hashchange"' in script
     assert 'window.addEventListener("popstate"' in script
     assert 'view.kind !== "full"' in script
-    assert '"Inventory checked is neutral:' in script
+    assert 'statusCounts.has("inventory_pending")' in script
+    assert '"Inventory statuses are neutral:' in script
+
+
+def test_a_pending_inventory_has_a_neutral_colour_of_its_own(tmp_path: Path) -> None:
+    """A catalog not yet checked is drawn apart from the checked ones and from every state.
+
+    It is neutral like a checked inventory, but a ring holding both kinds
+    needs two greys, and borrowing a state's colour would read as target work.
+    """
+    statuses = ("planned", "inventory_pending", "inventory_checked")
+    view = GraphView(
+        kind="chapter",
+        title="Library",
+        nodes=tuple(
+            ViewNode(
+                id=f"library/{status}",
+                title=status,
+                kind="node",
+                members=(f"library/{status}",),
+                status_counts=((status, 1),),
+                catalog=None if status == "planned" else "module",
+                status_key="planned",
+            )
+            for status in statuses
+        ),
+        edges=(),
+    )
+    output = tmp_path / "library.json"
+    dag_viewer.write_payload(output, view, links={})
+    payload = json.loads(output.read_text(encoding="utf-8"))
+
+    assert [node["status"] for node in payload["nodes"]] == list(statuses)
+    assert payload["present_statuses"] == ["planned", "inventory_checked", "inventory_pending"]
+    pending = payload["palette"]["inventory_pending"]
+    assert pending["label"] == "inventory pending"
+    assert pending["neutral"] is True
+    for scheme in ("light", "dark"):
+        assert all(
+            entry[scheme]["stroke"] != pending[scheme]["stroke"]
+            for key, entry in payload["palette"].items()
+            if key != "inventory_pending"
+        )
 
 
 def test_isolated_inventory_does_not_spread_the_connected_dag() -> None:

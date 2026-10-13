@@ -124,8 +124,9 @@ def test_checked_catalog_has_a_neutral_inventory_presentation_status(tmp_path: P
 def test_status_rings_count_only_leaves_that_declare_something(tmp_path: Path) -> None:
     """Rings agree with the legend beside them.
 
-    A prose leaf is not a formalization target, and an unverified catalog is
-    inventory, not work in its target state, so neither colours a ring.
+    A prose leaf is not a formalization target, so it colours no ring. An
+    unverified catalog is inventory, not work in its target state, so it fills
+    a pending-inventory segment and leaves the scope's status alone.
     """
     roadmap = tmp_path / "blueprint/roadmap"
 
@@ -150,7 +151,7 @@ def test_status_rings_count_only_leaves_that_declare_something(tmp_path: Path) -
 
     project = project_view(graph, statuses)
     scopes = {view_node.id: view_node for view_node in project.nodes}
-    assert scopes["scope:mixed"].status_counts == (("can_state", 1),)
+    assert scopes["scope:mixed"].status_counts == (("can_state", 1), ("inventory_pending", 1))
     assert scopes["scope:mixed"].status_key == "can_state"
     assert scopes["scope:prose"].status_counts == ()
     assert scopes["scope:prose"].status_key == "planned"
@@ -158,7 +159,9 @@ def test_status_rings_count_only_leaves_that_declare_something(tmp_path: Path) -
     assert {node_id: status.key for node_id, status in legend.items()} == {"mixed/result": "can_state"}
 
     complete = {view_node.id: view_node for view_node in full_view(graph, statuses).nodes}
-    assert complete["mixed"].status_counts == (("can_state", 1),)
+    assert complete["mixed"].status_counts == (("can_state", 1), ("inventory_pending", 1))
+    assert complete["mixed/catalog"].status_counts == (("inventory_pending", 1),)
+    assert complete["mixed/catalog"].status_key == "planned"
     assert complete["prose"].status_counts == ()
     assert complete["prose"].status_key == "planned"
 
