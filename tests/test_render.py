@@ -1101,13 +1101,17 @@ def test_unresolved_declarations_are_reported_not_linked(tmp_path: Path) -> None
 
 def test_stale_generated_files_are_not_republished(tmp_path: Path) -> None:
     project = _project(tmp_path)
+    revision = publication_source_revision(project / "blueprint")
     (project / "blueprint/dependencies.html").write_text("stale", encoding="utf-8")
+    (project / "blueprint/dependencies.json").write_text("stale", encoding="utf-8")
     (project / "blueprint/progress.md").write_text("stale", encoding="utf-8")
     render_site(project / "blueprint", tmp_path / "out", lean_root=project)
 
     assert not (tmp_path / "out/dependencies.html").exists()
     assert (tmp_path / "out/dependencies.md").is_file()
     assert not (tmp_path / "out/progress.md").exists()
+    # The capture never reads a generated name at the root, so no stale copy is hashed.
+    assert publication_source_revision(project / "blueprint") == revision
 
 
 def test_a_nested_article_named_like_a_generated_view_is_published(tmp_path: Path) -> None:
@@ -2835,15 +2839,18 @@ def test_render_accepts_an_ancestor_that_grants_search_but_not_read(tmp_path: Pa
     [
         ("Summary.md", "SUMMARY.md"),
         ("Dependencies.md", "dependencies.md"),
+        ("Dependencies.json", "dependencies.json"),
         ("Structure.md", "structure.md"),
         ("Publication.json", PUBLICATION_MANIFEST),
         ("Assets/logo.svg", "assets"),
         ("Stylesheets/site.css", "stylesheets"),
         ("stylesheets/Blueprint.css", "stylesheets/blueprint.css"),
         ("assets/Autoform.svg", "assets/autoform.svg"),
+        ("javascripts/Blueprint-dag.js", "javascripts/blueprint-dag.js"),
         ("Progress.md", None),
         ("Graph.html", None),
         ("roadmap/dependencies.md", None),
+        ("roadmap/dependencies.json", None),
     ],
 )
 def test_only_names_that_collide_with_generated_output_are_refused(

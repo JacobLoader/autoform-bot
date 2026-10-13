@@ -104,6 +104,7 @@ _GENERATED_FILES = frozenset(
     {
         "dependencies.md",
         "dependencies.html",
+        "dependencies.json",
         "graph.html",
         "progress.md",
         # The vault keeps its own Obsidian-readable copy; the site builds one.
@@ -125,7 +126,7 @@ _LOCAL_ONLY_NAMES = frozenset(
 )
 #: Root entries every site holds; an authored root entry differing only in case would collide.
 _GENERATED_ROOT_ENTRIES = frozenset(
-    {"SUMMARY.md", "dependencies.md", "structure.md", PUBLICATION_MANIFEST}
+    {"SUMMARY.md", "dependencies.json", "dependencies.md", "structure.md", PUBLICATION_MANIFEST}
     | {"assets", "dependencies", "javascripts", "stylesheets"}
 )
 #: Render reads no hidden, local-only, or root generated file. Omitted entries are
@@ -141,13 +142,6 @@ _PUBLICATION_SELECTION = TreeSelection(
 _PUBLICATION_MARKER = OpaqueDirectoryMarker(
     PUBLICATION_MANIFEST, PUBLICATION_MANIFEST_MAX_BYTES, lambda data: _is_complete_publication(data)
 )
-
-
-def _is_generated_path(relative: Path) -> bool:
-    """Generated views occupy only the publication root."""
-
-    return len(relative.parts) == 1 and relative.name in _GENERATED_FILES
-
 
 #: How a ``declaration:`` value is announced in the statement box.
 DECLARATION_LABELS = {
@@ -172,7 +166,7 @@ LIVE_SCRIPT = "javascripts/blueprint-live.js"
 DAG_SCRIPT = "javascripts/blueprint-dag.js"
 LOGO = "assets/autoform.svg"
 #: Paths render writes at fixed places; an authored path differing only in case would collide.
-_GENERATED_PATHS = _GENERATED_ROOT_ENTRIES | {STYLESHEET, MERMAID_SCRIPT, LIVE_SCRIPT, LOGO}
+_GENERATED_PATHS = _GENERATED_ROOT_ENTRIES | {STYLESHEET, MERMAID_SCRIPT, LIVE_SCRIPT, DAG_SCRIPT, LOGO}
 _ASSET_DIR = Path(__file__).resolve().parent / "assets"
 
 
