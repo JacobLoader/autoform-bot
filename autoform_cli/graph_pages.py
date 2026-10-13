@@ -21,6 +21,7 @@ from .graph_views import (
     chapter_view,
     full_view,
     group_nodes,
+    is_scope_target,
     project_view,
     scope_views,
 )
@@ -344,13 +345,14 @@ def _selected_statuses(
     statuses: dict[str, NodeStatus],
     view: GraphView,
 ) -> dict[str, NodeStatus]:
+    """Select the leaves the explorer's rings count, for the legend beside them."""
     containers = frozenset(
         node.parent for node in graph.nodes.values() if node.parent is not None
     )
     return {
         node_id: statuses[node_id]
         for node_id in view.member_ids
-        if node_id not in containers and graph.nodes[node_id].formalizable
+        if node_id not in containers and is_scope_target(graph.nodes[node_id])
     }
 
 

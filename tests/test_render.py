@@ -786,6 +786,35 @@ def test_the_landing_page_is_the_hero_and_project_explorer_and_nothing_else(
     assert overview.index("bp-map-legend") > overview.index("bp-map-head")
 
 
+def test_the_legends_beside_the_explorer_count_what_its_rings_count(tmp_path: Path) -> None:
+    """Deferred work holds its scope open, so the legend beside a ring counts it.
+
+    A leaf marked not ready that declares nothing yet is not one of the hero's
+    targets, but the rings count it. A legend that left it out disagreed with
+    the map it explains.
+    """
+    project = _project(tmp_path)
+    (project / "blueprint/roadmap/later.md").write_text(
+        "---\nnot_ready: true\n---\n\n# Later\n\nA result still to be decomposed.\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+
+    render_site(project / "blueprint", out, lean_root=project)
+
+    ring = json.loads((out / "dependencies.json").read_text(encoding="utf-8"))["nodes"][0]
+    assert ring["status_counts"] == {"fully_proved": 2, "not_ready": 1}
+    not_ready_row = (
+        '<span class="bp-swatch bp-swatch-not_ready"></span>'
+        '<span class="bp-legend-label">not ready</span>'
+        '<span class="bp-legend-count">1</span>'
+    )
+    overview = (out / "README.md").read_text(encoding="utf-8")
+    assert "2 of 2 targets complete" in overview
+    assert not_ready_row in overview.split('class="bp-map-legend"', 1)[1]
+    assert not_ready_row in (out / "dependencies.md").read_text(encoding="utf-8")
+
+
 def test_book_navigation_is_bottom_only_and_never_crosses_into_project_views(tmp_path: Path) -> None:
     _render(tmp_path)
     overview = (tmp_path / "out/README.md").read_text(encoding="utf-8")

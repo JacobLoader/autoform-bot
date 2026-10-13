@@ -163,6 +163,34 @@ def test_a_conditional_proof_has_its_own_colour_and_legend_entry(tmp_path: Path)
     assert "Proof compiles, but rests on an open statement without a recorded Lean proof." in document
 
 
+def test_vault_legends_count_the_deferred_work_their_scope_boxes_count(tmp_path: Path) -> None:
+    """A leaf marked not ready that declares nothing yet holds its scope open.
+
+    The scope box counts it, so the legend under the map counts it too, on the
+    vault's project map and on the full Mermaid page alike.
+    """
+    blueprint = tmp_path / "blueprint"
+    _write_node(blueprint / "roadmap" / "README.md", "Roadmap")
+    _write_node(blueprint / "roadmap" / "drafts" / "README.md", "Drafts")
+    _write_node(blueprint / "roadmap" / "drafts" / "result.md", "Result", declaration="theorem")
+    _write_node(blueprint / "roadmap" / "drafts" / "later.md", "Later", not_ready="true")
+    box = '["Drafts<br/><small>2 items · 1 ready to state · 1 not ready</small>"]:::scope'
+    not_ready_row = (
+        '<span class="bp-swatch bp-swatch-not_ready"></span>'
+        '<span class="bp-legend-label">not ready</span>'
+        '<span class="bp-legend-count">1</span>'
+    )
+
+    vault = export_graph(blueprint).read_text(encoding="utf-8")
+    assert box in vault
+    assert not_ready_row in vault.split("## Legend", 1)[1]
+
+    graph = load_graph(blueprint)
+    page = mermaid.render_page(graph, derive(graph), tmp_path / "dependencies.md")
+    assert box in page
+    assert not_ready_row in page.split("## Legend", 1)[1]
+
+
 def test_the_legend_explains_readiness_without_naming_a_policy(tmp_path: Path) -> None:
     """Readiness depends on the project's policy, so the legend words it without naming one."""
     blueprint = tmp_path / "blueprint"

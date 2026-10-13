@@ -467,9 +467,13 @@ authoring judgement that no local check can make.
 
 Module inventory counts are reported separately from formalization-target
 completion. The target denominator, readiness count, declaration-kind totals,
-and progress-state breakdown use non-container articles carrying
-`declaration`; a `catalog: module` record contributes only to the separate
-module-inventory count. The coverage `counts` object always includes an integer
+and the progress-state breakdowns in the book and in `autoform check` use
+non-container articles carrying `declaration`; a `catalog: module` record
+contributes only to the separate module-inventory count. A scope's status ring
+and item count, and the legend beside each dependency map, also count a leaf
+marked `not_ready` that declares nothing yet, so deferred work holds its scope
+open; the ring and item count add each checked catalog as `inventory checked`.
+The coverage `counts` object always includes an integer
 `INVENTORIED` key, including zero when no row uses it. Status assertions on a
 catalog remain accepted. The presentation calls a fully checked catalog
 `inventory checked`, not a completed definition or result. The rendered site

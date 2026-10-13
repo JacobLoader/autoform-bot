@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import quote
 from typing import TYPE_CHECKING
 
-from .graph_views import container_nodes
+from .graph_views import container_nodes, is_scope_target
 from .status import STATES, State, is_definition
 
 if TYPE_CHECKING:
@@ -331,13 +331,13 @@ def render_page(
         include_classdefs=include_classdefs,
     )
     # Containers are drawn as scope boxes, so they have no row in the legend,
-    # and neither does a leaf that is not a formalization target.
+    # and a leaf has one only if the boxes count it as a target.
     boxes = container_nodes(graph, statuses)
     legend = render_legend(
         {
             node_id: state
             for node_id, state in statuses.items()
-            if node_id not in boxes and graph.nodes[node_id].formalizable
+            if node_id not in boxes and is_scope_target(graph.nodes[node_id])
         }
     )
     sections = [

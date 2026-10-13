@@ -1327,7 +1327,14 @@ def _render_landing_page(
             targets=targets,
         ),
     ]
-    target_statuses = {node_id: statuses[node_id] for node_id in _countable(graph)}
+    # The legend sits under the map, so it counts what the map's rings count,
+    # deferred work included, rather than the hero's declaration targets.
+    containers = _containers(graph)
+    target_statuses = {
+        node_id: statuses[node_id]
+        for node_id, node in graph.nodes.items()
+        if node_id not in containers and graph_views.is_scope_target(node)
+    }
     breakdown = mermaid.render_legend(target_statuses)
     # dependencies.json is the project projection written by graph_pages. The
     # landing page deliberately mounts that exact payload and host instead of

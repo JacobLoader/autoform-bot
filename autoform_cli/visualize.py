@@ -23,14 +23,14 @@ def _target_statuses(
     graph: Graph,
     statuses: dict[str, status.NodeStatus],
 ) -> dict[str, status.NodeStatus]:
-    """Keep inventory articles out of the mathematical progress legend."""
+    """Select the leaves the scope boxes count by state, for the legend."""
     containers = frozenset(
         node.parent for node in graph.nodes.values() if node.parent is not None
     )
     return {
         node_id: statuses[node_id]
         for node_id, node in graph.nodes.items()
-        if node_id not in containers and node.formalizable
+        if node_id not in containers and graph_views.is_scope_target(node)
     }
 
 
