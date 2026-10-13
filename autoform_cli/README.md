@@ -316,7 +316,9 @@ uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform dashboard . --site-dir site
 ```
 
 Drop `--require-declarations` when reviewing work in progress, where a
-statement may name a Lean declaration that does not exist yet.
+statement may name a Lean declaration that does not exist yet. On native
+Windows, run `check` and `render` without `--lean-root`: the site then has no
+code links (see the publication contract below).
 
 `dashboard` serves the exact built MkDocs site on `127.0.0.1`, choosing an
 available port unless `--port` is supplied, and adds a read-only live overlay
@@ -1560,11 +1562,12 @@ and the generated stylesheet, scripts and logo inside them) is refused, as are
 two blueprint paths that differ only in case or Unicode form, because they would
 collide on a case-insensitive filesystem.
 
-Every render writes `publication.json` with blueprint and Lean-source hashes,
-Git ref, article and dependency counts, the site's file inventory, and available
-views. It contains no timestamp or absolute path, so identical inputs produce
-identical output files. Render reads the blueprint and the Lean sources once
-each and derives every page, link and hash from those bytes; an edit saved
+Every render writes `publication.json` with blueprint and Lean-source hashes
+(the Lean-source hash is empty when render reads no Lean sources, as on native
+Windows), Git ref, article and dependency counts, the site's file inventory, and
+available views. It contains no timestamp or absolute path, so identical inputs
+produce identical output files. Render reads the blueprint and the Lean sources
+once each and derives every page, link and hash from those bytes; an edit saved
 during a render waits for the next one. Repository links appear only when those
 bytes match one locally available Git commit, recorded by its full object ID; a
 clean checkout that Git converts on checkout still matches. Otherwise the render
@@ -1587,4 +1590,9 @@ output (the repository root for `--output site-src`); render never indexes it
 as Lean source and the setup ignore rules cover it, but it may hold the previous
 site, so inspect it before deleting it. (On macOS `fsync` does not flush the
 drive's cache, so a power loss can still lose the newest site.) Native Windows
-cannot run `autoform render`.
+has no directory-descriptor traversal. There render reads the blueprint and the
+output as two pathname captures that must agree, commits through the backup
+swap without a lock, and reads the Lean sources only for an explicit
+`--lean-root`, which then fails closed. Without one it publishes no code
+links; when a published statement names a `lean:` declaration it warns, and
+`--require-declarations` makes it exit 1.
