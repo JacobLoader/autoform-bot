@@ -23,7 +23,6 @@ from typing import Any, Callable
 logger = getLogger(__name__)
 
 DEFAULT_MAX_DIAGNOSTICS = 10
-DEFAULT_REPL_STARTUP_TIMEOUT = 180.0
 DEFAULT_REPL_CLEANUP_SECONDS = 2.0
 REPL_ABORT_TERM_SECONDS = 0.5
 REPL_ABORT_KILL_SECONDS = 1.0
@@ -556,7 +555,6 @@ class LeanReplConfig:
     env: dict[str, str] = field(default_factory=dict)
 
     request_timeout: float = 240.0
-    startup_timeout: float = DEFAULT_REPL_STARTUP_TIMEOUT
     chunk_size: int = 4096
 
     instance_mem_limit_gb: int = 16
@@ -803,23 +801,17 @@ class LeanRepl:
         if config.validate_imports and config.allowed_imports:
             self._allowed_import_roots = config.allowed_imports
 
-    def start(self, startup_timeout: float | None = None) -> None:
-        """Start a Lean REPL child within one startup deadline."""
+    def start(self) -> None:
+        """Spawn a Lean REPL child; ``DEFAULT_REPL_CLEANUP_SECONDS`` bounds cleanup if spawning fails."""
         if os.name != "posix":
             raise RuntimeError("Lean REPL transport requires a POSIX platform")
-        timeout = self.config.startup_timeout if startup_timeout is None else min(
-            self.config.startup_timeout,
-            startup_timeout,
-        )
-        deadline = time.monotonic() + timeout
-
         try:
             self._spawn(self.config.repl_command)
             self._stderr_bytes = 0
             self._stderr_tail.clear()
         except BaseException:
             try:
-                self.close(deadline=deadline)
+                self.close(deadline=time.monotonic() + DEFAULT_REPL_CLEANUP_SECONDS)
             except BaseException:
                 logger.exception(
                     "failed to retire Lean REPL process after startup failure"
@@ -992,7 +984,8 @@ class LeanRepl:
                         f"import {root}" for root in added_imports
                     )
                     command = f"{prefix}\n{code}" if prefix else code
-                    self.start(startup_timeout=remaining("disposable child startup"))
+                    remaining("disposable child startup")
+                    self.start()
                     response = self._run(
                         code=command,
                         env_id=None,

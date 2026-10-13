@@ -467,8 +467,8 @@ def test_disposable_call_uses_one_frame_and_removes_process_handles(monkeypatch)
         repl.process = None
         repl._process_group_id = None
 
-    def start(**kwargs):
-        starts.append(kwargs)
+    def start():
+        starts.append(True)
         repl.process = object()
         repl._process_group_id = 7
 
@@ -534,7 +534,6 @@ def test_disposable_call_uses_one_frame_and_removes_process_handles(monkeypatch)
         ],
     }
     assert len(starts) == 1
-    assert 0 < starts[0]["startup_timeout"] <= 3
     assert len(calls) == 1
     assert calls[0][0] == "import Mathlib\n#check Nat"
     assert calls[0][1] is None
@@ -555,8 +554,8 @@ def test_disposable_call_uses_one_decreasing_phase_budget(monkeypatch):
         clock["now"] = 2
         return repl_core._LeanHeaderAnalysis((), True)
 
-    def start(*, startup_timeout):
-        budgets.append(("startup", startup_timeout))
+    def start():
+        budgets.append("startup")
         clock["now"] = 5
 
     def run(code, env_id, timeout):
@@ -569,7 +568,7 @@ def test_disposable_call_uses_one_decreasing_phase_budget(monkeypatch):
 
     assert repl.run_disposable("#check Nat", timeout=10) == {"messages": []}
     assert budgets == [
-        ("startup", 8),
+        "startup",
         ("command", 5, "import Mathlib\n#check Nat"),
     ]
 
@@ -604,7 +603,9 @@ def test_disposable_timeout_names_the_expired_phase(monkeypatch, expired_phase, 
             clock["now"] = 2
         return repl_core._LeanHeaderAnalysis((), True)
 
-    def start(**kwargs):
+    def start():
+        if expired_phase == "startup":
+            pytest.fail("expired budget started a REPL child")
         if expired_phase == "command":
             clock["now"] = 2
 
