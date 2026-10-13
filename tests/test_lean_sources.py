@@ -1445,9 +1445,21 @@ def test_rechecks_do_not_walk_excluded_folders(
     assert snapshot.index.find("out0") is None
 
 
+@pytest.mark.parametrize(
+    ("mode", "reason"),
+    [
+        # Opening site is refused.
+        (0, "permission denied: site"),
+        # site opens and lists, but looking up its entries is refused.
+        (0o444, "permission denied while the directory tree was captured"),
+    ],
+    ids=["open", "lookup"],
+)
 def test_folder_refused_to_a_selected_recheck_is_not_accepted(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    mode: int,
+    reason: str,
 ) -> None:
     _require_descriptor_capture()
     if hasattr(os, "geteuid") and os.geteuid() == 0:
@@ -1459,7 +1471,7 @@ def test_folder_refused_to_a_selected_recheck_is_not_accepted(
     def refuse() -> None:
         if os.access(site, os.W_OK):
             (site / "New.lean").write_text("def appeared : Nat := 0\n", encoding="utf-8")
-            site.chmod(0)
+            site.chmod(mode)
 
     _on_checkpoint(monkeypatch, "before-final-verification", refuse)
     monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
@@ -1467,7 +1479,7 @@ def test_folder_refused_to_a_selected_recheck_is_not_accepted(
     try:
         # The verification cannot look into site, so the attempt is a change;
         # the retry's scan then reports the lasting refusal.
-        with pytest.raises(lean_module.LeanSourceError, match=r"^permission denied: site$"):
+        with pytest.raises(lean_module.LeanSourceError, match=rf"^{re.escape(reason)}$"):
             snapshot_project_sources(tmp_path)
     finally:
         site.chmod(0o755)
