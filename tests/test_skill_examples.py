@@ -285,6 +285,10 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
     ) in servers
     assert "`AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` (default 15 minutes)" in servers
     assert "`leanprover-community/repl` at an immutable revision" in setup
+    assert "the commit of the upstream tag that names the project's Lean version" in setup
+    assert "failing that, its `vX.Y.0` release" in setup
+    assert "git ls-remote --tags https://github.com/leanprover-community/repl.git" in setup
+    assert "if neither exists, ask the user instead of guessing" in setup
     assert "Name the require `repl`" in setup
     assert "which finds the package only under its require name" in setup
     assert "run `lake update repl`" in setup
