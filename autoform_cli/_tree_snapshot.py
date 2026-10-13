@@ -1315,8 +1315,8 @@ def capture_directory_descriptor(
                     data = _read_file(
                         descriptor,
                         name,
-                        child_relative,
                         child_identity,
+                        relative=relative,
                         max_bytes=max_bytes,
                     )
                 except PermissionError as error:
@@ -1578,8 +1578,8 @@ def _opaque_marker(
             data = _read_file(
                 descriptor,
                 name,
-                marker_path,
                 identity,
+                relative=relative,
                 max_bytes=max_bytes,
             )
         except PermissionError as error:
@@ -1777,17 +1777,19 @@ def _selected(selection: TreeSelection, relative: PurePosixPath, mode: int) -> b
 def _read_file(
     parent_descriptor: int,
     name: str,
-    relative: str,
     expected: tuple[int, ...],
     *,
+    relative: str,
     max_bytes: int | None = None,
 ) -> bytes:
+    """Read the regular file *name* in the directory *relative*."""
+
     descriptor: int | None = None
     try:
         descriptor = os.open(name, _FILE_FLAGS, dir_fd=parent_descriptor)
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode) or _stat_signature(opened) != expected:
-            raise _TreeChanged(relative)
+            raise _TreeChanged(f"{relative}/{name}" if relative else name)
         stream = os.fdopen(descriptor, "rb", buffering=0, closefd=False)
         try:
             data = stream.read() if max_bytes is None else _read_prefix(stream, max_bytes + 1)
@@ -1800,7 +1802,7 @@ def _read_file(
             )
             != expected
         ):
-            raise _TreeChanged(relative)
+            raise _TreeChanged(f"{relative}/{name}" if relative else name)
         return data
     finally:
         if descriptor is not None:
@@ -1854,8 +1856,8 @@ def _verify_snapshot(
             data = _read_file(
                 descriptor,
                 marker.name,
-                marker_relative,
                 marker.identity,
+                relative=relative,
                 max_bytes=marker.max_bytes,
             )
             if data != marker.data:

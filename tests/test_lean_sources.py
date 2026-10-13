@@ -2971,10 +2971,16 @@ def test_managed_output_marker_prunes_before_any_descendant_open(
     )
     original_read = tree_snapshot_module._read_file
 
-    def refuse_descendant(parent_descriptor, name, *args, **kwargs):
+    def refuse_descendant(parent_descriptor, name, expected, *, relative, max_bytes=None):
         if name == "Packet.lean":
             raise AssertionError("managed descendants must not be opened")
-        return original_read(parent_descriptor, name, *args, **kwargs)
+        return original_read(
+            parent_descriptor,
+            name,
+            expected,
+            relative=relative,
+            max_bytes=max_bytes,
+        )
 
     monkeypatch.setattr(tree_snapshot_module, "_read_file", refuse_descendant)
 
@@ -3041,10 +3047,10 @@ def test_managed_marker_folder_is_listed_once_per_look_and_never_entered(
         return original_scandir(path)
     original_read = tree_snapshot_module._read_file
 
-    def refuse_descendant(parent_descriptor, name, *args, **kwargs):
+    def refuse_descendant(parent_descriptor, name, expected, *, relative, max_bytes=None):
         if name == "Packet.lean":
             raise AssertionError("managed descendants must not be opened")
-        return original_read(parent_descriptor, name, *args, **kwargs)
+        return original_read(parent_descriptor, name, expected, relative=relative, max_bytes=max_bytes)
 
     def add_irrelevant_churn() -> None:
         for index in range(100):
