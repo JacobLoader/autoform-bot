@@ -215,7 +215,7 @@ def test_runtime_warmup_prefix_preserves_source_line_numbers(runtime_dir, monkey
             "repl.run",
             {
                 "project_dir": str(REPL_FIXTURE),
-                "code": "#check autoformMissingIdentifier",
+                "code": "#check autoformWarmupMarker\n#check autoformMissingIdentifier",
                 "timeout": 180,
             },
         )
@@ -223,4 +223,7 @@ def test_runtime_warmup_prefix_preserves_source_line_numbers(runtime_dir, monkey
         with suppress(LeanRuntimeUnavailable):
             client.stop()
 
-    assert re.search(r"\b1:\d+: error:", response), response
+    # Without the warmup prefix the marker is unknown as well, and without the
+    # line shift the remaining error would be reported on line 3.
+    assert "Compilation Errors (1)" in response
+    assert re.search(r"\b2:\d+: error:", response), response
