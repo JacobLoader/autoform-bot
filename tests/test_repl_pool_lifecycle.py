@@ -86,7 +86,7 @@ def test_shutdown_retains_failed_workers_for_a_retry(monkeypatch):
     assert [worker.close_calls for worker in workers] == [2, 1]
 
 
-def test_partial_startup_transfers_failed_cleanup_for_retry(monkeypatch):
+def test_partial_construction_transfers_failed_cleanup_for_retry(monkeypatch):
     workers = []
 
     class FakeRepl:
@@ -95,7 +95,7 @@ def test_partial_startup_transfers_failed_cleanup_for_retry(monkeypatch):
             self.close_calls = 0
             workers.append(self)
             if self.number == 2:
-                raise RuntimeError("second worker failed")
+                raise RuntimeError("second slot failed")
 
         def close(self):
             self.close_calls += 1
@@ -107,7 +107,7 @@ def test_partial_startup_transfers_failed_cleanup_for_retry(monkeypatch):
     with pytest.raises(repl_pool.LeanReplPoolStartupError) as raised:
         repl_pool.LeanReplPool(repl_pool.LeanReplPoolConfig(num_repls=2))
 
-    assert str(raised.value.cause) == "second worker failed"
+    assert str(raised.value.cause) == "second slot failed"
     assert raised.value.pool._workers == [workers[0]]
     assert [worker.close_calls for worker in workers] == [1, 0]
     with pytest.raises(RuntimeError, match="shut down"):
@@ -195,7 +195,7 @@ def test_queued_call_timeout_states_the_callers_budget(monkeypatch):
     assert command_timeouts == [8]
 
 
-def test_pool_runs_each_call_disposably_and_reuses_only_a_clean_slot(monkeypatch):
+def test_pool_runs_each_call_disposably_and_reuses_a_clean_slot(monkeypatch):
     workers = []
 
     class FakeRepl:

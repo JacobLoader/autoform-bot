@@ -597,10 +597,10 @@ def test_repl_status_field_cancellation_releases_pin_without_refreshing_ttl(tmp_
         services.close()
 
 
-def test_shared_runtime_disables_ambiguous_repl_retries(tmp_path, monkeypatch):
+def test_runtime_passes_the_header_command_to_each_pool(tmp_path, monkeypatch):
     from servers import lean_runtime
 
-    project = make_lake_project(tmp_path, "at-most-once")
+    project = make_lake_project(tmp_path, "header-command")
     configs = []
 
     class CapturingPool(FakePool):
@@ -1833,6 +1833,8 @@ def test_per_project_workers_cannot_exceed_node_budget(monkeypatch):
 def test_default_repl_command_is_package_qualified(monkeypatch):
     monkeypatch.delenv("LEAN_REPL_CMD", raising=False)
     monkeypatch.delenv("LEAN_REPL_HEADER_CMD", raising=False)
+    monkeypatch.delenv("AUTOFORM_REPL_REQUEST_TIMEOUT", raising=False)
+    monkeypatch.delenv("AUTOFORM_MAX_REPL_REQUEST_SECONDS", raising=False)
 
     config = LeanRuntimeConfig.from_environment()
 
