@@ -1255,7 +1255,7 @@ def capture_directory_descriptor(
                     except PermissionError as error:
                         raise _PermissionDenied(child_relative) from error
                     except OSError as error:
-                        if selected_only and error.errno in _VANISHED_ERRNOS:
+                        if _vanished_in_selected_capture(error, selection):
                             continue
                         raise _entry_error(error, child_relative)
                     opened = os.fstat(child_descriptor)
@@ -1265,13 +1265,12 @@ def capture_directory_descriptor(
                     )
                     if moved and not selected_only:
                         raise _TreeChanged(child_relative)
-                    # Selected mode checks the name binding only for a folder it
-                    # records; any other folder is examined again where it is now.
+                    # Selected mode records a folder by the identity it opened,
+                    # and the stat below checks that its name still leads there;
+                    # a folder it does not record is examined again where it is now.
                     if not scan(child_descriptor, child_relative, depth + 1, opened_identity):
                         unkept[name] = _stable_entry_identity(opened_identity)
                         continue
-                    if moved:
-                        raise _TreeChanged(child_relative)
                     try:
                         final_identity = _stat_signature(
                             os.stat(name, dir_fd=descriptor, follow_symlinks=False)
@@ -1443,9 +1442,6 @@ _CHANGED_ERRNOS = frozenset(
     )
     if hasattr(errno, name)
 )
-# Opening a listed child folder fails with these once it was removed or
-# replaced by a non-directory.
-_VANISHED_ERRNOS = frozenset((errno.ENOENT, errno.ENOTDIR))
 
 
 def _capture_failure(error: BaseException) -> TreeSnapshotError:
@@ -1951,10 +1947,6 @@ def _verify_snapshot(
         relative: str,
         expected: _DirectoryRecord,
     ) -> None:
-        if _stable_entry_identity(
-            _stat_signature(os.fstat(descriptor))
-        ) != _stable_entry_identity(expected.identity):
-            raise _TreeChanged(relative)
         depth = relative.count("/") + 1 if relative else 0
         names = _relist_directory(
             descriptor,
