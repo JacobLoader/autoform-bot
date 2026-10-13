@@ -984,18 +984,30 @@ def _remove_tree(path: Path) -> None:
 
     Until then a leftover of an interrupted deletion still carries the marker
     that keeps Lean walks out of it. The root itself goes with rmdir, so a file
-    saved into it meanwhile stops the deletion instead of being lost.
+    saved into it meanwhile stops the deletion instead of being lost. An entry
+    already gone is skipped: on a volume without native extended attributes,
+    macOS deletes ``._X`` along with ``X``.
     """
     with os.scandir(path) as entries:
         children = [entry for entry in entries if entry.name != PUBLICATION_MANIFEST]
     for child in children:
-        if child.is_dir(follow_symlinks=False):
-            shutil.rmtree(child.path)
+        if not child.is_dir(follow_symlinks=False):
+            with suppress(FileNotFoundError):
+                os.unlink(child.path)
+        elif sys.version_info >= (3, 12):
+            shutil.rmtree(child.path, onexc=_skip_missing)
         else:
-            os.unlink(child.path)
+            shutil.rmtree(child.path, onerror=_skip_missing)
     with suppress(FileNotFoundError):  # a stage that failed early has none
         os.unlink(path / PUBLICATION_MANIFEST)
     os.rmdir(path)
+
+
+def _skip_missing(_function: object, _path: str, error: BaseException | tuple) -> None:
+    """An rmtree error handler (``onexc``, or ``onerror``'s exc_info) that skips vanished entries."""
+    exception = error[1] if isinstance(error, tuple) else error
+    if not isinstance(exception, FileNotFoundError):
+        raise exception
 
 
 def _sources_base(blueprint: Path, repo_root: Path, linker: SourceLinker) -> "_SourceBase | None":

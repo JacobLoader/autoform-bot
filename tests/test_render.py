@@ -1636,6 +1636,28 @@ def test_finder_metadata_does_not_block_replacing_an_owned_publication(tmp_path:
     assert not _debris(tmp_path)
 
 
+def test_metadata_files_macos_deletes_with_their_file_do_not_stop_the_deletion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, output, _site = _published(tmp_path)
+    finder_files = [output / "._README.md", output / "roadmap" / "._README.md"]
+    for path in finder_files:
+        path.write_bytes(b"\x00\x05\x16\x07")
+    unlink = os.unlink
+
+    def gone_already(path, *, dir_fd=None) -> None:  # the kernel removed it with README.md
+        unlink(path, dir_fd=dir_fd)
+        if os.path.basename(path).startswith("._"):
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), path)
+
+    monkeypatch.setattr(render_module.os, "unlink", gone_already)
+    report = render_site(project / "blueprint", output, lean_root=project)
+
+    assert report.warnings == []
+    assert not any(path.exists() for path in finder_files)
+    assert not _debris(tmp_path)
+
+
 @pytest.mark.parametrize("finder", [None, "file", "directory"])
 def test_render_installs_into_an_existing_empty_directory(tmp_path: Path, finder: str | None) -> None:
     project = _project(tmp_path)
