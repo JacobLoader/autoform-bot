@@ -82,7 +82,8 @@ The `mathlib` object has `source` (`"lake-manifest.json"` or
 `".lake/package-overrides.json"`, whichever Lake takes the entry from),
 `type` (`"git"` or `"path"`), `inherited`, and the entry's `url` (with any
 embedded credentials, and everything after the first `?` or `#`, replaced by
-`***`), `input_rev`, `rev`, `dir` and
+`***`; when a `?` or `#` comes before the `@` that ends the credentials,
+everything after `scheme://` is replaced), `input_rev`, `rev`, `dir` and
 `sub_dir`, each `null` when the entry does not have it, and `config_file`
 and `manifest_file`, which default to `"lakefile"` and
 `"lake-manifest.json"` when the entry has no value or `null`, as Lake reads

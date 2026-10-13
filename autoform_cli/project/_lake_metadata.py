@@ -411,10 +411,18 @@ def _requirement_source(requirement: dict) -> tuple[str | None, str | None, str 
 def _redact(url: str | None) -> str | None:
     """Hide a Git URL's embedded credentials, query, and fragment, since reports end up in logs.
 
-    The ``***@``, ``?***`` or ``#***`` marker stays, so a redacted URL never matches a catalog URL.
+    The ``***@``, ``?***`` or ``#***`` marker stays, so a redacted URL never matches a catalog URL. When a ``?``
+    or ``#`` comes before the credentials' ``@``, everything after ``scheme://`` becomes ``***``, which still never
+    matches a catalog URL.
     """
 
-    return None if url is None else _URL_QUERY_OR_FRAGMENT.sub(r"\1***", _URL_CREDENTIALS.sub(r"\1***@", url))
+    if url is None:
+        return None
+    credentials = _URL_CREDENTIALS.match(url)
+    marker = _URL_QUERY_OR_FRAGMENT.search(url)
+    if credentials and marker and marker.start() < credentials.end():
+        return credentials.group(1) + "***"
+    return _URL_QUERY_OR_FRAGMENT.sub(r"\1***", _URL_CREDENTIALS.sub(r"\1***@", url))
 
 
 def _is_name(value: object) -> bool:

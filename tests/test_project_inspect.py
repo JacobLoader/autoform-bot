@@ -457,6 +457,39 @@ def test_url_query_and_fragment_are_redacted_and_never_match(
     assert "hunter2" not in result.to_json() + captured.out + captured.err
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com?user=alice@corp.example&token=hunter2",
+        "https://example.com#me@corp.example&token=hunter2",
+        "https://alice:hun#ter2@github.com/leanprover-community/mathlib4",
+        "https://alice:hun?ter2@github.com/leanprover-community/mathlib4?token=hunter2",
+    ],
+    ids=["query-with-at", "fragment-with-at", "fragment-in-password", "query-in-password"],
+)
+@pytest.mark.parametrize("source", ["lake-manifest.json", ".lake/package-overrides.json"], ids=["manifest", "override"])
+def test_url_with_a_query_or_fragment_before_its_at_sign_keeps_only_its_scheme(
+    tmp_path: Path, capsys, source: str, url: str
+) -> None:
+    # Masking the credentials first would swallow the marker, and masking the query first would expose `alice:hun`.
+    if source == "lake-manifest.json":
+        root = _project(tmp_path, manifest=(_mathlib(url=url),))
+    else:
+        root = _project(tmp_path)
+        _write_overrides(root, _mathlib(url=url))
+
+    result = inspect_project(root)
+    main(["project", "inspect", str(root)])
+    main(["project", "inspect", str(root), "--json"])
+    captured = capsys.readouterr()
+
+    assert result.mathlib.source == source
+    assert result.mathlib.url == "https://***"
+    assert result.compatibility.status == "unlisted"
+    output = result.to_json() + captured.out + captured.err
+    assert not any(secret in output for secret in ("hunter2", "ter2", "alice"))
+
+
 def test_escaped_mathlib_spelling_is_the_same_package(tmp_path: Path) -> None:
     lakefile = LAKEFILE.replace('name = "mathlib"', 'name = "«mathlib»"')
     result = inspect_project(_project(tmp_path, lakefile=lakefile, manifest=(_mathlib(name="«mathlib»"),)))
