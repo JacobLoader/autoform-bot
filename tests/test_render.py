@@ -757,6 +757,31 @@ def test_the_module_inventory_figure_counts_inventories_and_hides_at_zero(tmp_pa
     assert "existing Lean modules checked" not in overview
 
 
+def test_an_unclassified_catalog_warning_names_the_contract_once(tmp_path: Path) -> None:
+    """A coverage-role issue with no line already names the contract.
+
+    A catalog that no INVENTORIED row reaches has no contract line to cite,
+    and its warning read "coverage contract: coverage contract leaves ...".
+    """
+    project = _project(tmp_path)
+    sources = project / "blueprint/sources"
+    sources.mkdir()
+    (sources / "catalog.md").write_text("# Project.Base declarations\n", encoding="utf-8")
+    (project / "blueprint/roadmap/catalog.md").write_text(
+        "---\ncatalog: module\n---\n\n"
+        "# Existing module\n\nA module inventory that no coverage row reaches.\n\n"
+        "## Sources\n\n- [Declaration ledger](../sources/catalog.md)\n",
+        encoding="utf-8",
+    )
+
+    report = render_site(project / "blueprint", tmp_path / "out", lean_root=project)
+
+    assert report.warnings == [
+        "coverage contract leaves 1 catalog article outside INVENTORIED evidence; "
+        "link each inventory area directly or through a containing roadmap article"
+    ]
+
+
 def test_the_landing_page_is_the_hero_and_project_explorer_and_nothing_else(
     tmp_path: Path,
 ) -> None:

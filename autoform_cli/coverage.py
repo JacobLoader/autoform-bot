@@ -164,9 +164,10 @@ def validate_coverage_roles(
 
     :func:`load_coverage` remains a syntax-only operation. Callers that already
     have a validated graph use this second phase to distinguish declaration
-    exposition from module inventory. Audit reports each issue as a finding;
-    render prints it as a warning and still publishes, as it does for a
-    ``MAPPED`` row, so a blueprint keeps its site while its rows migrate.
+    exposition from module inventory. Audit reports each issue as a finding.
+    Render prints it as a warning and still publishes, as it publishes a
+    contract with ``MAPPED`` rows, so a blueprint keeps its site while its
+    rows migrate.
     """
 
     contained: dict[str, list[str]] = {}

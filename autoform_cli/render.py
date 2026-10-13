@@ -345,11 +345,12 @@ def _render_captured_site(
     if coverage is None:
         raise PublicationError(["coverage contract could not be loaded"])
     # Coverage-role issues are audit findings. A valid contract still
-    # publishes with them, as it does with MAPPED rows.
+    # publishes with them, as it does with MAPPED rows. An issue without a
+    # line already names the contract in its reason, so it gets no prefix.
     coverage_warnings = [
         f"coverage contract line {issue.line}: {issue.reason}"
         if issue.line
-        else f"coverage contract: {issue.reason}"
+        else issue.reason
         for issue in validate_coverage_roles(graph, coverage)
     ]
     statuses = status.derive(graph)
