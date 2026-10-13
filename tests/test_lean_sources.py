@@ -1377,6 +1377,30 @@ def test_checkout_marker_appearing_beside_lean_files_is_caught(
     assert snapshot.index.find("vendored") is None
 
 
+def test_checkout_marker_seen_only_by_its_folders_relist_is_caught(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A marker that appears in a folder holding Lean files hides them, even
+    # if it is gone again by verification; only the folder's end-of-scan
+    # relist sees it.
+    _require_descriptor_capture()
+    _index(tmp_path, "def main : Nat := 0\n", "Main.lean")
+    _index(tmp_path, "def vendored : Nat := 0\n", "vendor/lib/Lib.lean")
+    marker = tmp_path / "vendor" / "lib" / ".git"
+    fired = _before_relist_of(monkeypatch, "vendor/lib", marker.mkdir)
+    _on_checkpoint(monkeypatch, "before-final-verification", marker.rmdir)
+    sources = open_project_sources(tmp_path)
+    try:
+        with pytest.raises(TreeChangedError) as error:
+            sources.capture()
+    finally:
+        sources.close()
+
+    assert fired == ["vendor/lib"]
+    assert error.value.relative == "vendor/lib"
+
+
 def test_unrelated_folders_do_not_change_tree_revisions(tmp_path: Path) -> None:
     _require_descriptor_capture()
     plain = tmp_path / "plain"
