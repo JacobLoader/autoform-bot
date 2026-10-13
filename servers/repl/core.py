@@ -406,7 +406,7 @@ def _communicate_bounded(
                 continue
             if len(stdout) + len(stderr) + len(chunk) > max_output_bytes:
                 raise RuntimeError(
-                    f"Lean header check failed: parser output exceeded {max_output_bytes} bytes"
+                    f"Lean header check failed: header command output exceeded {max_output_bytes} bytes"
                 )
             target.extend(chunk)
 

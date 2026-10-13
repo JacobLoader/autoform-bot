@@ -1344,7 +1344,7 @@ def test_header_check_never_spawns_after_its_shared_deadline(monkeypatch):
 
 
 def test_header_check_rejects_output_over_the_combined_limit():
-    with pytest.raises(RuntimeError, match="Lean header check failed: parser output exceeded 1024 bytes"):
+    with pytest.raises(RuntimeError, match="Lean header check failed: header command output exceeded 1024 bytes"):
         _header_modules(_fake_header_command("x" * 600, stderr="y" * 600), max_buffer_bytes=1024)
 
 
