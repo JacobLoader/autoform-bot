@@ -256,12 +256,17 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
     assert "unrecognized parser response fails closed" in servers
     assert "names that remain quoted or\npath-like after Lean parsing are refused" in servers
     assert "package-qualified `@repl/repl` target" in servers
+    assert "finds the REPL only through a require named `repl`" in servers
+    assert 'needs `LEAN_REPL_CMD="lake exe @<name>/repl"`' in servers
+    assert "so the header command is still derived from" in servers
     assert "one total post-admission budget" in servers
     assert "default and maximum are 240 seconds" in servers
     assert "does not mean a REPL subprocess remains resident" in servers
     assert "`LEAN_REPL_HEADER_CMD`" in servers
     assert "the runtime refuses to start" in servers
     assert "`leanprover-community/repl` at an immutable revision" in setup
+    assert "Name the require `repl`" in setup
+    assert "which finds the package only under its require name" in setup
     assert "run `lake update repl`" in setup
     assert "commit the manifest" in setup
     assert "lake build @repl/repl" in setup

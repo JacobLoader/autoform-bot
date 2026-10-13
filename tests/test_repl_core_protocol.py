@@ -1294,6 +1294,44 @@ def test_disposable_call_refuses_non_posix_before_spawning_header_parser(monkeyp
     assert repl.is_clean()
 
 
+def _failing_lake_exe(stderr: str) -> list[str]:
+    # Reading the whole frame first makes the failure arrive after the frame is
+    # sent, as it does with Lake, which takes longer to start than a short
+    # frame takes to write.
+    script = (
+        "import sys\n"
+        "while sys.stdin.readline() not in ('\\n', ''):\n"
+        "    pass\n"
+        f"sys.stderr.write({stderr!r})\n"
+        "sys.exit(1)\n"
+    )
+    return [sys.executable, "-c", script]
+
+
+@pytest.mark.parametrize(
+    ("lake_error", "hinted"),
+    [
+        ("error: unknown package `repl`", True),
+        ("error: unknown executable @repl/repl", False),
+    ],
+)
+def test_failed_repl_start_names_both_remedies_only_for_an_unknown_package(lake_error, hinted):
+    repl = repl_core.LeanRepl(
+        repl_core.LeanReplConfig(
+            validate_imports=False,
+            warmup_imports=frozenset(),
+            repl_command=_failing_lake_exe(lake_error + "\n"),
+        )
+    )
+
+    error = repl.run_disposable("#check Nat", timeout=30)["repl_error"]
+
+    assert lake_error in error
+    assert ("name the project's REPL require `repl`" in error) is hinted
+    assert ('set LEAN_REPL_CMD="lake exe @<name>/repl"' in error) is hinted
+    assert repl.is_clean()
+
+
 _LEGACY_INIT_ONLY = json.dumps(
     {"imports": [{"errors": [], "imports": [{"module": "Init", "importAll": False}]}]}
 )
@@ -1927,6 +1965,22 @@ def test_wire_protocol_retires_a_process_with_closed_stderr_before_writing():
             repl._run("#check Nat", env_id=None, timeout=1)
 
         assert repl.process is None
+
+
+def test_stdout_eof_before_the_frame_is_sent_reports_the_stderr_tail():
+    # A child that exits before reading the frame, as Lake does when it cannot
+    # find the REPL package, says why only on stderr.
+    with ExitStack() as stack:
+        process = _PipeProcess(stack, [])
+        process._stderr_write.write(b"error: unknown package `repl`\n")
+        process._stdout_write.close()
+        repl = _repl_with_process(process)
+
+        with pytest.raises(repl_core.ReplProcessExited, match="closed stdout before") as error:
+            repl._run("#check Nat", env_id=None, timeout=1)
+
+        assert repl.process is None
+    assert "error: unknown package `repl`" in str(error.value)
 
 
 def test_stdout_eof_keeps_only_a_fixed_stderr_tail(monkeypatch):

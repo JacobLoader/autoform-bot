@@ -51,9 +51,12 @@ uid-specific directory in `/tmp`; the rotating runtime log is beside it.
 by `AUTOFORM_REPL_TOTAL_WORKERS`, `AUTOFORM_REPL_WORKERS_PER_PROJECT`,
 `AUTOFORM_MAX_LEAN_PROJECTS`, and `AUTOFORM_LEAN_IDLE_SECONDS`. The first
 process to start the runtime supplies those settings until it is stopped.
-`LEAN_REPL_CMD` selects the disposable child command. An absolute `lake`
-executable is reused for header validation; a container or other wrapper must
-also set `LEAN_REPL_HEADER_CMD` to a command that runs
+`LEAN_REPL_CMD` selects the disposable child command. Its default,
+`lake exe @repl/repl`, finds the REPL only through a require named `repl`. A
+require with any other name needs `LEAN_REPL_CMD="lake exe @<name>/repl"`,
+which still starts with `lake`, so the header command is still derived from
+it. An absolute `lake` executable is reused for header validation; a container
+or other wrapper must also set `LEAN_REPL_HEADER_CMD` to a command that runs
 `servers/repl/parse_header.lean` with the matching toolchain's `lean --run`,
 passing the source on standard input. If `LEAN_REPL_CMD` does not invoke `lake`
 and `LEAN_REPL_HEADER_CMD` is unset, or if `AUTOFORM_MAX_REPL_REQUEST_SECONDS`

@@ -42,6 +42,13 @@ LEAN_HEADER_LAUNCHER = (
     "lean = os.path.join(os.environ['LEAN_SYSROOT'], 'bin', 'lean'); "
     "os.execv(lean, [lean, '--run', sys.argv[1]])"
 )
+# Lake's error for ``lake exe @<package>/<target>`` when no package in the
+# workspace has that name, as when the REPL is required under another name.
+_LAKE_UNKNOWN_PACKAGE = "unknown package `"
+_REPL_REQUIRE_HINT = (
+    "Lake could not find the REPL package: name the project's REPL require `repl`, "
+    'or set LEAN_REPL_CMD="lake exe @<name>/repl" for a require named <name>'
+)
 
 
 # ---------------------------------------------------------------------------
@@ -633,6 +640,17 @@ def _without_process_handles(response: dict[str, Any]) -> dict[str, Any]:
     return cleaned
 
 
+def _with_repl_require_hint(message: str) -> str:
+    """Name both remedies when Lake found no package for the REPL command.
+
+    A child that fails this way reaches the caller as a process exit or an
+    unknown outcome whose message carries the child's stderr tail.
+    """
+    if _LAKE_UNKNOWN_PACKAGE not in message:
+        return message
+    return f"{message.rstrip()}; {_REPL_REQUIRE_HINT}"
+
+
 def format_message(msg: dict) -> str:
     """Format one REPL message: ``"3:5: error: unknown identifier"``."""
     severity = msg.get("severity", "info")
@@ -1097,9 +1115,12 @@ class LeanRepl:
             except ReplCommandError as error:
                 result = {"repl_error": str(error)}
             except (ReplProtocolError, ReplOutcomeUnknown) as error:
-                result = {"repl_error": str(error), "outcome_unknown": True}
+                result = {
+                    "repl_error": _with_repl_require_hint(str(error)),
+                    "outcome_unknown": True,
+                }
             except (ReplProcessExited, TimeoutError, RuntimeError, OSError) as error:
-                result = {"repl_error": str(error)}
+                result = {"repl_error": _with_repl_require_hint(str(error))}
             except BaseException as error:
                 request_error = error
             finally:
@@ -1419,14 +1440,18 @@ class LeanRepl:
                 raise ReplProcessExited(
                     "Lean REPL stdout failed before the request frame was fully sent"
                 ) from error
+            _, stderr_tail = stderr_details()
             self.close(deadline=end_time)
             if chunk:
                 raise ReplProcessExited(
                     "Lean REPL emitted unsolicited stdout before the request frame "
                     "was fully sent; the process was recycled"
                 )
+            # A child that exits before reading the frame, as Lake does when it
+            # cannot find the REPL package, says why only on stderr.
             raise ReplProcessExited(
-                "Lean REPL closed stdout before the request frame was fully sent"
+                "Lean REPL closed stdout before the request frame was fully sent. "
+                f"Tail: {stderr_tail!r}"
             )
 
         def drain_stderr(*, max_reads: int | None = None, after_response: bool = False) -> bool:
