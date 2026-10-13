@@ -526,32 +526,33 @@ class ClaimBoard:
         for _ in range(_LIST_ATTEMPTS):
             advertised = self._advertised_claims()
             try:
-                leases = self._read_listed(advertised)
+                for key, oid in advertised.items():
+                    self._fetch_listed(key, oid)
             except _ClaimRefChanged:
                 continue
             if self._advertised_claims() == advertised:
-                return leases
+                return self._read_listed(advertised)
         raise ClaimTransportError(f"claim refs changed during each of {_LIST_ATTEMPTS} attempts to list them")
 
     def _advertised_claims(self) -> dict[str, str]:
+        """Return the object ID of every validly named claim ref, by key."""
         proc = self._git(["ls-remote", self.repo_url, CLAIM_REF_PREFIX + "*"])
-        refs: dict[str, str] = {}
+        advertised: dict[str, str] = {}
         for line in proc.stdout.splitlines():
             oid, separator, ref = line.partition("\t")
             if not separator or not ref.startswith(CLAIM_REF_PREFIX):
                 continue
-            refs[ref] = oid
-        return refs
-
-    def _read_listed(self, advertised: Mapping[str, str]) -> list[dict[str, Any]]:
-        leases: list[dict[str, Any]] = []
-        for ref, oid in advertised.items():
             key = ref[len(CLAIM_REF_PREFIX) :]
             try:
                 _validate_key(key)
             except ValueError:
                 continue
-            self._fetch_listed(key, oid)
+            advertised[key] = oid
+        return advertised
+
+    def _read_listed(self, advertised: Mapping[str, str]) -> list[dict[str, Any]]:
+        leases: list[dict[str, Any]] = []
+        for key, oid in advertised.items():
             try:
                 lease = dict(self._read_lease(key, oid))
             except MalformedLeaseError as exc:

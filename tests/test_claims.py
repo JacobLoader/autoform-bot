@@ -618,6 +618,32 @@ def test_list_retries_when_a_claim_ref_changes_between_ls_remote_and_fetch(
     assert not any(lease["_malformed"] for lease in listed)
 
 
+def test_list_returns_its_verified_snapshot_when_refs_change_while_leases_are_parsed(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire_many(["a", "b"], ttl=600)
+    before = _refs(board_repo)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+    ls_remotes: list[list[str]] = []
+
+    def renew_while_parsing(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "ls-remote":
+            ls_remotes.append(args)
+        if args[:2] == ["cat-file", "commit"]:
+            assert owner.renew("b")
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(reader, "_git", renew_while_parsing)
+    listed = reader.list()
+
+    assert _refs(board_repo) != before
+    assert {claims.CLAIM_REF_PREFIX + lease["_key"]: lease["_oid"] for lease in listed} == before
+    assert not any(lease["_malformed"] for lease in listed)
+    assert len(ls_remotes) == 2
+
+
 def test_list_raises_when_claim_refs_keep_changing(
     tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
