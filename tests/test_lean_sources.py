@@ -824,6 +824,37 @@ def test_lean_file_removed_after_scan_is_named(
     assert _changed_path(tmp_path) == "Proj/A.lean"
 
 
+def test_lean_file_edited_while_it_is_read_is_named(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_descriptor_capture()
+    _index(tmp_path, "def kept : Nat := 0\n", "Proj/A.lean")
+    source = tmp_path / "Proj" / "A.lean"
+    original_fdopen = os.fdopen
+    edited = False
+
+    def edit_once(descriptor, *args, **kwargs):
+        nonlocal edited
+        if not edited and os.fstat(descriptor).st_ino == source.stat().st_ino:
+            edited = True
+            with source.open("a", encoding="utf-8") as handle:
+                handle.write("def edited : Nat := 1\n")
+        return original_fdopen(descriptor, *args, **kwargs)
+
+    monkeypatch.setattr(tree_snapshot_module.os, "fdopen", edit_once)
+    monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
+
+    assert _changed_path(tmp_path) == "Proj/A.lean"
+    edited = False
+    binds = _count_binds(monkeypatch)
+    snapshot = snapshot_project_sources(tmp_path)
+
+    assert edited
+    assert len(binds) == 2
+    assert snapshot.index.find("edited") is not None
+
+
 def test_lean_file_removed_before_it_is_examined_is_absent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2876,15 +2907,10 @@ def test_managed_output_marker_prunes_before_any_descendant_open(
     )
     original_read = tree_snapshot_module._read_file
 
-    def refuse_descendant(parent_descriptor, name, expected, *, max_bytes=None):
+    def refuse_descendant(parent_descriptor, name, *args, **kwargs):
         if name == "Packet.lean":
             raise AssertionError("managed descendants must not be opened")
-        return original_read(
-            parent_descriptor,
-            name,
-            expected,
-            max_bytes=max_bytes,
-        )
+        return original_read(parent_descriptor, name, *args, **kwargs)
 
     monkeypatch.setattr(tree_snapshot_module, "_read_file", refuse_descendant)
 
@@ -2951,10 +2977,10 @@ def test_managed_marker_folder_is_listed_once_per_look_and_never_entered(
         return original_scandir(path)
     original_read = tree_snapshot_module._read_file
 
-    def refuse_descendant(parent_descriptor, name, expected, *, max_bytes=None):
+    def refuse_descendant(parent_descriptor, name, *args, **kwargs):
         if name == "Packet.lean":
             raise AssertionError("managed descendants must not be opened")
-        return original_read(parent_descriptor, name, expected, max_bytes=max_bytes)
+        return original_read(parent_descriptor, name, *args, **kwargs)
 
     def add_irrelevant_churn() -> None:
         for index in range(100):
