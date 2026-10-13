@@ -38,7 +38,11 @@ from ._tree_snapshot import (
 )
 
 _NAMESPACE = re.compile(r"^\s*namespace\s+(.+)$")
-_SECTION = re.compile(r"^\s*section\b\s*(\S*)")
+#: ``section`` in every form that opens one, e.g. ``@[expose] public section``.
+_SECTION = re.compile(
+    r"^\s*(?:@\[[^\]]*\]\s*)*(?:(?:public|private|meta|noncomputable)\s+)*section\b\s*(\S*)"
+)
+_MUTUAL = re.compile(r"^\s*mutual\s*$")
 _END = re.compile(r"^\s*end\b\s*(\S*)")
 _DECLARATION = re.compile(
     r"^\s*(?:@\[[^\]]*\]\s*)*"
@@ -735,8 +739,7 @@ def _scan(text: str, relative: Path) -> list[Declaration]:
             scopes.append(name)
             continue
 
-        section_match = _SECTION.match(line)
-        if section_match:
+        if _SECTION.match(line) or _MUTUAL.match(line):
             scopes.append(None)
             continue
 
