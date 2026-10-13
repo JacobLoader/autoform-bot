@@ -180,7 +180,7 @@ class LeanReplPool:
                     self._condition.notify_all()
 
     def get_memory_usage(self) -> float:
-        """Total memory usage across all REPL instances in GB."""
+        """Total memory usage in GB of the live child processes of calls in progress."""
         with self._lock:
             workers = tuple(self._workers)
         return sum(worker.get_memory_usage() for worker in workers)
