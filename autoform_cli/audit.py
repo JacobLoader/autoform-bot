@@ -26,7 +26,6 @@ from .graph import (
 from .lean import (
     _DECLARATION,
     Declaration,
-    IndexedSourceSnapshot,
     SourceIndex,
     _without_lean_comments,
     declaration_names,
@@ -437,6 +436,7 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
             )
         ]
 
+    findings: list[AuditFinding] = []
     try:
         snapshot = snapshot_project_sources(root)
     except OSError as error:
@@ -447,11 +447,6 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
                 index_failure_message(error),
             )
         ]
-    return _lean_target_findings(graph, snapshot)
-
-
-def _lean_target_findings(graph: Graph, snapshot: IndexedSourceSnapshot) -> list[AuditFinding]:
-    findings: list[AuditFinding] = []
     index = snapshot.index
     spans = _source_spans(index)
     sizes: dict[str, int] = {}

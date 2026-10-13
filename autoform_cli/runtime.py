@@ -14,7 +14,7 @@ from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote, urlsplit
 
 from .graph import Graph, load_graph, roadmap_symlink_issues
-from .lean import SourceIndex, declaration_names, index_failure_message, index_project
+from .lean import declaration_names, index_failure_message, index_project
 from .status import derive, is_definition
 
 RUNTIME_SCHEMA = "autoform-runtime/v3"
@@ -237,23 +237,14 @@ def load_runtime_graph(
 
     paths = resolve_runtime_paths(project_or_blueprint)
     graph = load_graph(paths.blueprint_dir)
-    lean_index = None
-    if lean_root is not None:
-        root = Path(lean_root).expanduser().resolve()
-        if not root.is_dir():
-            raise RuntimeProjectionError(["Lean root does not exist or is not a directory"])
-        try:
-            lean_index = index_project(root)
-        except OSError as error:
-            raise RuntimeProjectionError([index_failure_message(error)]) from error
-    return build_runtime_graph(graph, project_root=paths.project_root, lean_index=lean_index)
+    return build_runtime_graph(graph, project_root=paths.project_root, lean_root=lean_root)
 
 
 def build_runtime_graph(
     graph: Graph,
     *,
     project_root: str | Path,
-    lean_index: SourceIndex | None = None,
+    lean_root: str | Path | None = None,
 ) -> RuntimeGraph:
     """Copy an already validated canonical graph into the runtime contract."""
 
@@ -322,6 +313,16 @@ def build_runtime_graph(
         raise RuntimeProjectionError(issues)
 
     statuses = derive(graph)
+    lean_index = None
+    if lean_root is not None:
+        root = Path(lean_root).expanduser().resolve()
+        if not root.is_dir():
+            raise RuntimeProjectionError(["Lean root does not exist or is not a directory"])
+        try:
+            lean_index = index_project(root)
+        except OSError as error:
+            raise RuntimeProjectionError([index_failure_message(error)]) from error
+
     parents = {node.parent for node in graph.nodes.values() if node.parent is not None}
     runtime_nodes: list[RuntimeNode] = []
     for node_id in sorted(graph.nodes):

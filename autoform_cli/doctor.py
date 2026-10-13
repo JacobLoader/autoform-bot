@@ -13,9 +13,8 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path, PureWindowsPath
 
-from .audit import AuditFinding, _lean_target_findings, audit_graph
+from .audit import AuditFinding, _lean_findings, audit_graph
 from .graph import GraphValidationError, load_graph
-from .lean import IndexedSourceSnapshot, index_failure_message, snapshot_project_sources
 from .runtime import (
     RUNTIME_AUTHORITY,
     RUNTIME_SCHEMA,
@@ -97,24 +96,10 @@ def diagnose_project(
         checks.append(DoctorCheck("graph", False, reason))
         return _blocked_result(checks, "graph validation failed", lean_root=lean_root)
 
-    # One capture serves the runtime projection and the Lean target checks, so
-    # both judge the same sources; a Lean failure fails only lean targets.
-    resolved_lean_root, lean_root_valid = _resolve_lean_root(lean_root)
-    lean_snapshot: IndexedSourceSnapshot | None = None
-    lean_failure: DoctorCheck | None = None
-    if not lean_root_valid:
-        lean_failure = DoctorCheck("lean targets", False, "1 finding(s): invalid-lean-root")
-    elif resolved_lean_root is not None:
-        try:
-            lean_snapshot = snapshot_project_sources(resolved_lean_root)
-        except OSError as error:
-            lean_failure = DoctorCheck("lean targets", False, index_failure_message(error))
+    # No runtime field the doctor reports depends on Lean, so the projection
+    # runs without it and the lean targets check is the only Lean capture.
     try:
-        runtime = build_runtime_graph(
-            graph,
-            project_root=paths.project_root,
-            lean_index=lean_snapshot.index if lean_snapshot is not None else None,
-        )
+        runtime = build_runtime_graph(graph, project_root=paths.project_root)
     except RuntimeProjectionError as error:
         checks.append(DoctorCheck("runtime", False, _issues(error.issues)))
     else:
@@ -128,7 +113,7 @@ def diagnose_project(
 
     if runtime is None:
         checks.append(DoctorCheck("graph", False, "not summarized because runtime projection failed"))
-        return _blocked_result(checks, "runtime projection failed", lean_root=lean_root, lean_check=lean_failure)
+        return _blocked_result(checks, "runtime projection failed", lean_root=lean_root)
 
     checks.append(
         DoctorCheck(
@@ -150,13 +135,11 @@ def diagnose_project(
     )
 
     checks.append(_finding_check("audit", audit_graph(graph).findings, "roadmap audit passed"))
-    if lean_failure is not None:
-        checks.append(lean_failure)
-    elif lean_snapshot is not None:
-        lean_findings = tuple(_lean_target_findings(graph, lean_snapshot))
-        checks.append(_finding_check("lean targets", lean_findings, "all asserted local Lean targets resolve"))
-    else:
+    if lean_root is None:
         checks.append(DoctorCheck("lean targets", True, "not checked; no Lean root supplied"))
+    else:
+        lean_findings = tuple(_lean_findings(graph, lean_root))
+        checks.append(_finding_check("lean targets", lean_findings, "all asserted local Lean targets resolve"))
     return _result(checks)
 
 
@@ -165,11 +148,10 @@ def _blocked_result(
     reason: str,
     *,
     lean_root: str | Path | None,
-    lean_check: DoctorCheck | None = None,
 ) -> DoctorResult:
     for name in _CHECK_NAMES[len(checks) : -1]:
         checks.append(DoctorCheck(name, False, f"not checked because {reason}"))
-    checks.append(lean_check or _blocked_lean_check(reason, lean_root))
+    checks.append(_blocked_lean_check(reason, lean_root))
     return _result(checks)
 
 
@@ -184,17 +166,6 @@ def _finding_check(name: str, findings: tuple[AuditFinding, ...], clean_detail: 
         return DoctorCheck(name, True, clean_detail)
     codes = ", ".join(sorted({finding.code for finding in findings}))
     return DoctorCheck(name, False, f"{len(findings)} finding(s): {codes}")
-
-
-def _resolve_lean_root(lean_root: str | Path | None) -> tuple[Path | None, bool]:
-    if lean_root is None:
-        return None, True
-    try:
-        root = Path(lean_root).expanduser().resolve()
-        valid = root.is_dir()
-    except (OSError, RuntimeError, ValueError):
-        return None, False
-    return (root if valid else None), valid
 
 
 def _sanitize_issues(issues: tuple[str, ...], paths: RuntimePaths) -> str:

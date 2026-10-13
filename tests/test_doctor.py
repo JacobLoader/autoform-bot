@@ -198,7 +198,6 @@ _LEAN_METADATA = (
     "proof: formalized",
     "lean: Project.result",
 )
-_FIFO_REASON = "unsafe Lean source Project/F.lean: named pipe is not a regular file or directory"
 
 
 def _lean_root(tmp_path: Path) -> Path:
@@ -220,24 +219,24 @@ def test_an_unindexable_lean_source_fails_only_the_lean_targets_check(tmp_path: 
     assert not result.clean
     assert _checks(result)["runtime"][0]
     assert _checks(result)["audit"] == (True, "roadmap audit passed")
-    assert _checks(result)["lean targets"] == (False, f"Lean sources could not be indexed: {_FIFO_REASON}")
+    assert _checks(result)["lean targets"] == (False, "1 finding(s): unreadable-lean-sources")
     assert str(tmp_path) not in result.to_json()
 
 
-def test_a_lean_failure_is_reported_when_the_runtime_projection_fails(tmp_path: Path) -> None:
-    project = _clean_project(tmp_path, metadata=(*_LEAN_METADATA, "mathlib_file: ../Outside.lean"))
+def test_an_oversized_node_fails_the_lean_targets_check_not_the_audit(tmp_path: Path) -> None:
+    project = _clean_project(tmp_path)
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    spans = {f"small{index}": 6 for index in range(5)} | {"big": 420}
+    for name, lines in spans.items():
+        _article(project, f"{name}.md", metadata=(*_LEAN_METADATA[:3], f"lean: Project.{name}"))
+        steps = "".join(f"  -- step {step}\n" for step in range(lines - 2))
+        (lean_root / f"{name}.lean").write_text(f"theorem Project.{name} : True := by\n{steps}  trivial\n", encoding="utf-8")
 
-    missing = _checks(diagnose_project(project, lean_root=tmp_path / "missing-lean"))
+    result = diagnose_project(project, lean_root=lean_root)
 
-    assert missing["runtime"] == (False, "result: mathlib file must be a portable relative path")
-    assert missing["audit"] == (False, "not checked because runtime projection failed")
-    assert missing["lean targets"] == (False, "1 finding(s): invalid-lean-root")
-    if not hasattr(os, "mkfifo"):
-        pytest.skip("named pipes are unavailable")
-    lean_root = _lean_root(tmp_path)
-    os.mkfifo(lean_root / "Project" / "F.lean")
-    unindexable = _checks(diagnose_project(project, lean_root=lean_root))
-    assert unindexable["lean targets"] == (False, f"Lean sources could not be indexed: {_FIFO_REASON}")
+    assert _checks(result)["audit"] == (True, "roadmap audit passed")
+    assert _checks(result)["lean targets"] == (False, "1 finding(s): node-too-large")
 
 
 def test_doctor_captures_the_lean_sources_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
