@@ -184,6 +184,20 @@ def test_skeleton_checks_the_lean_root_before_the_lake_files(
 
 
 @_EVERY_ROOT
+def test_unused_hypotheses_checks_the_lean_root_before_the_lake_files(
+    tmp_path: Path, unusable_root: tuple[Path, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, reason = unusable_root
+    blueprint = _blueprint(tmp_path)
+
+    assert main(["unused-hypotheses", str(blueprint), "--lean-root", str(root)]) == 2
+
+    captured = capsys.readouterr()
+    assert captured.err == f"error: {reason}\n"
+    assert _without_host_paths(captured.out + captured.err, tmp_path)
+
+
+@_EVERY_ROOT
 def test_impact_checks_the_lean_root_before_the_lake_files(
     tmp_path: Path, unusable_root: tuple[Path, str], capsys: pytest.CaptureFixture[str]
 ) -> None:

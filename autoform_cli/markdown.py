@@ -68,7 +68,6 @@ EXTERNAL_SCHEMES = frozenset({"http", "https"})
 HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 FENCE = re.compile(r"^ {0,3}(`{3,}(?=[^`]*$)|~{3,})")
 INLINE_CODE = re.compile(r"(`+).*?\1")
-HTML_COMMENT = re.compile(r"<!--.*?(?:-->|$)", re.DOTALL)
 
 #: A closing fence carries nothing but its marker. ``pymdownx.superfences`` keeps
 #: ````` trailing`` inside the code block, so treating it as a closer would expose
@@ -479,10 +478,11 @@ class ArticleSection:
 class ArticleParts:
     """An article body split at its published H2 headings.
 
-    ``statement`` is everything between the frontmatter and the first H2, with
-    the H1 title line removed. It is the author's Markdown, untouched apart from
-    surrounding blank lines, so a caller that publishes it publishes what was
-    written and indentation keeps its meaning.
+    ``statement`` is everything no H2 section holds: the text between the
+    frontmatter and the first H2, and the text under an H1 title written below
+    an H2, with the title line removed. It is the author's Markdown, untouched
+    apart from surrounding blank lines, so a caller that publishes it publishes
+    what was written and indentation keeps its meaning.
     """
 
     statement: str
@@ -507,8 +507,7 @@ def article_parts(text: str) -> ArticleParts:
     masked = mask_fences_and_comments(body)
 
     title = next((index for index, line in enumerate(masked) if _heading_level(line) == 1), None)
-    starts = [index for index, line in enumerate(masked) if _heading_level(line) == 2]
-    breaks = sorted([*starts, *(() if title is None else (title,))])
+    breaks = [index for index, line in enumerate(masked) if index == title or _heading_level(line) == 2]
 
     # The statement is whatever no section holds: the text before the first
     # heading and the text under the title. A title written below a section
@@ -803,7 +802,6 @@ __all__ = [
     "FENCE",
     "FENCE_CLOSE",
     "HEADING",
-    "HTML_COMMENT",
     "INLINE_CODE",
     "LINK",
     "SITE_EXTENSIONS",

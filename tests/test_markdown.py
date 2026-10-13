@@ -479,6 +479,10 @@ def test_a_fence_that_never_closes_is_text_only_from_its_own_first_line() -> Non
     assert [line for line in content("```\nfenced\n``` trailing\nstill fenced\n").lines if line.strip()] == []
 
 
+def test_a_fence_closes_only_on_its_own_character() -> None:
+    assert mask_fences_and_comments(["~~~", "```", "## Hidden", "~~~", "## Shown"]) == ["", "", "", "", "## Shown"]
+
+
 def test_a_closed_fence_after_one_that_never_closes_is_still_hidden() -> None:
     lines = ["````py", "## Shown", "```", "hidden", "```", "after"]
 
@@ -499,10 +503,27 @@ def test_a_later_longer_fence_line_closes_a_fence_whose_own_closing_line_is_not_
     assert mask_fences_and_comments(lines) == ["", "", "", "", "", "code", "````"]
 
 
-def test_many_fences_that_never_close_do_not_each_reread_the_article() -> None:
-    lines = [line for index in range(20000) for line in (f"```{'`' * (index % 3)}info{index}", "## Heading")]
+def test_many_fences_that_never_close_do_not_each_reread_the_article(monkeypatch: pytest.MonkeyPatch) -> None:
+    import autoform_cli.markdown as markdown_module
 
+    lines = [line for index in range(20000) for line in (f"```{'`' * (index % 3)}info{index}", "## Heading")]
+    reads: list[str] = []
+
+    class Counted:
+        """Each line read is matched against exactly one fence pattern."""
+
+        def __init__(self, pattern: re.Pattern[str]) -> None:
+            self.pattern = pattern
+
+        def match(self, line: str) -> re.Match[str] | None:
+            reads.append(line)
+            assert len(reads) <= 3 * len(lines), "an unclosed fence rereads the article"
+            return self.pattern.match(line)
+
+    monkeypatch.setattr(markdown_module, "FENCE", Counted(markdown_module.FENCE))
+    monkeypatch.setattr(markdown_module, "FENCE_CLOSE", Counted(markdown_module.FENCE_CLOSE))
     assert mask_fences_and_comments(lines) == lines
+    assert len(reads) >= len(lines)
 
 
 def test_an_unclosed_comment_hides_every_heading_after_it() -> None:

@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -78,6 +80,9 @@ def test_every_term_must_occur_but_terms_may_sit_in_different_fields(tmp_path: P
     project = _project(tmp_path)
 
     assert _matched(project, "separating affine") == {"convexity/hyperplane": ("title", "statement_text")}
+    # Best first and once each, whatever the order of the terms.
+    assert _matched(project, "affine separating") == {"convexity/hyperplane": ("title", "statement_text")}
+    assert _matched(project, "affine disjoint") == {"convexity/hyperplane": ("statement_text",)}
     assert _ids(project, "separating nowhere") == []
     assert search_blueprint(project, "Affine  affine AFFINE").terms == ("affine",)
 
@@ -161,7 +166,7 @@ def test_punctuation_around_a_query_word_does_not_hide_an_article(tmp_path: Path
     assert search_blueprint(project, "affine ...").terms == ("affine", "...")
 
 
-def test_a_title_is_matched_as_the_page_shows_it(tmp_path: Path) -> None:
+def test_a_title_is_matched_without_its_markup(tmp_path: Path) -> None:
     project = _project(tmp_path)
     _article(project, "convexity/README.md", title="Convex *analysis* at caf&eacute;")
     _article(
@@ -630,6 +635,21 @@ def test_the_bundled_example_answers_a_reuse_question(repo_root: Path) -> None:
         {"declaration": "CabannesThesis.NonAmbiguous", "line": 11, "source_file": "src/CabannesThesis/Basic.lean"}
     ]
     assert hit.used_by_count == 2
+
+
+def test_the_reference_search_examples_run(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    reference = (repo_root / "autoform_cli/README.md").read_text(encoding="utf-8")
+    examples = [
+        shlex.split(line)[1:]
+        for block in re.findall(r"```bash\n(.*?)```", reference, re.DOTALL)
+        for line in block.splitlines()
+        if line.startswith("autoform search ")
+    ]
+    monkeypatch.chdir(repo_root / "skills/setup/assets/cabannes-thesis-project")
+
+    assert len(examples) == 3
+    for argv in examples:
+        assert cli.main(argv) == 0, argv
 
 
 def test_search_cli_emits_stable_json(tmp_path: Path, capsys) -> None:
