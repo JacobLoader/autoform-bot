@@ -450,36 +450,6 @@ def test_shutdown_waits_for_checked_out_worker_before_closing_or_draining(monkey
         pool.run("#check Int", timeout=0.1)
 
 
-def test_repl_retry_recovery_uses_the_original_deadline(monkeypatch):
-    clock = {"now": 0.0}
-    repl = repl_core.LeanRepl(
-        repl_core.LeanReplConfig(
-            max_retries=1,
-            validate_imports=False,
-            warmup_imports=frozenset(),
-        )
-    )
-    calls = []
-    closed = []
-
-    monkeypatch.setattr(repl_core.time, "monotonic", lambda: clock["now"])
-    monkeypatch.setattr(repl, "is_alive", lambda: True)
-    monkeypatch.setattr(repl, "_check_memory_and_maybe_restart", lambda timeout: None)
-    monkeypatch.setattr(repl, "close", lambda **kwargs: closed.append(True))
-
-    def consume_deadline(code, env_id, timeout):
-        calls.append(timeout)
-        clock["now"] += timeout
-        raise TimeoutError("ambiguous timeout")
-
-    monkeypatch.setattr(repl, "_run", consume_deadline)
-    response = repl.run("#check Nat", timeout=1)
-
-    assert calls == [1]
-    assert closed == [True]
-    assert "timed out" in response["repl_error"]
-
-
 def test_repl_request_write_uses_the_operation_deadline():
     read_fd, write_fd = os.pipe()
     stdout_read_fd, stdout_write_fd = os.pipe()

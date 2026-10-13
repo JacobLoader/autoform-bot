@@ -836,7 +836,6 @@ class LeanRuntimeServices:
                         repl_command=list(self.config.repl_command),
                         header_command=list(self.config.repl_header_command),
                         num_repls=self.config.repl_workers_per_project,
-                        max_retries=0,
                     )
                 )
             except LeanReplPoolStartupError as error:

@@ -278,325 +278,6 @@ def test_process_group_cleanup_refuses_a_pre_reaped_leader_with_live_members(
         repl_core._kill_subprocesses(process, 1234)
 
 
-def test_split_imports_preserves_body_offset_after_comments_and_blank_lines():
-    code = """-- preface
-import Mathlib.Data.Nat.Basic
-
--- body comment
-#check Nat
-"""
-
-    imports, body, offset = repl_core._split_imports_and_body(code)
-
-    assert imports == ["Mathlib.Data.Nat.Basic"]
-    assert body == "#check Nat\n"
-    assert offset == 4
-
-
-def test_split_imports_stops_at_the_first_body_statement():
-    imports, body, offset = repl_core._split_imports_and_body(
-        "import Mathlib\n#check Nat\nimport Aesop\n"
-    )
-
-    assert imports == ["Mathlib"]
-    assert body == "#check Nat\nimport Aesop\n"
-    assert offset == 1
-
-
-def test_run_rejects_disallowed_import_roots_before_touching_the_process():
-    repl = repl_core.LeanRepl(
-        repl_core.LeanReplConfig(
-            allowed_imports=frozenset({"Mathlib"}),
-            warmup_imports=frozenset(),
-        )
-    )
-
-    response = repl.run("import Unsafe.Module\n#check Nat")
-
-    assert response == {
-        "repl_error": "Disallowed imports: Unsafe. Allowed roots: Mathlib."
-    }
-    assert repl.process is None
-
-
-def test_run_offsets_diagnostics_after_stripping_import_header(monkeypatch):
-    repl = repl_core.LeanRepl(
-        repl_core.LeanReplConfig(
-            warmup_imports=frozenset(),
-            validate_imports=False,
-        )
-    )
-    monkeypatch.setattr(repl, "is_alive", lambda: True)
-    monkeypatch.setattr(repl, "_check_memory_and_maybe_restart", lambda timeout: None)
-    monkeypatch.setattr(
-        repl,
-        "_run",
-        lambda code, env_id, timeout: {
-            "env": 74,
-            "messages": [
-                {
-                    "severity": "error",
-                    "data": "boom",
-                    "pos": {"line": 1, "column": 2},
-                    "endPos": {"line": 1, "column": 3},
-                }
-            ],
-            "sorries": [
-                {
-                    "goal": "False",
-                    "proofState": None,
-                    "pos": {"line": 2, "column": 1},
-                    "endPos": {"line": 2, "column": 2},
-                }
-            ],
-        },
-    )
-
-    response = repl.run("import Mathlib\n\n#check Missing", timeout=1)
-
-    assert response["messages"][0]["pos"]["line"] == 3
-    assert response["messages"][0]["endPos"]["line"] == 3
-    assert response["sorries"][0]["pos"]["line"] == 4
-    assert response["sorries"][0]["endPos"]["line"] == 4
-
-
-def test_run_resolves_the_base_environment_after_restart(monkeypatch):
-    repl = repl_core.LeanRepl(
-        repl_core.LeanReplConfig(validate_imports=False, warmup_imports=frozenset())
-    )
-    dispatched_envs = []
-
-    monkeypatch.setattr(repl, "is_alive", lambda: repl.process is not None)
-
-    def restart(timeout=None):
-        repl.process = object()
-        repl._base_env_id = 73
-
-    monkeypatch.setattr(repl, "restart", restart)
-    monkeypatch.setattr(repl, "_check_memory_and_maybe_restart", lambda timeout: None)
-    monkeypatch.setattr(
-        repl,
-        "_run",
-        lambda code, env_id, timeout: dispatched_envs.append(env_id) or {"env": 74},
-    )
-
-    assert repl.run("#check Nat", timeout=1) == {"env": 74}
-    assert dispatched_envs == [73]
-
-
-def test_explicit_environment_is_not_sent_after_an_entry_restart(monkeypatch):
-    repl = repl_core.LeanRepl(
-        repl_core.LeanReplConfig(validate_imports=False, warmup_imports=frozenset())
-    )
-    monkeypatch.setattr(
-        repl,
-        "restart",
-        lambda timeout=None: pytest.fail("a stale explicit environment must not restart"),
-    )
-    monkeypatch.setattr(
-        repl,
-        "_run",
-        lambda code, env_id, timeout: pytest.fail("a stale environment must not be sent"),
-    )
-
-    with pytest.raises(repl_core.ReplProcessRestarted, match="environment state was lost"):
-        repl.run("#check Nat", env_id=7, timeout=1)
-
-
-def test_run_refreshes_the_base_environment_after_retry(monkeypatch):
-    repl = repl_core.LeanRepl(
-        repl_core.LeanReplConfig(
-            max_retries=1,
-            validate_imports=False,
-            warmup_imports=frozenset(),
-        )
-    )
-    repl.process = object()
-    repl._base_env_id = 11
-    dispatched_envs = []
-
-    monkeypatch.setattr(repl, "is_alive", lambda: True)
-    monkeypatch.setattr(repl, "_check_memory_and_maybe_restart", lambda timeout: None)
-    monkeypatch.setattr(repl_core.time, "sleep", lambda delay: None)
-    monkeypatch.setattr(repl_core.random, "uniform", lambda low, high: 0)
-
-    def run_once(code, env_id, timeout):
-        dispatched_envs.append(env_id)
-        if len(dispatched_envs) == 1:
-            raise RuntimeError("retry me")
-        return {"env": 23}
-
-    def restart(timeout=None):
-        repl.process = object()
-        repl._base_env_id = 22
-
-    monkeypatch.setattr(repl, "_run", run_once)
-    monkeypatch.setattr(repl, "restart", restart)
-
-    assert repl.run("#check Nat", timeout=5) == {"env": 23}
-    assert dispatched_envs == [11, 22]
-
-
-def test_pinned_repl_error_response_is_not_reported_as_success(monkeypatch):
-    repl = repl_core.LeanRepl(
-        repl_core.LeanReplConfig(
-            warmup_imports=frozenset(),
-            validate_imports=False,
-            max_retries=2,
-        )
-    )
-    repl.process = object()
-    calls = []
-    monkeypatch.setattr(repl, "is_alive", lambda: True)
-    monkeypatch.setattr(repl, "_check_memory_and_maybe_restart", lambda timeout: None)
-    monkeypatch.setattr(
-        repl,
-        "_run",
-        lambda code, env_id, timeout: calls.append((code, env_id))
-        or {"message": "Unknown environment."},
-    )
-
-    assert repl.run("#eval 1", timeout=1) == {
-        "repl_error": "Unknown environment."
-    }
-    assert calls == [("#eval 1", None)]
-
-
-@pytest.mark.parametrize(
-    "raw_response",
-    [
-        [],
-        {},
-        {"messages": []},
-        {"messages": {}},
-        {
-            "env": 1,
-            "messages": [
-                {
-                    "severity": [],
-                    "data": "boom",
-                    "pos": {"line": 1, "column": 1},
-                }
-            ],
-        },
-        {
-            "env": 1,
-            "messages": [
-                {
-                    "severity": {},
-                    "data": "boom",
-                    "pos": {"line": 1, "column": 1},
-                }
-            ],
-        },
-        {"env": True},
-        {"sorries": [{"goal": "False"}]},
-    ],
-)
-def test_malformed_body_response_is_not_retried(monkeypatch, raw_response):
-    repl = repl_core.LeanRepl(
-        repl_core.LeanReplConfig(
-            warmup_imports=frozenset(),
-            validate_imports=False,
-            max_retries=2,
-        )
-    )
-    repl.process = object()
-    calls = []
-    retired = []
-    monkeypatch.setattr(repl, "is_alive", lambda: True)
-    monkeypatch.setattr(repl, "_check_memory_and_maybe_restart", lambda timeout: None)
-    monkeypatch.setattr(
-        repl,
-        "_run",
-        lambda code, env_id, timeout: calls.append((code, env_id)) or raw_response,
-    )
-    monkeypatch.setattr(repl, "close", lambda **kwargs: retired.append(True))
-
-    result = repl.run("#eval 1", timeout=1)
-
-    assert result["outcome_unknown"] is True
-    assert calls == [("#eval 1", None)]
-    assert retired == [True]
-
-
-def test_env_scoped_malformed_response_reports_the_lost_environment(monkeypatch):
-    repl = repl_core.LeanRepl(
-        repl_core.LeanReplConfig(
-            warmup_imports=frozenset(),
-            validate_imports=False,
-        )
-    )
-    process = object()
-    repl.process = process
-    retired = []
-    monkeypatch.setattr(repl, "is_alive", lambda: True)
-    monkeypatch.setattr(repl, "_check_memory_and_maybe_restart", lambda timeout: None)
-    monkeypatch.setattr(repl, "_run", lambda code, env_id, timeout: {})
-    monkeypatch.setattr(repl, "close", lambda **kwargs: retired.append(True))
-
-    with pytest.raises(repl_core.ReplProcessRestarted) as error:
-        repl.run("#check Nat", env_id=7, timeout=1)
-
-    assert isinstance(error.value.__cause__, repl_core.ReplProtocolError)
-    assert retired == [True]
-
-
-@pytest.mark.parametrize("raw_response", [[], {"sorries": [{"goal": "False"}]}])
-def test_malformed_backlog_response_is_reported_as_unknown(
-    monkeypatch, raw_response
-):
-    repl = repl_core.LeanRepl(
-        repl_core.LeanReplConfig(
-            warmup_imports=frozenset(),
-            validate_imports=False,
-        )
-    )
-    repl.process = object()
-    monkeypatch.setattr(repl, "is_alive", lambda: True)
-    monkeypatch.setattr(repl, "_check_memory_and_maybe_restart", lambda timeout: None)
-    monkeypatch.setattr(
-        repl,
-        "_run",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            repl_core.ReplStderrBacklog("stderr backlog", raw_response)
-        ),
-    )
-    monkeypatch.setattr(repl, "close", lambda **kwargs: None)
-
-    result = repl.run("#eval 1", timeout=1)
-
-    assert result["outcome_unknown"] is True
-    assert "malformed" in result["repl_error"]
-
-
-def test_explicit_environment_is_not_sent_after_a_memory_restart(monkeypatch):
-    repl = repl_core.LeanRepl(
-        repl_core.LeanReplConfig(validate_imports=False, warmup_imports=frozenset())
-    )
-    repl.process = object()
-
-    monkeypatch.setattr(repl, "is_alive", lambda: True)
-
-    def restart_during_memory_check(timeout):
-        repl.process = object()
-        repl._base_env_id = 22
-
-    monkeypatch.setattr(
-        repl,
-        "_check_memory_and_maybe_restart",
-        restart_during_memory_check,
-    )
-    monkeypatch.setattr(
-        repl,
-        "_run",
-        lambda code, env_id, timeout: pytest.fail("a stale environment must not be sent"),
-    )
-
-    with pytest.raises(repl_core.ReplProcessRestarted, match="environment state was lost"):
-        repl.run("#check Nat", env_id=7, timeout=1)
-
-
 def test_format_repl_response_prioritizes_errors_and_keeps_sorries():
     formatted = repl_core.format_repl_response(
         {
@@ -852,7 +533,6 @@ def test_disposable_call_uses_one_frame_and_removes_process_handles(monkeypatch)
         ],
     }
     assert len(starts) == 1
-    assert starts[0]["warm"] is False
     assert 0 < starts[0]["startup_timeout"] <= 3
     assert len(calls) == 1
     assert calls[0][0] == "import Mathlib\n#check Nat"
@@ -878,8 +558,8 @@ def test_disposable_call_uses_one_decreasing_phase_budget(monkeypatch):
         clock["now"] = 2
         return repl_core._LeanHeaderAnalysis((), True)
 
-    def start(*, startup_timeout, warm):
-        budgets.append(("startup", startup_timeout, warm))
+    def start(*, startup_timeout):
+        budgets.append(("startup", startup_timeout))
         clock["now"] = 5
 
     def run(code, env_id, timeout):
@@ -893,7 +573,7 @@ def test_disposable_call_uses_one_decreasing_phase_budget(monkeypatch):
 
     assert repl.run_disposable("#check Nat", timeout=10) == {"messages": []}
     assert budgets == [
-        ("startup", 8, False),
+        ("startup", 8),
         ("command", 5, "import Mathlib\n#check Nat"),
     ]
 
@@ -1747,43 +1427,6 @@ def test_disposable_call_preserves_header_request_cancellation(monkeypatch):
     assert repl.is_clean()
 
 
-def test_response_timeout_after_full_write_is_not_retried(monkeypatch):
-    repl = repl_core.LeanRepl(
-        repl_core.LeanReplConfig(
-            warmup_imports=frozenset(),
-            validate_imports=False,
-            max_retries=2,
-        )
-    )
-    repl.process = object()
-    calls = []
-    monkeypatch.setattr(repl, "is_alive", lambda: True)
-    monkeypatch.setattr(repl, "_check_memory_and_maybe_restart", lambda timeout: None)
-    monkeypatch.setattr(
-        repl,
-        "close",
-        lambda **kwargs: setattr(repl, "process", None),
-    )
-    monkeypatch.setattr(
-        repl,
-        "restart",
-        lambda timeout=None: pytest.fail("a sent request must not be retried"),
-    )
-
-    def fail_after_send(code, env_id, timeout, mark_sent):
-        calls.append((code, env_id))
-        mark_sent()
-        raise TimeoutError("response timed out")
-
-    monkeypatch.setattr(repl, "_run_io", fail_after_send)
-    response = repl.run("#eval 1", timeout=1)
-
-    assert response["outcome_unknown"] is True
-    assert "fully sent" in response["repl_error"]
-    assert calls == [("#eval 1", None)]
-    assert repl.process is None
-
-
 def test_disposable_timeout_after_full_write_is_not_retried(monkeypatch):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(warmup_imports=frozenset(), validate_imports=False)
@@ -1804,44 +1447,6 @@ def test_disposable_timeout_after_full_write_is_not_retried(monkeypatch):
     assert "fully sent" in response["repl_error"]
     assert calls == [("#eval 1", None)]
     assert repl.process is None
-
-
-def test_cleanup_failure_after_full_write_preserves_unknown_outcome(monkeypatch):
-    repl = repl_core.LeanRepl(
-        repl_core.LeanReplConfig(
-            warmup_imports=frozenset(),
-            validate_imports=False,
-            max_retries=2,
-        )
-    )
-    repl.process = object()
-    close_calls = 0
-    monkeypatch.setattr(repl, "is_alive", lambda: True)
-    monkeypatch.setattr(repl, "_check_memory_and_maybe_restart", lambda timeout: None)
-    monkeypatch.setattr(
-        repl,
-        "restart",
-        lambda timeout=None: pytest.fail("a sent request must not be retried"),
-    )
-
-    def close(**kwargs):
-        nonlocal close_calls
-        close_calls += 1
-        raise RuntimeError("cleanup failed")
-
-    def fail_after_send(code, env_id, timeout, mark_sent):
-        mark_sent()
-        raise TimeoutError("response timed out")
-
-    monkeypatch.setattr(repl, "close", close)
-    monkeypatch.setattr(repl, "_run_io", fail_after_send)
-
-    response = repl.run("#eval 1", timeout=1)
-
-    assert response["outcome_unknown"] is True
-    assert "process cleanup also failed" in response["repl_error"]
-    assert close_calls == 2
-    assert repl.process is not None
 
 
 def test_disposable_cleanup_failure_after_full_write_keeps_the_unknown_outcome(monkeypatch):
@@ -2156,24 +1761,6 @@ def test_wire_protocol_retires_a_process_generation_that_exceeds_its_stderr_quot
     assert "23456789" in str(error.value)
 
 
-def test_process_stderr_overflow_without_a_response_is_not_retried(monkeypatch):
-    with ExitStack() as stack:
-        process = _PipeProcess(stack, [], stderr=b"x" * 32)
-        repl = _repl_with_process(process, max_buffer_bytes=16)
-        _patch_pipe_reads(monkeypatch, process)
-        monkeypatch.setattr(
-            repl,
-            "restart",
-            lambda timeout=None: pytest.fail("an uncertain command must not be retried"),
-        )
-
-        response = repl.run("#check Nat", timeout=1)
-
-        assert "execution outcome is unknown and was not retried" in response["repl_error"]
-        assert response["outcome_unknown"] is True
-        assert repl.process is None
-
-
 def test_disposable_stderr_overflow_without_a_response_is_not_retried(monkeypatch):
     with ExitStack() as stack:
         process = _PipeProcess(stack, [], stderr=b"x" * 32)
@@ -2184,19 +1771,6 @@ def test_disposable_stderr_overflow_without_a_response_is_not_retried(monkeypatc
 
         assert "execution outcome is unknown and was not retried" in response["repl_error"]
         assert response["outcome_unknown"] is True
-        assert repl.process is None
-
-
-def test_explicit_environment_preserves_an_unknown_outcome(monkeypatch):
-    with ExitStack() as stack:
-        process = _PipeProcess(stack, [], stderr=b"x" * 32)
-        repl = _repl_with_process(process, max_buffer_bytes=16)
-        _patch_pipe_reads(monkeypatch, process)
-
-        with pytest.raises(repl_core.ReplOutcomeUnknown) as error:
-            repl.run("#check Nat", env_id=7, timeout=1)
-
-        assert isinstance(error.value, repl_core.ReplProcessRestarted)
         assert repl.process is None
 
 
@@ -2401,86 +1975,6 @@ def test_wire_protocol_keeps_the_response_when_the_deadline_ends_the_stderr_drai
     assert error.value.response == {"messages": []}
 
 
-def _patch_reads_across_processes(monkeypatch, processes: list[_PipeProcess]):
-    """Serve reads and readiness for several processes, keyed by descriptor."""
-    real_read = os.read
-
-    def take_chunk(chunks: list[bytes], size: int) -> bytes:
-        if not chunks:
-            return b""
-        result = chunks[0][:size]
-        chunks[0] = chunks[0][size:]
-        if not chunks[0]:
-            chunks.pop(0)
-        return result
-
-    def fake_read(fd: int, size: int) -> bytes:
-        for process in processes:
-            if fd == process.stdout.fileno():
-                return take_chunk(process.stdout_chunks, size)
-            if fd == process.stderr.fileno():
-                if not process.stderr_bytes:
-                    raise BlockingIOError
-                result = process.stderr_bytes[:size]
-                process.stderr_bytes = process.stderr_bytes[size:]
-                return result
-        return real_read(fd, size)
-
-    def fake_select(readable, writable, exceptional, timeout=None):
-        if writable:
-            return [], writable, []
-        ready = []
-        for process in processes:
-            if process.stderr_bytes:
-                ready.append(process.stderr.fileno())
-            if process.stdout_chunks:
-                ready.append(process.stdout.fileno())
-        return [fd for fd in ready if fd in readable], [], []
-
-    monkeypatch.setattr(repl_core.os, "read", fake_read)
-    monkeypatch.setattr(repl_core.select, "select", fake_select)
-
-
-def test_backlog_recycles_the_process_so_two_commands_cannot_share_stderr(monkeypatch):
-    with ExitStack() as stack:
-        first = _PipeProcess(stack, [b'{"env":9}\n\n'], stderr=b"e" * 40)
-        second = _PipeProcess(stack, [b'{"env": 1}\n\n'])
-        repl = _repl_with_process(first, chunk_size=18, max_buffer_bytes=20)
-        _patch_reads_across_processes(monkeypatch, [first, second])
-
-        # Command one completes, but its stderr cannot be drained within budget.
-        assert repl.run("#check Nat", timeout=5) == {}
-
-        # The process holding the remainder is gone, so nothing can inherit it.
-        assert repl.process is None
-        assert first.stderr_bytes == b"e" * 4
-
-        monkeypatch.setattr(repl, "restart", lambda timeout=None: setattr(repl, "process", second))
-
-        # Command two runs on a clean process and sees only its own streams.
-        assert repl.run("#check Nat", timeout=5) == {"env": 1}
-
-        assert second.stderr_bytes == b""
-        # Command one's stderr was never consumed by, or charged against, command two.
-        assert first.stderr_bytes == b"e" * 4
-
-
-def test_backlog_response_drops_environment_owned_by_the_recycled_process(monkeypatch):
-    with ExitStack() as stack:
-        process = _PipeProcess(
-            stack,
-            [b'{"env":9,"messages":[]}\n\n'],
-            stderr=b"e" * 64,
-        )
-        repl = _repl_with_process(process, chunk_size=30, max_buffer_bytes=32)
-        _patch_pipe_reads(monkeypatch, process)
-
-        response = repl.run("#check Nat", timeout=5)
-
-        assert response == {"messages": []}
-        assert repl.process is None
-
-
 def test_disposable_backlog_response_drops_the_environment_of_the_retired_process(monkeypatch):
     with ExitStack() as stack:
         process = _PipeProcess(
@@ -2497,61 +1991,6 @@ def test_disposable_backlog_response_drops_the_environment_of_the_retired_proces
         assert repl.process is None
 
 
-def test_env_scoped_request_refuses_to_outlive_the_recycled_process(monkeypatch):
-    with ExitStack() as stack:
-        process = _PipeProcess(stack, [b'{"env": 9, "messages": []}\n\n'], stderr=b"e" * 40)
-        repl = _repl_with_process(process, chunk_size=18, max_buffer_bytes=20)
-        _patch_pipe_reads(monkeypatch, process)
-
-        # An explicit environment cannot transparently survive the recycle, so the
-        # caller is told rather than handed a response tied to a dead process.
-        with pytest.raises(repl_core.ReplProcessRestarted):
-            repl.run("#check Nat", env_id=7, timeout=5)
-
-        assert repl.process is None
-
-
-def test_deadline_ended_drain_recycles_the_process_so_two_commands_cannot_share_stderr(monkeypatch):
-    with ExitStack() as stack:
-        first = _PipeProcess(stack, [b'{"env": 9, "messages": []}\n\n'], stderr=b"x")
-        second = _PipeProcess(stack, [b'{"env": 1}\n\n'])
-        # A ceiling far out of reach, so the deadline is what ends the drain.
-        repl = _repl_with_process(first, max_buffer_bytes=1_000_000)
-        _patch_reads_across_processes(monkeypatch, [first, second])
-
-        real_read = repl_core.os.read
-
-        def fake_read(fd: int, size: int) -> bytes:
-            # first's stderr never empties, so no clean boundary is ever reached.
-            if fd == first.stderr.fileno():
-                return b"x" * size
-            return real_read(fd, size)
-
-        now = 0.0
-
-        def fake_monotonic() -> float:
-            nonlocal now
-            now += 0.25
-            return now
-
-        monkeypatch.setattr(repl_core.os, "read", fake_read)
-        monkeypatch.setattr(repl_core.time, "monotonic", fake_monotonic)
-
-        # Command one still gets its response: the deadline must not starve stdout.
-        assert repl.run("#check Nat", timeout=5) == {"messages": []}
-
-        # But the process that still holds unread stderr is out of service.
-        assert repl.process is None
-        assert first.stderr_bytes
-
-        monkeypatch.setattr(repl, "restart", lambda timeout=None: setattr(repl, "process", second))
-        monkeypatch.setattr(repl_core.os, "read", real_read)
-
-        # Command two runs on a clean process, unaffected by command one's stderr.
-        assert repl.run("#check Nat", timeout=5) == {"env": 1}
-        assert second.stderr_bytes == b""
-
-
 def test_run_never_leaves_a_reusable_process_when_a_backlog_stops_the_drain(monkeypatch):
     # The invariant holds at the source, so no caller of _run() can skip it.
     with ExitStack() as stack:
@@ -2563,110 +2002,7 @@ def test_run_never_leaves_a_reusable_process_when_a_backlog_stops_the_drain(monk
             repl._run("#check Nat", env_id=None, timeout=5)
 
         assert repl.process is None
-        assert repl.is_alive() is False
-
-
-def test_stderr_salvage_removes_every_process_owned_handle(monkeypatch):
-    with ExitStack() as stack:
-        process = _PipeProcess(stack, [b"{}\n\n"])
-        repl = _repl_with_process(process)
-        response = {
-            "env": 7,
-            "sorries": [{"goal": "False", "proofState": 9}],
-        }
-        monkeypatch.setattr(
-            repl,
-            "_run",
-            lambda *args, **kwargs: (_ for _ in ()).throw(
-                repl_core.ReplStderrBacklog("stderr backlog", response)
-            ),
-        )
-
-        result = repl.run("#check Nat", timeout=1)
-
-    assert result == {"sorries": [{"goal": "False"}]}
-    assert repl.process is None
-
-
-def test_stderr_arriving_during_the_next_write_is_process_scoped(monkeypatch):
-    with ExitStack() as stack:
-        first = _PipeProcess(stack, [])
-        second = _PipeProcess(stack, [])
-        repl = _repl_with_process(first, max_buffer_bytes=16)
-        requests: list[bytes] = []
-
-        def serve(process: _PipeProcess, responses: list[bytes]) -> None:
-            for response in responses:
-                request = bytearray()
-                while b"\n\n" not in request:
-                    request.extend(os.read(process._stdin_read.fileno(), 4096))
-                requests.append(bytes(request))
-                os.write(process._stdout_write.fileno(), response)
-
-        first_worker = threading.Thread(
-            target=serve,
-            args=(first, [b'{"env":1}\n\n', b'{"env":2}\n\n']),
-            daemon=True,
-        )
-        second_worker = threading.Thread(
-            target=serve,
-            args=(second, [b'{"env":3}\n\n']),
-            daemon=True,
-        )
-        first_worker.start()
-        second_worker.start()
-
-        normal_select = repl_core.select.select
-        writes = 0
-
-        def inject_during_second_write(readable, writable, exceptional, timeout=None):
-            nonlocal writes
-            result = normal_select(readable, writable, exceptional, timeout)
-            if writable:
-                writes += 1
-                if writes == 4:
-                    # These bytes are emitted by command one after command two's
-                    # old preflight window, while command two is being written.
-                    os.write(first._stderr_write.fileno(), b"x" * 32)
-            return result
-
-        monkeypatch.setattr(repl_core.select, "select", inject_during_second_write)
-
-        assert repl.run("first", timeout=1) == {"env": 1}
-        # The process-generation quota is exceeded, but command two's captured
-        # response survives without the dead environment identifier or a retry.
-        assert repl.run("second", timeout=1) == {}
-        assert writes == 4
-        assert repl.process is None
-
-        monkeypatch.setattr(repl, "restart", lambda timeout=None: setattr(repl, "process", second))
-
-        # A third command starts on a clean process generation; command one's
-        # delayed stderr was neither consumed nor charged as command-three output.
-        assert repl.run("third", timeout=1) == {"env": 3}
-        assert repl._stderr_bytes == 0
-        assert len(requests) == 3
-        first_worker.join(timeout=1)
-        second_worker.join(timeout=1)
-
-
-def test_invalid_json_with_a_stderr_backlog_is_not_retried(monkeypatch):
-    with ExitStack() as stack:
-        process = _PipeProcess(stack, [b"not-json\n\n"], stderr=b"e" * 40)
-        repl = _repl_with_process(process, chunk_size=18, max_buffer_bytes=20)
-        _patch_pipe_reads(monkeypatch, process)
-        monkeypatch.setattr(
-            repl,
-            "restart",
-            lambda timeout=None: pytest.fail("an uncertain command must not be retried"),
-        )
-
-        response = repl.run("#check Nat", timeout=5)
-
-        assert response["outcome_unknown"] is True
-        assert "response frame was malformed" in response["repl_error"]
-        assert repl.process is None
-        assert process.stderr_bytes == b"e" * 4
+        assert repl.is_clean()
 
 
 def test_disposable_invalid_json_with_a_stderr_backlog_is_not_retried(monkeypatch):
@@ -2691,25 +2027,6 @@ def test_wire_protocol_rejects_invalid_json(monkeypatch):
 
         with pytest.raises(repl_core.ReplOutcomeUnknown, match="fully sent"):
             repl._run("#check Nat", env_id=None, timeout=1)
-
-
-@pytest.mark.parametrize(
-    "response",
-    [
-        b'{"env":1,"env":2}\n\n',
-        b'{"env":NaN}\n\n',
-    ],
-)
-def test_wire_protocol_rejects_noncanonical_response_json(monkeypatch, response):
-    with ExitStack() as stack:
-        process = _PipeProcess(stack, [response])
-        repl = _repl_with_process(process)
-        _patch_pipe_reads(monkeypatch, process)
-
-        result = repl.run("#check Nat", timeout=1)
-
-        assert result["outcome_unknown"] is True
-        assert repl.process is None
 
 
 @pytest.mark.parametrize(
@@ -2759,16 +2076,6 @@ _RESPONSIVE_FAKE_REPL = (
 )
 
 
-def _responsive_fake_repl():
-    return repl_core.LeanRepl(
-        repl_core.LeanReplConfig(
-            repl_command=[sys.executable, "-c", _RESPONSIVE_FAKE_REPL],
-            warmup_imports=frozenset({"Mathlib"}),
-            validate_imports=False,
-        )
-    )
-
-
 def test_close_after_an_expired_deadline_still_reserves_cleanup_time(monkeypatch):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(warmup_imports=frozenset(), validate_imports=False)
@@ -2786,32 +2093,6 @@ def test_close_after_an_expired_deadline_still_reserves_cleanup_time(monkeypatch
     repl.close(deadline=before - 5)
 
     assert deadlines[0] >= before + repl_core.DEFAULT_REPL_CLEANUP_SECONDS
-
-
-def test_request_timeout_reaps_a_slow_to_exit_process_without_cleanup_failure(
-    monkeypatch,
-):
-    real_kill = repl_core._kill_subprocesses
-
-    def slow_reap(process, process_group_id, deadline=None):
-        # A large Lean process needs real time to exit after SIGKILL.
-        if deadline is not None and deadline - time.monotonic() < 0.5:
-            raise RuntimeError("timed out reaping the Lean REPL process")
-        real_kill(process, process_group_id, deadline)
-
-    monkeypatch.setattr(repl_core, "_kill_subprocesses", slow_reap)
-    repl = _responsive_fake_repl()
-    repl.start()
-    try:
-        response = repl.run("HANG", timeout=0.5)
-
-        assert response.get("outcome_unknown") is True
-        assert "cleanup also failed" not in response["repl_error"]
-        assert repl.process is None
-        assert repl._process_group_id is None
-        assert repl._retire_pending is False
-    finally:
-        repl.close()
 
 
 def test_disposable_timeout_reaps_a_slow_to_exit_process_without_cleanup_failure(
@@ -2839,34 +2120,5 @@ def test_disposable_timeout_reaps_a_slow_to_exit_process_without_cleanup_failure
         assert response.get("outcome_unknown") is True
         assert "cleanup also failed" not in response["repl_error"]
         assert repl.is_clean()
-    finally:
-        repl.close()
-
-
-def test_worker_whose_close_failed_is_restarted_before_the_next_request(
-    monkeypatch,
-):
-    repl = _responsive_fake_repl()
-    repl.start()
-    real_kill = repl_core._kill_subprocesses
-    failures = iter([RuntimeError("timed out reaping the Lean REPL process")])
-
-    def fail_once(process, process_group_id, deadline=None):
-        error = next(failures, None)
-        if error is not None:
-            # The group is dead but its leader is left unreaped.
-            os.killpg(process_group_id, signal.SIGKILL)
-            raise error
-        real_kill(process, process_group_id, deadline)
-
-    monkeypatch.setattr(repl_core, "_kill_subprocesses", fail_once)
-    try:
-        with pytest.raises(RuntimeError, match="timed out reaping"):
-            repl.close()
-        assert not repl.is_alive()
-
-        response = repl.run("#check Nat", timeout=10)
-
-        assert "repl_error" not in response
     finally:
         repl.close()

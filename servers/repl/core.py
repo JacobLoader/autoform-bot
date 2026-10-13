@@ -9,7 +9,6 @@ from __future__ import annotations
 import errno
 import json
 import os
-import random
 import select
 import signal
 import subprocess
@@ -23,7 +22,6 @@ from typing import Any, Callable
 logger = getLogger(__name__)
 
 DEFAULT_MAX_DIAGNOSTICS = 10
-DEFAULT_SMOKE_TEST_TIMEOUT = 10
 DEFAULT_REPL_STARTUP_TIMEOUT = 180.0
 DEFAULT_REPL_CLEANUP_SECONDS = 2.0
 REPL_ABORT_TERM_SECONDS = 0.5
@@ -533,30 +531,6 @@ def _decode_header_analysis(stdout: bytes) -> _LeanHeaderAnalysis:
         ) from None
 
 
-def _split_imports_and_body(code: str) -> tuple[list[str], str, int]:
-    """Split Lean code into import statements and body.
-
-    Returns (import_names, body, header_line_count).
-    """
-    lines = code.split("\n")
-    imports: list[str] = []
-    body_start = 0
-
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("import "):
-            imports.append(stripped[7:].strip())
-            body_start = i + 1
-        elif stripped == "" or stripped.startswith("--"):
-            if imports:
-                body_start = i + 1
-        else:
-            break
-
-    body = "\n".join(lines[body_start:])
-    return imports, body, body_start
-
-
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -579,7 +553,6 @@ class LeanReplConfig:
     chunk_size: int = 4096
 
     instance_mem_limit_gb: int = 16
-    max_retries: int = 1
 
     allowed_imports: frozenset[str] = ALLOWED_IMPORTS
     warmup_imports: frozenset[str] = WARMUP_IMPORTS
@@ -588,9 +561,8 @@ class LeanReplConfig:
     header_command: list[str] = field(default_factory=default_header_command)
 
     # stdout is capped per response. stderr has no protocol framing, so its
-    # ceiling applies to the entire process generation and resets on restart.
+    # ceiling applies to the entire process generation.
     max_buffer_bytes: int = 10 * 1024 * 1024
-    mem_restart_ratio: float = 0.9
     validate_imports: bool = True
 
 
@@ -771,11 +743,7 @@ class ReplProcessExited(RuntimeError):
     """Raised when the REPL process dies unexpectedly."""
 
 
-class ReplProcessRestarted(RuntimeError):
-    """Raised when the REPL restarts and env_id state is lost."""
-
-
-class ReplOutcomeUnknown(ReplProcessRestarted):
+class ReplOutcomeUnknown(RuntimeError):
     """Raised when stderr poisoning leaves a sent command's outcome unknown."""
 
 
@@ -813,16 +781,9 @@ class LeanRepl:
         self.cwd = config.cwd
         self.process: subprocess.Popen | None = None
         self._process_group_id: int | None = None
-        # Set while a process handle is owned but a close() has not completed.
-        self._retire_pending = False
 
         self.request_timeout = config.request_timeout
-        self.max_retries = config.max_retries
-
-        self._base_env_id: int | None = None
         self.chunk_size: int = config.chunk_size
-
-        self.mem_limit_gb: int = config.instance_mem_limit_gb
 
         self._process_lock = threading.Lock()
         # stderr has no command boundary. Account for it monotonically across one
@@ -834,13 +795,8 @@ class LeanRepl:
         if config.validate_imports and config.allowed_imports:
             self._allowed_import_roots = config.allowed_imports
 
-    def start(
-        self,
-        startup_timeout: float | None = None,
-        *,
-        warm: bool = True,
-    ) -> None:
-        """Start and warm the Lean REPL within one startup deadline."""
+    def start(self, startup_timeout: float | None = None) -> None:
+        """Start a Lean REPL child within one startup deadline."""
         if os.name != "posix":
             raise RuntimeError("Lean REPL transport requires a POSIX platform")
         timeout = self.config.startup_timeout if startup_timeout is None else min(
@@ -849,59 +805,10 @@ class LeanRepl:
         )
         deadline = time.monotonic() + timeout
 
-        def remaining() -> float:
-            value = deadline - time.monotonic()
-            if value <= 0:
-                raise TimeoutError(f"REPL startup timed out after {timeout:g} seconds")
-            return value
-
         try:
             self._spawn(self.config.repl_command)
-            self._retire_pending = False
             self._stderr_bytes = 0
             self._stderr_tail.clear()
-
-            if warm and self.config.warmup_imports:
-                header = "\n".join(
-                    f"import {root}" for root in self.config.warmup_imports
-                )
-                logger.info(
-                    "Loading imports at startup: %s",
-                    self.config.warmup_imports,
-                )
-                resp = self._run(code=header, env_id=None, timeout=remaining())
-                environment, messages = _validate_command_response(
-                    resp,
-                    context="startup imports",
-                    require_environment=True,
-                )
-                errors = [message for message in messages if message["severity"] == "error"]
-                if errors:
-                    error_details = "\n".join(message["data"] for message in errors)
-                    raise RuntimeError(f"Import preloading failed:\n{error_details}")
-
-                self._base_env_id = environment
-
-                smoke = self._run(
-                    code="#check Nat",
-                    env_id=self._base_env_id,
-                    timeout=min(DEFAULT_SMOKE_TEST_TIMEOUT, remaining()),
-                )
-                _, smoke_messages = _validate_command_response(
-                    smoke,
-                    context="the startup smoke test",
-                    require_environment=True,
-                )
-                smoke_errors = [
-                    message
-                    for message in smoke_messages
-                    if message["severity"] == "error"
-                ]
-                if smoke_errors:
-                    error_details = "; ".join(message["data"] for message in smoke_errors)
-                    raise RuntimeError(
-                        f"REPL smoke test failed — LEAN_PATH may be misconfigured. Errors: {error_details}"
-                    )
         except BaseException:
             try:
                 self.close(deadline=deadline)
@@ -925,7 +832,6 @@ class LeanRepl:
         process_group_id = self._process_group_id
         try:
             if process is not None:
-                self._retire_pending = True
                 if process_group_id is None:
                     try:
                         process_group_id = process.pid
@@ -940,35 +846,9 @@ class LeanRepl:
                         _kill_subprocesses(process, process_group_id, deadline)
             self.process = None
             self._process_group_id = None
-            self._retire_pending = False
         finally:
-            self._base_env_id = None
             self._stderr_bytes = 0
             self._stderr_tail.clear()
-
-    def restart(self, timeout: float | None = None) -> None:
-        """Restart the Lean REPL process within an optional total timeout."""
-        deadline = time.monotonic() + timeout if timeout is not None else None
-        self.close(deadline=deadline)
-        if deadline is None:
-            self.start()
-            return
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError(f"REPL restart timed out after {timeout:g} seconds")
-        self.start(startup_timeout=remaining)
-
-    def is_alive(self) -> bool:
-        """Conservatively check without reaping the process-group leader.
-
-        A process whose close() failed is not alive even while its leader is
-        unreaped, so the next request retries cleanup instead of dispatching.
-        """
-        return (
-            self.process is not None
-            and not self._retire_pending
-            and getattr(self.process, "returncode", None) is None
-        )
 
     def get_memory_usage(self) -> float:
         """Return memory usage in GB."""
@@ -1052,7 +932,7 @@ class LeanRepl:
                 self.close(deadline=deadline)
                 if os.name != "posix":
                     raise RuntimeError("Lean REPL transport requires a POSIX platform")
-                imports, _, _ = _split_imports_and_body(code)
+                modules: tuple[str, ...] = ()
                 accepts_leading_imports = False
                 needs_header_analysis = bool(self.config.warmup_imports) or (
                     self.config.validate_imports
@@ -1064,10 +944,9 @@ class LeanRepl:
                     except ValueError as error:
                         result = {"repl_error": f"Rejected Lean header: {error}"}
                     else:
-                        imports = list(header.modules)
+                        modules = header.modules
                         accepts_leading_imports = header.accepts_leading_imports
-                submitted_modules = set(imports)
-                submitted_roots = {statement.split(".")[0] for statement in imports}
+                submitted_roots = {module.split(".")[0] for module in modules}
                 if (
                     result is None
                     and self.config.validate_imports
@@ -1087,18 +966,13 @@ class LeanRepl:
                     added_imports = tuple(
                         root
                         for root in sorted(self.config.warmup_imports)
-                        if accepts_leading_imports and root not in submitted_modules
+                        if accepts_leading_imports and root not in modules
                     )
                     prefix = "\n".join(
                         f"import {root}" for root in added_imports
                     )
                     command = f"{prefix}\n{code}" if prefix else code
-                    # Do not send startup import or smoke-test frames. The
-                    # submitted command is the generation's only request.
-                    self.start(
-                        startup_timeout=remaining("disposable child startup"),
-                        warm=False,
-                    )
+                    self.start(startup_timeout=remaining("disposable child startup"))
                     response = self._run(
                         code=command,
                         env_id=None,
@@ -1166,179 +1040,6 @@ class LeanRepl:
             if request_error is not None:
                 raise request_error
             return result
-
-    def run(self, code: str, env_id: int | None = None, timeout: float | None = None) -> dict[str, Any]:
-        """Send code to the REPL within one deadline across recovery attempts."""
-        timeout = self.request_timeout if timeout is None else timeout
-        deadline = time.monotonic() + timeout
-
-        def remaining() -> float:
-            value = deadline - time.monotonic()
-            if value <= 0:
-                raise TimeoutError(f"REPL command timed out after {timeout:g} seconds")
-            return value
-
-        run_from_env = env_id is not None
-        max_retries = 0 if run_from_env else self.max_retries
-
-        header_line_count = 0
-        if not run_from_env:
-            imports, code, header_line_count = _split_imports_and_body(code)
-
-            if self.config.validate_imports and self._allowed_import_roots is not None:
-                submitted_roots = {stmt.split(".")[0] for stmt in imports}
-                disallowed = submitted_roots - self._allowed_import_roots
-                if disallowed:
-                    return {
-                        "repl_error": (
-                            f"Disallowed imports: {', '.join(sorted(disallowed))}. "
-                            f"Allowed roots: {', '.join(sorted(self._allowed_import_roots))}."
-                        )
-                    }
-
-        last_exception: Exception | None = None
-        with self._process_lock:
-            if run_from_env and not self.is_alive():
-                self.close(deadline=deadline)
-                raise ReplProcessRestarted(
-                    "REPL process restarted before the request; environment state was lost"
-                )
-
-            process_before_memory_check = self.process
-            try:
-                if not self.is_alive():
-                    self.restart(timeout=remaining())
-                self._check_memory_and_maybe_restart(timeout=remaining())
-            except (TimeoutError, RuntimeError) as error:
-                self.close(deadline=deadline)
-                if run_from_env:
-                    raise ReplProcessRestarted(str(error)) from error
-                return {"repl_error": str(error)}
-
-            if run_from_env and self.process is not process_before_memory_check:
-                raise ReplProcessRestarted(
-                    "REPL process restarted before the request; environment state was lost"
-                )
-
-            for i in range(max_retries + 1):
-                try:
-                    dispatch_env_id = env_id if run_from_env else self._base_env_id
-                    resp = self._run(
-                        code=code,
-                        env_id=dispatch_env_id,
-                        timeout=remaining(),
-                    )
-                    _validate_command_response(
-                        resp,
-                        context="the requested command",
-                        require_environment=True,
-                    )
-                    _adjust_line_numbers(resp, header_line_count)
-                    return resp
-                except ReplStderrBacklog as e:
-                    # _run() already retired the process, so nothing can inherit the
-                    # undrained stderr; close() here is an idempotent assertion of
-                    # that. The response is valid, so a plain request still receives
-                    # it. An env-scoped request cannot transparently outlive the
-                    # process that held its environment, so it is told loudly.
-                    logger.error("%s", e)
-                    self.close(deadline=deadline)
-                    if run_from_env:
-                        raise ReplProcessRestarted(str(e)) from e
-                    try:
-                        _validate_command_response(
-                            e.response,
-                            context="the requested command",
-                            require_environment=True,
-                        )
-                    except ReplCommandError as error:
-                        return {"repl_error": str(error)}
-                    except ReplProtocolError as error:
-                        return {
-                            "repl_error": str(error),
-                            "outcome_unknown": True,
-                        }
-                    # The command's diagnostics remain valid, but any environment
-                    # identifier belongs to the process _run() just retired.
-                    response = _without_process_handles(e.response)
-                    _adjust_line_numbers(response, header_line_count)
-                    return response
-                except ReplOutcomeUnknown as e:
-                    # The request was fully written, so replay could execute it
-                    # twice. Retire the process and report the unknown outcome
-                    # without entering the ordinary retry path.
-                    logger.error("%s", e)
-                    message = str(e)
-                    try:
-                        self.close(deadline=deadline)
-                    except Exception as cleanup_error:
-                        message += (
-                            f"; process cleanup also failed: {cleanup_error}"
-                        )
-                    if run_from_env:
-                        raise ReplOutcomeUnknown(message) from e
-                    return {"repl_error": message, "outcome_unknown": True}
-                except ReplCommandError as e:
-                    logger.error("Lean REPL rejected the command: %s", e)
-                    return {"repl_error": str(e)}
-                except ReplProtocolError as e:
-                    logger.error("%s", e)
-                    message = str(e)
-                    try:
-                        self.close(deadline=deadline)
-                    except Exception as cleanup_error:
-                        message += (
-                            f"; process cleanup also failed: {cleanup_error}"
-                        )
-                    if run_from_env:
-                        raise ReplProcessRestarted(message) from e
-                    return {"repl_error": message, "outcome_unknown": True}
-                except ReplProcessExited as e:
-                    last_exception = e
-                    logger.error("REPL process exited: %s. Attempt %d/%d.", e, i + 1, max_retries + 1)
-                    if run_from_env:
-                        self.close(deadline=deadline)
-                        raise ReplProcessRestarted(str(e)) from e
-                except (TimeoutError, RuntimeError, json.JSONDecodeError) as e:
-                    last_exception = e
-                    logger.error("Error running command: %s. Attempt %d/%d.", e, i + 1, max_retries + 1)
-                    if run_from_env:
-                        self.close(deadline=deadline)
-                        raise ReplProcessRestarted(str(e)) from e
-
-                if i >= max_retries:
-                    self.close(deadline=deadline)
-                    break
-
-                backoff = min(2**i, 30) + random.uniform(0, 1)
-                try:
-                    if backoff >= remaining():
-                        raise TimeoutError(
-                            f"REPL command timed out after {timeout:g} seconds"
-                        )
-                    time.sleep(backoff)
-                    self.restart(timeout=remaining())
-                except (TimeoutError, RuntimeError) as error:
-                    last_exception = error
-                    self.close(deadline=deadline)
-                    break
-            logger.error("Exceeded maximum retries for Lean REPL command")
-            return {"repl_error": str(last_exception)}
-
-    def _check_memory_and_maybe_restart(self, timeout: float | None = None) -> None:
-        """Proactively restart if memory usage is near the limit."""
-        if self.mem_limit_gb <= 0 or self.config.mem_restart_ratio <= 0:
-            return
-        try:
-            usage_gb = self.get_memory_usage()
-            threshold_gb = self.mem_limit_gb * self.config.mem_restart_ratio
-            if usage_gb >= threshold_gb:
-                logger.info("REPL memory %.2fGB >= threshold %.2fGB, restarting...", usage_gb, threshold_gb)
-                self.restart(timeout=timeout)
-        except (TimeoutError, RuntimeError):
-            raise
-        except Exception:
-            logger.warning("Memory check failed, continuing", exc_info=True)
 
     def _run(self, code: str, env_id: int | None, timeout: float) -> dict[str, Any]:
         """Run one frame and distinguish safe pre-send failures from unknown outcomes."""

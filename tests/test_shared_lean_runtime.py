@@ -619,7 +619,6 @@ def test_shared_runtime_disables_ambiguous_repl_retries(tmp_path, monkeypatch):
             "repl.run",
             {"project_dir": str(project), "code": "#check Nat", "timeout": 1},
         )
-        assert configs[0].max_retries == 0
         assert configs[0].header_command == list(
             services.config.repl_header_command
         )
