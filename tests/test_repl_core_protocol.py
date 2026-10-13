@@ -1669,7 +1669,7 @@ def test_wire_protocol_rechecks_stdout_before_dispatching_a_complete_request_bod
         monkeypatch.setattr(repl_core.os, "write", write_body_then_emit_stdout)
 
         with pytest.raises(repl_core.ReplProcessExited, match="unsolicited stdout"):
-            repl._run("second", env_id=None, timeout=1)
+            repl._run("#check Nat", env_id=None, timeout=1)
 
         os.set_blocking(process._stdin_read.fileno(), False)
         written = os.read(process._stdin_read.fileno(), 4096)
