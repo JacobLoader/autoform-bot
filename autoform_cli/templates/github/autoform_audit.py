@@ -245,7 +245,8 @@ def _module_parts(module: str, display_path: str) -> tuple[str, ...]:
             index = end
         if (
             not part
-            or any(ord(character) < 32 or character in "/\\«»" for character in part)
+            or not _printable(part)
+            or any(character in "/\\«»" for character in part)
             or part in {".", ".."}
         ):
             raise AuditInputError(f"ILean metadata has an invalid module name: {display_path}")

@@ -138,6 +138,15 @@ def test_archive_modules_are_sorted_and_probe_fails_on_zero_declarations(
     assert "autoformAuditAxioms env declName" in probe
 
 
+@pytest.mark.parametrize("character", [chr(0x7F), chr(0x85), chr(0xDCFF)])
+def test_module_names_with_control_characters_or_lone_surrogates_are_refused(
+    helper: ModuleType, character: str
+) -> None:
+    # Such a component would reach the probe's Lean source as it is.
+    with pytest.raises(helper.AuditInputError, match="invalid module name"):
+        helper._module_parts(f"Fixture.«{character}»", "lib/lean/Fixture.ilean")
+
+
 def test_both_probes_spell_module_names_outside_the_basic_multilingual_plane(helper: ModuleType) -> None:
     # Lean reads a JSON surrogate pair such as \ud835\udd3d as two NUL characters.
     for probe in (helper.render_probe(("Fixture.𝔽",)), helper.render_open_probe(("Fixture.𝔽",), ())):
