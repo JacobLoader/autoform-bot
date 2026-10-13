@@ -84,7 +84,11 @@ _SKIPPED_DIRECTORIES = frozenset({".obsidian", ".trash", ".git"})
 #: Transcriptions of the paper being formalised. Vault material, not chapters.
 SOURCES_DIR = "sources"
 PUBLICATION_MANIFEST = "publication.json"
-PUBLICATION_SCHEMA = "autoform-publication/v2"
+#: v3 adds the shared dependency explorer to v2's inventoried site and hashes
+#: the blueprint under a label of its own.
+PUBLICATION_SCHEMA = "autoform-publication/v3"
+#: Sites render may replace: each records a file inventory to check first.
+_REPLACEABLE_SCHEMAS = frozenset({"autoform-publication/v2", PUBLICATION_SCHEMA})
 #: Render never writes a larger manifest, so the next render can always read it.
 PUBLICATION_MANIFEST_MAX_BYTES = 8 * 1024 * 1024
 #: Hidden siblings of the output: a site being built, a replaced one, or a backup.
@@ -698,7 +702,7 @@ def _is_complete_publication(data: bytes) -> bool:
         return False
     return (
         isinstance(value, dict)
-        and value.get("schema") in {"autoform-publication/v1", PUBLICATION_SCHEMA}
+        and value.get("schema") in {"autoform-publication/v1", *_REPLACEABLE_SCHEMAS}
         and value.get("complete") is True
     )
 
@@ -804,7 +808,7 @@ def _destination_state(path: Path) -> _State | None:
                 "inventory to check before deleting it; delete it once by hand and render again"
             ]
         )
-    if not isinstance(manifest, dict) or manifest.get("schema") != PUBLICATION_SCHEMA:
+    if not isinstance(manifest, dict) or manifest.get("schema") not in _REPLACEABLE_SCHEMAS:
         raise PublicationError(
             [
                 "refusing to overwrite a non-Autoform output directory or legacy "
@@ -1134,7 +1138,7 @@ def _source_href(sources_base: _SourceBase, tail: tuple[str, ...]) -> str:
 
 def _source_revision(snapshot: TreeSnapshot) -> str:
     """Hash every captured directory and file, each field length-framed."""
-    digest = hashlib.sha256(b"autoform-markdown-publication/v2\0")
+    digest = hashlib.sha256(b"autoform-markdown-publication/v3\0")
     for relative in sorted(relative or "." for relative in snapshot.directories):
         _update_digest(digest, b"directory", relative, b"")
     for relative, data in sorted(snapshot.files):

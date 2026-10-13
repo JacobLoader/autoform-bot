@@ -1321,7 +1321,7 @@ def test_render_is_deterministic_and_records_a_path_free_manifest(tmp_path: Path
         "git_ref": ref,
         "lean_source_revision": manifest["lean_source_revision"],
         "nodes": 3,
-        "schema": "autoform-publication/v2",
+        "schema": "autoform-publication/v3",
         "source": "blueprint/roadmap Markdown",
         "source_revision": manifest["source_revision"],
         "views": ["book", "progress", "project", "chapter", "focus", "full"],
@@ -1486,7 +1486,7 @@ def test_the_source_revision_of_a_fixed_blueprint_is_pinned(tmp_path: Path) -> N
     (tmp_path / "blueprint/roadmap/README.md").write_bytes(b"# Roadmap\n")
 
     assert publication_source_revision(tmp_path / "blueprint") == (
-        "3f0d54b44bb4077afbfa730e1544a34ce6bdca035c63a7c3db4488514c938fde"
+        "04080a4d2406a4444f585fca13b3006f0e670e2ed699911595417c0e83da3e4b"
     )
 
 
@@ -1689,6 +1689,7 @@ def _edit(path: Path, old: str, new: str) -> None:
         (lambda out: (out / "README.md").write_text("edited\n"), "modified Autoform publication"),
         (lambda out: (out / "assets/empty").mkdir(), "untracked or missing directories"),
         (lambda out: _manifest(out, _V2), "file inventory"),
+        (lambda out: _manifest(out, _V2.replace("v2", "v3")), "file inventory"),
         (lambda out: _manifest(out, _V2.replace("v2", "v1")), "legacy autoform-publication/v1 site at .* once"),
     ],
 )
@@ -1702,6 +1703,19 @@ def test_render_replaces_only_an_exact_owned_publication(tmp_path: Path, tamper,
         render_site(project / "blueprint", output, lean_root=project)
 
     assert _tree(output) == before
+    assert not _debris(tmp_path)
+
+
+def test_render_replaces_an_exact_v2_publication(tmp_path: Path) -> None:
+    """A v2 site records the same file inventory, so render checks and replaces it like a v3 one."""
+    project, output, _site = _published(tmp_path)
+    manifest = json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))
+    _manifest(output, json.dumps({**manifest, "schema": "autoform-publication/v2"}))
+
+    render_site(project / "blueprint", output, lean_root=project)
+
+    replaced = json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))
+    assert replaced["schema"] == "autoform-publication/v3"
     assert not _debris(tmp_path)
 
 
@@ -3045,6 +3059,23 @@ def test_in_repo_outputs_never_supply_lean_source_links(tmp_path: Path) -> None:
         render_site(project / "blueprint", project / name, lean_root=project, repository_url=_REPOSITORY)
         page = (project / name / "roadmap/README.md").read_text(encoding="utf-8")
         assert f"{_REPOSITORY}/blob/{commit}/blueprint/proofs.lean#L1" in page
+
+
+@pytest.mark.parametrize("schema", ["autoform-publication/v1", "autoform-publication/v2"])
+def test_an_older_site_in_the_lean_root_is_never_indexed(tmp_path: Path, schema: str) -> None:
+    project = _project(tmp_path)
+    (project / "blueprint/proofs.lean").write_text("theorem BlueprintProof : True := trivial\n", encoding="utf-8")
+    _edit(project / "blueprint/roadmap/top.md", "lean: Project.top", "lean: BlueprintProof")
+    commit = _commit_project(project)
+    older = project / "aaa-output"
+    render_site(project / "blueprint", older, lean_root=project, repository_url=_REPOSITORY)
+    manifest = json.loads((older / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))
+    _manifest(older, json.dumps({**manifest, "schema": schema}))
+
+    render_site(project / "blueprint", project / "zzz-output", lean_root=project, repository_url=_REPOSITORY)
+
+    page = (project / "zzz-output/roadmap/README.md").read_text(encoding="utf-8")
+    assert f"{_REPOSITORY}/blob/{commit}/blueprint/proofs.lean#L1" in page
 
 
 def test_an_edit_during_a_render_publishes_the_captured_generation(

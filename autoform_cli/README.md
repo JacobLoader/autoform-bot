@@ -517,7 +517,7 @@ mathematical scopes; do not overwrite the inventory claim. Existing coverage
 Markdown remains readable, but emitted audit and publication coverage uses
 `autoform-coverage/v2`: `INVENTORIED` is a new disposition, terminal meaning,
 and counts key. The shared-explorer publication manifest uses
-`autoform-publication/v2`, as described below. Until migrated, a catalog-only
+`autoform-publication/v3`, as described below. Until migrated, a catalog-only
 `DECOMPOSED` row
 remains syntactically accepted: `render` warns and still publishes, while audit
 reports `coverage-role-mismatch`. A catalog not reached by any `INVENTORIED`
@@ -966,11 +966,12 @@ that item. Point `mkdocs.yml` at `docs_dir: site-src` and enable `md_in_html` pl
 `pymdownx.superfences` mermaid fence; see the [repository
 example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml).
 
-This shared-explorer layout is recorded as `autoform-publication/v2`; it
-replaces the v1 `dependencies/nodes/*.html` focus pages. Legacy
+This shared-explorer layout is recorded as `autoform-publication/v3`; it
+replaces the `dependencies/nodes/*.html` focus pages of earlier sites. Legacy
 `dependencies/full.html#node=<id>` links use the global index to redirect to the
-smallest bounded scope containing that node. Existing v1 output directories
-remain recognized so a normal clean render upgrades them in place.
+smallest bounded scope containing that node. Render replaces a v2 site as it
+replaces a v3 one, while a v1 output must be deleted once by hand; the
+[publication contract](#publication-contract) says when.
 
 ## Validation
 
@@ -1582,6 +1583,13 @@ that Git converts on checkout still matches. Otherwise the render stays local,
 keeps source notes in the site, records no Git ref, and warns with the first
 mismatch.
 
+The manifest's schema is `autoform-publication/v3`. It records what v2
+records, but the site holds the shared explorer's JSON projections and script
+in place of v2's Mermaid dependency maps, and the blueprint hash is taken under
+a label of its own, so no v2 `source_revision` equals a v3 one. The dashboard
+accepts only a v3 site and reports an older one as stale until render replaces
+it.
+
 The site is built and synced in a hidden `.autoform-publication-*` directory
 beside the output, then swapped in with one atomic exchange (`renamex_np` on
 macOS, `renameat2` on Linux); renders committing into the same parent directory
@@ -1589,9 +1597,9 @@ take turns when it can be locked. On filesystems without the exchange (NFS, SMB,
 9p or WSL2 `/mnt/c`, exFAT, sshfs) the previous site is first renamed to
 `.autoform-publication-backup-<name>`; if render dies between the two renames,
 the next render moves it back before anything else. Render replaces only an
-empty directory or a complete `autoform-publication/v2` site whose files match
-its inventory (macOS metadata files, `.DS_Store` and `._*`, are ignored in
-both), and refuses anything else, including a legacy v1 output, which you
+empty directory or a complete `autoform-publication/v2` or v3 site whose files
+match its inventory (macOS metadata files, `.DS_Store` and `._*`, are ignored
+in both), and refuses anything else, including a legacy v1 output, which you
 remove once by hand. A failed or refused render leaves the output as it was. A
 render killed mid-way can leave a `.autoform-publication-*` directory beside the
 output (the repository root for `--output site-src`); render never indexes it

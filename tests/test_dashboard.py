@@ -131,7 +131,11 @@ def test_live_loader_does_not_hide_programming_errors() -> None:
 
 @pytest.mark.parametrize(
     ("publication_schema", "accepted"),
-    [("autoform-publication/v1", False), ("autoform-publication/v2", True)],
+    [
+        ("autoform-publication/v1", False),
+        ("autoform-publication/v2", False),
+        ("autoform-publication/v3", True),
+    ],
 )
 def test_live_overlay_refuses_a_stale_built_publication(
     tmp_path: Path,
@@ -190,7 +194,7 @@ def test_live_overlay_projects_claims_onto_the_bytes_it_compared(
     site = tmp_path / "site"
     site.mkdir()
     revision = publication_source_revision(tmp_path / "blueprint")
-    manifest = {"schema": "autoform-publication/v2", "complete": True, "source_revision": revision}
+    manifest = {"schema": "autoform-publication/v3", "complete": True, "source_revision": revision}
     (site / "publication.json").write_text(json.dumps(manifest), encoding="utf-8")
     capture = render_module._capture_blueprint
 
