@@ -513,7 +513,7 @@ def _decode_header_analysis(stdout: bytes) -> _LeanHeaderAnalysis:
                 or any(not component for component in components)
             ):
                 raise ValueError(
-                    "Lean header imports must use plain, nonempty module components"
+                    f"import {module} must use plain, nonempty module components"
                 )
             is_meta = item.get("isMeta")
             if is_meta is not None and type(is_meta) is not bool:

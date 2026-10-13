@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import select
 import signal
 import subprocess
@@ -956,7 +957,7 @@ _FAST_PARSER_ORDINARY = json.dumps(
         ),
         (
             _fake_header_command(_header_json("Mathlib.«..».Secret")),
-            "plain, nonempty module components",
+            re.escape("import Mathlib.«..».Secret must use plain, nonempty module components"),
         ),
         # parse_header.lean prints this name escaped. Unescaped, as Name.toString
         # prints it, its root would read as the allowlisted Mathlib.
