@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
 
-from .core import ReplCleanupError, LeanRepl, LeanReplConfig
+from .core import LeanRepl, LeanReplConfig, ReplCleanupError
 
 logger = getLogger(__name__)
 
@@ -29,10 +29,7 @@ class LeanReplPoolConfig(LeanReplConfig):
                 import psutil
 
                 total_gb = psutil.virtual_memory().total / (1024**3)
-                self.num_repls = max(
-                    1,
-                    int(total_gb * DEFAULT_RAM_FRACTION / self.instance_mem_limit_gb),
-                )
+                self.num_repls = max(1, int(total_gb * DEFAULT_RAM_FRACTION / self.instance_mem_limit_gb))
             except ImportError:
                 self.num_repls = 1
 
@@ -86,13 +83,11 @@ class LeanReplPool:
     @property
     def requires_retirement(self) -> bool:
         """Whether this generation must leave the resident project cache."""
-
         with self._condition:
             return self._requires_retirement
 
     def _stop_admission_locked(self, *, require_retirement: bool = False) -> None:
         """Stop admission and wake every queue waiter; condition is held."""
-
         if require_retirement:
             self._requires_retirement = True
         self._shutdown = True
@@ -102,8 +97,7 @@ class LeanReplPool:
         self._condition.notify_all()
 
     def _close_workers(self) -> None:
-        """Close every constructed worker, preserving cleanup survivors."""
-
+        """Close every constructed worker, preserving cleanup after one failure."""
         survivors: list[LeanRepl] = []
         first_error: BaseException | None = None
         for worker in reversed(self._workers):
@@ -126,7 +120,6 @@ class LeanReplPool:
 
     def run(self, code: str, timeout: float | None = None) -> dict[str, Any]:
         """Run one cold call within a total queue-and-execution timeout."""
-
         deadline = time.monotonic() + timeout if timeout is not None else None
         with self._condition:
             if self._shutdown:
@@ -188,14 +181,12 @@ class LeanReplPool:
 
     def get_memory_usage(self) -> float:
         """Total memory usage across all REPL instances in GB."""
-
         with self._lock:
             workers = tuple(self._workers)
         return sum(worker.get_memory_usage() for worker in workers)
 
     def shutdown(self) -> None:
         """Stop admission, wait for active calls, then retire every wrapper."""
-
         with self._condition:
             self._stop_admission_locked()
             while self._active_calls:
