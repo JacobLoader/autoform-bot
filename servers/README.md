@@ -29,14 +29,17 @@ check runs as one extra short Lean process per call and counts toward the same
 request budget as the rest of the call. Execution names the package-qualified
 `@repl/repl` target so a project target cannot shadow it.
 
-REPL children and LSP processes remain lazy. A cold tool call stays pending
-while Lean warms up, so no `/repl-start`, `/lsp-start`, or model-side sleep is
-needed. The REPL `timeout` is one total post-admission budget for an idle-slot
-wait, header validation, child startup, generated imports, and submitted code;
-the default and maximum are 240 seconds. Project-cache admission uses the
-daemon response budget separately. Idle project state is closed after 30
-minutes by default, while the small runtime remains available. Its lifecycle
-is also explicit:
+REPL children and LSP processes remain lazy. A tool call stays pending while
+Lean starts, so no `/repl-start`, `/lsp-start`, or model-side sleep is needed.
+Every REPL call starts Lean afresh and, unless its header starts with `module`
+or `prelude`, imports Mathlib, so it takes at least as long as `import Mathlib`
+on the node. Calls to the same project run one at a time unless
+`AUTOFORM_REPL_WORKERS_PER_PROJECT` is raised. The REPL `timeout` is one total
+post-admission budget for an idle-slot wait, header validation, child startup,
+generated imports, and submitted code; the default and maximum are 240 seconds.
+Project-cache admission uses the daemon response budget separately. Idle project
+state is closed after 30 minutes by default, while the small runtime remains
+available. Its lifecycle is also explicit:
 
 ```bash
 uv run autoform-lean-runtime start

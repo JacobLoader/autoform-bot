@@ -258,6 +258,9 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
     assert "The allowlist is a policy check, not a sandbox" in servers
     assert "`Init` alone provides file and process IO" in servers
     assert "package-qualified `@repl/repl` target" in servers
+    assert "Every REPL call starts Lean afresh" in servers
+    assert "so it takes at least as long as `import Mathlib` on the node" in servers
+    assert "run one at a time unless `AUTOFORM_REPL_WORKERS_PER_PROJECT` is raised" in servers
     assert "finds the REPL only through a require named `repl`" in servers
     assert 'needs `LEAN_REPL_CMD="lake exe @<name>/repl"`' in servers
     assert "so the header command is still derived from" in servers
