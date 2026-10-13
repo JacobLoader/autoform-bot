@@ -776,7 +776,11 @@ claim target. A Markdown path reaches the revised declarations when it ends at
 the revised article or at an article that names one of them or, when none names
 it, owns it; missing dependency paths are counted the same way. Project
 locality is an exact inventory of regular repository source modules, never a
-namespace-prefix guess.
+namespace-prefix guess. The inventory skips nested Git checkouts, ignored
+directories such as `build`, and symlinked directories, so the probe refuses a
+loaded root-package module whose source the inventory lacks, and a module an
+`M.*` or `M.+` glob finds that it did not load, which Lake builds even when
+nothing imports it, instead of silently leaving out what such a module uses.
 
 The command snapshots and rereads the roadmap around the probe. It retains one
 bound Lean source generation, derives module inventory and locations from that
@@ -802,11 +806,8 @@ the working article and `MODULE` the module whose effective header would change.
 Lean supplies the loaded module graph; Autoform binds every node to its captured
 root source and configured root-package artifact so dependencies cannot shadow
 it. The probe imports project modules, so run it only in a trusted checkout or
-sandbox. The command refuses a loaded root-package module whose source the
-captured inventory lacks, and a module an `M.*` or `M.+` glob finds that the
-inventory lacks, which Lake builds even when nothing imports it; the inventory
-skips nested Git checkouts, ignored directories such as `build`, and symlinked
-directories. `affected_modules` is therefore complete over the root libraries'
+sandbox. Like `work impact`, it refuses a root-package module the captured
+inventory lacks, so `affected_modules` is complete over the root libraries'
 loaded Lake roots/globs, not dormant source files outside that build boundary.
 It holds `MODULE` and every loaded module that imports it, directly or
 transitively, which covers what an added import can affect. Removing an import
