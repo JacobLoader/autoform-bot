@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -333,6 +334,7 @@ srcDir = "app-src"
     probe.write_text(helper.render_probe(modules), encoding="utf-8")
     audited = _run_probe(project, probe)
     assert audited.returncode == 0, audited.stdout + audited.stderr
+    assert _ends_with_the_success_line(audited.stdout), audited.stdout
 
 
 @pytest.mark.skipif(not _REAL_LEAN, reason="needs lake and the fixture's Lean toolchain")
@@ -435,6 +437,7 @@ lean_lib «PublicApi» where
     probe.write_text(helper.render_probe(modules), encoding="utf-8")
     audited = _run_probe(project, probe)
     assert audited.returncode == 0, audited.stdout + audited.stderr
+    assert _ends_with_the_success_line(audited.stdout), audited.stdout
 
 
 def test_example_and_template_helpers_are_identical(repo_root: Path) -> None:
@@ -471,6 +474,18 @@ def _audit_step(workflow: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
+_WORKFLOW = Path(__file__).parents[1] / "autoform_cli/templates/github/workflows/autoform-verify.yml"
+
+
+def _ends_with_the_success_line(stdout: str) -> bool:
+    """Whether *stdout* ends as the audit step requires, by the step's own pattern."""
+
+    found = re.search(r"grep -Eq '([^']+)'", _audit_step(_WORKFLOW))
+    assert found
+    lines = stdout.splitlines()
+    return bool(lines) and re.search(found.group(1), lines[-1]) is not None
+
+
 # Stubs for the step's commands: uvx answers as an AUTOFORM_REF with or without
 # `work assumptions`, or as a failed fetch; python3 stands in for the audit, and
 # lean for the probe, which prints STUB_PROBE_OUTPUT and exits STUB_PROBE_EXIT.
@@ -505,6 +520,10 @@ printf '%s' "$STUB_PROBE_OUTPUT"
 exit "${STUB_PROBE_EXIT:-0}"
 """
 _CLEAN = "kernel trust clean (1 root-package declaration(s) audited)\n"
+_OPEN_CLEAN = (
+    "kernel trust clean except declared open statements "
+    "(1 root-package declaration(s) audited; 0 open statement(s), 0 conditional declaration(s))\n"
+)
 
 
 def _run_audit_step(
@@ -560,7 +579,8 @@ def _run_audit_step(
 def test_audit_step_falls_back_only_for_a_ref_without_work_assumptions(
     repo_root: Path, tmp_path: Path, ref: str, policy: str, audit: list[str] | None
 ) -> None:
-    result, runner_temp, log = _run_audit_step(repo_root, tmp_path, ref, policy)
+    success = _OPEN_CLEAN if policy == "allowed" else _CLEAN
+    result, runner_temp, log = _run_audit_step(repo_root, tmp_path, ref, policy, success)
 
     warned = "::warning::AUTOFORM_REF predates autoform work assumptions" in result.stdout
     assert warned == (audit is not None and ref == "old")
@@ -582,7 +602,7 @@ def test_audit_step_falls_back_only_for_a_ref_without_work_assumptions(
     # a panic aborts the probe.
     assert (log / "lake").read_text(encoding="utf-8").splitlines() == ["env", "printenv", "LEAN_PATH"]
     assert (log / "lean").read_text(encoding="utf-8").splitlines() == ["unset", "1", "/stub/lean/path", recorded[-1]]
-    assert result.stdout.endswith(_CLEAN)
+    assert result.stdout.endswith(success)
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash is not installed")
@@ -1157,6 +1177,7 @@ def test_open_probe_accepts_declared_open_statements_and_reductions(
     assert "kernel trust clean except declared open statements (" in output
     assert "; 2 open statement(s), 1 conditional declaration(s))" in output
     assert "kernel trust clean (" not in output
+    assert _ends_with_the_success_line(audited.stdout), audited.stdout
 
 
 @pytest.mark.parametrize(
@@ -1345,7 +1366,9 @@ def test_strict_probe_requires_every_target_and_checks_non_root_ones(
     helper: ModuleType, open_projects: dict[str, tuple[Path, Path]]
 ) -> None:
     # Without targets the strict audit passes: every sorry it can see is gone.
-    assert _strict_audit(helper, open_projects["strict"], None).returncode == 0
+    passed = _strict_audit(helper, open_projects["strict"], None)
+    assert passed.returncode == 0, passed.stdout + passed.stderr
+    assert _ends_with_the_success_line(passed.stdout), passed.stdout
     audited = _strict_audit(
         helper,
         open_projects["strict"],
@@ -1387,6 +1410,7 @@ def test_strict_probe_requires_every_target_and_checks_non_root_ones(
     )
     assert passed.returncode == 0, passed.stdout + passed.stderr
     assert "kernel trust clean (2 root-package declaration(s) audited)" in passed.stdout + passed.stderr
+    assert _ends_with_the_success_line(passed.stdout), passed.stdout
 
 
 def test_strict_probe_audits_a_build_that_declares_its_helper_names(
