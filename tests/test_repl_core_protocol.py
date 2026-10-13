@@ -1206,6 +1206,17 @@ _FAST_PARSER_ORDINARY = json.dumps(
             _fake_header_command(_header_json("«Mathlib.Unsafe».«x✝»")),
             "plain, nonempty module components",
         ),
+    ],
+)
+def test_header_check_rejects_parse_errors_and_ambiguous_module_components(command, message):
+    with pytest.raises(ValueError, match=message):
+        _header_modules(command)
+
+
+# The parser reports parse errors as JSON, so these are failures of the check.
+@pytest.mark.parametrize(
+    ("command", "message"),
+    [
         (_fake_header_command("", returncode=1, stderr="unknown package\n"), "unknown package"),
         (_fake_header_command("not json"), "unrecognized output"),
         (
@@ -1226,8 +1237,8 @@ _FAST_PARSER_ORDINARY = json.dumps(
         (_fake_header_command(_FAST_PARSER_ORDINARY), "unrecognized output"),
     ],
 )
-def test_header_check_fails_closed_on_rejected_or_unknown_output(command, message):
-    with pytest.raises(ValueError, match=message):
+def test_header_check_fails_closed_when_the_parser_fails(command, message):
+    with pytest.raises(RuntimeError, match=f"Lean header check failed: {message}"):
         _header_modules(command)
 
 
@@ -1260,6 +1271,16 @@ def test_disposable_call_rejects_what_lean_reports_before_starting(
     assert repl.is_clean()
 
 
+_LEAN_TYPE_MISMATCH = (
+    "parse_header.lean:14:47: error: Application type mismatch: The argument\n"
+    "  input\n"
+    "has type\n"
+    "  String : Type\n"
+    "but is expected to have type\n"
+    "  Parser.InputContext : Type\n"
+)
+
+
 @pytest.mark.parametrize(
     ("stdout", "stderr", "detail"),
     [
@@ -1277,11 +1298,24 @@ def test_disposable_call_rejects_what_lean_reports_before_starting(
             "",
             "parse_header.lean:14:3: error: unknown constant 'Lean.Parser.parseHeader'",
         ),
+        # Lean follows the error line with indented terms, and Lake warns on
+        # stderr while the manifest is out of date.
+        (
+            _LEAN_TYPE_MISMATCH,
+            "",
+            "parse_header.lean:14:47: error: Application type mismatch: The argument",
+        ),
+        (
+            _LEAN_TYPE_MISMATCH,
+            "warning: manifest out of date: git revision of dependency 'repl' changed; "
+            "use `lake update repl` to update it\n",
+            "parse_header.lean:14:47: error: Application type mismatch: The argument",
+        ),
         ("", "", "exit status 1"),
         ("", "x" * 1000, "x" * repl_core._HEADER_FAILURE_DETAIL_CHARS + "..."),
     ],
 )
-def test_failed_header_command_reports_its_last_output_line(monkeypatch, stdout, stderr, detail):
+def test_failed_header_command_reports_its_error_line(monkeypatch, stdout, stderr, detail):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(
             warmup_imports=frozenset(),
@@ -1294,7 +1328,7 @@ def test_failed_header_command_reports_its_last_output_line(monkeypatch, stdout,
         lambda *args, **kwargs: pytest.fail("a failed header check must not start Lean"),
     )
 
-    assert repl.run_disposable("#check Nat") == {"repl_error": f"Rejected Lean header: {detail}"}
+    assert repl.run_disposable("#check Nat") == {"repl_error": f"Lean header check failed: {detail}"}
     assert repl.is_clean()
 
 
@@ -1478,7 +1512,7 @@ def test_header_check_never_spawns_after_its_shared_deadline(monkeypatch):
 
 
 def test_header_check_rejects_output_over_the_combined_limit():
-    with pytest.raises(ValueError, match="output exceeded 1024 bytes"):
+    with pytest.raises(RuntimeError, match="Lean header check failed: parser output exceeded 1024 bytes"):
         _header_modules(_fake_header_command("x" * 1025), max_buffer_bytes=1024)
 
 

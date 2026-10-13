@@ -400,8 +400,8 @@ def _communicate_bounded(
                     stderr_open = False
                 continue
             if len(stdout) + len(stderr) + len(chunk) > max_output_bytes:
-                raise ValueError(
-                    f"Lean header parser output exceeded {max_output_bytes} bytes"
+                raise RuntimeError(
+                    f"Lean header check failed: parser output exceeded {max_output_bytes} bytes"
                 )
             target.extend(chunk)
 
@@ -428,14 +428,22 @@ def _communicate_bounded(
 
 
 def _header_failure_detail(stdout: bytes, stderr: bytes, returncode: int) -> str:
-    """Return the last non-empty line of stderr, else of stdout, bounded.
+    """Return the line that names a failed header command's error, bounded.
 
-    A launcher that cannot start ends its stderr with the exception after a
-    traceback, and Lean prints elaboration errors on stdout.
+    Lean prints an elaboration error on stdout as a ``file:line:col: error:``
+    line followed by indented terms, so the first such line wins, even over a
+    Lake warning on stderr. Otherwise the last non-empty line of stderr, else
+    of stdout: a launcher that cannot start ends its stderr with the exception
+    after a traceback.
     """
-    for output in (stderr, stdout):
-        lines = output.decode(errors="replace").splitlines()
-        detail = next((line.strip() for line in reversed(lines) if line.strip()), "")
+    stdout_lines = stdout.decode(errors="replace").splitlines()
+    stderr_lines = stderr.decode(errors="replace").splitlines()
+    for lines in (
+        (line for line in stdout_lines if ": error:" in line),
+        reversed(stderr_lines),
+        reversed(stdout_lines),
+    ):
+        detail = next((line.strip() for line in lines if line.strip()), "")
         if detail:
             if len(detail) > _HEADER_FAILURE_DETAIL_CHARS:
                 detail = detail[:_HEADER_FAILURE_DETAIL_CHARS] + "..."
@@ -514,11 +522,15 @@ def _decode_header_analysis(stdout: bytes) -> _LeanHeaderAnalysis:
             accepts_leading_imports=not is_module and not is_prelude,
         )
     except (ReplProtocolError, TypeError, KeyError, json.JSONDecodeError):
-        raise ValueError("unrecognized output from the Lean header parser") from None
+        raise RuntimeError(
+            "Lean header check failed: unrecognized output from the Lean header parser"
+        ) from None
     except ValueError as error:
         if str(error):
             raise
-        raise ValueError("unrecognized output from the Lean header parser") from None
+        raise RuntimeError(
+            "Lean header check failed: unrecognized output from the Lean header parser"
+        ) from None
 
 
 def _split_imports_and_body(code: str) -> tuple[list[str], str, int]:
@@ -981,6 +993,11 @@ class LeanRepl:
     def _check_header(self, code: str, deadline: float) -> _LeanHeaderAnalysis:
         """Analyze the submitted header with the selected toolchain's Lean parser.
 
+        A header that the parser or the module check refuses raises ValueError.
+        A non-zero exit, unrecognized output or output over the cap means the
+        check itself failed and raises RuntimeError, since the parser reports
+        parse errors as JSON and exits 0.
+
         The parser is this wrapper's process generation until close() verifies
         that it exited, so a failed cleanup is retried before the slot is reused.
         """
@@ -1008,7 +1025,8 @@ class LeanRepl:
         self.close(deadline=deadline)
         returncode = process.returncode
         if returncode != 0:
-            raise ValueError(_header_failure_detail(stdout, stderr, returncode))
+            detail = _header_failure_detail(stdout, stderr, returncode)
+            raise RuntimeError(f"Lean header check failed: {detail}")
         return _decode_header_analysis(stdout)
 
     def run_disposable(
