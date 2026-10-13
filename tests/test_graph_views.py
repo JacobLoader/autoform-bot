@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
-from autoform_cli import graph_views
+from autoform_cli import dag_viewer, graph_views
 from autoform_cli.graph import Graph, Node
 from autoform_cli.graph_pages import _selected_statuses
 from autoform_cli.graph_views import chapter_view, focus_view, focus_views, full_view, project_view, scope_view
@@ -160,6 +161,46 @@ def test_status_rings_count_only_leaves_that_declare_something(tmp_path: Path) -
     assert complete["mixed"].status_counts == (("can_state", 1),)
     assert complete["prose"].status_counts == ()
     assert complete["prose"].status_key == "planned"
+
+
+def test_a_scope_header_counts_the_items_its_status_rows_list(tmp_path: Path) -> None:
+    """The explorer heads a scope's status rows with "N items in this scope".
+
+    N is the payload's member_count, so it is the sum of those rows: a prose
+    leaf is in neither, and a checked catalog is one item in its inventory row.
+    """
+    roadmap = tmp_path / "blueprint/roadmap"
+
+    def node(node_id: str, parent: str | None, **kwargs) -> Node:
+        return Node(node_id, node_id.title(), roadmap / f"{node_id}.md", (), parent=parent, **kwargs)
+
+    graph = Graph(
+        tmp_path / "blueprint",
+        {
+            "roadmap": node("roadmap", None),
+            "mixed": node("mixed", "roadmap"),
+            "mixed/result": node("mixed/result", "mixed", declaration="theorem"),
+            "mixed/essay": node("mixed/essay", "mixed"),
+            "mixed/catalog": node(
+                "mixed/catalog",
+                "mixed",
+                catalog="module",
+                statement_formalized=True,
+                proof_formalized=True,
+            ),
+        },
+    )
+    payload = tmp_path / "dependencies.json"
+    dag_viewer.write_payload(payload, project_view(graph, derive(graph)), links={})
+    scope = json.loads(payload.read_text(encoding="utf-8"))["nodes"][0]
+
+    assert scope["id"] == "scope:mixed"
+    assert scope["status_counts"] == {"can_state": 1, "inventory_checked": 1}
+    assert scope["member_count"] == sum(scope["status_counts"].values()) == 2
+    # The inspector titles the rows with member_count and lists status_counts.
+    script = dag_viewer.viewer_script()
+    assert '(node.member_count || 1) + " items in this scope"' in script
+    assert "var counts = node.status_counts || {};" in script
 
 
 def test_chapter_view_keeps_external_relations_as_boundaries(tmp_path: Path) -> None:
