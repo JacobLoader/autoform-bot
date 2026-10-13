@@ -776,7 +776,11 @@ claim target. A Markdown path reaches the revised declarations when it ends at
 the revised article or at an article that names one of them or, when none names
 it, owns it; missing dependency paths are counted the same way. Project
 locality is an exact inventory of regular repository source modules, never a
-namespace-prefix guess.
+namespace-prefix guess. The inventory skips nested Git checkouts, ignored
+directories such as `build`, and symlinked directories, so the probe refuses a
+loaded root-package module whose source the inventory lacks, and a module an
+`M.*` or `M.+` glob finds that it did not load, which Lake builds even when
+nothing imports it, instead of silently leaving out what such a module uses.
 
 The command snapshots and rereads the roadmap around the probe. It retains one
 bound Lean source generation, derives module inventory and locations from that
@@ -802,11 +806,8 @@ the working article and `MODULE` the module whose effective header would change.
 Lean supplies the loaded module graph; Autoform binds every node to its captured
 root source and configured root-package artifact so dependencies cannot shadow
 it. The probe imports project modules, so run it only in a trusted checkout or
-sandbox. The command refuses a loaded root-package module whose source the
-captured inventory lacks, and a module an `M.*` or `M.+` glob finds that the
-inventory lacks, which Lake builds even when nothing imports it; the inventory
-skips nested Git checkouts, ignored directories such as `build`, and symlinked
-directories. `affected_modules` is therefore complete over the root libraries'
+sandbox. Like `work impact`, it refuses a root-package module the captured
+inventory lacks, so `affected_modules` is complete over the root libraries'
 loaded Lake roots/globs, not dormant source files outside that build boundary.
 It holds `MODULE` and every loaded module that imports it, directly or
 transitively, which covers what an added import can affect. Removing an import
@@ -1001,7 +1002,8 @@ that asserted Mathlib facts are
 internally consistent, and that cited work resolves to local source
 material without escaping the blueprint. Coverage files are checked for broken
 links and explicitly declared gaps. With `--lean-root`, local declaration names
-and declaration kinds are checked against the Lean source index.
+and declaration kinds are checked against the Lean source index, along with the
+elaboration limits each target runs under.
 
 A wanted target matches the intent its command mirrors: `theorem_wanted` and
 `proof_wanted` a `theorem`, `lemma`, `proposition`, or `corollary`,
@@ -1047,6 +1049,28 @@ correlates with realized Lean length at r = -0.03 and prerequisite count at
 r = 0.25; its largest node is 1344 lines of Lean behind 66 words of prose and a
 single declaration name. Pre-formalization size estimates were considered and
 rejected on that evidence.
+
+### Elaboration limits
+
+With `--lean-root`, the audit reads the `maxHeartbeats`,
+`synthInstance.maxHeartbeats`, and `maxRecDepth` settings each resolved `lean:`
+target is elaborated under. `lean-target-unbounded-limit` reports a target with
+no heartbeat limit: a `set_option maxHeartbeats 0` or
+`set_option synthInstance.maxHeartbeats 0` in force at the declaration or inside
+its proof, which lets elaboration run indefinitely instead of failing.
+`lean-target-unscoped-limit` reports a target whose raised limit comes from a
+file- or section-wide `set_option`, which also covers every later declaration
+whether or not it needs one; Mathlib's `linter.style.setOption` rejects
+unscoped heartbeat limits for the same reason. A raised limit put on the
+declaration itself with `set_option ... in` is accepted Mathlib practice and is
+not reported. The pass is lexical: it follows `namespace`, `mutual`, `end`, and
+`section` nesting, including `noncomputable section` and the module system's
+`@[expose] public section`, and treats an indented `set_option` as part of the
+proof above it.
+
+ATLAS v1, built with Autoform, shows what accumulates without this check: 901
+raised `maxHeartbeats` settings, 497 of them file- or section-wide and 9 of them
+`0` ([#260](https://github.com/facebookresearch/autoform-bot/issues/260)).
 
 The audit API also accepts an already compiled graph. Formalize may use its
 findings while working the Markdown frontier, but the audit itself never

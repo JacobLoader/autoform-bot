@@ -8,6 +8,7 @@ import pytest
 
 import autoform_cli.audit as audit_module
 from autoform_cli.audit import audit_blueprint, audit_graph
+from autoform_cli.elaboration_limits import limits_in_force
 from autoform_cli.graph import Graph, Node, load_graph
 from autoform_cli.lean import LeanSourceError
 
@@ -615,6 +616,122 @@ def test_audit_reports_lean_targets_declared_deprecated(tmp_path: Path) -> None:
         "roadmap/multi-line.md": deprecated("Project.multiLine"),
         "roadmap/public.md": deprecated("Project.publicOld"),
     }
+
+
+def test_audit_reports_unbounded_and_inherited_elaboration_limits(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    names = (
+        "fileWide",
+        "scoped",
+        "chained",
+        "consumer",
+        "afterConsumer",
+        "lowered",
+        "sectionWide",
+        "afterSection",
+        "unbounded",
+    )
+    for name in names:
+        _article(blueprint, f"{name}.md", declaration="theorem", statement="formalized", lean=f"Project.{name}")
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    source = [
+        "set_option maxHeartbeats 800000",
+        "",
+        "namespace Project",
+        "",
+        "theorem fileWide : True := trivial",
+        "",
+        "set_option maxHeartbeats 400000 in",
+        "-- `simp` needs the extra budget here",
+        "theorem scoped : True := trivial",
+        "",
+        "open Nat in",
+        "set_option synthInstance.maxHeartbeats 0 in",
+        "theorem chained : True := trivial",
+        "",
+        # A wrapper reaches only the next declaration.
+        "set_option maxHeartbeats 400000 in",
+        "theorem consumer : True := trivial",
+        "theorem afterConsumer : True := trivial",
+        "",
+        "section",
+        "set_option maxHeartbeats 100000",
+        "theorem lowered : True := by",
+        "  set_option maxHeartbeats 0 in",
+        "  trivial",
+        "end",
+        "",
+        "end Project",
+        "",
+        "@[expose] public noncomputable section",
+        "set_option maxRecDepth 4096",
+        "theorem Project.sectionWide : True := trivial",
+        "end",
+        "",
+        "-- set_option maxHeartbeats 0",
+        "theorem Project.afterSection : True := trivial",
+        "",
+        "set_option maxHeartbeats 0",
+        "set_option maxHeartbeats 0",
+        "theorem Project.unbounded : True := trivial",
+    ]
+    (lean_root / "Limits.lean").write_text("\n".join(source) + "\n", encoding="utf-8")
+
+    def unscoped(name: str, scope: str, option: str, line: int) -> tuple[str, str]:
+        return (
+            "lean-target-unscoped-limit",
+            f"lean target Project.{name} inherits the {scope}-wide `set_option {option}` at Limits.lean:{line}; "
+            f"put `set_option {option.split()[0]} N in` on the declarations that need it",
+        )
+
+    def unbounded(name: str, option: str, line: int) -> tuple[str, str]:
+        return (
+            "lean-target-unbounded-limit",
+            f"lean target Project.{name} has no {option} limit: `set_option {option} 0` at Limits.lean:{line}; "
+            "set a finite limit",
+        )
+
+    file_wide = ("file", "maxHeartbeats 800000", 1)
+    assert _finding_map(blueprint) == {}
+    assert _finding_map(blueprint, lean_root=lean_root) == {
+        "roadmap/fileWide.md": [unscoped("fileWide", *file_wide)],
+        "roadmap/chained.md": [
+            unbounded("chained", "synthInstance.maxHeartbeats", 12),
+            unscoped("chained", *file_wide),
+        ],
+        "roadmap/afterConsumer.md": [unscoped("afterConsumer", *file_wide)],
+        "roadmap/lowered.md": [unbounded("lowered", "maxHeartbeats", 22)],
+        "roadmap/sectionWide.md": [
+            unscoped("sectionWide", *file_wide),
+            unscoped("sectionWide", "section", "maxRecDepth 4096", 29),
+        ],
+        "roadmap/afterSection.md": [unscoped("afterSection", *file_wide)],
+        "roadmap/unbounded.md": [unbounded("unbounded", "maxHeartbeats", 37)],
+    }
+
+
+def test_the_limit_scan_reads_commands_at_the_declaration_s_indentation() -> None:
+    # This file indents its commands inside the namespace. A later wrapper is
+    # not part of an earlier proof, and settings at that indentation count.
+    lines = [
+        "namespace Project",
+        "  set_option maxHeartbeats 800000",
+        "  theorem first : True := trivial",
+        "",
+        "  set_option maxHeartbeats 0 in",
+        "  theorem second : True := by",
+        "    set_option maxRecDepth 2000 in",
+        "    trivial",
+        "end Project",
+    ]
+
+    def found(line: int) -> list[tuple[str, int, str]]:
+        return [(setting.option, setting.value, setting.scope) for setting in limits_in_force(lines, line)]
+
+    assert found(3) == [("maxHeartbeats", 800000, "section")]
+    assert found(6) == [("maxHeartbeats", 0, "declaration"), ("maxRecDepth", 2000, "proof")]
 
 
 def test_audit_reads_deprecation_from_the_captured_source_generation(

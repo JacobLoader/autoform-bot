@@ -13,6 +13,20 @@ namespace AutoformImpact
 
 def probeOutputLimit : Nat := {output_limit}
 
+/-- Names as the CLI passes them: JSON `[request, components]` pairs, where a
+component is a string or a number. A list literal of names would be compiled,
+and the code generator gives up on one longer than about 1,500 entries. -/
+def requestedNames (text : String) : CommandElabM (Array Name) := do
+  let decode (entry : Json) : Except String Name := do
+    let components ← entry.getArrVal? 1 >>= (·.getArr?)
+    components.foldlM (init := Name.anonymous) fun name component =>
+      match component with
+      | .str part => pure (name.str part)
+      | _ => name.num <$> component.getNat?
+  match _root_.Lean.Json.parse text >>= (·.getArr?) >>= (·.mapM decode) with
+  | .ok names => pure names
+  | .error e => throwError ("the project module list is malformed: " ++ e)
+
 /-- Write one complete record without letting the scratch file grow past the
 CLI's output limit. The Python reader checks the limit again after exit. -/
 def emitRecord (out : IO.FS.Handle) (written : IO.Ref Nat) (marker : String)
@@ -110,7 +124,8 @@ end AutoformImpact
 
 set_option maxHeartbeats 0 in
 run_cmd do
-  let projectModules : Std.HashSet Name := Std.HashSet.ofList [{project_modules}]
+  let projectModules : Std.HashSet Name :=
+    Std.HashSet.ofList (← AutoformImpact.requestedNames {project_modules}).toList
   let env ← getEnv
   -- `env.header` is slow to reach from the interpreted probe, so module names
   -- are read once.
@@ -125,17 +140,14 @@ run_cmd do
   let out ← IO.FS.Handle.mk path .write
   let written ← IO.mkRef 0
   try
-    -- Module ownership and direct imports come from the loaded environment,
-    -- not source syntax. Emit even modules with no declarations so the
-    -- evidence is a closed graph over every loaded project module.
-    if {emit_module_evidence} then
-      let sourceSearchPath ← getSrcSearchPath
+    -- A root-package module the inventory missed gets no records, so what it
+    -- uses and imports would silently drop out of the scope. Lake builds every
+    -- module an `M.*` or `M.+` glob finds by this same walk of the live tree,
+    -- imported or not. This probe imports every glob module the inventory
+    -- holds, so one it did not load is one the inventory missed (even if
+    -- another srcDir holds a file of that name).
+    if {check_inventory} then
       let artifactDir := (← IO.FS.realPath {artifact_dir}).components
-      -- Lake builds every module an `M.*` or `M.+` glob finds by this same walk
-      -- of the live tree, imported or not. This probe imports every glob module
-      -- the inventory holds, so one it did not load is one the inventory missed
-      -- (even if another srcDir holds a file of that name), and its articles
-      -- would silently drop out of the scope.
       for (dir, base, glob) in ([{glob_directories}] : List (System.FilePath × Name × String)) do
         if (← dir.isDir) then
           Lean.forEachModuleInDir dir fun sub => do
@@ -143,6 +155,19 @@ run_cmd do
               throwError m!"the impact probe found root-package module {{base ++ sub}} under glob {{glob}}, \
                 but loaded no captured source for it: the source inventory skips nested Git checkouts, \
                 ignored directories such as `build`, and symlinked directories"
+      for module in moduleNames do
+        unless isLocalModule module do
+          let oleanPath ← IO.FS.realPath (← findOLean module)
+          if oleanPath.components.take artifactDir.length == artifactDir then
+            throwError m!"the impact probe loaded root-package module {{module}} from {{oleanPath}}, \
+              but the captured source inventory has no such module: it skips nested Git checkouts, \
+              ignored directories such as `build`, and symlinked directories, and names a module \
+              exactly as its file is spelled, including case"
+    -- Module ownership and direct imports come from the loaded environment,
+    -- not source syntax. Emit even modules with no declarations so the
+    -- evidence is a closed graph over every loaded project module.
+    if {emit_module_evidence} then
+      let sourceSearchPath ← getSrcSearchPath
       for module in moduleNames do
         if isLocalModule module then
           let some moduleIdx := env.getModuleIdx? module | continue
@@ -165,15 +190,6 @@ run_cmd do
             ("source_path", Json.str sourcePath.toString),
             ("olean_path", Json.str oleanPath.toString),
             ("direct_local_imports", AutoformImpact.namesJson directImports)]
-        else
-          -- A root-package module the inventory missed would get no record,
-          -- silently cutting every import edge through it.
-          let oleanPath ← IO.FS.realPath (← findOLean module)
-          if oleanPath.components.take artifactDir.length == artifactDir then
-            throwError m!"the impact probe loaded root-package module {{module}} from {{oleanPath}}, \
-              but the captured source inventory has no such module: it skips nested Git checkouts, \
-              ignored directories such as `build`, and symlinked directories, and names a module \
-              exactly as its file is spelled, including case"
     for (c, info) in env.constants do
       let some module := moduleOf c | continue
       if isLocalModule module then

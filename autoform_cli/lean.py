@@ -39,7 +39,11 @@ from ._tree_snapshot import (
 )
 
 _NAMESPACE = re.compile(r"^\s*namespace\s+(.+)$")
-_SECTION = re.compile(r"^\s*section\b\s*(\S*)")
+#: ``section`` in every form that opens one, e.g. ``@[expose] public section``.
+_SECTION = re.compile(
+    r"^\s*(?:@\[[^\]]*\]\s*)*(?:(?:public|private|meta|noncomputable)\s+)*section\b\s*(\S*)"
+)
+_MUTUAL = re.compile(r"^\s*mutual\s*$")
 _END = re.compile(r"^\s*end\b\s*(\S*)")
 # The ``*_wanted`` commands are Batteries' ``Batteries.Util.ProofWanted``: each
 # states a result whose proof or construction is deferred.
@@ -757,8 +761,7 @@ def _scan(text: str, relative: Path) -> list[Declaration]:
             scopes.append(name)
             continue
 
-        section_match = _SECTION.match(line)
-        if section_match:
+        if _SECTION.match(line) or _MUTUAL.match(line):
             scopes.append(None)
             continue
 
@@ -915,60 +918,22 @@ class SourceLinker:
         return f"{self.repository_url}/blob/{self.ref}/{path}#L{declaration.line}"
 
 
-def build_linker(
-    lean_root: str | Path,
-    *,
-    repository_url: str | None = None,
-    ref: str | None = None,
-    exclude_roots: Iterable[str | Path] = (),
-    source_index: SourceIndex | None = None,
-    detect_missing: bool = True,
-) -> SourceLinker:
-    """Index *lean_root* and resolve repository coordinates.
-
-    A supplied source snapshot never inherits a live Git ref; callers must bind
-    that ref explicitly if they want permalinks.
-    """
+def build_linker(lean_root: str | Path) -> SourceLinker:
+    """Index *lean_root* and resolve repository coordinates."""
     resolved_root = resolve_lean_root(lean_root)
-    requested_root = directory_binding.lexical_absolute_path(lean_root)
-    remapped_exclusions = tuple(
-        _remap_resolved_root_exclusion(requested_root, resolved_root, value)
-        for value in exclude_roots
-    )
-    if source_index is not None and source_index.root != resolved_root:
-        raise ValueError("captured source index belongs to a different Lean root")
-    resolved_repository_url = repository_url
-    resolved_ref = ref
-    linkable_paths: frozenset[Path] | None = None
-    index = source_index
-    if source_index is None:
-        if detect_missing and ref is None:
-            snapshot, detected_url, detected_ref, linkable_paths = _capture_link_state(
-                resolved_root,
-                remapped_exclusions,
-            )
-            index = snapshot.index
-            resolved_repository_url = repository_url or detected_url
-            resolved_ref = detected_ref
-        else:
-            index = index_project(
-                resolved_root,
-                exclude_roots=remapped_exclusions,
-            )
-    if detect_missing and resolved_repository_url is None:
-        resolved_repository_url = detect_repository_url(resolved_root)
-    assert index is not None
+    snapshot, repository_url, ref, linkable_paths = _capture_link_state(resolved_root)
+    if repository_url is None:
+        repository_url = detect_repository_url(resolved_root)
     return SourceLinker(
-        index=index,
-        repository_url=resolved_repository_url,
-        ref=resolved_ref,
+        index=snapshot.index,
+        repository_url=repository_url,
+        ref=ref,
         linkable_paths=linkable_paths,
     )
 
 
 def _capture_link_state(
     root: Path,
-    exclude_roots: Iterable[str | Path],
 ) -> tuple[
     IndexedSourceSnapshot,
     str | None,
@@ -977,7 +942,6 @@ def _capture_link_state(
 ]:
     """Capture source bytes and prove which ones belong to one stable commit."""
 
-    exclusions = tuple(exclude_roots)
     last_snapshot: IndexedSourceSnapshot | None = None
     last_url: str | None = None
     for attempt in range(_SNAPSHOT_ATTEMPTS):
@@ -985,7 +949,7 @@ def _capture_link_state(
             time.sleep(_SNAPSHOT_RETRY_DELAY_SECONDS * attempt)
         before_url = detect_repository_url(root)
         before_ref = detect_ref(root)
-        snapshot = snapshot_project_sources(root, exclude_roots=exclusions)
+        snapshot = snapshot_project_sources(root)
         last_snapshot = snapshot
         last_url = before_url
         after_url = detect_repository_url(root)
