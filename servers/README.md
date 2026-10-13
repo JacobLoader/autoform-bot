@@ -36,7 +36,7 @@ or `prelude`, imports Mathlib, so it takes at least as long as `import Mathlib`
 on the node. Calls to the same project run one at a time unless
 `AUTOFORM_REPL_WORKERS_PER_PROJECT` is raised. The REPL `timeout` is one total
 post-admission budget for an idle-slot wait, header validation, child startup,
-generated imports, and submitted code; the default and maximum are 240 seconds.
+generated imports, and submitted code; it and its cap default to 240 seconds.
 Project-cache admission uses the daemon response budget separately. Idle project
 state is closed after 30 minutes by default, while the small runtime remains
 available. Its lifecycle is also explicit:
@@ -71,10 +71,10 @@ node-wide and read only when the runtime starts; after changing either, run
 `uv run autoform-lean-runtime stop`. `AUTOFORM_MAX_REPL_REQUEST_SECONDS` caps
 the REPL `timeout`; when `AUTOFORM_REPL_REQUEST_TIMEOUT` is unset, the default
 `timeout` is the lower of 240 seconds and that cap. If `LEAN_REPL_CMD` does not
-start with a `lake` executable and `LEAN_REPL_HEADER_CMD` is unset, if
-`AUTOFORM_MAX_REPL_REQUEST_SECONDS` exceeds 240, or if an explicit
-`AUTOFORM_REPL_REQUEST_TIMEOUT` exceeds that cap, the runtime refuses to start,
-so the LSP tools are unavailable as well.
+start with a `lake` executable and `LEAN_REPL_HEADER_CMD` is unset, if an
+explicit `AUTOFORM_REPL_REQUEST_TIMEOUT` exceeds that cap, or if that cap does
+not fit the response budget below, the runtime refuses to start, so the LSP
+tools are unavailable as well.
 `AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` (default 15 minutes) bounds project
 admission, the tool operation, and a safety margin. Failed cleanup transfers to
 a retained background reaper and may continue past that response budget rather
