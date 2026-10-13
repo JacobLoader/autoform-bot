@@ -1255,8 +1255,9 @@ def test_failed_repl_start_names_both_remedies_only_for_an_unknown_package(lake_
 
     assert lake_error in error
     assert error.startswith("Lake could not find the REPL package: ") is hinted
-    assert ("name the project's REPL require `repl`" in error) is hinted
-    assert ('set LEAN_REPL_CMD="lake exe @<name>/repl"' in error) is hinted
+    assert ("rename the require to `repl`" in error) is hinted
+    assert ('restart the runtime with LEAN_REPL_CMD="lake exe @<name>/repl"' in error) is hinted
+    assert ("applies to every project the runtime serves" in error) is hinted
     assert repl.is_clean()
 
 

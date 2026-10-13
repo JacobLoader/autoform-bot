@@ -48,8 +48,9 @@ LEAN_HEADER_LAUNCHER = (
 # workspace has that name, as when the REPL is required under another name.
 _LAKE_UNKNOWN_PACKAGE = "unknown package `"
 _REPL_REQUIRE_HINT = (
-    "Lake could not find the REPL package: name the project's REPL require `repl`, "
-    'or set LEAN_REPL_CMD="lake exe @<name>/repl" for a require named <name>'
+    "Lake could not find the REPL package: rename the require to `repl`, "
+    'or restart the runtime with LEAN_REPL_CMD="lake exe @<name>/repl" for a require '
+    "named <name>, which applies to every project the runtime serves"
 )
 
 
