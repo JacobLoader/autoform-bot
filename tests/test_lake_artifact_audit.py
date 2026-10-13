@@ -1656,12 +1656,16 @@ def test_both_probes_refuse_a_root_module_another_library_also_provides(
     for audited, _ in _both_probes(helper, project, [_article("cheat", ["Fixture.cheat"])]):
         output = audited.stdout + audited.stderr
         assert audited.returncode != 0, output
-        message = next(line for line in output.splitlines() if "with another library on the search path" in line)
-        assert "root module Fixture shares its first component Fixture with another library on the search path (" in message
-        assert message.endswith("); rename the module so the audit can run")
+        message = next((line for line in output.splitlines() if "with another library on the search path" in line), "")
+        assert (
+            "root module Fixture shares its first component Fixture with another library on the search path ("
+            in message
+        ), output
+        assert message.endswith("); rename the module so the audit can run"), output
         # The dependency's library comes first, as Lake lists it.
         dependency = str((project[0] / "evildep/.lake/build/lib/lean").resolve())
-        assert message.index(dependency) < message.index(str((project[0] / ".lake/build/lib/lean").resolve()) + ")")
+        root = str((project[0] / ".lake/build/lib/lean").resolve())
+        assert f"({dependency}, {root})" in message, output
         assert "kernel trust clean" not in output
 
 
