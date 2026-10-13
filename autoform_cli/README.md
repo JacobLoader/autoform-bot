@@ -971,7 +971,7 @@ indexing too; other files are never read. `render` without `--lean-root` uses
 the blueprint's parent folder as the Lean root. To clear a stop, fix the
 permissions, or move the entry out of the Lean root or into a folder the walk
 skips: `.direnv`, `.git`, `.lake`, `.obsidian`, `.trash`, `.venv`,
-`lake-packages`, `build`, a folder below the root that holds a `.git` entry, a
+`build`, a folder below the root that holds a `.git` entry, a
 recognized skeleton output folder, or, for `render`, a rendered site. There is
 no command-line option to exclude other folders. The skipped folder names and
 the `manifest.json`, `publication.json` and `.git` names match in any letter
