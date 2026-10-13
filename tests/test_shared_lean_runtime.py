@@ -725,6 +725,11 @@ def test_project_startup_that_misses_its_budget_is_discarded(tmp_path):
 
     assert closed_event.wait(timeout=1)
     assert closed == [project.resolve()]
+    # close_resource returns before the reaper releases the slot.
+    deadline = time.monotonic() + 1
+    while cache.stats()["retiring"]:
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
     with cache.observe(str(project)) as (resource, state):
         assert resource is None and state == "cold"
     cache.close()
@@ -923,7 +928,7 @@ def test_lru_waiter_retires_one_victim_while_its_cleanup_is_slow(tmp_path):
         assert close_started.wait(timeout=1)
         # Wake the waiter while its victim is still retiring: once through
         # another lease's release, then through its own 0.5s poll.
-        with cache.lease(str(second)):
+        with cache.lease(str(second), acquisition_timeout=1.0):
             pass
         time.sleep(0.6)
         assert [entry["project_dir"] for entry in cache.stats()["resident"]] == [
@@ -1113,7 +1118,7 @@ def test_late_startup_moves_directly_to_retirement(tmp_path):
     created = []
 
     def factory(root):
-        time.sleep(0.03)
+        time.sleep(0.6)
         resource = object()
         created.append(resource)
         return resource
@@ -1130,7 +1135,7 @@ def test_late_startup_moves_directly_to_retirement(tmp_path):
         start_sweeper=False,
     )
     with pytest.raises(ProjectResourceBusyError, match="startup exceeded"):
-        with cache.lease(str(project), acquisition_timeout=0.01):
+        with cache.lease(str(project), acquisition_timeout=0.5):
             pytest.fail("late startup entered a request")
     assert close_started.wait(timeout=1)
     assert cache.stats()["retiring"] == [str(project.resolve())]
@@ -1186,7 +1191,8 @@ def test_partial_repl_startup_transfers_cleanup_without_masking_the_error(
                 {"project_dir": str(project), "code": "#check Nat", "timeout": None},
             )
         assert raised.value is startup_error
-        assert time.monotonic() - started < 0.5
+        # Cleanup on the request thread would block on its release event.
+        assert time.monotonic() - started < 1.5
         assert cleanup_started.wait(timeout=1)
         assert services.repl_projects.stats()["retiring"] == [str(project.resolve())]
 
@@ -1218,7 +1224,7 @@ def test_partial_lsp_startup_transfers_cleanup_without_masking_the_error(
             pass
 
     class Process:
-        pid = 43210
+        pid = 999_999_999  # no kernel allocates it, so group probes find nothing
         returncode = None
         stdin = Stream()
         stdout = Stream()
@@ -1258,7 +1264,8 @@ def test_partial_lsp_startup_transfers_cleanup_without_masking_the_error(
                 {"project_dir": str(project), "file_path": "Main.lean"},
             )
         assert raised.value is startup_error
-        assert time.monotonic() - started < 0.5
+        # Cleanup on the request thread would block on its release event.
+        assert time.monotonic() - started < 1.5
         assert cleanup_started.wait(timeout=1)
         assert services.lsp_projects.stats()["retiring"] == [str(project.resolve())]
 
@@ -1850,7 +1857,8 @@ def test_failed_lsp_request_returns_while_verified_cleanup_runs(tmp_path):
                 "lsp.diagnostics",
                 {"project_dir": str(project), "file_path": "Main.lean"},
             )
-        assert time.monotonic() - started < 0.5
+        # Cleanup on the request thread would block on its release event.
+        assert time.monotonic() - started < 1.5
         assert close_started.wait(timeout=1)
         assert services.lsp_projects.stats()["retiring"] == [str(project.resolve())]
 

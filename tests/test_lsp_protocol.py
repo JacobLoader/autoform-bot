@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import threading
@@ -12,6 +11,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import psutil
 import pytest
 
 from servers.lsp import server as lsp
@@ -31,7 +31,8 @@ class _FakeStream:
 
 class _FakeProcess:
     def __init__(self) -> None:
-        self.pid = 43210
+        # No kernel allocates this PID, so real process-group probes find nothing.
+        self.pid = 999_999_999
         self.returncode: int | None = None
         self.killed = False
         self.waited = False
@@ -56,6 +57,28 @@ def _owned_session(process: _FakeProcess) -> lsp.LeanLspSession:
     session.process = process
     session._process_group_id = process.pid
     return session
+
+
+def _wait_until_gone(process: psutil.Process, timeout: float) -> bool:
+    """Whether process exits or becomes a zombie in time; a reused PID counts as gone."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            if not process.is_running() or process.status() == psutil.STATUS_ZOMBIE:
+                return True
+        except psutil.NoSuchProcess:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.01)
+
+
+def _kill_quietly(process: psutil.Process) -> None:
+    # psutil refuses to signal a PID that now belongs to another process.
+    try:
+        process.kill()
+    except psutil.Error:
+        pass
 
 
 def test_json_rpc_error_response_raises_protocol_error(monkeypatch):
@@ -421,13 +444,17 @@ def test_concurrent_abort_and_close_serialize_owned_cleanup(monkeypatch):
     aborter = threading.Thread(target=call, args=(session.abort,))
     closer = threading.Thread(target=call, args=(session.close,))
     aborter.start()
-    assert entered.wait(timeout=1)
-    closer.start()
-    closer.join(timeout=0.1)
-    assert closer.is_alive()
-    release.set()
-    aborter.join(timeout=2)
-    closer.join(timeout=2)
+    try:
+        assert entered.wait(timeout=1)
+        closer.start()
+        closer.join(timeout=0.1)
+        assert closer.is_alive()
+    finally:
+        # Join while the patched helpers are still installed.
+        release.set()
+        aborter.join(timeout=5)
+        if closer.ident is not None:
+            closer.join(timeout=5)
 
     assert errors == []
     assert maximum_active == 1
@@ -449,31 +476,23 @@ def test_close_retires_a_descendant_without_pre_reaping_its_wrapper():
         start_new_session=True,
     )
     assert process.stdout is not None
-    child_pid = int(process.stdout.readline())
+    child = psutil.Process(int(process.stdout.readline()))
     session = _owned_session(process)
     try:
-        import psutil
-
-        deadline = time.monotonic() + 5
-        while psutil.Process(process.pid).status() != psutil.STATUS_ZOMBIE:
-            if time.monotonic() >= deadline:
-                pytest.fail("LSP wrapper did not become a zombie")
-            time.sleep(0.01)
-        assert process.returncode is None
+        assert _wait_until_gone(psutil.Process(process.pid), timeout=5), "LSP wrapper did not exit"
         assert session.is_alive() is False
+        # is_alive() must not reap the leader, or its PGID could be reused.
+        assert process.returncode is None
 
         session.close()
 
         assert session.process is None
         assert process.returncode == 0
-        try:
-            assert psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE
-        except psutil.NoSuchProcess:
-            pass
+        assert _wait_until_gone(child, timeout=0)
     finally:
         if process.returncode is None:
             session.abort()
-        _kill_quietly(child_pid)
+        _kill_quietly(child)
 
 
 def test_close_sends_exit_without_params(monkeypatch):
@@ -514,28 +533,6 @@ _FAKE_WATCHDOG = (
 )
 
 
-def _wait_until_gone(pid: int, timeout: float) -> bool:
-    import psutil
-
-    deadline = time.monotonic() + timeout
-    while True:
-        try:
-            if psutil.Process(pid).status() == psutil.STATUS_ZOMBIE:
-                return True
-        except psutil.NoSuchProcess:
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.01)
-
-
-def _kill_quietly(pid: int) -> None:
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except OSError:
-        pass
-
-
 @pytest.mark.skipif(os.name != "posix", reason="native LSP backend requires POSIX groups")
 def test_abort_lets_the_watchdog_stop_workers_outside_the_group():
     process = subprocess.Popen(
@@ -546,16 +543,16 @@ def test_abort_lets_the_watchdog_stop_workers_outside_the_group():
         start_new_session=True,
     )
     assert process.stdout is not None
-    worker_pid = int(process.stdout.readline().split()[1])
+    worker = psutil.Process(int(process.stdout.readline().split()[1]))
     session = _owned_session(process)
     try:
         session.retire()
         session.close()
 
         assert session.process is None
-        assert _wait_until_gone(worker_pid, timeout=5)
+        assert _wait_until_gone(worker, timeout=5)
     finally:
-        _kill_quietly(worker_pid)
+        _kill_quietly(worker)
         if session.process is not None:
             session.abort()
 
@@ -577,29 +574,24 @@ def test_abort_after_the_wrapper_crashed_still_reaches_the_watchdog():
         start_new_session=True,
     )
     assert process.stdout is not None
-    pids = {}
+    spawned = {}
     for _ in range(2):
         name, pid = process.stdout.readline().split()
-        pids[name] = int(pid)
+        spawned[name] = psutil.Process(int(pid))
     session = _owned_session(process)
     try:
-        import psutil
-
-        deadline = time.monotonic() + 5
-        while psutil.Process(process.pid).status() != psutil.STATUS_ZOMBIE:
-            if time.monotonic() >= deadline:
-                pytest.fail("LSP wrapper did not exit")
-            time.sleep(0.01)
+        assert _wait_until_gone(psutil.Process(process.pid), timeout=5), "LSP wrapper did not exit"
         assert session.is_alive() is False
+        assert process.returncode is None
 
         session.close()
 
         assert session.process is None
-        assert _wait_until_gone(pids["worker"], timeout=5)
-        assert _wait_until_gone(pids["server"], timeout=5)
+        assert _wait_until_gone(spawned["worker"], timeout=5)
+        assert _wait_until_gone(spawned["server"], timeout=5)
     finally:
-        for pid in pids.values():
-            _kill_quietly(pid)
+        for child in spawned.values():
+            _kill_quietly(child)
         if session.process is not None:
             session.abort()
 
@@ -645,16 +637,16 @@ def _real_lean_project(root: Path, main: str, **modules: str) -> Path:
     return root
 
 
-def _command_mentions(pid: int, text: str) -> bool:
-    import psutil
-
+def _command_mentions(process: psutil.Process, text: str) -> bool:
     try:
-        return any(text in part for part in psutil.Process(pid).cmdline())
+        return any(text in part for part in process.cmdline())
     except psutil.Error:
         return False
 
 
-def _open_until(session, project: Path, leader, marker: str, descendants: set[int]) -> None:
+def _open_until(
+    session, project: Path, leader: psutil.Process, marker: str, descendants: set[psutil.Process]
+) -> None:
     """Open Probe/Main.lean and record descendants until one's command mentions marker."""
     main = project / "Probe" / "Main.lean"
     session._send_notification(
@@ -669,25 +661,23 @@ def _open_until(session, project: Path, leader, marker: str, descendants: set[in
         },
     )
     deadline = time.monotonic() + 120
-    while not any(_command_mentions(pid, marker) for pid in descendants):
+    while not any(_command_mentions(child, marker) for child in descendants):
         if time.monotonic() >= deadline:
             pytest.fail(f"Lean never started a process mentioning {marker}")
-        descendants.update(child.pid for child in leader.children(recursive=True))
+        descendants.update(leader.children(recursive=True))
         time.sleep(0.1)
-    descendants.update(child.pid for child in leader.children(recursive=True))
+    descendants.update(leader.children(recursive=True))
 
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
 def test_real_lean_abort_stops_file_workers(tmp_path):
-    import psutil
-
     # Building the import blocks, so the file worker's `lake setup-file` and
     # its `lean ... -o` child are still running when cleanup starts.
     project = _real_lean_project(tmp_path / "abort", "import Probe.Slow\n", Slow="#eval IO.sleep 300000\n")
     session = lsp.LeanLspSession(lsp.LspConfig(cwd=str(project), timeout=120))
     session.start()
     leader = psutil.Process(session.process.pid)
-    descendants: set[int] = set()
+    descendants: set[psutil.Process] = set()
     try:
         # A timed-out diagnostics call leaves the document open like this.
         _open_until(session, project, leader, "Slow.lean", descendants)
@@ -696,10 +686,36 @@ def test_real_lean_abort_stops_file_workers(tmp_path):
         session.close()
 
         assert session.process is None
-        assert [pid for pid in descendants if not _wait_until_gone(pid, timeout=10)] == []
+        assert [child for child in descendants if not _wait_until_gone(child, timeout=10)] == []
     finally:
-        for pid in descendants:
-            _kill_quietly(pid)
+        for child in descendants:
+            _kill_quietly(child)
+        if session.process is not None:
+            session.abort()
+
+
+@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+def test_real_lean_graceful_close_is_prompt_and_complete(tmp_path):
+    project = _real_lean_project(tmp_path / "graceful", "theorem probe : 1 + 1 = 2 := rfl\n")
+    session = lsp.LeanLspSession(lsp.LspConfig(cwd=str(project), timeout=120))
+    session.start()
+    leader = psutil.Process(session.process.pid)
+    descendants: set[psutil.Process] = set()
+    try:
+        # Opened directly, so a file worker is running at close time without
+        # depending on get_diagnostics' one-second quiet-period reads.
+        _open_until(session, project, leader, "--worker", descendants)
+
+        started = time.monotonic()
+        session.close()
+
+        # An exit with params left Lean running until the 5s grace expired.
+        assert time.monotonic() - started < 4
+        assert session.process is None
+        assert [child for child in descendants if not _wait_until_gone(child, timeout=10)] == []
+    finally:
+        for child in descendants:
+            _kill_quietly(child)
         if session.process is not None:
             session.abort()
 
@@ -917,31 +933,3 @@ def test_lsp_write_cannot_block_on_a_full_pipe():
     finally:
         writer.close()
         os.close(read_fd)
-
-
-@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
-def test_real_lean_graceful_close_is_prompt_and_complete(tmp_path):
-    import psutil
-
-    project = _real_lean_project(tmp_path / "graceful", "theorem probe : 1 + 1 = 2 := rfl\n")
-    session = lsp.LeanLspSession(lsp.LspConfig(cwd=str(project), timeout=120))
-    session.start()
-    leader = psutil.Process(session.process.pid)
-    descendants: set[int] = set()
-    try:
-        # Opened directly, so a file worker is running at close time without
-        # depending on get_diagnostics' one-second quiet-period reads.
-        _open_until(session, project, leader, "--worker", descendants)
-
-        started = time.monotonic()
-        session.close()
-
-        # An exit with params left Lean running until the 5s grace expired.
-        assert time.monotonic() - started < 4
-        assert session.process is None
-        assert [pid for pid in descendants if not _wait_until_gone(pid, timeout=10)] == []
-    finally:
-        for pid in descendants:
-            _kill_quietly(pid)
-        if session.process is not None:
-            session.abort()
