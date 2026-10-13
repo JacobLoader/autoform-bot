@@ -452,29 +452,36 @@ class LeanLspSession:
             if remaining <= 0:
                 break
             msg = self._read_message(timeout=remaining)
-            if msg and msg.get("id") == request_id:
-                if "error" in msg:
-                    error = msg["error"]
-                    if isinstance(error, dict):
-                        code = error.get("code", "unknown")
-                        message = error.get("message", "unspecified protocol error")
-                        data = error.get("data")
-                        detail = f" ({data!r})" if data is not None else ""
-                        raise LspProtocolError(
-                            f"LSP request {request_id} failed [{code}]: "
-                            f"{message}{detail}"
-                        )
-                    raise LspProtocolError(
-                        f"LSP request {request_id} returned malformed error: {error!r}"
-                    )
-                if "result" not in msg:
-                    raise LspProtocolError(
-                        f"LSP response {request_id} has neither result nor error"
-                    )
-                return msg["result"]
+            # Lean's workers send their own requests with numeric ids, so a
+            # frame that names a method is never the response to ours.
+            if msg and "method" not in msg and msg.get("id") == request_id:
+                return self._response_result(msg, request_id)
         raise TimeoutError(
             f"timed out after {timeout:g}s waiting for LSP response {request_id}"
         )
+
+    @staticmethod
+    def _response_result(msg: dict, request_id: int) -> Any:
+        """Return a JSON-RPC response's result, or raise its error."""
+        if "error" in msg:
+            error = msg["error"]
+            if isinstance(error, dict):
+                code = error.get("code", "unknown")
+                message = error.get("message", "unspecified protocol error")
+                data = error.get("data")
+                detail = f" ({data!r})" if data is not None else ""
+                raise LspProtocolError(
+                    f"LSP request {request_id} failed [{code}]: "
+                    f"{message}{detail}"
+                )
+            raise LspProtocolError(
+                f"LSP request {request_id} returned malformed error: {error!r}"
+            )
+        if "result" not in msg:
+            raise LspProtocolError(
+                f"LSP response {request_id} has neither result nor error"
+            )
+        return msg["result"]
 
     def _read_message(self, timeout: float = 5) -> dict | None:
         """Read one bounded JSON-RPC frame within one absolute deadline."""

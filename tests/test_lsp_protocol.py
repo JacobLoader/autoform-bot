@@ -862,6 +862,24 @@ def test_hover_opens_and_closes_document(tmp_path: Path, monkeypatch):
     assert notifications[0][1]["textDocument"]["text"] == source_text
 
 
+def test_hover_skips_a_server_request_that_reuses_its_id(tmp_path: Path, monkeypatch):
+    source = tmp_path / "Test.lean"
+    source.write_text("#check Nat\n")
+    session = _owned_session(_FakeProcess())
+    monkeypatch.setattr(session, "_write_message", lambda msg, timeout=30: None)
+    messages = iter(
+        [
+            # Lean's workers number their own requests from 0, so ids collide.
+            {"jsonrpc": "2.0", "id": 1, "method": "workspace/semanticTokens/refresh"},
+            {"jsonrpc": "2.0", "id": 1, "result": {"contents": "Nat : Type"}},
+        ]
+    )
+    monkeypatch.setattr(session, "_read_message", lambda timeout=5: next(messages))
+
+    assert session.hover(str(source), 0, 7) == "Nat : Type"
+    assert session.is_alive() is True
+
+
 def test_document_operations_are_serialized_per_session(tmp_path: Path, monkeypatch):
     first = tmp_path / "First.lean"
     second = tmp_path / "Second.lean"
