@@ -1128,19 +1128,27 @@ def test_rendered_probe_imports_modules_and_names_exact_local_modules() -> None:
     assert IMPACT_MODULE_MARKER in source
     assert "env.header.moduleData[moduleIdx.toNat]!.imports" in source
     assert "findOLean module" in source
-    assert "if false then" in source
+    # Neither the inventory checks nor module evidence run by default.
+    assert source.count("if false then") == 2
     assert "([] : List (System.FilePath × Name × String))" in source
-    # The root artifact directory turns module evidence on, with the walk of
-    # each `M.*` or `M.+` glob's directory.
-    evidence = render_impact_probe(
+    # The root artifact directory turns on the inventory checks, with the walk
+    # of each `M.*` or `M.+` glob's directory, and module evidence is separate.
+    checked = render_impact_probe(
         imports=["Demo"],
         project_modules=["Demo"],
         artifact_dir=Path("/lean/.lake/build/lib/lean"),
         glob_directories=[(Path("/lean/Demo"), "Demo", "Demo.*")],
     )
-    assert "if true then" in evidence
-    assert 'IO.FS.realPath "/lean/.lake/build/lib/lean"' in evidence
-    assert '[(System.FilePath.mk "/lean/Demo", Name.str (Name.anonymous) "Demo", "Demo.*")]' in evidence
+    assert (checked.count("if true then"), checked.count("if false then")) == (1, 1)
+    assert 'IO.FS.realPath "/lean/.lake/build/lib/lean"' in checked
+    assert '[(System.FilePath.mk "/lean/Demo", Name.str (Name.anonymous) "Demo", "Demo.*")]' in checked
+    evidence = render_impact_probe(
+        imports=["Demo"],
+        project_modules=["Demo"],
+        artifact_dir=Path("/lean/.lake/build/lib/lean"),
+        emit_module_evidence=True,
+    )
+    assert evidence.count("if true then") == 2
     with pytest.raises(SkeletonError, match="no imports"):
         render_impact_probe(imports=[], project_modules=["Demo"])
 
@@ -1830,6 +1838,22 @@ def test_cli_import_impact_binds_modules_to_captured_root_sources(
     assert code == 2
     assert output.out == ""
     assert message in output.err
+
+
+def test_cli_work_impact_has_the_probe_check_the_inventory(tmp_path: Path, monkeypatch, capsys) -> None:
+    # work impact runs the same inventory checks as import-impact, without
+    # asking for module evidence.
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _stub_lean_root(tmp_path)
+    calls = _stub_probe(monkeypatch)
+
+    code = cli.main(["work", "impact", _BASE_ID, str(project), "--lean-root", str(lean_root), "--json"])
+
+    assert code == 0, capsys.readouterr().err
+    (call,) = calls
+    artifact_dir = (lean_root / ".lake/build/lib/lean").resolve()
+    assert f"IO.FS.realPath {json.dumps(str(artifact_dir))}" in call["probe"]
+    assert (call["probe"].count("if true then"), call["probe"].count("if false then")) == (1, 1)
 
 
 def test_cli_import_impact_has_the_probe_walk_each_glob_directory(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -2569,15 +2593,19 @@ def test_import_impact_refuses_a_root_module_outside_the_captured_inventory(
             project, name, metadata=[f"declaration: {declaration}", "statement: formalized", f"lean: {lean}"]
         )
     command = ["work", "import-impact", "chapter/base", "Demo.Base", str(project), "--lean-root", str(root), "--json"]
+    revision = ["work", "impact", "chapter/base", str(project), "--lean-root", str(root), "--json"]
 
-    code = cli.main(command)
+    # Both commands run the same probe; without the refusal, work impact would
+    # also silently miss that Demo.Top's statement rests on Demo.Base.b.
+    for argv in (command, revision):
+        code = cli.main(argv)
 
-    output = capsys.readouterr()
-    assert code == 2
-    assert output.out == ""
-    # The project is built, so the refusal comes without the rebuild hint.
-    assert output.err.startswith("error: the impact probe loaded root-package module Demo.Mid.X from ")
-    assert "but the captured source inventory has no such module" in output.err
+        output = capsys.readouterr()
+        assert code == 2, argv
+        assert output.out == ""
+        # The project is built, so the refusal comes without the rebuild hint.
+        assert output.err.startswith("error: the impact probe loaded root-package module Demo.Mid.X from ")
+        assert "but the captured source inventory has no such module" in output.err
 
     # The same OLeans pass once the inventory captures Demo/Mid: the
     # dependency's and Lean's own modules lie outside the root artifacts.
@@ -2587,6 +2615,11 @@ def test_import_impact_refuses_a_root_module_outside_the_captured_inventory(
     output = capsys.readouterr()
     assert code == 0, output.err
     assert json.loads(output.out)["affected_modules"] == ["Demo", "Demo.Base", "Demo.Mid.X", "Demo.Top"]
+    code = cli.main(revision)
+
+    output = capsys.readouterr()
+    assert code == 0, output.err
+    assert [article["id"] for article in json.loads(output.out)["statement_impacted"]] == ["chapter/top"]
 
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
@@ -2636,18 +2669,22 @@ def test_import_impact_refuses_a_glob_module_the_inventory_lacks(tmp_path: Path,
     _write_article(project, "base.md", metadata=base)
     command = ["work", "import-impact", "chapter/base", "Demo.Base", str(project), "--lean-root", str(root), "--json"]
 
+    revision = ["work", "impact", "chapter/base", str(project), "--lean-root", str(root), "--json"]
+
     # The probe imports every glob module in the inventory, so one the
     # inventory lacks and nothing imports is never loaded; only the probe's
-    # walk of the glob directory, the same walk Lake makes, finds it.
+    # walk of the glob directory, the same walk Lake makes, finds it. Both
+    # commands run that probe.
     for name, module in skipped.items():
         (aside / name).rename(root / "Demo" / name)
-        code = cli.main(command)
+        codes = [cli.main(argv) for argv in (command, revision)]
         (root / "Demo" / name).rename(aside / name)
 
         output = capsys.readouterr()
-        assert code == 2, output.out
+        assert codes == [2, 2], output.out
         assert output.out == ""
-        assert output.err.startswith(f"error: the impact probe found root-package module {module} under glob Demo.*, ")
+        refusal = f"error: the impact probe found root-package module {module} under glob Demo.*, "
+        assert output.err.count(refusal) == 2
         assert "but loaded no captured source for it" in output.err
 
     code = cli.main(command)
@@ -2655,6 +2692,7 @@ def test_import_impact_refuses_a_glob_module_the_inventory_lacks(tmp_path: Path,
     output = capsys.readouterr()
     assert code == 0, output.err
     assert json.loads(output.out)["affected_modules"] == ["Demo", "Demo.Base"]
+    assert cli.main(revision) == 0, capsys.readouterr().err
 
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")

@@ -550,15 +550,17 @@ def render_impact_probe(
     project_modules: Iterable[str],
     artifact_dir: Path | None = None,
     glob_directories: Iterable[tuple[Path, str, str]] = (),
+    emit_module_evidence: bool = False,
 ) -> str:
     """Render the Lean program that records every project-local constant.
 
     Given ``artifact_dir``, the root package's Lean artifact directory, the
-    probe also emits module evidence and refuses a root-package module the
-    captured inventory lacks: a loaded module outside ``project_modules`` whose
-    OLean lies under ``artifact_dir``, or a module the probe did not load that
-    it finds by walking a ``glob_directories`` entry. Each entry is the
-    directory of an ``M.*`` or ``M.+`` glob, with ``M`` and the glob.
+    probe refuses a root-package module the captured inventory lacks: a loaded
+    module outside ``project_modules`` whose OLean lies under ``artifact_dir``,
+    or a module the probe did not load that it finds by walking a
+    ``glob_directories`` entry. Each entry is the directory of an ``M.*`` or
+    ``M.+`` glob, with ``M`` and the glob. ``emit_module_evidence`` also
+    records every loaded project module's source, artifact and direct imports.
     """
 
     modules = sorted(set(imports))
@@ -568,7 +570,8 @@ def render_impact_probe(
         imports="\n".join(f"import {module}" for module in modules),
         marker=IMPACT_MARKER,
         module_marker=IMPACT_MODULE_MARKER,
-        emit_module_evidence="false" if artifact_dir is None else "true",
+        check_inventory="false" if artifact_dir is None else "true",
+        emit_module_evidence="true" if emit_module_evidence else "false",
         artifact_dir=json.dumps(str(artifact_dir or ""), ensure_ascii=False),
         glob_directories=", ".join(
             f"(System.FilePath.mk {json.dumps(str(directory), ensure_ascii=False)}, {_lean_name(base)}, "
@@ -1379,8 +1382,9 @@ def _load_impact_evidence(
             render_impact_probe(
                 imports=imports,
                 project_modules=local_modules,
-                artifact_dir=_root_artifact_dir(libraries) if require_modules else None,
-                glob_directories=_glob_directories(libraries) if require_modules else (),
+                artifact_dir=_root_artifact_dir(libraries),
+                glob_directories=_glob_directories(libraries),
+                emit_module_evidence=require_modules,
             ),
             root,
             timeout=skeleton.DEFAULT_PROBE_TIMEOUT if timeout is None else timeout,
