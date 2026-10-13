@@ -99,7 +99,9 @@ def test_render_without_descriptor_capture_is_quiet_when_no_declaration_is_named
 
     assert status == 0
     assert "warning:" not in capsys.readouterr().out
-    assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["complete"]
+    manifest = json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))
+    assert manifest["complete"]
+    assert manifest["lean_source_revision"] == ""
 
 
 def test_render_explicit_lean_root_fails_closed_without_descriptor_capture(

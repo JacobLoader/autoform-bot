@@ -447,7 +447,7 @@ def _render_pages(
     groups = _group_nodes(graph)
     if not linker.indexed:
         # Only the declarations a page would link are lost. A blueprint that
-        # names none publishes the same site as a host that read the sources.
+        # names none publishes the same pages as a host that read the sources.
         report.unchecked = any(
             declaration_names(graph.nodes[node_id].lean or "")
             for node_ids in groups.values()
