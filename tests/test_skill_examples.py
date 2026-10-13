@@ -14,6 +14,7 @@ from autoform_cli.graph import load_graph
 from autoform_cli.lean import build_linker, declaration_names
 from autoform_cli.render import render_site
 from autoform_cli.status import derive
+from servers.repl.core import ALLOWED_IMPORTS
 
 
 _HREF = re.compile(r'href="([^"]+)"')
@@ -252,6 +253,9 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
     assert "no process-owned environment or proof-state handle survives" in servers
     assert "toolchain runs Lean's own header" in servers
     assert "unrecognized parser response fails closed" in servers
+    for root in sorted(ALLOWED_IMPORTS):
+        assert f"`{root}`" in servers, root
+    assert "(a plain `Init` import is ignored)" in servers
     assert "names that remain quoted or path-like after Lean parsing are refused" in servers
     assert "The allowlist is a policy check, not a sandbox" in servers
     assert "`Init` alone provides file and process IO" in servers

@@ -18,8 +18,10 @@ fingerprint, so an in-place upgrade gracefully replaces the older build.
 LSP sessions stay warm; each public REPL call gets a fresh child and no
 process-owned environment or proof-state handle survives the response. Before
 that child starts, the selected Lake toolchain runs Lean's own header parser,
-which the REPL also uses, on the submitted source. Every import it reports is
-validated, and a rejected or unrecognized parser response fails closed.
+which the REPL also uses, on the submitted source. Every import it reports must
+have one of the allowlisted roots `Mathlib`, `Aesop`, `Batteries`, or
+`LeanSearchClient` (a plain `Init` import is ignored), and a rejected or
+unrecognized parser response fails closed.
 Allowlisted imports require plain, nonempty canonical module components; names
 that remain quoted or path-like after Lean parsing are refused instead of being
 reduced to a misleading allowlisted root. The allowlist is a policy check, not a
