@@ -1405,11 +1405,10 @@ graph counts, reference invariants, roadmap audit, and optional local Lean
 targets. It exits zero only when every required check passes. Omitting
 `--lean-root` records an explicit advisory pass; supplying it performs only a
 lexical local-source check, not a Lean build, kernel check, or proof-honesty
-review. The Lean sources are captured once per run, and the runtime projection
-and the Lean target checks both read that one capture; sources that cannot be
-captured fail only the `lean targets` check, with the reason, while the other
-checks still judge the Markdown roadmap. The bundled example intentionally
-exits nonzero while its declared coverage still holds `MAPPED` rows.
+review. The Lean sources are captured once; a Lean root or source that cannot
+be read fails only the `lean targets` check, with the reason. The bundled
+example intentionally exits nonzero while its declared coverage still holds
+`MAPPED` rows.
 
 This command is strictly read-only and local. It does not invoke Git, GitHub,
 subprocesses, network services, claims, queues, reviews, recovery state,

@@ -13,7 +13,7 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path, PureWindowsPath
 
-from .audit import AuditFinding, audit_graph
+from .audit import AuditFinding, _lean_target_findings, audit_graph
 from .graph import GraphValidationError, load_graph
 from .lean import IndexedSourceSnapshot, index_failure_message, snapshot_project_sources
 from .runtime import (
@@ -26,14 +26,6 @@ from .runtime import (
     resolve_runtime_paths,
 )
 
-_LEAN_FINDING_CODES = frozenset(
-    {
-        "invalid-lean-root",
-        "lean-target-deprecated",
-        "lean-target-kind-mismatch",
-        "lean-target-not-found",
-    }
-)
 _CHECK_NAMES = ("blueprint", "runtime", "graph", "references", "audit", "lean targets")
 _QUOTED_STRING = re.compile(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"")
 
@@ -105,12 +97,14 @@ def diagnose_project(
         checks.append(DoctorCheck("graph", False, reason))
         return _blocked_result(checks, "graph validation failed", lean_root=lean_root)
 
-    # One capture serves the runtime projection and the audit, so both judge
-    # the same sources; when it fails, only the lean targets check says so.
+    # One capture serves the runtime projection and the Lean target checks, so
+    # both judge the same sources; a Lean failure fails only lean targets.
     resolved_lean_root, lean_root_valid = _resolve_lean_root(lean_root)
     lean_snapshot: IndexedSourceSnapshot | None = None
     lean_failure: DoctorCheck | None = None
-    if resolved_lean_root is not None:
+    if not lean_root_valid:
+        lean_failure = DoctorCheck("lean targets", False, "1 finding(s): invalid-lean-root")
+    elif resolved_lean_root is not None:
         try:
             lean_snapshot = snapshot_project_sources(resolved_lean_root)
         except OSError as error:
@@ -155,21 +149,14 @@ def diagnose_project(
         )
     )
 
-    audit = audit_graph(graph, lean_snapshot=lean_snapshot)
-    lean_findings = tuple(finding for finding in audit.findings if finding.code in _LEAN_FINDING_CODES)
-    if lean_root is not None and not lean_root_valid:
-        lean_findings = (
-            AuditFinding(".", "invalid-lean-root", "Lean root does not exist or is not a directory"),
-            *lean_findings,
-        )
-    roadmap_findings = tuple(finding for finding in audit.findings if finding.code not in _LEAN_FINDING_CODES)
-    checks.append(_finding_check("audit", roadmap_findings, "roadmap audit passed"))
-    if lean_root is None:
-        checks.append(DoctorCheck("lean targets", True, "not checked; no Lean root supplied"))
-    elif lean_failure is not None:
+    checks.append(_finding_check("audit", audit_graph(graph).findings, "roadmap audit passed"))
+    if lean_failure is not None:
         checks.append(lean_failure)
-    else:
+    elif lean_snapshot is not None:
+        lean_findings = tuple(_lean_target_findings(graph, lean_snapshot))
         checks.append(_finding_check("lean targets", lean_findings, "all asserted local Lean targets resolve"))
+    else:
+        checks.append(DoctorCheck("lean targets", True, "not checked; no Lean root supplied"))
     return _result(checks)
 
 
