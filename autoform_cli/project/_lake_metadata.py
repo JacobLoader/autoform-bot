@@ -9,7 +9,7 @@ orchestration and diagnostics remain in :mod:`autoform_cli.project.inspect`.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .catalog import canonical_git_url
 
@@ -60,10 +60,14 @@ class _Requirements:
 
 @dataclass(frozen=True, slots=True)
 class _LockedPackages:
-    """The package names a manifest or package-overrides file records, and its Mathlib entry."""
+    """The package names a manifest or package-overrides file records, and its Mathlib entry.
+
+    ``raw_url`` is that entry's Git URL before redaction. Only the staleness check reads it; it is never reported.
+    """
 
     names: frozenset[tuple[tuple[str, str | int], ...]]
     mathlib: MathlibLock | None
+    raw_url: str | None = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,8 +377,12 @@ def _reject_json_constant(constant: str) -> None:
     raise ValueError(f"Lake's JSON parser rejects {constant}")
 
 
-def _is_stale(requirement: dict, locked: MathlibLock) -> bool:
-    """Whether lakefile.toml asks for a different Mathlib source than the lock records."""
+def _is_stale(requirement: dict, locked: MathlibLock, locked_url: str | None) -> bool:
+    """Whether lakefile.toml asks for a different Mathlib source than the lock records.
+
+    ``locked_url`` is the lock's Git URL before redaction, so credentials, a query or a fragment take part in the
+    comparison, as they do in Lake's.
+    """
 
     kind, git, revision = _requirement_source(requirement)
     if kind is None:
@@ -383,7 +391,7 @@ def _is_stale(requirement: dict, locked: MathlibLock) -> bool:
         return True
     return locked.type == "git" and (
         revision != locked.input_rev
-        or (git is not None and canonical_git_url(_redact(git)) != canonical_git_url(locked.url))
+        or (git is not None and canonical_git_url(git) != canonical_git_url(locked_url))
     )
 
 

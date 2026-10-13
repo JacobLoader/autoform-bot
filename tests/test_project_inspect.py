@@ -490,6 +490,31 @@ def test_url_with_a_query_or_fragment_before_its_at_sign_keeps_only_its_scheme(
     assert not any(secret in output for secret in ("hunter2", "ter2", "alice"))
 
 
+@pytest.mark.parametrize(
+    ("requested", "locked"),
+    [
+        (MATHLIB_URL + "?token=a", MATHLIB_URL + "?token=b"),
+        (MATHLIB_URL.replace("://", "://token=a@"), MATHLIB_URL.replace("://", "://token=b@")),
+    ],
+    ids=["query", "credentials"],
+)
+def test_requirement_git_url_is_compared_with_the_lock_before_redaction(
+    tmp_path: Path, capsys, requested: str, locked: str
+) -> None:
+    # Lake compares the URLs as written, so equal redacted URLs do not make the lock current.
+    lakefile = LAKEFILE.replace('scope = "leanprover-community"', f'git = "{requested}"')
+    root = _project(tmp_path, lakefile=lakefile, manifest=(_mathlib(url=locked),))
+
+    result = inspect_project(root)
+    main(["project", "inspect", str(root)])
+    main(["project", "inspect", str(root), "--json"])
+    captured = capsys.readouterr()
+
+    assert "lake-manifest-stale" in _codes(result)
+    output = result.to_json() + captured.out + captured.err
+    assert "token=a" not in output and "token=b" not in output
+
+
 def test_escaped_mathlib_spelling_is_the_same_package(tmp_path: Path) -> None:
     lakefile = LAKEFILE.replace('name = "mathlib"', 'name = "«mathlib»"')
     result = inspect_project(_project(tmp_path, lakefile=lakefile, manifest=(_mathlib(name="«mathlib»"),)))

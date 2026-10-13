@@ -202,7 +202,7 @@ def _inspect_snapshot(
     mathlib = locked if manifest_valid and overrides_valid else None
     # Lake validates direct requirements against the root manifest before it
     # loads workspace overrides, so an override does not suppress this warning.
-    if locked is not None and requirement is not None and _is_stale(requirement, locked):
+    if locked is not None and requirement is not None and _is_stale(requirement, locked, manifest_packages.raw_url):
         diagnostics.append(
             ProjectDiagnostic(
                 "warning",
@@ -488,8 +488,12 @@ def _locked_mathlib(
         )
         return False, None
     # Lake inserts entries into a NameMap in order, so the last duplicate wins.
-    match = next((lock for name, lock in reversed(decoded) if name == _MATHLIB_NAME), None)
-    return True, _LockedPackages(frozenset(name for name, _lock in decoded), match)
+    match, entry = next(
+        ((lock, item) for (name, lock), item in zip(reversed(decoded), reversed(packages)) if name == _MATHLIB_NAME),
+        (None, None),
+    )
+    raw_url = entry["url"] if match is not None and match.type == "git" else None
+    return True, _LockedPackages(frozenset(name for name, _lock in decoded), match, raw_url)
 
 
 def _read_text(
