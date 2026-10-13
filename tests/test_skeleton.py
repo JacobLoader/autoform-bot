@@ -3475,12 +3475,19 @@ def test_packet_publication_rolls_back_both_trees_on_commit_failure(
     assert (passages / "old-marker").read_text(encoding="utf-8") == "old passages\n"
 
 
-class _ManifestFirstListing(list):
+class _ManifestFirstListing:
     """A directory listing that yields ``manifest.json`` first, the order that exposed packets."""
 
     def __init__(self, listing) -> None:
         with listing:
-            super().__init__(sorted(listing, key=lambda entry: entry.name.casefold() != PACKET_MANIFEST))
+            self._entries = iter(sorted(listing, key=lambda entry: entry.name.casefold() != PACKET_MANIFEST))
+
+    # Iterated with ``next`` by ``os.walk``, which ``shutil.rmtree`` uses without descriptor functions.
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._entries)
 
     def __enter__(self):
         return self
@@ -3494,6 +3501,8 @@ def test_packet_publication_never_shows_lean_capture_an_unmarked_packet(tmp_path
     unless it also holds its whole, recognized manifest, so a Lean capture never indexes a packet."""
 
     report = _fake_report(tmp_path / "fixture")
+    # Each node gets a passage, so the passage stage also holds folders that need its manifest.
+    report = replace(report, nodes=tuple(replace(node, passage="source") for node in report.nodes))
     lean_root = tmp_path / "lean"
     packets, passages = lean_root / "packets", lean_root / "passages"
     write_packets(report, packets, passages=passages)
@@ -3550,6 +3559,7 @@ def test_packet_publication_never_shows_lean_capture_an_unmarked_packet(tmp_path
     assert exposed == []
     assert not (packets / "old-marker").exists()
     assert (packets / "basics" / "determined" / "article.lean").is_file()
+    assert (passages / "basics" / "determined" / "passage.txt").is_file()
     assert sorted(path.name for path in lean_root.iterdir()) == ["packets", "passages"]
 
 
