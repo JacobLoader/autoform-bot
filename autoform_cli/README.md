@@ -101,6 +101,24 @@ target, `bridged` for a result introduced between source targets, and
 Frontmatter is optional. A container article that only supplies prose and
 placement needs none at all; only checked facts are recorded.
 
+Versioned implementation notes live outside the mathematical roadmap at
+`blueprint/.implementation-notes/<article_id>.md`, one file per article. The
+durable ID survives article moves. Claims keep independent workers from editing
+the same leaf's note; containers have no claims, and any worker may delete a
+note that `autoform audit` reports as stale or repair an orphaned one. Every
+command that loads the graph, including `autoform check`, rejects malformed,
+empty, symlinked, or orphaned notes; assign the article ID before creating its
+note. Parallel branches can orphan a note without a Git conflict, when one
+deletes or merges an article while another writes its note; a worker repairs
+that by moving anything still useful into the surviving article's note and
+deleting the orphan. When the article still exists but lost its `article_id`
+line, restore the line instead.
+Delete the file once its article is proved; for a container, delete it once
+every formalizable descendant is proved and there is at least one. The
+directory is hidden, so current and older renderers omit it from the site and
+publication hash without requiring an `AUTOFORM_REF` migration; `autoform
+audit` reports a note left behind after that point.
+
 ## Assertions and derived status
 
 An article asserts only facts a human or agent verified:
@@ -1161,11 +1179,13 @@ declares`, or for a `lean:` name outside the root package with `NAME [ID] is
 outside the root package and depends on X, which no module of the build
 declares`. The walk takes a mutual inductive block as one node, so each type and
 constructor of the block gets the axioms of the whole block. It imports the
-toolchain's `Init` along with the build, so a build that declares a core name of
-its own, such as `propext`, fails to load with `environment already contains
-'propext'` instead of passing the axiom allowlist, which compares names. Lean
-does let a theorem stand in for another module's axiom of the same name and
-type, which the module system relies on, so a theorem restating an axiom such as
+toolchain's `Init` along with the build, so a core name that the build declares
+itself, such as `propext`, cannot pass the axiom allowlist, which compares
+names: a differing declaration fails to load with `environment already contains
+'propext'`, and an identical copy of a theorem or of a Prop-valued axiom is
+merged with the toolchain's own constant. Lean does let a
+theorem stand in for another module's axiom of the same name and type, which the
+module system relies on, so a theorem restating an axiom such as
 `Lean.trustCompiler`, whose type is `True`, fails with `M declares a theorem N
 in place of the axiom K declares; rename one of them so the audit can run`. A
 root module whose first component names an entry of the toolchain's library,
@@ -1177,11 +1197,12 @@ module from the first search-path entry that holds its first component, and Lake
 lists dependency libraries before the root package's, so a dependency library
 that also provides a root module's first component could stand in for the root
 package's files. The audit refuses that with `root module M shares its first
-component R with another library on the search path; rename the module so the
-audit can run`. The workflow runs the probe with `LEAN_ABORT_ON_PANIC=1`, so a
-panic stops it instead of letting it continue with a default value. It also
-requires the probe's success line as its last line, so a probe that stops early
-fails the step even when it exits 0.
+component R with another library on the search path (DIRS); rename the module so
+the audit can run`, where DIRS lists the library directories that hold R. The
+workflow runs the probe with `LEAN_ABORT_ON_PANIC=1`, so a panic stops it
+instead of letting it continue with a default value. It also requires the
+probe's success line as its last line, so a probe that stops early fails the
+step even when it exits 0.
 
 The audit does not cover build-time IO. `lake build` runs root and dependency
 code, and the Lake configuration, on the same runner before the audit, so that
@@ -1244,6 +1265,9 @@ python3 .github/autoform_audit.py --open-statements /tmp/autoform-assumptions.js
 AUTOFORM_AUDIT_LEAN_PATH="$(lake env printenv LEAN_PATH)" LEAN_ABORT_ON_PANIC=1 \
   lean /tmp/autoform-probe.lean
 ```
+
+The audit passes only when `lean` exits 0 and the last line it prints is the
+`kernel trust clean ...` line; the workflow checks both.
 
 ## Claim contract
 
@@ -1330,9 +1354,10 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
      proof that cannot be repaired becomes exactly `sorry` under the open
      policy; otherwise delete the declaration and remove its article's
      `lean:`, `statement`, and `proof`, which works only when nothing else
-     uses it. When neither applies, the
-     revision is blocked: release the claims and report it. Record what
-     happened under `## Execution notes` of each touched article.
+     uses it. When neither applies, the revision is blocked: release the claims
+     and report it. Record what happened in the revision commit and report. Use
+     an implementation note only until [its deletion
+     rule](#articles-and-containment) applies.
 
    An unused statement dependency, which rules out the contained route, is
    re-reviewed under the revised meaning, X' on the expand route and X's new
@@ -1426,11 +1451,42 @@ from runtime snapshots and publication.
 
 `autoform render` publishes the book, derived progress, and dependency maps at
 project, chapter, nested-scope, local, and full-graph scales. It never reads a
-`graph.json` or an operational queue. Hidden files are omitted, while symlinks,
-credentials, logs, provider state, and agent/task state inside the blueprint
-cause the render to fail rather than silently leak them. Source and output
-directories must be disjoint.
+`graph.json` or an operational queue. Hidden files and directories, including
+`.implementation-notes`, are omitted, while a `.autoform` directory and
+symlinks, credentials, logs, provider state, and agent/task state outside hidden
+directories cause the render to fail rather than silently leak them. Source and
+output directories must be disjoint. A blueprint path that differs only in case
+from one render writes (`SUMMARY.md`, `dependencies.md`, `structure.md`,
+`publication.json`, `assets/`, `dependencies/`, `javascripts/`, `stylesheets/`,
+and the generated stylesheet, scripts and logo inside them) is refused, as are
+two blueprint paths that differ only in case or Unicode form, because they would
+collide on a case-insensitive filesystem.
 
-Every render writes `publication.json` with the source-content hash, Git ref,
-article and dependency counts, and available views. It contains no timestamp or
-absolute path, so identical inputs produce identical output files.
+Every render writes `publication.json` with blueprint and Lean-source hashes,
+Git ref, article and dependency counts, the site's file inventory, and available
+views. It contains no timestamp or absolute path, so identical inputs produce
+identical output files. Render reads the blueprint and the Lean sources once
+each and derives every page, link and hash from those bytes; an edit saved
+during a render waits for the next one. Repository links appear only when those
+bytes match one locally available Git commit, recorded by its full object ID; a
+clean checkout that Git converts on checkout still matches. Otherwise the render
+stays local, keeps source notes in the site, records no Git ref, and warns with
+the first mismatch.
+
+The site is built and synced in a hidden `.autoform-publication-*` directory
+beside the output, then swapped in with one atomic exchange (`renamex_np` on
+macOS, `renameat2` on Linux); renders committing into the same parent directory
+take turns when it can be locked. On filesystems without the exchange (NFS, SMB,
+9p or WSL2 `/mnt/c`, exFAT, sshfs) the previous site is first renamed to
+`.autoform-publication-backup-<name>`; if render dies between the two renames,
+the next render moves it back before anything else. Render replaces only an
+empty directory or a complete `autoform-publication/v2` site whose files match
+its inventory (macOS metadata files, `.DS_Store` and `._*`, are ignored in
+both), and refuses anything else, including a legacy v1 output, which you
+remove once by hand. A failed or refused render leaves the output as it was. A
+render killed mid-way can leave a `.autoform-publication-*` directory beside the
+output (the repository root for `--output site-src`); render never indexes it
+as Lean source and the setup ignore rules cover it, but it may hold the previous
+site, so inspect it before deleting it. (On macOS `fsync` does not flush the
+drive's cache, so a power loss can still lose the newest site.) Native Windows
+cannot run `autoform render`.
