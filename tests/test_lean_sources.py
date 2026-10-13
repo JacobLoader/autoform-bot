@@ -208,33 +208,20 @@ def test_hidden_lean_source_directories_are_indexed(tmp_path: Path) -> None:
     assert index_project(tmp_path).find("hiddenProof") is not None
 
 
-@pytest.mark.parametrize("directory", [".direnv", ".obsidian", ".trash", ".venv"])
+@pytest.mark.parametrize("parent", ["", "Nested/"])
+@pytest.mark.parametrize(
+    "directory",
+    [".direnv", ".git", ".lake", ".obsidian", ".trash", ".venv", "lake-packages", ".GIT", ".LAKE", ".ObSiDiAn"],
+)
 def test_known_tooling_directories_are_not_scanned(
     tmp_path: Path,
     directory: str,
+    parent: str,
 ) -> None:
     _index(tmp_path, "def canonical : Nat := 0\n")
-    ignored = tmp_path / directory
-    ignored.mkdir()
-    try:
-        (ignored / "external").symlink_to(tmp_path.parent, target_is_directory=True)
-    except OSError:
-        pytest.skip("symlinks are unavailable")
-
-    index = index_project(tmp_path)
-
-    assert index.find("canonical") is not None
-
-
-@pytest.mark.parametrize("directory", [".GIT", ".LAKE", ".ObSiDiAn"])
-def test_case_aliases_of_tooling_directories_are_not_scanned(
-    tmp_path: Path,
-    directory: str,
-) -> None:
-    _index(tmp_path, "def canonical : Nat := 0\n")
-    ignored = tmp_path / directory
-    ignored.mkdir()
-    (ignored / "Leak.lean").write_text("def leaked : Nat := 0\n")
+    ignored = tmp_path / parent / directory
+    ignored.mkdir(parents=True)
+    (ignored / "Leak.lean").write_text("def leaked : Nat := 0\n", encoding="utf-8")
 
     index = index_project(tmp_path)
 
