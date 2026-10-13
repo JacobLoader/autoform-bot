@@ -17,11 +17,11 @@ from tests.test_impact import _lean_toolchain_available
 
 
 _TEMPLATE = Path("autoform_cli/templates/github/autoform_audit.py")
-# The toolchain the real-Lean CI job installs. Under AUTOFORM_REQUIRE_REAL_LEAN_TESTS=1
-# the availability check fails instead of skipping.
+# The toolchain the real-Lean CI job installs.
 _TOOLCHAIN = (Path(__file__).parent / "fixtures" / "skeleton-project" / "lean-toolchain").read_text(
     encoding="utf-8"
 ).strip() + "\n"
+# Under AUTOFORM_REQUIRE_REAL_LEAN_TESTS=1 this raises instead of returning False.
 _REAL_LEAN = _lean_toolchain_available()
 
 
