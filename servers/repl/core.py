@@ -791,8 +791,8 @@ class LeanRepl:
         self.chunk_size: int = config.chunk_size
 
         self._process_lock = threading.Lock()
-        # stderr has no command boundary. Account for it monotonically across one
-        # process generation and retain only a bounded tail for diagnostics.
+        # Account for stderr monotonically across one process generation and
+        # retain only a bounded tail for diagnostics.
         self._stderr_bytes = 0
         self._stderr_tail = bytearray()
 
@@ -1194,8 +1194,7 @@ class LeanRepl:
             without destroying a response already captured.
 
             Returns whether stderr is currently empty and the process generation
-            remains within budget. EAGAIN is never treated as a command boundary;
-            the byte count and tail persist until the process is replaced.
+            remains within budget.
             """
             nonlocal stderr_open, stderr_poison_reason
 
@@ -1252,8 +1251,7 @@ class LeanRepl:
 
         # stdout and stderr are independent pipes. A child blocked on a full
         # stderr pipe may be unable to read its stdin, so service stderr fairly
-        # while writing instead of waiting on stdin alone. Any stderr observed
-        # here remains process-scoped; it is never assigned to this command.
+        # while writing instead of waiting on stdin alone.
         encoded_command = command.encode("utf-8")
         # Hold back the final blank-line byte. The REPL cannot dispatch this
         # command until that delimiter arrives, which gives us a stdout check
