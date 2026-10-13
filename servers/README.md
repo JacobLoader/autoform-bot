@@ -63,7 +63,9 @@ to start the runtime supplies those settings until it is stopped.
 `lake exe @repl/repl`, finds the REPL only through a require named `repl`. For a
 require with any other name, rename the require to `repl`, or restart the
 runtime with `LEAN_REPL_CMD="lake exe @<name>/repl"` for a require named
-`<name>`, which applies to every project the runtime serves.
+`<name>`, which applies to every project the runtime serves. A project with no
+REPL require, as `autoform project new` and `init` leave it, fails every REPL
+call until it adds one as the [setup skill](../skills/setup/SKILL.md) describes.
 When `LEAN_REPL_HEADER_CMD` is unset and `LEAN_REPL_CMD` starts with a `lake`
 executable, absolute or not, header validation reuses that executable without
 the command's other arguments. A container or other wrapper
