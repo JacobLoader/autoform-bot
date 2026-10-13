@@ -910,7 +910,8 @@ that asserted Mathlib facts are
 internally consistent, and that cited work resolves to local source
 material without escaping the blueprint. Coverage files are checked for broken
 links and explicitly declared gaps. With `--lean-root`, local declaration names
-and declaration kinds are checked against the Lean source index.
+and declaration kinds are checked against the Lean source index, along with the
+elaboration limits each target runs under.
 
 ### Structure
 
@@ -943,6 +944,27 @@ correlates with realized Lean length at r = -0.03 and prerequisite count at
 r = 0.25; its largest node is 1344 lines of Lean behind 66 words of prose and a
 single declaration name. Pre-formalization size estimates were considered and
 rejected on that evidence.
+
+### Elaboration limits
+
+With `--lean-root`, the audit reads the `maxHeartbeats`,
+`synthInstance.maxHeartbeats`, and `maxRecDepth` settings each resolved `lean:`
+target is elaborated under. `lean-target-unbounded-limit` reports a target with
+no heartbeat limit: a `set_option maxHeartbeats 0` or
+`set_option synthInstance.maxHeartbeats 0` in force at the declaration or inside
+its proof, which lets elaboration run indefinitely instead of failing.
+`lean-target-unscoped-limit` reports a target whose raised limit comes from a
+file- or section-wide `set_option`, which also covers every later declaration
+whether or not it needs one; Mathlib's `linter.style.setOption` rejects
+unscoped heartbeat limits for the same reason. A raised limit put on the
+declaration itself with `set_option ... in` is accepted Mathlib practice and is
+not reported. The pass is lexical: it follows `namespace`, `section`, `mutual`,
+and `end` nesting and treats an indented `set_option` as part of the proof
+above it.
+
+ATLAS v1, built with Autoform, shows what accumulates without this check: 901
+raised `maxHeartbeats` settings, 497 of them file- or section-wide and 9 of them
+`0` ([#260](https://github.com/facebookresearch/autoform-bot/issues/260)).
 
 The audit API also accepts an already compiled graph. Formalize may use its
 findings while working the Markdown frontier, but the audit itself never

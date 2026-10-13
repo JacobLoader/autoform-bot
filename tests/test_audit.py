@@ -565,6 +565,100 @@ def test_audit_reports_lean_targets_declared_deprecated(tmp_path: Path) -> None:
     }
 
 
+def test_audit_reports_unbounded_and_inherited_elaboration_limits(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    names = (
+        "fileWide",
+        "scoped",
+        "chained",
+        "consumer",
+        "afterConsumer",
+        "lowered",
+        "sectionWide",
+        "afterSection",
+        "unbounded",
+    )
+    for name in names:
+        _article(blueprint, f"{name}.md", declaration="theorem", statement="formalized", lean=f"Project.{name}")
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    source = [
+        "set_option maxHeartbeats 800000",
+        "",
+        "namespace Project",
+        "",
+        "theorem fileWide : True := trivial",
+        "",
+        "set_option maxHeartbeats 400000 in",
+        "-- `simp` needs the extra budget here",
+        "theorem scoped : True := trivial",
+        "",
+        "open Nat in",
+        "set_option synthInstance.maxHeartbeats 0 in",
+        "theorem chained : True := trivial",
+        "",
+        # A wrapper reaches only the next declaration.
+        "set_option maxHeartbeats 400000 in",
+        "theorem consumer : True := trivial",
+        "theorem afterConsumer : True := trivial",
+        "",
+        "section",
+        "set_option maxHeartbeats 100000",
+        "theorem lowered : True := by",
+        "  set_option maxHeartbeats 0 in",
+        "  trivial",
+        "end",
+        "",
+        "end Project",
+        "",
+        "noncomputable section",
+        "set_option maxRecDepth 4096",
+        "theorem Project.sectionWide : True := trivial",
+        "end",
+        "",
+        "-- set_option maxHeartbeats 0",
+        "theorem Project.afterSection : True := trivial",
+        "",
+        "set_option maxHeartbeats 0",
+        "set_option maxHeartbeats 0",
+        "theorem Project.unbounded : True := trivial",
+    ]
+    (lean_root / "Limits.lean").write_text("\n".join(source) + "\n", encoding="utf-8")
+
+    def unscoped(name: str, scope: str, option: str, line: int) -> tuple[str, str]:
+        return (
+            "lean-target-unscoped-limit",
+            f"lean target Project.{name} inherits the {scope}-wide `set_option {option}` at Limits.lean:{line}; "
+            f"put `set_option {option.split()[0]} N in` on the declarations that need it",
+        )
+
+    def unbounded(name: str, option: str, line: int) -> tuple[str, str]:
+        return (
+            "lean-target-unbounded-limit",
+            f"lean target Project.{name} has no {option} limit: `set_option {option} 0` at Limits.lean:{line}; "
+            "set a finite limit",
+        )
+
+    file_wide = ("file", "maxHeartbeats 800000", 1)
+    assert _finding_map(blueprint) == {}
+    assert _finding_map(blueprint, lean_root=lean_root) == {
+        "roadmap/fileWide.md": [unscoped("fileWide", *file_wide)],
+        "roadmap/chained.md": [
+            unbounded("chained", "synthInstance.maxHeartbeats", 12),
+            unscoped("chained", *file_wide),
+        ],
+        "roadmap/afterConsumer.md": [unscoped("afterConsumer", *file_wide)],
+        "roadmap/lowered.md": [unbounded("lowered", "maxHeartbeats", 22)],
+        "roadmap/sectionWide.md": [
+            unscoped("sectionWide", *file_wide),
+            unscoped("sectionWide", "section", "maxRecDepth 4096", 29),
+        ],
+        "roadmap/afterSection.md": [unscoped("afterSection", *file_wide)],
+        "roadmap/unbounded.md": [unbounded("unbounded", "maxHeartbeats", 37)],
+    }
+
+
 def test_audit_reads_deprecation_from_the_captured_source_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
