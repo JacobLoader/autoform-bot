@@ -104,12 +104,28 @@ def test_index_project_refuses_an_unusable_root(unusable_root: tuple[Path, str])
 
 
 # One case per command code path, each with a root that command misreported
-# before it called resolve_lean_root. render, skeleton and doctor are pinned in
+# before it called resolve_lean_root. The unknown-home cases pin that check and
+# render resolve the root before anything expands it, which would raise a raw
+# RuntimeError. render's other messages, skeleton and doctor are pinned in
 # tests/test_render.py, tests/test_skeleton.py and tests/test_doctor.py.
 @pytest.mark.parametrize(
     ("arguments", "unusable_root", "code", "expected"),
     [
         pytest.param(["check", "{blueprint}"], "missing", 1, "error: Lean sources could not be indexed: {}\n", id="check"),
+        pytest.param(
+            ["check", "{blueprint}"],
+            "unknown-home",
+            1,
+            "error: Lean sources could not be indexed: {}\n",
+            id="check-unknown-home",
+        ),
+        pytest.param(
+            ["render", "{blueprint}", "-o", "{site}"],
+            "unknown-home",
+            1,
+            "error: Lean sources could not be indexed: {}\n",
+            id="render-unknown-home",
+        ),
         pytest.param(["search", "{blueprint}", "result"], "unsearchable", 2, "error: {}\n", id="search"),
         pytest.param(["work", "list", "{blueprint}"], "unsearchable", 2, "error: {}\n", id="work-list"),
         pytest.param(["work", "impact", "result", "{blueprint}"], "missing", 2, "error: {}\n", id="work-impact"),
@@ -127,7 +143,7 @@ def test_command_names_the_unusable_lean_root(
 ) -> None:
     root, reason = unusable_root
     blueprint = _blueprint(tmp_path)
-    arguments = [argument.format(blueprint=blueprint) for argument in arguments]
+    arguments = [argument.format(blueprint=blueprint, site=tmp_path / "site") for argument in arguments]
 
     assert main([*arguments, "--lean-root", str(root)]) == code
 
