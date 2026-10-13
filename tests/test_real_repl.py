@@ -156,7 +156,7 @@ def test_header_parser_runs_on_the_minimum_supported_lean(code, is_prelude):
     # Lean. Before v4.30 both headers report one plain Init import, so only
     # isPrelude tells them apart.
     completed = subprocess.run(
-        LeanReplConfig().header_deps_command,
+        LeanReplConfig().header_command,
         cwd=MINIMUM_LEAN,
         input=code.encode(),
         capture_output=True,

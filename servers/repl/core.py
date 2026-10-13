@@ -564,6 +564,11 @@ def _split_imports_and_body(code: str) -> tuple[list[str], str, int]:
 # ---------------------------------------------------------------------------
 
 
+def default_header_command(lake: str = "lake") -> list[str]:
+    """Return the command that runs the header parser with the Lean ``lake`` selects."""
+    return [lake, "env", sys.executable, "-c", LEAN_HEADER_LAUNCHER, LEAN_HEADER_PARSER]
+
+
 @dataclass
 class LeanReplConfig:
     """Configuration for a Lean REPL instance."""
@@ -582,11 +587,7 @@ class LeanReplConfig:
     warmup_imports: frozenset[str] = WARMUP_IMPORTS
 
     repl_command: list[str] = field(default_factory=lambda: ["lake", "exe", "@repl/repl"])
-    header_deps_command: list[str] = field(
-        default_factory=lambda: [
-            "lake", "env", sys.executable, "-c", LEAN_HEADER_LAUNCHER, LEAN_HEADER_PARSER
-        ]
-    )
+    header_command: list[str] = field(default_factory=default_header_command)
 
     # stdout is capped per response. stderr has no protocol framing, so its
     # ceiling applies to the entire process generation and resets on restart.
@@ -1002,7 +1003,7 @@ class LeanRepl:
         env = _inherit_clean_env()
         env.update(self.config.env)
         self.process = subprocess.Popen(
-            self.config.header_deps_command,
+            self.config.header_command,
             cwd=self.cwd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,

@@ -16,7 +16,6 @@ import shlex
 import signal
 import socketserver
 import stat
-import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -46,7 +45,7 @@ from servers.lsp.server import (
     LeanLspSession,
     format_lsp_diagnostics,
 )
-from servers.repl.core import LEAN_HEADER_LAUNCHER, LEAN_HEADER_PARSER, format_repl_response
+from servers.repl.core import default_header_command, format_repl_response
 from servers.repl.pool import (
     DEFAULT_RAM_FRACTION,
     LeanReplPool,
@@ -192,14 +191,7 @@ class LeanRuntimeConfig:
             if not repl_header_command:
                 raise ValueError("LEAN_REPL_HEADER_CMD must not be empty")
         elif Path(repl_command[0]).name == "lake":
-            repl_header_command = (
-                repl_command[0],
-                "env",
-                sys.executable,
-                "-c",
-                LEAN_HEADER_LAUNCHER,
-                LEAN_HEADER_PARSER,
-            )
+            repl_header_command = tuple(default_header_command(repl_command[0]))
         else:
             raise ValueError(
                 "LEAN_REPL_HEADER_CMD must be set when LEAN_REPL_CMD does not "
@@ -842,7 +834,7 @@ class LeanRuntimeServices:
                     LeanReplPoolConfig(
                         cwd=str(project_dir),
                         repl_command=list(self.config.repl_command),
-                        header_deps_command=list(self.config.repl_header_command),
+                        header_command=list(self.config.repl_header_command),
                         num_repls=self.config.repl_workers_per_project,
                         max_retries=0,
                     )

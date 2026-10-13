@@ -1072,7 +1072,7 @@ def test_disposable_call_rejects_import_before_starting_a_process(monkeypatch):
         repl_core.LeanReplConfig(
             allowed_imports=frozenset({"Mathlib"}),
             warmup_imports=frozenset(),
-            header_deps_command=_fake_header_deps(_deps_json("Unsafe")),
+            header_command=_fake_header_command(_header_json("Unsafe")),
         )
     )
     starts = []
@@ -1085,7 +1085,7 @@ def test_disposable_call_rejects_import_before_starting_a_process(monkeypatch):
     assert repl.is_clean()
 
 
-def _fake_header_deps(stdout: str, returncode: int = 0, stderr: str = "") -> list[str]:
+def _fake_header_command(stdout: str, returncode: int = 0, stderr: str = "") -> list[str]:
     script = (
         "import sys; sys.stdin.read(); "
         f"sys.stdout.write({stdout!r}); sys.stderr.write({stderr!r}); "
@@ -1094,7 +1094,7 @@ def _fake_header_deps(stdout: str, returncode: int = 0, stderr: str = "") -> lis
     return [sys.executable, "-c", script]
 
 
-def _deps_json(
+def _header_json(
     *modules: str,
     errors: tuple[str, ...] = (),
     is_module: bool = False,
@@ -1112,7 +1112,7 @@ def _deps_json(
 
 
 def _header_modules(command: list[str], *, timeout: float = 10, **config) -> list[str]:
-    repl = repl_core.LeanRepl(repl_core.LeanReplConfig(header_deps_command=command, **config))
+    repl = repl_core.LeanRepl(repl_core.LeanReplConfig(header_command=command, **config))
     try:
         return list(repl._check_header("import Mathlib", time.monotonic() + timeout).modules)
     finally:
@@ -1120,8 +1120,8 @@ def _header_modules(command: list[str], *, timeout: float = 10, **config) -> lis
 
 
 def test_header_check_accepts_current_and_legacy_lean_schemas():
-    current = _fake_header_deps(_deps_json("Init", "Mathlib.Tactic"))
-    legacy = _fake_header_deps(
+    current = _fake_header_command(_header_json("Init", "Mathlib.Tactic"))
+    legacy = _fake_header_command(
         json.dumps(
             {
                 "imports": [
@@ -1142,7 +1142,7 @@ def test_header_check_accepts_current_and_legacy_lean_schemas():
 
 
 def test_default_header_parser_selects_lean_from_the_lake_toolchain():
-    command = repl_core.LeanReplConfig().header_deps_command
+    command = repl_core.LeanReplConfig().header_command
 
     assert command[:3] == ["lake", "env", sys.executable]
     assert "LEAN_SYSROOT" in command[-2]
@@ -1162,7 +1162,7 @@ def test_header_parser_launcher_ignores_a_path_shadow(tmp_path):
             "import sys\n"
             f"assert sys.argv[1:] == ['--run', {repl_core.LEAN_HEADER_PARSER!r}]\n"
             "sys.stdin.read()\n"
-            f"sys.stdout.write({_deps_json(module)!r})\n"
+            f"sys.stdout.write({_header_json(module)!r})\n"
         )
         path.chmod(0o755)
 
@@ -1184,32 +1184,32 @@ def test_header_parser_launcher_ignores_a_path_shadow(tmp_path):
 @pytest.mark.parametrize(
     ("command", "message"),
     [
-        (_fake_header_deps(_deps_json(errors=("bad header",))), "bad header"),
+        (_fake_header_command(_header_json(errors=("bad header",))), "bad header"),
         (
-            _fake_header_deps(_deps_json("Mathlib.«/abs/path/Secret»")),
+            _fake_header_command(_header_json("Mathlib.«/abs/path/Secret»")),
             "plain, nonempty module components",
         ),
         (
-            _fake_header_deps(_deps_json("Mathlib.«..».Secret")),
+            _fake_header_command(_header_json("Mathlib.«..».Secret")),
             "plain, nonempty module components",
         ),
         # parse_header.lean prints this name escaped. Unescaped, as Name.toString
         # prints it, its root would read as the allowlisted Mathlib.
         (
-            _fake_header_deps(_deps_json("«Mathlib.Unsafe».«x✝»")),
+            _fake_header_command(_header_json("«Mathlib.Unsafe».«x✝»")),
             "plain, nonempty module components",
         ),
-        (_fake_header_deps("", returncode=1, stderr="unknown package\n"), "unknown package"),
-        (_fake_header_deps("not json"), "unrecognized output"),
+        (_fake_header_command("", returncode=1, stderr="unknown package\n"), "unknown package"),
+        (_fake_header_command("not json"), "unrecognized output"),
         (
-            _fake_header_deps(
+            _fake_header_command(
                 '{"imports":[{"errors":[],"result":{"isModule":false,'
                 '"imports":[{"module":"Unsafe","isMeta":false}],"imports":[]}}]}'
             ),
             "unrecognized output",
         ),
         (
-            _fake_header_deps(
+            _fake_header_command(
                 '{"imports":[{"errors":[],"result":{"isModule":false,'
                 '"imports":[{"module":"Mathlib","isMeta":false,"importAll":NaN}]}}]}'
             ),
@@ -1223,20 +1223,20 @@ def test_header_check_fails_closed_on_rejected_or_unknown_output(command, messag
 
 
 @pytest.mark.parametrize(
-    ("deps_output", "expected_error"),
+    ("header_output", "expected_error"),
     [
-        (_deps_json("Mathlib", "Unsafe.Mod"), "Disallowed imports: Unsafe"),
-        (_deps_json(errors=("bad header",)), "Rejected Lean header: bad header"),
+        (_header_json("Mathlib", "Unsafe.Mod"), "Disallowed imports: Unsafe"),
+        (_header_json(errors=("bad header",)), "Rejected Lean header: bad header"),
     ],
 )
 def test_disposable_call_rejects_what_lean_reports_before_starting(
-    monkeypatch, deps_output, expected_error
+    monkeypatch, header_output, expected_error
 ):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(
             allowed_imports=frozenset({"Mathlib"}),
             warmup_imports=frozenset(),
-            header_deps_command=_fake_header_deps(deps_output),
+            header_command=_fake_header_command(header_output),
         )
     )
     monkeypatch.setattr(
@@ -1276,7 +1276,7 @@ def test_failed_header_command_reports_its_last_output_line(monkeypatch, stdout,
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(
             warmup_imports=frozenset(),
-            header_deps_command=_fake_header_deps(stdout, returncode=1, stderr=stderr),
+            header_command=_fake_header_command(stdout, returncode=1, stderr=stderr),
         )
     )
     monkeypatch.setattr(
@@ -1399,25 +1399,25 @@ _FAST_PARSER_ORDINARY = json.dumps(
 
 
 @pytest.mark.parametrize(
-    ("deps_output", "code", "frame"),
+    ("header_output", "code", "frame"),
     [
-        (_deps_json(), "#check Nat", "import Mathlib\n#check Nat"),
+        (_header_json(), "#check Nat", "import Mathlib\n#check Nat"),
         (
-            _deps_json("Mathlib.TraversalAnchor"),
+            _header_json("Mathlib.TraversalAnchor"),
             "import Mathlib.TraversalAnchor\n#check autoformWarmupMarker",
             "import Mathlib\nimport Mathlib.TraversalAnchor\n#check autoformWarmupMarker",
         ),
         (
-            _deps_json("REPL.Frontend", is_module=True),
+            _header_json("REPL.Frontend", is_module=True),
             "module\npublic import REPL.Frontend\n",
             "module\npublic import REPL.Frontend\n",
         ),
         (
-            _deps_json("REPL.Frontend", prelude=True),
+            _header_json("REPL.Frontend", prelude=True),
             "prelude\nimport REPL.Frontend\n#check Nat",
             "prelude\nimport REPL.Frontend\n#check Nat",
         ),
-        (_deps_json("Init", prelude=True), "prelude\nimport Init\n#check Nat", "prelude\nimport Init\n#check Nat"),
+        (_header_json("Init", prelude=True), "prelude\nimport Init\n#check Nat", "prelude\nimport Init\n#check Nat"),
         (_V4_27_INIT_ONLY % "false", "#check Nat", "import Mathlib\n#check Nat"),
         (
             _V4_27_INIT_ONLY % "true",
@@ -1429,12 +1429,12 @@ _FAST_PARSER_ORDINARY = json.dumps(
         (_FAST_PARSER_ORDINARY, "#check Nat", "#check Nat"),
     ],
 )
-def test_disposable_call_prefixes_warmup_only_onto_proven_ordinary_headers(monkeypatch, deps_output, code, frame):
+def test_disposable_call_prefixes_warmup_only_onto_proven_ordinary_headers(monkeypatch, header_output, code, frame):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(
             allowed_imports=frozenset({"Mathlib", "REPL", "Init"}),
             warmup_imports=frozenset({"Mathlib"}),
-            header_deps_command=_fake_header_deps(deps_output),
+            header_command=_fake_header_command(header_output),
         )
     )
     frames = []
@@ -1455,7 +1455,7 @@ def test_disposable_call_rejects_disallowed_warmup_import(monkeypatch):
         repl_core.LeanReplConfig(
             allowed_imports=frozenset({"Mathlib"}),
             warmup_imports=frozenset({"Unsafe.Prelude"}),
-            header_deps_command=_fake_header_deps(_deps_json()),
+            header_command=_fake_header_command(_header_json()),
         )
     )
     monkeypatch.setattr(
@@ -1493,7 +1493,7 @@ def test_header_check_never_spawns_after_its_shared_deadline(monkeypatch):
 
 def test_header_check_rejects_output_over_the_combined_limit():
     with pytest.raises(ValueError, match="output exceeded 1024 bytes"):
-        _header_modules(_fake_header_deps("x" * 1025), max_buffer_bytes=1024)
+        _header_modules(_fake_header_command("x" * 1025), max_buffer_bytes=1024)
 
 
 def test_header_check_reaps_descendants_after_success(tmp_path):
@@ -1506,7 +1506,7 @@ def test_header_check_reaps_descendants_after_success(tmp_path):
         f"open({str(process_record)!r}, 'w').write(json.dumps("
         "{'child': child.pid, 'group': os.getpgrp()})); "
         "sys.stdin.read(); "
-        f"sys.stdout.write({_deps_json('Mathlib')!r})"
+        f"sys.stdout.write({_header_json('Mathlib')!r})"
     )
 
     assert _header_modules([sys.executable, "-c", script]) == ["Mathlib"]
@@ -1517,7 +1517,7 @@ def test_header_check_reaps_descendants_after_success(tmp_path):
 def _repl_failing_first_header_cleanup(monkeypatch, error: BaseException):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(
-            warmup_imports=frozenset(), header_deps_command=_fake_header_deps(_deps_json("Mathlib"))
+            warmup_imports=frozenset(), header_command=_fake_header_command(_header_json("Mathlib"))
         )
     )
     real_kill = repl_core._kill_subprocesses
