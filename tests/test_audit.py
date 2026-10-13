@@ -830,6 +830,9 @@ def test_audit_reports_a_placeholder_statement(tmp_path: Path, prose: str) -> No
         "[ ](missing.md)",
         "![diagram](diagram.png)",
         "...",
+        "Setting\n=======",
+        "> ### Setting",
+        "- ### Setting",
     ],
 )
 def test_audit_reports_a_statement_that_shows_a_reader_nothing(tmp_path: Path, prose: str) -> None:
@@ -942,7 +945,7 @@ def test_statement_findings_say_what_is_wrong(tmp_path: Path) -> None:
     findings = _finding_map(blueprint)
 
     assert findings["roadmap/chapter/none.md"] == [
-        ("missing-statement-text", "formalizable article has no statement text before its first H2 section")
+        ("missing-statement-text", "formalizable article has no statement text outside its H2 sections")
     ]
     assert findings["roadmap/chapter/todo.md"] == [
         (
