@@ -1120,6 +1120,10 @@ _LEAN_TYPE_MISMATCH = (
             "use `lake update repl` to update it\n",
             "parse_header.lean:14:47: error: Application type mismatch: The argument",
         ),
+        # Without an error line on stdout, stderr's last non-empty line wins...
+        ("stdout first\nstdout last\n", "stderr first\nstderr last\n\n", "stderr last"),
+        # ...and stdout's last non-empty line is used only when stderr has none.
+        ("stdout first\nstdout last\n\n", "", "stdout last"),
         ("", "", "exit status 1"),
         ("", "x" * 1000, "x" * repl_core._HEADER_FAILURE_DETAIL_CHARS + "..."),
     ],
