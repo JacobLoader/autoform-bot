@@ -336,7 +336,7 @@ def test_the_verified_toolchains_are_the_one_the_probe_was_tested_on() -> None:
     assert VERIFIED_TOOLCHAINS == ("leanprover/lean4:v4.34.1",)
 
 
-@pytest.mark.parametrize("toolchain", ["leanprover/lean4:v4.27.0", "leanprover/lean4:v4.35.0", "leanprover/lean4:nightly-2026-01-01", "v4.34.1"])
+@pytest.mark.parametrize("toolchain", ["leanprover/lean4:v4.27.0", "leanprover/lean4:v4.35.0", "leanprover/lean4:nightly-2026-01-01"])
 def test_a_toolchain_the_probe_was_not_verified_on_is_refused_before_any_probe_runs(tmp_path: Path, toolchain: str) -> None:
     root = library(tmp_path)
     (root / "lean-toolchain").write_text(toolchain + "\n", encoding="utf-8")
@@ -349,6 +349,16 @@ def test_a_toolchain_the_probe_was_not_verified_on_is_refused_before_any_probe_r
         f"the package pins {toolchain}, but the library probe is verified only on leanprover/lean4:v4.34.1"
     )
     assert runner.calls == []
+
+
+@pytest.mark.parametrize("toolchain", ["v4.34.1", "4.34.1", "leanprover/lean4:4.34.1"])
+def test_a_spelling_elan_resolves_to_the_verified_toolchain_is_indexed_as_written(tmp_path: Path, toolchain: str) -> None:
+    root = library(tmp_path)
+    (root / "lean-toolchain").write_text(toolchain + "\n", encoding="utf-8")
+
+    index = generate_index(root, runner=runner_for()).index
+
+    assert index.header.lean_toolchain == toolchain
 
 
 def test_a_refused_toolchain_exits_2_and_writes_nothing(tmp_path: Path, capsys) -> None:

@@ -1194,7 +1194,7 @@ pin the Autoform revision: the bytes of an index depend on it.
 
 The generator is tested on Lean 4.34.1 only and is not supported on Windows: it
 exits 2, before it runs Lean, when the package's `lean-toolchain` is not
-`leanprover/lean4:v4.34.1`.
+`leanprover/lean4:v4.34.1` or a spelling elan resolves to it, such as `v4.34.1`.
 The index's `package` is the name in the package's `lake-manifest.json`, else in its
 `lakefile.toml`, and the command exits 2 when neither gives one; the folder it
 is checked out in never matters.

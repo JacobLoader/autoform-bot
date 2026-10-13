@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 import tomli
 
 from .. import skeleton
+from ..project.catalog import canonical_lean_toolchain
 from ..skeleton import SkeletonError, lean_libraries
 from .declarations import ProbeOutputError, classify, parse_probe_output, starts_with_module
 from .index import (
@@ -208,7 +209,7 @@ def generate_index(
         raise GenerateError(str(error)) from None
     if pins.lean_toolchain is None:
         raise GenerateError("the package has no lean-toolchain")
-    if pins.lean_toolchain not in VERIFIED_TOOLCHAINS:
+    if canonical_lean_toolchain(pins.lean_toolchain) not in VERIFIED_TOOLCHAINS:
         raise GenerateError(
             f"the package pins {_cut(pins.lean_toolchain)}, but the library probe is verified only on "
             + ", ".join(VERIFIED_TOOLCHAINS)
