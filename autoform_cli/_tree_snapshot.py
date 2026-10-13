@@ -577,8 +577,10 @@ class TreeSelection:
     folder may change, vanish or be rebuilt during the capture, provided it
     still holds no selected entry and no recognized marker when it is
     rechecked.  Such folders leave no trace in the snapshot or its revisions.
-    This mode needs directory-descriptor traversal and does not record omitted
-    entries.
+    Its end-of-folder recheck skips an unselected entry that keeps the
+    ``(dev, ino, file type)`` the scan saw, so ``include`` and ``placeholder``
+    must not depend on other mode bits.  This mode needs directory-descriptor
+    traversal and does not record omitted entries.
     """
 
     include: Callable[[PurePosixPath, int], bool]
@@ -1217,16 +1219,17 @@ def capture_directory_descriptor(
             directories.append(_DirectoryRecord(relative, identity, names))
         _tree_snapshot_checkpoint("after-directory-list", relative)
         relevant_names: list[str] = []
-        # Listed names the scan dropped because they had vanished; the relist at
-        # the end of this folder's scan examines them again.
-        vanished: set[str] = set()
+        # The (dev, ino, file type) the scan saw for each listed name it did not
+        # keep.  The relist at the end of this folder's scan examines again any
+        # unkept name whose entry differs, or has no record (new since the
+        # listing, or dropped because it had vanished).
+        unkept: dict[str, tuple[int, int, int]] = {}
         for name in names:
             child_relative = f"{relative}/{name}" if relative else name
             try:
                 metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
             except OSError as error:
                 if _vanished_in_selected_capture(error, selection):
-                    vanished.add(name)
                     continue
                 raise _entry_error(error, child_relative)
             child_identity = _stat_signature(metadata)
@@ -1234,6 +1237,7 @@ def capture_directory_descriptor(
             if stat.S_ISDIR(metadata.st_mode):
                 if not selection.descend(relative_path):
                     if selected_only:
+                        unkept[name] = _stable_entry_identity(child_identity)
                         continue
                     entries.append(_EntryRecord(child_relative, child_identity, ignored=True))
                     if selection.record_omitted:
@@ -1247,7 +1251,6 @@ def capture_directory_descriptor(
                         raise _PermissionDenied(child_relative) from error
                     except OSError as error:
                         if selected_only and error.errno in _VANISHED_ERRNOS:
-                            vanished.add(name)
                             continue
                         raise _entry_error(error, child_relative)
                     opened = os.fstat(child_descriptor)
@@ -1260,6 +1263,7 @@ def capture_directory_descriptor(
                     # Selected mode checks the name binding only for a folder it
                     # records; any other folder is examined again where it is now.
                     if not scan(child_descriptor, child_relative, depth + 1, opened_identity):
+                        unkept[name] = _stable_entry_identity(opened_identity)
                         continue
                     if moved:
                         raise _TreeChanged(child_relative)
@@ -1288,6 +1292,7 @@ def capture_directory_descriptor(
                     relevant_names.append(name)
                     continue
                 if selected_only:
+                    unkept[name] = _stable_entry_identity(child_identity)
                     continue
                 entries.append(_EntryRecord(child_relative, child_identity, ignored=True))
                 kind = (
@@ -1318,7 +1323,6 @@ def capture_directory_descriptor(
                     raise _TreeChanged(child_relative) from error
                 except OSError as error:
                     if _vanished_in_selected_capture(error, selection):
-                        vanished.add(name)
                         continue
                     raise _entry_error(error, child_relative)
                 budget.add_file_bytes(len(data))
@@ -1331,7 +1335,6 @@ def capture_directory_descriptor(
                     )
                 except OSError as error:
                     if _vanished_in_selected_capture(error, selection):
-                        vanished.add(name)
                         continue
                     raise _entry_error(error, child_relative)
                 if link_identity != child_identity:
@@ -1347,9 +1350,8 @@ def capture_directory_descriptor(
                 descriptor,
                 relative=relative,
                 depth=depth,
-                listed=names,
                 kept=relevant_names,
-                dropped=vanished,
+                unkept=unkept,
                 selection=selection,
                 budget=recheck_budget,
             )
@@ -1615,20 +1617,21 @@ def _recheck_scanned_directory(
     *,
     relative: str,
     depth: int,
-    listed: tuple[str, ...],
     kept: list[str],
-    dropped: set[str],
+    unkept: dict[str, tuple[int, int, int]],
     selection: TreeSelection,
     budget: _CaptureBudget,
 ) -> None:
     """Relist a folder once its scan ends, in selected-entry mode.
 
-    Its recorded names must still be present, it must not have become opaque,
-    and every name that appeared since its scan listing, or that the scan
-    dropped as vanished, must hold no selected entry.  This is the
-    selected-mode form of the strict end-of-folder relist, and like it bounds
-    the undetected window of this folder to the time between this relist and
-    its verification.
+    Its recorded names must still be present and it must not have become
+    opaque.  Every other name must still be the entry the scan saw and did
+    not keep, by ``(dev, ino, file type)``, or must now hold no selected entry
+    or marker; names that appeared since the scan's listing and names the
+    scan dropped as vanished have no recorded identity.
+    This is the selected-mode form of the strict end-of-folder relist, and
+    like it bounds the undetected window of this folder to the time between
+    this relist and its verification.
     """
 
     names = _relist_directory(
@@ -1642,17 +1645,28 @@ def _recheck_scanned_directory(
     for name in kept:
         if name not in current:
             raise _TreeChanged(f"{relative}/{name}" if relative else name)
-    scanned = set(listed)
+    recorded = set(kept)
     for name in names:
-        if name not in scanned or name in dropped:
-            _require_no_inputs(
-                descriptor,
-                name,
-                relative=relative,
-                depth=depth,
-                selection=selection,
-                budget=budget,
-            )
+        if name in recorded:
+            continue
+        examined = unkept.get(name)
+        if examined is not None:
+            try:
+                metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            except OSError:
+                # _require_no_inputs decides what this failure means.
+                pass
+            else:
+                if _stable_entry_identity(_stat_signature(metadata)) == examined:
+                    continue
+        _require_no_inputs(
+            descriptor,
+            name,
+            relative=relative,
+            depth=depth,
+            selection=selection,
+            budget=budget,
+        )
 
 
 def _relist_directory(

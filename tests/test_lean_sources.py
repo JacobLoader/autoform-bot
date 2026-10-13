@@ -1123,6 +1123,113 @@ def test_lean_entry_dropped_as_vanished_and_back_at_its_folders_relist_is_caught
     assert error.value.relative == expected
 
 
+def _before_relist_of(
+    monkeypatch: pytest.MonkeyPatch,
+    folder: str,
+    action: Callable[[], None],
+) -> list[str]:
+    """Run `action` once, just before the end-of-scan relist of `folder`."""
+    fired: list[str] = []
+    original_recheck = tree_snapshot_module._recheck_scanned_directory
+
+    def recheck(descriptor, *, relative: str, **kwargs):
+        if relative == folder and not fired:
+            fired.append(relative)
+            action()
+        return original_recheck(descriptor, relative=relative, **kwargs)
+
+    monkeypatch.setattr(tree_snapshot_module, "_recheck_scanned_directory", recheck)
+    return fired
+
+
+def _unselected_entry(entry: Path, kind: str) -> None:
+    if kind == "folder":
+        entry.mkdir()
+        (entry / "notes.txt").write_text("notes\n", encoding="utf-8")
+    else:
+        entry.symlink_to("user@host.1234:1700000000")
+
+
+@pytest.mark.parametrize(
+    ("name", "kind"),
+    [("X.lean", "folder"), (".#A.lean", "link")],
+    ids=["folder-to-file", "lock-link-to-file"],
+)
+def test_unselected_entry_turned_lean_file_before_its_folders_relist_is_caught(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    kind: str,
+) -> None:
+    # The scan lists and examines the entry, an X.lean folder holding no Lean
+    # input or an Emacs lock link, and keeps nothing for it.  Before Proj's
+    # end-of-scan relist it becomes a regular .lean file, and it is gone
+    # before verification, so only that relist can see the file.
+    _require_descriptor_capture()
+    _index(tmp_path, "def a : Nat := 0\n", "Proj/A.lean")
+    entry = tmp_path / "Proj" / name
+    _unselected_entry(entry, kind)
+
+    def turn_into_lean_file() -> None:
+        if kind == "folder":
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+        entry.write_text("def appeared : Nat := 0\n", encoding="utf-8")
+
+    fired = _before_relist_of(monkeypatch, "Proj", turn_into_lean_file)
+    _on_checkpoint(
+        monkeypatch,
+        "before-final-verification",
+        lambda: entry.unlink(missing_ok=True),
+    )
+    sources = open_project_sources(tmp_path)
+    try:
+        with pytest.raises(TreeChangedError) as error:
+            sources.capture()
+    finally:
+        sources.close()
+
+    assert fired == ["Proj"]
+    assert error.value.relative == f"Proj/{name}"
+
+
+@pytest.mark.parametrize(
+    ("name", "kind"),
+    [("site", "folder"), (".#A.lean", "link")],
+    ids=["folder-to-file", "lock-link-to-link"],
+)
+def test_unselected_entry_replaced_by_unselected_entry_before_its_folders_relist_is_tolerated(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    kind: str,
+) -> None:
+    # The entry changes identity before Proj's relist, but what replaces it
+    # (a regular file named site, another lock link) is still unselected.
+    _require_descriptor_capture()
+    _index(tmp_path, "def a : Nat := 0\n", "Proj/A.lean")
+    entry = tmp_path / "Proj" / name
+    _unselected_entry(entry, kind)
+
+    def replace() -> None:
+        if kind == "folder":
+            shutil.rmtree(entry)
+            entry.write_text("<html></html>\n", encoding="utf-8")
+        else:
+            entry.unlink()
+            entry.symlink_to("user@host.5678:1700000001")
+
+    fired = _before_relist_of(monkeypatch, "Proj", replace)
+    binds = _count_binds(monkeypatch)
+
+    snapshot = snapshot_project_sources(tmp_path)
+
+    assert fired == ["Proj"]
+    assert len(binds) == 1
+    assert snapshot.index.find("a") is not None
+
+
 @pytest.mark.parametrize("change", ["moved-away", "replaced-by-copy"])
 def test_relevant_folder_changed_during_its_parents_scan_is_caught(
     tmp_path: Path,
