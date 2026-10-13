@@ -429,9 +429,10 @@ def _lean_tree_selection(
         descend=lambda path: not _lean_path_is_excluded(path, excluded),
         record_omitted=False,
         limits=limits,
-        # Only Lean inputs, markers and the folders holding them must stay
-        # stable; generated sites, editor temporaries and other folders under
-        # the root may change while sources are captured.
+        # Only Lean inputs and the folders holding them must stay stable;
+        # generated sites, skeleton output, nested checkouts, editor
+        # temporaries and other folders under the root may change while
+        # sources are captured.
         unselected_may_change=True,
         opaque_markers=(
             # A nested Git checkout is another source tree.  Treat the

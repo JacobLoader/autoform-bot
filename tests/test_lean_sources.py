@@ -34,6 +34,7 @@ from autoform_cli.lean import (
     snapshot_project_sources,
     strip_lean_comments,
 )
+from autoform_cli.skeleton import _output_identity, _replace_outputs
 
 _SOURCE = """import Mathlib
 
@@ -1514,11 +1515,14 @@ def test_nested_checkouts_are_not_indexed_as_project_source(
 
 
 @pytest.mark.parametrize("replacement_kind", ["file", "directory"])
-def test_nested_checkout_marker_replacement_retries_one_generation(
+def test_nested_checkout_marker_replacement_is_captured_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     replacement_kind: str,
 ) -> None:
+    # A nested checkout contributes no Lean input, so its marker is not kept:
+    # swapping a clone's .git folder for a worktree's .git file (or back)
+    # leaves it hidden and is not a change.
     _index(tmp_path)
     worker = tmp_path / "vendor/worker"
     (worker / "Project").mkdir(parents=True)
@@ -1553,9 +1557,47 @@ def test_nested_checkout_marker_replacement_retries_one_generation(
     snapshot = snapshot_project_sources(tmp_path)
 
     assert changed
-    assert len(attempts) == 2
+    assert len(attempts) == 1
     assert snapshot.index.find("toplevel") is not None
     assert snapshot.index.find("nestedWorker") is None
+
+
+def test_nested_checkout_recloned_during_capture_is_captured_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_descriptor_capture()
+    _index(tmp_path)
+    worker = tmp_path / "vendor/worker"
+
+    def clone(revision: int) -> None:
+        (worker / ".git").mkdir(parents=True)
+        (worker / ".git/HEAD").write_text(f"ref: refs/heads/r{revision}\n", encoding="utf-8")
+        (worker / "Project").mkdir()
+        (worker / "Project/Worker.lean").write_text(
+            f"def nestedWorker{revision} : Nat := 0\n",
+            encoding="utf-8",
+        )
+
+    clone(0)
+    reclones = 0
+
+    def reclone() -> None:
+        nonlocal reclones
+        reclones += 1
+        shutil.rmtree(worker)
+        clone(reclones)
+
+    _on_checkpoint(monkeypatch, "before-final-verification", reclone)
+    attempts = _count_binds(monkeypatch)
+
+    snapshot = snapshot_project_sources(tmp_path)
+
+    assert reclones == 1
+    assert len(attempts) == 1
+    assert snapshot.index.find("toplevel") is not None
+    assert snapshot.index.find("nestedWorker0") is None
+    assert snapshot.index.find("nestedWorker1") is None
 
 
 @pytest.mark.parametrize(
@@ -2923,10 +2965,15 @@ def test_managed_output_descendant_churn_does_not_retry_source_capture(
     assert snapshot.index.find("generated") is None
 
 
-def test_managed_marker_verification_never_reenumerates_opaque_siblings(
+def test_managed_marker_folder_is_listed_once_per_look_and_never_entered(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Skeleton output contributes no Lean input, so verification looks at it
+    # as at any unrecorded folder: one listing to recognize its marker, and
+    # no further.  The scan's listing is the only other one; the end-of-scan
+    # relist skips the folder because its identity did not change.  Growth
+    # inside it now counts against capture limits as a fresh scan would.
     _index(tmp_path, "def authored : Nat := 0\n", "Authored.lean")
     generated = tmp_path / "review-packets"
     generated.mkdir()
@@ -2938,37 +2985,44 @@ def test_managed_marker_verification_never_reenumerates_opaque_siblings(
     original_scandir = tree_snapshot_module.os.scandir
     opaque_scans = 0
 
-    def one_opaque_scan(path):
+    def count_opaque_scans(path):
         nonlocal opaque_scans
         if isinstance(path, int):
             metadata = os.fstat(path)
             if (metadata.st_dev, metadata.st_ino) == generated_identity:
                 opaque_scans += 1
-                if opaque_scans > 1:
-                    raise AssertionError("opaque siblings were re-enumerated")
         return original_scandir(path)
+    original_read = tree_snapshot_module._read_file
+
+    def refuse_descendant(parent_descriptor, name, expected, *, max_bytes=None):
+        if name == "Packet.lean":
+            raise AssertionError("managed descendants must not be opened")
+        return original_read(parent_descriptor, name, expected, max_bytes=max_bytes)
 
     def add_irrelevant_churn() -> None:
         for index in range(100):
             (generated / f"junk-{index}").write_text("junk\n")
 
-    monkeypatch.setattr(tree_snapshot_module.os, "scandir", one_opaque_scan)
+    monkeypatch.setattr(tree_snapshot_module.os, "scandir", count_opaque_scans)
+    monkeypatch.setattr(tree_snapshot_module, "_read_file", refuse_descendant)
     _on_checkpoint(monkeypatch, "before-final-verification", add_irrelevant_churn, relative="")
+    attempts = _count_binds(monkeypatch)
 
-    snapshot = snapshot_project_sources(
-        tmp_path,
-        limits=TreeCaptureLimits(max_entries=4),
-    )
+    snapshot = snapshot_project_sources(tmp_path)
 
-    assert opaque_scans == 1
+    assert opaque_scans == 2
+    assert len(attempts) == 1
     assert snapshot.index.find("authored") is not None
     assert snapshot.index.find("generated") is None
 
 
-def test_managed_output_marker_change_retries_the_whole_capture(
+def test_managed_output_marker_rewrite_is_captured_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Skeleton output contributes no Lean input, so its manifest is not kept:
+    # a rewrite that is still recognized leaves the folder hidden and is not
+    # a change.
     _index(tmp_path, "def authored : Nat := 0\n", "Authored.lean")
     generated = tmp_path / "review-packets"
     generated.mkdir()
@@ -2995,9 +3049,129 @@ def test_managed_output_marker_change_retries_the_whole_capture(
     snapshot = snapshot_project_sources(tmp_path)
 
     assert changed
-    assert len(attempts) == 2
+    assert len(attempts) == 1
     assert snapshot.index.find("authored") is not None
     assert snapshot.index.find("generated") is None
+
+
+_PACKETS_MANIFEST = '{"kind":"packets","packets":[],"schema":"autoform-skeleton-packets/v2"}\n'
+
+
+def _packets_output(folder: Path, revision: int) -> None:
+    folder.mkdir()
+    (folder / "manifest.json").write_text(_PACKETS_MANIFEST, encoding="utf-8")
+    (folder / "Packet.lean").write_text(
+        f"def generated{revision} : Nat := 0\n",
+        encoding="utf-8",
+    )
+
+
+def test_skeleton_output_republished_during_capture_is_captured_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_descriptor_capture()
+    _index(tmp_path, "def authored : Nat := 0\n", "Authored.lean")
+    generated = tmp_path / "review-packets"
+    _packets_output(generated, 0)
+    publications = 0
+
+    def republish() -> None:
+        # Publish as skeleton output does: stage beside the output, move the
+        # old output to a backup, rename the stage into place, drop the backup.
+        nonlocal publications
+        publications += 1
+        stage = tmp_path / f".review-packets.autoform-stage-{publications}"
+        _packets_output(stage, publications)
+        _replace_outputs([(generated, stage, _output_identity(generated))])
+
+    _on_checkpoint(monkeypatch, "before-final-verification", republish)
+    attempts = _count_binds(monkeypatch)
+
+    snapshot = snapshot_project_sources(tmp_path)
+
+    assert publications == 1
+    assert len(attempts) == 1
+    assert snapshot.index.find("authored") is not None
+    assert snapshot.index.find("generated0") is None
+    assert snapshot.index.find("generated1") is None
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["Authored.lean", "review-packets"]
+
+
+@pytest.mark.parametrize("marker", ["manifest", "checkout"])
+def test_marker_folder_removed_during_capture_is_captured_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    marker: str,
+) -> None:
+    _require_descriptor_capture()
+    _index(tmp_path, "def authored : Nat := 0\n", "Authored.lean")
+    hidden = tmp_path / "hidden"
+    _packets_output(hidden, 0)
+    if marker == "checkout":
+        (hidden / "manifest.json").unlink()
+        (hidden / ".git").mkdir()
+
+    _on_checkpoint(monkeypatch, "before-final-verification", lambda: shutil.rmtree(hidden, True))
+    attempts = _count_binds(monkeypatch)
+
+    snapshot = snapshot_project_sources(tmp_path)
+
+    assert not hidden.exists()
+    assert len(attempts) == 1
+    assert snapshot.index.find("authored") is not None
+    assert snapshot.index.find("generated0") is None
+
+
+@pytest.mark.parametrize(
+    ("look", "shape"),
+    [
+        ("verification", "replaced"),
+        ("verification", "unmarked-in-place"),
+        ("relist", "replaced"),
+    ],
+)
+def test_marker_folder_exposing_lean_files_is_caught(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    look: str,
+    shape: str,
+) -> None:
+    _require_descriptor_capture()
+    _index(tmp_path, "def authored : Nat := 0\n", "Authored.lean")
+    generated = tmp_path / "review-packets"
+    _packets_output(generated, 0)
+    held = tmp_path / ".held"
+
+    def expose() -> None:
+        if shape == "unmarked-in-place":
+            (generated / "manifest.json").unlink()
+            return
+        generated.rename(held)
+        generated.mkdir()
+        (generated / "Packet.lean").write_text("def exposed : Nat := 0\n", encoding="utf-8")
+
+    def restore() -> None:
+        shutil.rmtree(generated)
+        held.rename(generated)
+
+    if look == "verification":
+        _on_checkpoint(monkeypatch, "before-final-verification", expose)
+    else:
+        # Exposed only while the root's end-of-scan relist looks, and hidden
+        # again by verification, so only that relist can see it.
+        fired = _before_relist_of(monkeypatch, "", expose)
+        _on_checkpoint(monkeypatch, "before-final-verification", restore)
+    sources = open_project_sources(tmp_path)
+    try:
+        with pytest.raises(TreeChangedError) as error:
+            sources.capture()
+    finally:
+        sources.close()
+
+    assert error.value.relative == "review-packets/Packet.lean"
+    if look == "relist":
+        assert fired == [""]
 
 
 def test_managed_marker_at_requested_root_never_prunes_the_root(tmp_path: Path) -> None:

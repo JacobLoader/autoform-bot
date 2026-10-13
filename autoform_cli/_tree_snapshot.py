@@ -5,19 +5,25 @@ directory is opened by name through its parent when it is walked, listed again
 when its walk ends, and reopened the same way by a final verification.
 Captured files are rechecked by their full ``stat`` signature and directories
 by ``(dev, ino, file type)``.  By default every descended directory must also
-keep its full list of names.  A selection with ``unselected_may_change``
-narrows this to what it selects: only selected entries, directories with a
-recognized opaque marker, and the directories that contain them are compared;
-any other directory may change, vanish or be rebuilt, and is only required to
-hold no selected entry or marker when it is listed again.  The contents of a
-directory with a recognized marker are not examined; the marker is rechecked
-by signature and bytes, or only by entry kind for a presence-only marker.
+keep its full list of names.  The contents of a directory with a recognized
+opaque marker are never examined; by default its marker is rechecked by
+signature and bytes, or only by entry kind for a presence-only marker.  A
+selection with ``unselected_may_change`` narrows this to what it selects:
+only selected entries and the directories that contain them are compared.
+Any other directory, including one hidden by a recognized marker, may change,
+vanish or be rebuilt; whatever is at its path when it is looked at again must
+be hidden by a recognized marker or hold no selected entry.
 
 A capture is not one atomic generation.  An entry that is present at a path
 only after the walk last looked at that path (when it listed or relisted the
 parent, or examined the entry) and before verification reached it is not
 seen, so coordinated moves across directories between those checks can yield
-a set of entries that no single state had.
+a set of entries that no single state had.  Verification lists each directory
+once, before it walks that directory's children, so an entry that appears in
+a directory after that listing is not seen either.  With
+``unselected_may_change`` a recognized marker is subject to the same windows,
+so a directory that is hidden by a marker whenever it is looked at may expose
+selected entries in between.
 """
 
 from __future__ import annotations
@@ -572,11 +578,14 @@ class TreeSelection:
     By default a capture proves the whole descended tree stable: every
     descended folder keeps its identity and full list of names.  With
     ``unselected_may_change`` it proves stable only what it selected: the
-    entries ``include`` or ``placeholder`` capture, folders with a recognized
-    opaque marker, and the folders that contain either.  Any other descended
-    folder may change, vanish or be rebuilt during the capture, provided it
-    still holds no selected entry and no recognized marker when it is
-    rechecked.  Such folders leave no trace in the snapshot or its revisions.
+    entries ``include`` or ``placeholder`` capture and the folders that
+    contain them.  Any other descended folder may change, vanish or be
+    rebuilt during the capture, provided that whatever is at its path when it
+    is rechecked is hidden by a recognized opaque marker or holds no selected
+    entry.  A folder hidden by a marker contributes no selected entry, so it
+    is treated the same way and its marker is not kept.  Such folders leave
+    no trace in the snapshot or its revisions, and ``opaque_directories``
+    stays empty.
     Its end-of-folder recheck skips an unselected entry that keeps the
     ``(dev, ino, file type)`` the scan saw, so ``include`` and ``placeholder``
     must not depend on other mode bits.  This mode needs directory-descriptor
@@ -1175,10 +1184,11 @@ def capture_directory_descriptor(
         """Record one folder and its descendants; return whether it was recorded.
 
         By default every descended folder is recorded.  With
-        ``selection.unselected_may_change`` only relevant folders are: the root, a
-        folder with a recognized marker, and a folder that directly holds a
-        selected entry or a relevant folder.  Unselected entries leave no record,
-        and an entry that vanishes before it is examined is treated as absent.
+        ``selection.unselected_may_change`` only relevant folders are: the root
+        and a folder that directly holds a selected entry or a relevant folder.
+        Unselected entries and folders hidden by a recognized marker leave no
+        record, and an entry that vanishes before it is examined is treated as
+        absent.
         """
 
         selected_only = selection.unselected_may_change
@@ -1202,6 +1212,11 @@ def capture_directory_descriptor(
                 depth=depth + 1,
             )
         if marker is not None:
+            if selected_only:
+                # A folder hidden by a recognized marker contributes no input, so
+                # nothing about it is kept; the rechecks only require whatever
+                # is at its path to be hidden by a marker or to hold no input.
+                return False
             directories.append(_DirectoryRecord(relative, identity, (), marker))
             marker_relative = f"{relative}/{marker.name}"
             entries.append(
@@ -1624,8 +1639,9 @@ def _recheck_scanned_directory(
 ) -> None:
     """Relist a folder once its scan ends, in selected-entry mode.
 
-    Its recorded names must still be present and it must not have become
-    opaque.  Every other name must still be the entry the scan saw and did
+    Its recorded names must still be present and, if it recorded any, it
+    must not have become hidden by a recognized marker; a folder that kept
+    nothing may.  Every other name must still be the entry the scan saw and did
     not keep, by ``(dev, ino, file type)``, or must now hold no selected entry
     or marker; names that appeared since the scan's listing and names the
     scan dropped as vanished have no recorded identity.
@@ -1641,6 +1657,10 @@ def _recheck_scanned_directory(
         selection=selection,
         budget=budget,
     )
+    if names is None:
+        if kept:
+            raise _TreeChanged(relative)
+        return
     current = set(names)
     for name in kept:
         if name not in current:
@@ -1676,11 +1696,11 @@ def _relist_directory(
     depth: int,
     selection: TreeSelection,
     budget: _CaptureBudget,
-) -> tuple[str, ...]:
+) -> tuple[str, ...] | None:
     """List a folder again for a selected-mode recheck, as the scan lists it.
 
-    A recognized marker means the folder became opaque after it was scanned,
-    which changes what is captured.  Limit, name and permission failures
+    Return ``None`` when a recognized marker now hides the folder; the caller
+    decides whether that hides recorded entries.  Limit, name and permission failures
     become changes too: the scan already passed this folder, so the retry's
     scan decides whether such a condition lasts.
     """
@@ -1695,7 +1715,7 @@ def _relist_directory(
                 depth=depth,
             )
             if marker is not None:
-                raise _TreeChanged(relative)
+                return None
             return names
         return _capture_directory_names(descriptor, budget=budget, depth=depth + 1)
     except _PermissionDenied as error:
@@ -1713,13 +1733,14 @@ def _require_no_inputs(
     selection: TreeSelection,
     budget: _CaptureBudget,
 ) -> None:
-    """Prove that whatever is now at *name* holds no selected entry or marker.
+    """Prove that whatever is now at *name* contributes no selected entry.
 
     *relative* and *depth* describe the parent folder.  Nothing here is
     compared with the scan: a missing entry holds nothing, an unselected entry
-    contributes nothing, and a folder may be new or rebuilt as long as it is
-    not opaque and, recursively, holds nothing selected.  Folders the scan
-    never descends into are not opened.
+    contributes nothing, a folder hidden by a recognized marker contributes
+    nothing, and any other folder may be new or rebuilt as long as it
+    recursively holds nothing selected.  Folders the scan never descends into
+    are not opened.
     """
 
     child_relative = f"{relative}/{name}" if relative else name
@@ -1762,6 +1783,8 @@ def _require_no_inputs(
             selection=selection,
             budget=budget,
         )
+        if names is None:
+            return
         for child_name in names:
             _require_no_inputs(
                 child_descriptor,
@@ -1949,6 +1972,9 @@ def _verify_snapshot(
             selection=selection,
             budget=budget,
         )
+        if names is None:
+            # A marker now hides the selected entries recorded here.
+            raise _TreeChanged(relative)
         current = set(names)
         for name in expected.names:
             if name not in current:

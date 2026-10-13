@@ -853,10 +853,34 @@ def test_verification_recognizes_markers_like_the_scan(
     assert ("X" in snapshot.directories) is holds_selected_entry
     assert snapshot.opaque_directories == ()
 
+    def add_late_entry() -> None:
+        (folder / "late.src").write_bytes(b"late\n")
+
     def recognize() -> None:
         (folder / "m.json").write_bytes(b"ok")
+        add_late_entry()
 
-    _at_final_verification(monkeypatch, recognize)
+    changes = [recognize]
+    _at_final_verification(monkeypatch, lambda: changes[0]())
+    if not holds_selected_entry:
+        # An unrecognized marker name hides nothing: a selected entry that
+        # appears beside it is a change.
+        changes[0] = add_late_entry
+        with pytest.raises(TreeChangedError) as error:
+            _capture(tmp_path, selection, portable=False, monkeypatch=monkeypatch)
+        assert error.value.relative == "X/late.src"
+        (folder / "late.src").unlink()
+        # A folder that holds nothing selected may become hidden by a marker
+        # the walk recognizes from its bytes, as the scan does; it then
+        # contributes nothing, whatever it holds.
+        changes[0] = recognize
+        snapshot = _capture(tmp_path, selection, portable=False, monkeypatch=monkeypatch)
+        assert snapshot.directories == ("",)
+        assert snapshot.files == (("kept.src", b"kept\n"),)
+        assert snapshot.opaque_directories == ()
+        return
+
+    # A marker that now hides recorded selected entries is a change.
     with pytest.raises(TreeChangedError) as error:
         _capture(tmp_path, selection, portable=False, monkeypatch=monkeypatch)
 
