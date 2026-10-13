@@ -1230,6 +1230,71 @@ def test_unselected_entry_replaced_by_unselected_entry_before_its_folders_relist
     assert snapshot.index.find("a") is not None
 
 
+@pytest.mark.parametrize("kind", ["file", "folder"])
+def test_entry_moved_away_at_its_open_and_back_at_its_folders_relist_is_caught(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+) -> None:
+    # Between the scan's lookup of the entry and its open, the entry is moved
+    # out of the tree.  The scan then drops B.lean as vanished, or walks the
+    # folder holding only notes.txt that took D's place and keeps nothing.
+    # Just before Proj's end-of-scan relist the original entry, with the
+    # inode the lookup saw, is moved back, and it loses its Lean input before
+    # verification.  Only that relist can see it, and only if the scan
+    # recorded no identity for the dropped file and the opened folder's
+    # identity, not the lookup's, for the walked one.
+    _require_descriptor_capture()
+    root = tmp_path / "root"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _index(root, "def a : Nat := 0\n", "Proj/A.lean")
+    if kind == "file":
+        name = "B.lean"
+        _index(root, "def b : Nat := 0\n", "Proj/B.lean")
+        expected = "Proj/B.lean"
+    else:
+        name = "D"
+        _index(root, "def n : Nat := 0\n", "Proj/D/New.lean")
+        expected = "Proj/D/New.lean"
+    entry = root / "Proj" / name
+
+    def move_away() -> None:
+        entry.rename(outside / "original")
+        if kind == "folder":
+            entry.mkdir()
+            (entry / "notes.txt").write_text("notes\n", encoding="utf-8")
+
+    def move_back() -> None:
+        if kind == "folder":
+            entry.rename(outside / "replacement")
+        (outside / "original").rename(entry)
+
+    def remove_lean_input() -> None:
+        (entry if kind == "file" else entry / "New.lean").unlink()
+
+    opened = _on_open_after_checkpoint(
+        monkeypatch,
+        "after-directory-list",
+        name,
+        move_away,
+        directory=kind == "folder",
+        relative="Proj",
+    )
+    relisted = _before_relist_of(monkeypatch, "Proj", move_back)
+    _on_checkpoint(monkeypatch, "before-final-verification", remove_lean_input)
+    sources = open_project_sources(root)
+    try:
+        with pytest.raises(TreeChangedError) as error:
+            sources.capture()
+    finally:
+        sources.close()
+
+    assert opened == [name]
+    assert relisted == ["Proj"]
+    assert error.value.relative == expected
+
+
 @pytest.mark.parametrize("change", ["moved-away", "replaced-by-copy"])
 def test_relevant_folder_changed_during_its_parents_scan_is_caught(
     tmp_path: Path,
