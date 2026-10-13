@@ -157,45 +157,24 @@ def resolve_lean_root(lean_root: str | Path) -> Path:
     searched.
     """
 
-    root, is_directory = _inspect_lean_root(lean_root)
-    if not is_directory:
-        raise LeanSourceError("Lean root does not exist or is not a directory")
-    return root
-
-
-def _inspect_lean_root(lean_root: str | Path) -> tuple[Path, bool]:
-    """Resolve *lean_root* and report whether it is a directory.
-
-    A root that does not exist or is not a directory is reported, not raised;
-    any other reason it cannot be inspected raises :class:`LeanSourceError`.
-    """
-
     try:
         root = directory_binding.lexical_absolute_path(lean_root).resolve()
+        metadata = os.stat(root)
     except RuntimeError as error:
         # An unknown ~user, or before Python 3.13 a symbolic link loop.
-        raise LeanSourceError(_UNRESOLVABLE_LEAN_ROOT) from error
+        raise LeanSourceError("Lean root cannot be resolved") from error
+    except (FileNotFoundError, NotADirectoryError) as error:
+        raise LeanSourceError("Lean root does not exist or is not a directory") from error
+    except PermissionError as error:
+        raise LeanSourceError("permission denied while resolving the Lean root") from error
     except (OSError, ValueError) as error:
-        raise _lean_root_failure(error) from error
-    try:
-        metadata = os.stat(root)
-    except (FileNotFoundError, NotADirectoryError):
-        return root, False
-    except (OSError, ValueError) as error:
-        raise _lean_root_failure(error) from error
-    return root, stat.S_ISDIR(metadata.st_mode)
-
-
-_UNRESOLVABLE_LEAN_ROOT = "Lean root cannot be resolved"
-
-
-def _lean_root_failure(error: Exception) -> LeanSourceError:
-    if isinstance(error, PermissionError):
-        return LeanSourceError("permission denied while resolving the Lean root")
-    if isinstance(error, OSError) and error.errno == errno.ELOOP:
-        # Python 3.13 and later resolve a symbolic link loop without raising.
-        return LeanSourceError(_UNRESOLVABLE_LEAN_ROOT)
-    return LeanSourceError("Lean root cannot be inspected")
+        if getattr(error, "errno", None) == errno.ELOOP:
+            # Python 3.13 and later resolve a symbolic link loop without raising.
+            raise LeanSourceError("Lean root cannot be resolved") from error
+        raise LeanSourceError("Lean root cannot be inspected") from error
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise LeanSourceError("Lean root does not exist or is not a directory")
+    return root
 
 
 def index_project(
@@ -203,14 +182,11 @@ def index_project(
 ) -> SourceIndex:
     """Scan ``*.lean`` beneath *root* and index declarations by full name.
 
-    A root that does not exist or is not a directory has an empty index; any
-    other reason the root cannot be inspected raises :class:`LeanSourceError`.
+    Raises :class:`LeanSourceError` when the root cannot be used or its
+    sources cannot be read.
     """
-    root_path, is_directory = _inspect_lean_root(root)
-    if not is_directory:
-        digest = hashlib.sha256(b"autoform-lean-source-index/v1\0").hexdigest()
-        return SourceIndex(root=root_path, declarations={}, source_digest=digest)
     requested_root = directory_binding.lexical_absolute_path(root)
+    root_path = resolve_lean_root(root)
     remapped_exclusions = tuple(
         _remap_resolved_root_exclusion(requested_root, root_path, value)
         for value in exclude_roots
@@ -981,10 +957,10 @@ def build_linker(
             resolved_repository_url = repository_url or detected_url
             resolved_ref = detected_ref
         else:
-            index = snapshot_project_sources(
+            index = index_project(
                 resolved_root,
                 exclude_roots=remapped_exclusions,
-            ).index
+            )
     if detect_missing and resolved_repository_url is None:
         resolved_repository_url = detect_repository_url(resolved_root)
     assert index is not None

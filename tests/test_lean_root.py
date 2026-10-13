@@ -1,4 +1,4 @@
-"""Every command that takes a Lean root names why an unusable root was refused."""
+"""An unusable Lean root is refused with a reason that names no host path."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from autoform_cli.__main__ import main
+from autoform_cli.lean import LeanSourceError, resolve_lean_root
 
 _MISSING = "Lean root does not exist or is not a directory"
 _UNSEARCHABLE = "permission denied while resolving the Lean root"
@@ -76,34 +77,56 @@ def unusable_root(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[tu
             locked.chmod(0o755)
 
 
-_EVERY_ROOT = pytest.mark.parametrize(
-    "unusable_root", ["missing", "file", "unsearchable", "unknown-home", "loop"], indirect=True
-)
-# audit, search and work named a missing or non-directory root correctly before
-# resolve_lean_root (tests/test_search.py and tests/test_work.py pin the
-# missing case), so they are checked only for the roots they misreported.
-_MISREPORTED_ROOT = pytest.mark.parametrize("unusable_root", ["unsearchable", "unknown-home", "loop"], indirect=True)
-
-
 def _without_host_paths(text: str, tmp_path: Path) -> bool:
     return str(tmp_path) not in text and str(tmp_path.resolve()) not in text
 
 
-@_EVERY_ROOT
-def test_check_names_the_unusable_lean_root(
-    tmp_path: Path, unusable_root: tuple[Path, str], capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    "unusable_root", ["missing", "file", "unsearchable", "unknown-home", "loop"], indirect=True
+)
+def test_resolve_lean_root_names_why_the_root_is_unusable(unusable_root: tuple[Path, str]) -> None:
+    root, reason = unusable_root
+
+    with pytest.raises(LeanSourceError) as caught:
+        resolve_lean_root(root)
+
+    assert str(caught.value) == reason
+
+
+# One case per command code path, each with a root that command misreported
+# before it called resolve_lean_root. render, skeleton and doctor are pinned in
+# tests/test_render.py, tests/test_skeleton.py and tests/test_doctor.py.
+@pytest.mark.parametrize(
+    ("arguments", "unusable_root", "code", "expected"),
+    [
+        pytest.param(["check", "{blueprint}"], "missing", 1, "error: Lean sources could not be indexed: {}\n", id="check"),
+        pytest.param(["search", "{blueprint}", "result"], "unsearchable", 2, "error: {}\n", id="search"),
+        pytest.param(["work", "list", "{blueprint}"], "unsearchable", 2, "error: {}\n", id="work-list"),
+        pytest.param(["work", "impact", "result", "{blueprint}"], "missing", 2, "error: {}\n", id="work-impact"),
+        pytest.param(["unused-hypotheses", "{blueprint}"], "missing", 2, "error: {}\n", id="unused-hypotheses"),
+    ],
+    indirect=["unusable_root"],
+)
+def test_command_names_the_unusable_lean_root(
+    tmp_path: Path,
+    unusable_root: tuple[Path, str],
+    capsys: pytest.CaptureFixture[str],
+    arguments: list[str],
+    code: int,
+    expected: str,
 ) -> None:
     root, reason = unusable_root
     blueprint = _blueprint(tmp_path)
+    arguments = [argument.format(blueprint=blueprint) for argument in arguments]
 
-    assert main(["check", str(blueprint), "--lean-root", str(root)]) == 1
+    assert main([*arguments, "--lean-root", str(root)]) == code
 
     captured = capsys.readouterr()
-    assert captured.out == f"error: Lean sources could not be indexed: {reason}\n"
+    assert captured.out + captured.err == expected.format(reason)
     assert _without_host_paths(captured.out + captured.err, tmp_path)
 
 
-@_MISREPORTED_ROOT
+@pytest.mark.parametrize("unusable_root", ["unsearchable"], indirect=True)
 def test_audit_names_the_unusable_lean_root(
     tmp_path: Path, unusable_root: tuple[Path, str], capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -115,113 +138,4 @@ def test_audit_names_the_unusable_lean_root(
     captured = capsys.readouterr()
     findings = json.loads(captured.out)["findings"]
     assert {"article_path": ".", "code": "invalid-lean-root", "reason": reason} in findings
-    assert _without_host_paths(captured.out + captured.err, tmp_path)
-
-
-@_EVERY_ROOT
-@pytest.mark.parametrize("ref", [None, "main"])
-def test_render_names_the_unusable_lean_root(
-    tmp_path: Path,
-    unusable_root: tuple[Path, str],
-    capsys: pytest.CaptureFixture[str],
-    ref: str | None,
-) -> None:
-    root, reason = unusable_root
-    blueprint = _blueprint(tmp_path)
-    output = tmp_path / "site"
-    arguments = ["render", str(blueprint), "-o", str(output), "--lean-root", str(root)]
-    if ref is not None:
-        arguments += ["--repository-url", "https://github.com/owner/repo", "--ref", ref]
-
-    assert main(arguments) == 1
-
-    captured = capsys.readouterr()
-    assert captured.out == f"error: Lean sources could not be indexed: {reason}\n"
-    assert _without_host_paths(captured.out + captured.err, tmp_path)
-    assert not output.exists()
-
-
-@_MISREPORTED_ROOT
-def test_search_names_the_unusable_lean_root(
-    tmp_path: Path, unusable_root: tuple[Path, str], capsys: pytest.CaptureFixture[str]
-) -> None:
-    root, reason = unusable_root
-    blueprint = _blueprint(tmp_path)
-
-    assert main(["search", str(blueprint), "result", "--lean-root", str(root)]) == 2
-
-    captured = capsys.readouterr()
-    assert captured.err == f"error: {reason}\n"
-    assert _without_host_paths(captured.out + captured.err, tmp_path)
-
-
-@_MISREPORTED_ROOT
-def test_work_names_the_unusable_lean_root(
-    tmp_path: Path, unusable_root: tuple[Path, str], capsys: pytest.CaptureFixture[str]
-) -> None:
-    root, reason = unusable_root
-    blueprint = _blueprint(tmp_path)
-
-    assert main(["work", "list", str(blueprint), "--lean-root", str(root)]) == 2
-
-    captured = capsys.readouterr()
-    assert captured.err == f"error: {reason}\n"
-    assert _without_host_paths(captured.out + captured.err, tmp_path)
-
-
-@_EVERY_ROOT
-def test_skeleton_checks_the_lean_root_before_the_lake_files(
-    tmp_path: Path, unusable_root: tuple[Path, str], capsys: pytest.CaptureFixture[str]
-) -> None:
-    root, reason = unusable_root
-    blueprint = _blueprint(tmp_path)
-
-    assert main(["skeleton", str(blueprint), "--lean-root", str(root)]) == 2
-
-    captured = capsys.readouterr()
-    assert captured.err == f"error: {reason}\n"
-    assert _without_host_paths(captured.out + captured.err, tmp_path)
-
-
-@_EVERY_ROOT
-def test_unused_hypotheses_checks_the_lean_root_before_the_lake_files(
-    tmp_path: Path, unusable_root: tuple[Path, str], capsys: pytest.CaptureFixture[str]
-) -> None:
-    root, reason = unusable_root
-    blueprint = _blueprint(tmp_path)
-
-    assert main(["unused-hypotheses", str(blueprint), "--lean-root", str(root)]) == 2
-
-    captured = capsys.readouterr()
-    assert captured.err == f"error: {reason}\n"
-    assert _without_host_paths(captured.out + captured.err, tmp_path)
-
-
-@_EVERY_ROOT
-def test_impact_checks_the_lean_root_before_the_lake_files(
-    tmp_path: Path, unusable_root: tuple[Path, str], capsys: pytest.CaptureFixture[str]
-) -> None:
-    root, reason = unusable_root
-    blueprint = _blueprint(tmp_path)
-
-    assert main(["work", "impact", "result", str(blueprint), "--lean-root", str(root)]) == 2
-
-    captured = capsys.readouterr()
-    assert captured.err == f"error: {reason}\n"
-    assert _without_host_paths(captured.out + captured.err, tmp_path)
-
-
-@_EVERY_ROOT
-def test_doctor_reports_why_the_lean_root_is_unusable(
-    tmp_path: Path, unusable_root: tuple[Path, str], capsys: pytest.CaptureFixture[str]
-) -> None:
-    root, reason = unusable_root
-    blueprint = _blueprint(tmp_path)
-
-    assert main(["doctor", str(blueprint), "--lean-root", str(root), "--json"]) == 1
-
-    captured = capsys.readouterr()
-    checks = {check["name"]: check for check in json.loads(captured.out)["checks"]}
-    assert checks["lean targets"] == {"detail": reason, "name": "lean targets", "ok": False}
-    assert checks["runtime"]["ok"]
     assert _without_host_paths(captured.out + captured.err, tmp_path)

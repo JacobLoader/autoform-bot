@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .graph import GraphValidationError, load_graph
-from .lean import LeanSourceError, index_failure_message, resolve_lean_root, snapshot_project_sources
+from .lean import LeanSourceError, index_failure_message, index_project, resolve_lean_root
 from .skeleton import (
     DEFAULT_PROBE_TIMEOUT,
     PROBE_OUTPUT_ENV,
@@ -172,7 +172,7 @@ def find_unused_hypotheses(
     libraries = lean_libraries(root)
     check_configuration_unchanged(root, inputs, activity=activity)
     try:
-        index = snapshot_project_sources(root).index
+        index = index_project(root)
     except OSError as error:
         raise SkeletonError([index_failure_message(error)]) from error
 

@@ -45,8 +45,8 @@ from .lean import (
     SourceIndex,
     declaration_names,
     index_failure_message,
+    index_project,
     resolve_lean_root,
-    snapshot_project_sources,
 )
 
 SKELETON_SCHEMA = "autoform-skeleton/v4"
@@ -2072,7 +2072,7 @@ def extract_skeletons(
     libraries = lean_libraries(root)
     check_configuration_unchanged(root, inputs, activity=activity)
     try:
-        index = snapshot_project_sources(root).index
+        index = index_project(root)
     except OSError as error:
         raise SkeletonError([index_failure_message(error)]) from error
     report = extract_graph_skeletons(
@@ -2129,7 +2129,7 @@ def check_inputs_unchanged(
     """
 
     try:
-        current_index = snapshot_project_sources(lean_root).index
+        current_index = index_project(lean_root)
     except OSError as error:
         raise SkeletonError([index_failure_message(error)]) from error
     if current_index.source_digest != index.source_digest:

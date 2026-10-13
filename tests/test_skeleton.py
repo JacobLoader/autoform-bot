@@ -25,7 +25,6 @@ from autoform_cli.lean import (
     LeanSourceError,
     SourceIndex,
     index_project,
-    snapshot_project_sources,
 )
 from autoform_cli.skeleton import (
     DeclarationSkeleton,
@@ -1480,7 +1479,7 @@ def test_extraction_translates_source_index_io_failure(
 ) -> None:
     project = _project(tmp_path)
     blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
-    real_snapshot_project_sources = snapshot_project_sources
+    real_index_project = index_project
     calls = 0
 
     def fail_index(root: Path):
@@ -1490,9 +1489,9 @@ def test_extraction_translates_source_index_io_failure(
             if reason is not None:
                 raise LeanSourceError(reason)
             raise OSError(f"private host detail: {root}")
-        return real_snapshot_project_sources(root)
+        return real_index_project(root)
 
-    monkeypatch.setattr("autoform_cli.skeleton.snapshot_project_sources", fail_index)
+    monkeypatch.setattr("autoform_cli.skeleton.index_project", fail_index)
 
     with pytest.raises(SkeletonError) as error:
         extract_skeletons(

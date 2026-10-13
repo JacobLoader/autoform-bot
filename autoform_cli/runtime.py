@@ -14,13 +14,7 @@ from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote, urlsplit
 
 from .graph import Graph, load_graph, roadmap_symlink_issues
-from .lean import (
-    LeanSourceError,
-    declaration_names,
-    index_failure_message,
-    resolve_lean_root,
-    snapshot_project_sources,
-)
+from .lean import LeanSourceError, declaration_names, index_failure_message, index_project, resolve_lean_root
 from .status import derive, is_definition
 
 RUNTIME_SCHEMA = "autoform-runtime/v3"
@@ -326,7 +320,7 @@ def build_runtime_graph(
         except LeanSourceError as error:
             raise RuntimeProjectionError([str(error)]) from error
         try:
-            lean_index = snapshot_project_sources(root).index
+            lean_index = index_project(root)
         except OSError as error:
             raise RuntimeProjectionError([index_failure_message(error)]) from error
 

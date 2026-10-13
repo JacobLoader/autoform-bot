@@ -282,33 +282,9 @@ def test_closed_source_binding_rejects_later_capture(
         sources.capture()
 
 
-def test_missing_project_keeps_the_empty_index_contract(tmp_path: Path) -> None:
-    missing = tmp_path / "missing"
-
-    index = index_project(missing)
-
-    assert index.root == missing.resolve()
-    assert index.declarations == {}
-
-
-def test_root_under_an_unsearchable_folder_is_refused_not_empty(tmp_path: Path) -> None:
-    if os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0):
-        pytest.skip("search permission is not enforced here")
-    locked = tmp_path / "locked"
-    _index(locked / "project", "def hidden : Nat := 0\n")
-    locked.chmod(0)
-    try:
-        if os.access(locked, os.X_OK):
-            pytest.skip("search permission is not enforced")
-        with pytest.raises(
-            lean_module.LeanSourceError,
-            match=r"^permission denied while resolving the Lean root$",
-        ) as caught:
-            index_project(locked / "project")
-    finally:
-        locked.chmod(0o755)
-
-    assert str(tmp_path) not in str(caught.value)
+def test_index_project_refuses_a_missing_root(tmp_path: Path) -> None:
+    with pytest.raises(lean_module.LeanSourceError, match=r"^Lean root does not exist or is not a directory$"):
+        index_project(tmp_path / "missing")
 
 
 @pytest.mark.parametrize("root_kind", ["missing", "file"])
@@ -2499,18 +2475,18 @@ def test_explicit_ref_linker_keeps_remote_bound_to_resolved_root(
         alias.symlink_to(first, target_is_directory=True)
     except OSError:
         pytest.skip("symlinks are unavailable")
-    original_snapshot = lean_module.snapshot_project_sources
+    original_index = lean_module.index_project
     swapped = False
 
-    def snapshot_then_swap(*args, **kwargs):
+    def index_then_swap(*args, **kwargs):
         nonlocal swapped
-        snapshot = original_snapshot(*args, **kwargs)
+        index = original_index(*args, **kwargs)
         alias.unlink()
         alias.symlink_to(second, target_is_directory=True)
         swapped = True
-        return snapshot
+        return index
 
-    monkeypatch.setattr(lean_module, "snapshot_project_sources", snapshot_then_swap)
+    monkeypatch.setattr(lean_module, "index_project", index_then_swap)
 
     linker = build_linker(alias, ref=commit)
 
