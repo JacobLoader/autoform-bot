@@ -895,23 +895,26 @@ the publication feature rather than this source layer.
 Only the Lean root's descriptor is retained: a capture opens each folder by
 name through its parent, lists it again when its walk ends, and a final check
 reopens each one the same way. Only what the index uses must stay put between
-these checks: each `.lean` entry, each folder that a `.git` entry or a
-recognized skeleton manifest hides, and the folders that contain them. A
-captured file must keep its metadata, and such a folder must keep its device,
-inode, file type, and the names of the `.lean` entries and folders it holds
-for the index. Any other folder under the Lean root, such as a generated site
-or `mkdocs` output, may change, vanish, or be rebuilt during a capture; the
-checks only require that whatever is at its path then holds no `.lean` entry
-and no such marker, and it never affects source revisions. Temporary files
-that editors write beside sources are ignored the same way unless they are
-`.lean` files. A capture that sees Lean inputs change is retried; when every
-attempt changes, the error names each changed path relative to the Lean root,
-for example `Lean sources kept changing while they were indexed; changed:
-Proj/A.lean`. A capture is not one atomic filesystem
-generation: a `.lean` file that exists at a path only after the walk last
-looked at that path and before the final check reached it is not seen, so
-coordinated moves across folders between those checks can yield a set of
-sources that no single state had.
+these checks: each `.lean` entry and the folders that contain one. A captured
+file must keep its metadata, and such a folder must keep its device, inode,
+file type, and the names of the `.lean` entries and folders it holds for the
+index. Any other folder under the Lean root, such as a generated site,
+`mkdocs` output, skeleton output, or a nested Git checkout, may change,
+vanish, or be rebuilt during a capture; the checks only require that whatever
+is at its path then is hidden by a `.git` entry or a recognized skeleton
+manifest, or holds no `.lean` entry, and it never affects source revisions.
+So skeleton output republished by rename, or a nested checkout recloned,
+during a capture is not a change, but a folder that loses its marker and
+exposes `.lean` files is. Temporary files that editors write beside sources
+are ignored the same way unless they are `.lean` files. A capture that sees
+Lean inputs change is retried; when every attempt changes, the error names
+each changed path relative to the Lean root, for example `Lean sources kept
+changing while they were indexed; changed: Proj/A.lean`. A capture is not one
+atomic filesystem generation: a `.lean` file or marker that exists at a path
+only after the walk last looked at that path and before the final check
+reached it is not seen, and the final check lists each folder once, before it
+checks that folder's contents. Coordinated moves across folders between
+those checks can therefore yield a set of sources that no single state had.
 
 Automatically detected Git permalinks are emitted only for captured files whose
 bytes equal the blob at the stable detected commit. Dirty, untracked, missing,
