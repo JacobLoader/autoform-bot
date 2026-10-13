@@ -17,7 +17,7 @@ and link on-demand references.
 Keep imports permissive: consumer Lean uses Formalize's
 `autoform work import-impact`; plugin changes preserve it.
 
-Per Lean/Mathlib release, regenerate `production_module_roots` from Lake
+For each Lean/Mathlib release, regenerate `production_module_roots` from Lake
 package configs. Update the private creation bundle, catalog identity, and
 complete `lake update` manifest together; run `lake build`.
 A direct-Mathlib-only manifest is invalid.
