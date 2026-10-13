@@ -316,7 +316,9 @@ uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform dashboard . --site-dir site
 ```
 
 Drop `--require-declarations` when reviewing work in progress, where a
-statement may name a Lean declaration that does not exist yet.
+statement may name a Lean declaration that does not exist yet. On native
+Windows, run `check` and `render` without `--lean-root`: the site then has no
+code links (see the publication contract below).
 
 `dashboard` serves the exact built MkDocs site on `127.0.0.1`, choosing an
 available port unless `--port` is supplied, and adds a read-only live overlay
@@ -787,6 +789,55 @@ or sandbox. It compares elaborated types and values; changes to notation,
 attributes, instance priority, or unreported generated declarations still
 require human review.
 
+Report the coordination and review scope of an import edit without forbidding
+the edit:
+
+```bash
+autoform work import-impact SELECTOR MODULE [TARGET] --lean-root PATH [--json] [--timeout SECONDS]
+```
+
+`import-impact` is advisory and does not edit authored roadmap or Lean source;
+its Lake freshness check may refresh build hash sidecars. `SELECTOR` identifies
+the working article and `MODULE` the module whose effective header would change.
+Lean supplies the loaded module graph; Autoform binds every node to its captured
+root source and configured root-package artifact so dependencies cannot shadow
+it. The probe imports project modules, so run it only in a trusted checkout or
+sandbox. The command refuses a loaded root-package module whose source the
+captured inventory lacks, and a module an `M.*` or `M.+` glob finds that the
+inventory lacks, which Lake builds even when nothing imports it; the inventory
+skips nested Git checkouts, ignored directories such as `build`, and symlinked
+directories. `affected_modules` is therefore complete over the root libraries'
+loaded Lake roots/globs, not dormant source files outside that build boundary.
+It holds `MODULE` and every loaded module that imports it, directly or
+transitively, which covers what an added import can affect. Removing an import
+can also drop modules from the build: roots and single-module globs bring in
+only what they import, transitively, so a module only the removed import
+reached is no longer built. The report does not list such modules.
+
+JSON uses `autoform-module-import-impact/v1` and binds the graph with
+`module_graph_revision`; `module_scope` is `loaded-root-library-graph`.
+Required `claim_targets` contain only the selected article and a stable
+`module_claim_target` resource, `lean-module/<lowercase-slug>-<sha256[:16]>`.
+`affected_claim_targets` are downstream warnings, not pre-emptive ownership
+requirements; `claim_keys` and `affected_claim_keys` match the JSON from
+`autoform claim list --worker-id WORKER`. `unresolved_articles` reports local
+declarations absent from the loaded environment without globally blocking
+unrelated edits, while every `affected_unowned_helpers` entry includes its own
+claim target and key.
+
+`article` is the selected article (`id`, `article_id`, `claim_target`), and
+`module_claim_key` is the claim key of `module_claim_target`.
+`affected_articles` lists each article that names, or owns through the parent
+chain, a declaration in an affected module, with those `modules`;
+`selected_affected` says whether the selected article is one of them.
+`article_local` holds only when it is, `affected_claim_targets` is empty, and
+no other article has unresolved declarations, like `contained` in
+`work impact`.
+
+Imports are allowed regardless of reported breadth. Follow the
+[Formalize import workflow](../skills/formalize/SKILL.md#import-edits) for
+baseline evidence, conflict checks, claim lifecycle, and post-build review.
+
 Ask whether the blueprint already holds a result before adding an article or
 a Lean helper:
 
@@ -1195,7 +1246,8 @@ what to change, and ends with `root-package declarations failed the
 open-statement audit`.
 
 Both audits check two more things. A `lean:` name outside the root package, as
-a Mathlib article's is, must be safe and use no axiom beyond `propext`,
+a Mathlib article's is, must be neither unsafe nor partial (a `partial def`
+counts as partial) and use no axiom beyond `propext`,
 `Classical.choice`, and `Quot.sound`; otherwise it fails with `NAME [ID] is
 outside the root package and is unsafe or partial` or `NAME [ID] is outside the
 root package and depends on unexpected axiom AX`. The open-statement audit
@@ -1211,6 +1263,16 @@ audit logs `kernel replay of the root package skipped: it runs once every other
 check passes`. A declaration the kernel rejects fails with `kernel replay of the
 root package failed: ...`, which names the first one; the workflow's scan for
 the kernel-check bypass option is only lexical.
+
+Both audits refuse an unsafe or partial root-package declaration with `unsafe
+or partial declaration: NAME`, and report a `partial def` under its own name.
+For every computable recursive definition, structural, well-founded, or
+`partial`, Lean adds a partial copy `NAME._unsafe_rec` for the compiler to run.
+The audits skip these copies: the kernel refuses a safe declaration that refers
+to one, and the kernel replay skips them too, so it refuses such a declaration
+added with kernel checking off. A `lean:` name that is one still fails, with
+`NAME [ID] is Lean's compiled copy of a recursive definition; name the
+definition itself`.
 
 The probe runs no project code. Its header imports only the toolchain's Lean,
 and the workflow runs it with plain `lean`, not `lake env lean`, passing the
@@ -1518,11 +1580,12 @@ and the generated stylesheet, scripts and logo inside them) is refused, as are
 two blueprint paths that differ only in case or Unicode form, because they would
 collide on a case-insensitive filesystem.
 
-Every render writes `publication.json` with blueprint and Lean-source hashes,
-Git ref, article and dependency counts, the site's file inventory, and available
-views. It contains no timestamp or absolute path, so identical inputs produce
-identical output files. Render reads the blueprint and the Lean sources once
-each and derives every page, link and hash from those bytes; an edit saved
+Every render writes `publication.json` with blueprint and Lean-source hashes
+(the Lean-source hash is empty when render reads no Lean sources, as on native
+Windows), Git ref, article and dependency counts, the site's file inventory, and
+available views. It contains no timestamp or absolute path, so identical inputs
+produce identical output files. Render reads the blueprint and the Lean sources
+once each and derives every page, link and hash from those bytes; an edit saved
 during a render waits for the next one. Repository links appear only when those
 bytes match one locally available Git commit, recorded by its full object ID; a
 clean checkout that Git converts on checkout still matches. Otherwise the render
@@ -1545,4 +1608,9 @@ output (the repository root for `--output site-src`); render never indexes it
 as Lean source and the setup ignore rules cover it, but it may hold the previous
 site, so inspect it before deleting it. (On macOS `fsync` does not flush the
 drive's cache, so a power loss can still lose the newest site.) Native Windows
-cannot run `autoform render`.
+has no directory-descriptor traversal. There render reads the blueprint and the
+output as two pathname captures that must agree, commits through the backup
+swap without a lock, and reads the Lean sources only for an explicit
+`--lean-root`, which then fails closed. Without one it publishes no code
+links; when a published statement names a `lean:` declaration it warns, and
+`--require-declarations` makes it exit 1.

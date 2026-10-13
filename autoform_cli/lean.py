@@ -889,6 +889,8 @@ class SourceLinker:
     repository_url: str | None = None
     ref: str | None = None
     linkable_paths: frozenset[Path] | None = None
+    indexed: bool = True
+    """False when the sources were not read, so no name was looked up."""
 
     def location(self, name: str) -> Declaration | None:
         return self.index.find(name)
