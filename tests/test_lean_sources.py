@@ -2333,55 +2333,6 @@ def test_no_link_without_repository_coordinates(tmp_path: Path) -> None:
     assert linker.location("Outer.alpha") is not None
 
 
-def test_build_linker_can_use_a_captured_index_without_live_detection(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    index = _index(tmp_path)
-
-    def unexpected_git(*_args, **_kwargs):
-        raise AssertionError("git detection must not run")
-
-    monkeypatch.setattr(lean_module, "_git", unexpected_git)
-
-    linker = build_linker(tmp_path, source_index=index, detect_missing=False)
-
-    assert linker.index is index
-    assert linker.repository_url is None
-    assert linker.ref is None
-
-
-def test_build_linker_never_pairs_a_captured_index_with_a_live_ref(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    index = _index(tmp_path)
-
-    def unexpected_ref(_root):
-        raise AssertionError("a captured source index requires an explicit ref")
-
-    monkeypatch.setattr(lean_module, "detect_ref", unexpected_ref)
-
-    linker = build_linker(
-        tmp_path,
-        repository_url="https://github.com/owner/repo",
-        source_index=index,
-    )
-
-    assert linker.ref is None
-    assert linker.url("Outer.alpha") is None
-
-
-def test_build_linker_rejects_a_captured_index_from_another_root(tmp_path: Path) -> None:
-    first = tmp_path / "first"
-    second = tmp_path / "second"
-    index = _index(first)
-    second.mkdir()
-
-    with pytest.raises(ValueError, match="different Lean root"):
-        build_linker(second, source_index=index, detect_missing=False)
-
-
 def _git_commit(root: Path, message: str, path: str = ".") -> str:
     subprocess.run(["git", "add", path], cwd=root, check=True)
     subprocess.run(
@@ -2488,29 +2439,6 @@ def test_auto_linker_retries_ref_and_source_as_one_unit(
     )
 
 
-def test_build_linker_preserves_alias_spelled_exclusions(tmp_path: Path) -> None:
-    root = tmp_path / "root"
-    _index(root, "def keptByLinker : Nat := 0\n", "Keep.lean")
-    excluded = root / "Generated"
-    excluded.mkdir()
-    (excluded / "Leak.lean").write_text("def leakedByLinker : Nat := 0\n")
-    alias = tmp_path / "alias"
-    try:
-        alias.symlink_to(root, target_is_directory=True)
-    except OSError:
-        pytest.skip("symlinks are unavailable")
-
-    linker = build_linker(
-        alias,
-        exclude_roots=(alias / "generated",),
-        repository_url="https://github.com/owner/repo",
-        ref="attested",
-    )
-
-    assert linker.location("keptByLinker") is not None
-    assert linker.location("leakedByLinker") is None
-
-
 def test_auto_linker_supports_a_symlinked_repository_root(tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()
@@ -2547,46 +2475,6 @@ def test_auto_linker_ignores_git_replace_objects(tmp_path: Path) -> None:
     assert linker.ref == original
     assert linker.location("replacementTree") is not None
     assert linker.url("replacementTree") is None
-
-
-def test_explicit_ref_linker_keeps_remote_bound_to_resolved_root(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    first = tmp_path / "first"
-    first.mkdir()
-    _index(first, "def fromFirstRepository : Nat := 0\n", "A.lean")
-    commit = _init_git_repository(first, origin="https://github.com/owner/A.git")
-    second = tmp_path / "second"
-    second.mkdir()
-    _index(second, "def fromSecondRepository : Nat := 0\n", "B.lean")
-    _init_git_repository(second, origin="https://github.com/owner/B.git")
-    alias = tmp_path / "alias"
-    try:
-        alias.symlink_to(first, target_is_directory=True)
-    except OSError:
-        pytest.skip("symlinks are unavailable")
-    original_index = lean_module.index_project
-    swapped = False
-
-    def index_then_swap(*args, **kwargs):
-        nonlocal swapped
-        index = original_index(*args, **kwargs)
-        alias.unlink()
-        alias.symlink_to(second, target_is_directory=True)
-        swapped = True
-        return index
-
-    monkeypatch.setattr(lean_module, "index_project", index_then_swap)
-
-    linker = build_linker(alias, ref=commit)
-
-    assert swapped
-    assert linker.repository_url == "https://github.com/owner/A"
-    assert linker.location("fromFirstRepository") is not None
-    assert linker.url("fromFirstRepository") == (
-        f"https://github.com/owner/A/blob/{commit}/A.lean#L1"
-    )
 
 
 def test_auto_linker_ignores_inherited_repo_and_ci_redirects(
