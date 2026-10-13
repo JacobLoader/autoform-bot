@@ -971,7 +971,7 @@ replaces the `dependencies/nodes/*.html` focus pages of earlier sites. Legacy
 `dependencies/full.html#node=<id>` links use the global index to redirect to the
 smallest bounded scope containing that node. Render replaces a v2 site as it
 replaces a v3 one, while a v1 output must be deleted once by hand; the
-[publication contract](#publication-contract) says when.
+[publication contract](#publication-contract) gives the rules.
 
 ## Validation
 

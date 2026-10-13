@@ -149,6 +149,8 @@ class LeanSourceError(OSError):
                 for character in reason
             )
         )
+
+
 def index_failure_message(error: OSError) -> str:
     """Describe an indexing failure without exposing host paths."""
 
