@@ -1224,6 +1224,27 @@ def test_failed_repl_start_names_the_remedies_only_for_an_unknown_package(lake_e
     assert repl.is_clean()
 
 
+# Lake exits without reading the frame when it cannot find the REPL package, so
+# a frame larger than the pipe buffer is still unsent when the child's pipes
+# close, and either stream can be seen closing first.
+@pytest.mark.parametrize("closed_stream", ["stdout", "stderr"])
+def test_failed_repl_start_before_the_frame_is_sent_names_the_remedies(monkeypatch, closed_stream):
+    with ExitStack() as stack:
+        process = _PipeProcess(stack, [])
+        process._stderr_write.write(b"error: unknown package `repl`\n")
+        if closed_stream == "stdout":
+            process._stdout_write.close()
+        else:
+            process._stderr_write.close()
+        repl = _disposable_repl_with_process(monkeypatch, process)
+
+        response = repl.run_disposable("#check Nat", timeout=1)
+
+    assert response["repl_error"].startswith("Lake could not find the REPL package: ")
+    assert "outcome_unknown" not in response
+    assert repl.is_clean()
+
+
 # The header parser on Lean v4.27.0 reports one plain Init import both for an
 # ordinary header and for ``prelude`` followed by ``import Init``.
 _V4_27_INIT_ONLY = (
