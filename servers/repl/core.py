@@ -914,16 +914,24 @@ class LeanRepl:
         self,
         code: str,
         timeout: float | None = None,
+        *,
+        budget: float | None = None,
     ) -> dict[str, Any]:
-        """Run one public call as the only request frame on a fresh process."""
+        """Run one public call as the only request frame on a fresh process.
+
+        Timeout messages state ``budget``, which defaults to ``timeout``. A pool
+        passes its caller's whole budget there and only the part left after
+        waiting for this slot as ``timeout``.
+        """
         timeout = self.request_timeout if timeout is None else timeout
+        budget = timeout if budget is None else budget
         deadline = time.monotonic() + timeout
 
         def remaining(phase: str) -> float:
             value = deadline - time.monotonic()
             if value <= 0:
                 raise TimeoutError(
-                    f"Lean REPL {phase} timed out after {timeout:g} seconds"
+                    f"Lean REPL {phase} timed out after {budget:g} seconds"
                 )
             return value
 
@@ -950,7 +958,7 @@ class LeanRepl:
                         result = {"repl_error": f"Rejected Lean header: {error}"}
                     except TimeoutError:
                         raise TimeoutError(
-                            f"Lean REPL header validation timed out after {timeout:g} seconds"
+                            f"Lean REPL header validation timed out after {budget:g} seconds"
                         ) from None
                     else:
                         modules = header.modules
@@ -1018,7 +1026,7 @@ class LeanRepl:
                 if isinstance(error.__cause__, TimeoutError):
                     # _run reports a timeout after dispatch as a transport
                     # failure with the budget left at dispatch.
-                    message = f"Lean REPL combined command execution timed out after {timeout:g} seconds"
+                    message = f"Lean REPL combined command execution timed out after {budget:g} seconds"
                 else:
                     message = _with_repl_require_hint(str(error))
                 result = {

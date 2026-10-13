@@ -161,7 +161,7 @@ class LeanReplPool:
                     f"timed out after {timeout:g}s waiting for an idle Lean REPL"
                 )
             try:
-                return repl.run_disposable(code, timeout=remaining)
+                return repl.run_disposable(code, timeout=remaining, budget=timeout)
             except ReplCleanupError as error:
                 # The response is process-free and remains valid. The dirty
                 # generation transfers to retained project-cache retirement.

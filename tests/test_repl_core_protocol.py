@@ -581,13 +581,13 @@ def test_disposable_call_uses_one_decreasing_phase_budget(monkeypatch):
 @pytest.mark.parametrize(
     ("expired_phase", "expected"),
     [
-        ("header", {"repl_error": "Lean REPL header validation timed out after 1 seconds"}),
-        ("startup", {"repl_error": "Lean REPL disposable child startup timed out after 1 seconds"}),
-        ("command", {"repl_error": "Lean REPL combined command execution timed out after 1 seconds"}),
+        ("header", {"repl_error": "Lean REPL header validation timed out after 3 seconds"}),
+        ("startup", {"repl_error": "Lean REPL disposable child startup timed out after 3 seconds"}),
+        ("command", {"repl_error": "Lean REPL combined command execution timed out after 3 seconds"}),
         (
             "dispatched",
             {
-                "repl_error": "Lean REPL combined command execution timed out after 1 seconds",
+                "repl_error": "Lean REPL combined command execution timed out after 3 seconds",
                 "outcome_unknown": True,
             },
         ),
@@ -626,7 +626,7 @@ def test_disposable_timeout_names_the_expired_phase(monkeypatch, expired_phase, 
     monkeypatch.setattr(repl, "start", start)
     monkeypatch.setattr(repl, "_run", run)
 
-    assert repl.run_disposable("#check Nat", timeout=1) == expected
+    assert repl.run_disposable("#check Nat", timeout=1, budget=3) == expected
 
 
 def test_disposable_backlog_adjusts_prefixed_positions(monkeypatch):

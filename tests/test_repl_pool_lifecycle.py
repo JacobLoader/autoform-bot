@@ -170,6 +170,38 @@ def test_pool_subtracts_queue_time_from_the_disposable_call(monkeypatch):
     pool.shutdown()
 
 
+def test_queued_call_timeout_states_the_callers_budget(monkeypatch):
+    command_timeouts = []
+    pool = repl_pool.LeanReplPool(
+        repl_pool.LeanReplPoolConfig(
+            num_repls=1,
+            validate_imports=False,
+            warmup_imports=frozenset(),
+        )
+    )
+    (repl,) = pool._workers
+
+    def run(code, env_id, timeout):
+        command_timeouts.append(timeout)
+        raise repl_core.ReplOutcomeUnknown("transport failed") from TimeoutError()
+
+    monkeypatch.setattr(repl, "close", lambda **kwargs: None)
+    monkeypatch.setattr(repl, "start", lambda **kwargs: None)
+    monkeypatch.setattr(repl, "_run", run)
+    # The wait for an idle slot takes 2 of the caller's 10 seconds.
+    times = iter((0.0, 0.0))
+    monkeypatch.setattr(repl_pool.time, "monotonic", lambda: next(times, 2.0))
+    try:
+        assert pool.run("#check Nat", timeout=10) == {
+            "repl_error": "Lean REPL combined command execution timed out after 10 seconds",
+            "outcome_unknown": True,
+        }
+    finally:
+        pool.shutdown()
+
+    assert command_timeouts == [8]
+
+
 def test_pool_runs_each_call_disposably_and_reuses_only_a_clean_slot(monkeypatch):
     workers = []
 
