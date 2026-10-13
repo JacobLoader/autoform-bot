@@ -298,7 +298,10 @@ def build_runtime_graph(
         # node was parsed from. A hand-built node without a digest makes no
         # snapshot claim, and the revision covers whatever bytes are read here.
         if node.source_sha256 is not None and hashlib.sha256(content).hexdigest() != node.source_sha256:
-            issues.append(f"{node.id}: article changed after graph load")
+            issues.append(
+                f"{node.id}: the article changed after the graph was loaded; "
+                "load the graph again, or retry after the project is idle"
+            )
         article_path = relative_project.as_posix()
         if article_path in seen_article_paths:
             issues.append(f"{node.id}: article path is duplicated")

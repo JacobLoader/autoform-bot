@@ -203,7 +203,10 @@ def test_runtime_refuses_an_article_edited_after_graph_load(tmp_path: Path) -> N
     with pytest.raises(RuntimeProjectionError) as error:
         build_runtime_graph(graph, project_root=project)
 
-    assert error.value.issues == ("chapter/section/result: article changed after graph load",)
+    assert error.value.issues == (
+        "chapter/section/result: the article changed after the graph was loaded; "
+        "load the graph again, or retry after the project is idle",
+    )
     assert load_runtime_graph(project).get("chapter/section/result").title == "Edited"  # type: ignore[union-attr]
 
 
