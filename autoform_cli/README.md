@@ -903,9 +903,11 @@ a path when it is rechecked must be hidden by a recognized marker (a `.git`
 entry, a skeleton manifest, or render's publication manifest while render
 indexes) or hold no `.lean` entry, so a folder that loses its marker and
 exposes `.lean` files is a change. A capture that sees Lean inputs change is
-retried; when every attempt changes, the error names the changed paths
-relative to the Lean root, for example `Lean sources kept changing while they
-were indexed; changed: Proj/A.lean`. A capture is not one atomic filesystem
+retried; when every attempt changes, the error names the changed paths it can
+attribute, relative to the Lean root, for example `Lean sources kept changing
+while they were indexed; changed: Proj/A.lean`. A change seen only as a failed
+lookup, such as a file removed just before it is rechecked, carries no path.
+A capture is not one atomic filesystem
 generation: a `.lean` file or marker that appears at a path after the capture
 last looked there, or in a folder after the final check listed it, is not
 seen, so coordinated moves across folders can yield a set of sources that no
