@@ -53,7 +53,6 @@ _IGNORED_DIRECTORIES = frozenset(
         ".obsidian",
         ".trash",
         ".venv",
-        "lake-packages",
     }
 )
 # ``Build`` can be a Lean namespace directory, so only this spelling is ignored.
