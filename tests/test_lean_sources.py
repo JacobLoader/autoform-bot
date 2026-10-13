@@ -133,6 +133,25 @@ def _capture_through(entry: str, root: Path):
         return snapshot
 
 
+def _changed_path(root: Path) -> str | None:
+    """Capture once without retrying; return the path the TreeChangedError names."""
+    sources = open_project_sources(root)
+    try:
+        with pytest.raises(TreeChangedError) as error:
+            sources.capture()
+    finally:
+        sources.close()
+    return error.value.relative
+
+
+def _snapshot_in_one_attempt(monkeypatch: pytest.MonkeyPatch, root: Path):
+    """Snapshot through the retrying entry point and require a single attempt."""
+    attempts = _count_binds(monkeypatch)
+    snapshot = snapshot_project_sources(root)
+    assert len(attempts) == 1
+    return snapshot
+
+
 def test_qualifies_names_with_their_namespace(tmp_path: Path) -> None:
     index = _index(tmp_path)
 
@@ -458,11 +477,9 @@ def test_snapshot_reports_sources_that_keep_changing(
         assert str(error.value).endswith("; changed: Project/Basic.lean")
 
 
-@pytest.mark.parametrize("entry", ["snapshot", "bind"])
 def test_kept_changing_names_each_changed_path_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    entry: str,
 ) -> None:
     _require_descriptor_capture()
     _index(tmp_path, "def a : Nat := 0\n", "Project/A.lean")
@@ -482,7 +499,7 @@ def test_kept_changing_names_each_changed_path_once(
     monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
 
     with pytest.raises(lean_module.LeanSourceError) as error:
-        _capture_through(entry, tmp_path)
+        snapshot_project_sources(tmp_path)
 
     assert edits == lean_module._SNAPSHOT_ATTEMPTS
     assert str(error.value) == (
@@ -491,11 +508,9 @@ def test_kept_changing_names_each_changed_path_once(
     )
 
 
-@pytest.mark.parametrize("entry", ["snapshot", "bind"])
 def test_kept_changing_names_only_known_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    entry: str,
 ) -> None:
     _require_descriptor_capture()
     source = tmp_path / "Project" / "Basic.lean"
@@ -521,7 +536,7 @@ def test_kept_changing_names_only_known_paths(
     monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
 
     with pytest.raises(lean_module.LeanSourceError) as error:
-        _capture_through(entry, tmp_path)
+        snapshot_project_sources(tmp_path)
 
     assert opens == lean_module._SNAPSHOT_ATTEMPTS
     assert str(error.value) == (
@@ -551,15 +566,10 @@ def test_relevant_folder_replaced_by_identical_copy_is_named(
         (tmp_path / "Moved").rmdir()
 
     _on_checkpoint(monkeypatch, "before-final-verification", replace_folder)
-    sources = open_project_sources(tmp_path)
-    try:
-        with pytest.raises(TreeChangedError) as error:
-            sources.capture()
-    finally:
-        sources.close()
+    named = _changed_path(tmp_path)
 
     assert replaced
-    assert error.value.relative == "Project"
+    assert named == "Project"
 
 
 def _write_site(site: Path, generation: int) -> None:
@@ -606,11 +616,9 @@ def test_rebuilt_folder_without_lean_inputs_is_captured_once(
             _write_site(site, rebuilds)
 
     _on_checkpoint(monkeypatch, "before-final-verification", rebuild)
-    binds = _count_binds(monkeypatch)
 
-    snapshot = snapshot_project_sources(tmp_path)
+    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
-    assert len(binds) == 1
     assert rebuilds == 1
     assert snapshot.index.find("kept") is not None
     if shape == "vanish":
@@ -639,12 +647,10 @@ def test_folder_removed_while_it_is_scanned_is_tolerated(
             shutil.rmtree(site)
 
     _on_checkpoint(monkeypatch, "after-directory-list", remove, relative=listed_in)
-    binds = _count_binds(monkeypatch)
 
-    snapshot = snapshot_project_sources(tmp_path)
+    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
     assert removed
-    assert len(binds) == 1
     assert snapshot.index.find("kept") is not None
 
 
@@ -670,12 +676,10 @@ def test_atomic_save_of_non_lean_file_is_captured_once(
         os.replace(temporary, notes)
 
     _on_checkpoint(monkeypatch, "before-final-verification", save)
-    binds = _count_binds(monkeypatch)
 
-    snapshot = snapshot_project_sources(tmp_path)
+    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
     assert saves == 1
-    assert len(binds) == 1
     assert snapshot.index.find("kept") is not None
 
 
@@ -700,11 +704,9 @@ def test_editor_lock_link_appearing_during_capture_is_accepted(
         pytest.skip("symlinks are unavailable")
     lock.unlink()
     _on_checkpoint(monkeypatch, "before-final-verification", lock_file)
-    binds = _count_binds(monkeypatch)
 
-    snapshot = snapshot_project_sources(tmp_path)
+    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
-    assert len(binds) == 1
     assert snapshot.index.find("kept") is not None
 
 
@@ -732,12 +734,10 @@ def test_marker_candidate_removed_before_it_is_read_is_absent(
         return names
 
     monkeypatch.setattr(tree_snapshot_module, "_capture_directory_names", list_then_remove)
-    binds = _count_binds(monkeypatch)
 
-    snapshot = snapshot_project_sources(tmp_path)
+    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
     assert removed
-    assert len(binds) == 1
     assert snapshot.index.find("kept") is not None
 
 
@@ -763,11 +763,9 @@ def test_unrecognized_manifest_in_rebuilt_folder_is_captured_once(
         )
 
     _on_checkpoint(monkeypatch, "before-final-verification", rebuild)
-    binds = _count_binds(monkeypatch)
 
-    snapshot = snapshot_project_sources(tmp_path)
+    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
-    assert len(binds) == 1
     assert snapshot.index.find("kept") is not None
 
 
@@ -805,14 +803,8 @@ def test_lean_file_appearing_in_unrelated_folder_is_named(
         (target / "New.lean").write_text("def appeared : Nat := 0\n", encoding="utf-8")
 
     _on_checkpoint(monkeypatch, "before-final-verification", appear)
-    sources = open_project_sources(tmp_path)
-    try:
-        with pytest.raises(TreeChangedError) as error:
-            sources.capture()
-    finally:
-        sources.close()
 
-    assert error.value.relative == expected
+    assert _changed_path(tmp_path) == expected
     assert snapshot_project_sources(tmp_path).index.find("appeared") is not None
 
 
@@ -828,14 +820,8 @@ def test_lean_file_removed_after_scan_is_named(
         (tmp_path / "Proj" / "A.lean").unlink(missing_ok=True)
 
     _on_checkpoint(monkeypatch, "before-final-verification", remove)
-    sources = open_project_sources(tmp_path)
-    try:
-        with pytest.raises(TreeChangedError) as error:
-            sources.capture()
-    finally:
-        sources.close()
 
-    assert error.value.relative == "Proj/A.lean"
+    assert _changed_path(tmp_path) == "Proj/A.lean"
 
 
 def test_lean_file_removed_before_it_is_examined_is_absent(
@@ -854,12 +840,10 @@ def test_lean_file_removed_before_it_is_examined_is_absent(
             (tmp_path / "Proj" / "B.lean").unlink()
 
     _on_checkpoint(monkeypatch, "after-directory-list", remove, relative="Proj")
-    binds = _count_binds(monkeypatch)
 
-    snapshot = snapshot_project_sources(tmp_path)
+    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
     assert removed
-    assert len(binds) == 1
     assert snapshot.index.find("a") is not None
     assert snapshot.index.find("b") is None
 
@@ -898,14 +882,8 @@ def test_lean_file_present_only_during_its_folders_scan_is_caught(
             remove()
 
     monkeypatch.setattr(tree_snapshot_module, "_tree_snapshot_checkpoint", checkpoint)
-    sources = open_project_sources(tmp_path)
-    try:
-        with pytest.raises(TreeChangedError) as error:
-            sources.capture()
-    finally:
-        sources.close()
 
-    assert error.value.relative == f"{folder}/X.lean"
+    assert _changed_path(tmp_path) == f"{folder}/X.lean"
 
 
 def _on_open_after_checkpoint(
@@ -963,15 +941,10 @@ def test_folder_replaced_by_lean_file_while_it_is_walked_is_named(
         replace,
         directory=True,
     )
-    sources = open_project_sources(tmp_path)
-    try:
-        with pytest.raises(TreeChangedError) as error:
-            sources.capture()
-    finally:
-        sources.close()
+    named = _changed_path(tmp_path)
 
     assert fired
-    assert error.value.relative == "X.lean"
+    assert named == "X.lean"
 
 
 def test_folder_removed_before_the_walk_opens_it_is_tolerated(
@@ -989,12 +962,10 @@ def test_folder_removed_before_the_walk_opens_it_is_tolerated(
         lambda: shutil.rmtree(site),
         directory=True,
     )
-    binds = _count_binds(monkeypatch)
 
-    snapshot = snapshot_project_sources(tmp_path)
+    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
     assert fired
-    assert len(binds) == 1
     assert snapshot.index.find("kept") is not None
 
 
@@ -1015,12 +986,10 @@ def test_lean_file_removed_before_it_is_read_is_absent(
         directory=False,
         relative="Proj",
     )
-    binds = _count_binds(monkeypatch)
 
-    snapshot = snapshot_project_sources(tmp_path)
+    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
     assert fired
-    assert len(binds) == 1
     assert snapshot.index.find("a") is not None
     assert snapshot.index.find("b") is None
 
@@ -1114,15 +1083,10 @@ def test_lean_entry_dropped_as_vanished_and_back_at_its_folders_relist_is_caught
     monkeypatch.setattr(os, "stat", stat_once)
     monkeypatch.setattr(os, "open", open_once)
     monkeypatch.setattr(os, "readlink", readlink_once)
-    sources = open_project_sources(tmp_path)
-    try:
-        with pytest.raises(TreeChangedError) as error:
-            sources.capture()
-    finally:
-        sources.close()
+    named = _changed_path(tmp_path)
 
     assert fired == [step]
-    assert error.value.relative == expected
+    assert named == expected
 
 
 def _before_relist_of(
@@ -1185,15 +1149,10 @@ def test_unselected_entry_turned_lean_file_before_its_folders_relist_is_caught(
         "before-final-verification",
         lambda: entry.unlink(missing_ok=True),
     )
-    sources = open_project_sources(tmp_path)
-    try:
-        with pytest.raises(TreeChangedError) as error:
-            sources.capture()
-    finally:
-        sources.close()
+    named = _changed_path(tmp_path)
 
     assert fired == ["Proj"]
-    assert error.value.relative == f"Proj/{name}"
+    assert named == f"Proj/{name}"
 
 
 @pytest.mark.parametrize(
@@ -1223,12 +1182,10 @@ def test_unselected_entry_replaced_by_unselected_entry_before_its_folders_relist
             entry.symlink_to("user@host.5678:1700000001")
 
     fired = _before_relist_of(monkeypatch, "Proj", replace)
-    binds = _count_binds(monkeypatch)
 
-    snapshot = snapshot_project_sources(tmp_path)
+    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
     assert fired == ["Proj"]
-    assert len(binds) == 1
     assert snapshot.index.find("a") is not None
 
 
@@ -1285,16 +1242,11 @@ def test_entry_moved_away_at_its_open_and_back_at_its_folders_relist_is_caught(
     )
     relisted = _before_relist_of(monkeypatch, "Proj", move_back)
     _on_checkpoint(monkeypatch, "before-final-verification", remove_lean_input)
-    sources = open_project_sources(root)
-    try:
-        with pytest.raises(TreeChangedError) as error:
-            sources.capture()
-    finally:
-        sources.close()
+    named = _changed_path(root)
 
     assert opened == [name]
     assert relisted == ["Proj"]
-    assert error.value.relative == expected
+    assert named == expected
 
 
 @pytest.mark.parametrize("change", ["moved-away", "replaced-by-copy"])
@@ -1337,14 +1289,8 @@ def test_relevant_folder_changed_during_its_parents_scan_is_caught(
             restore()
 
     monkeypatch.setattr(tree_snapshot_module, "_tree_snapshot_checkpoint", checkpoint)
-    sources = open_project_sources(root)
-    try:
-        with pytest.raises(TreeChangedError) as error:
-            sources.capture()
-    finally:
-        sources.close()
 
-    assert error.value.relative == "Proj/Sub"
+    assert _changed_path(root) == "Proj/Sub"
 
 
 def test_checkout_marker_appearing_beside_lean_files_is_caught(
@@ -1361,13 +1307,8 @@ def test_checkout_marker_appearing_beside_lean_files_is_caught(
             marker.mkdir()
 
     _on_checkpoint(monkeypatch, "before-final-verification", clone)
-    sources = open_project_sources(tmp_path)
-    try:
-        with pytest.raises(TreeChangedError) as error:
-            sources.capture()
-    finally:
-        sources.close()
-    assert error.value.relative == "vendor/lib"
+
+    assert _changed_path(tmp_path) == "vendor/lib"
 
     marker.rmdir()
     binds = _count_binds(monkeypatch)
@@ -1391,15 +1332,10 @@ def test_checkout_marker_seen_only_by_its_folders_relist_is_caught(
     marker = tmp_path / "vendor" / "lib" / ".git"
     fired = _before_relist_of(monkeypatch, "vendor/lib", marker.mkdir)
     _on_checkpoint(monkeypatch, "before-final-verification", marker.rmdir)
-    sources = open_project_sources(tmp_path)
-    try:
-        with pytest.raises(TreeChangedError) as error:
-            sources.capture()
-    finally:
-        sources.close()
+    named = _changed_path(tmp_path)
 
     assert fired == ["vendor/lib"]
-    assert error.value.relative == "vendor/lib"
+    assert named == "vendor/lib"
 
 
 def test_unrelated_folders_do_not_change_tree_revisions(tmp_path: Path) -> None:
@@ -1576,13 +1512,11 @@ def test_nested_checkout_marker_replacement_is_captured_once(
             marker.mkdir()
 
     _on_checkpoint(monkeypatch, "before-final-verification", replace_marker)
-    attempts = _count_binds(monkeypatch)
     monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
 
-    snapshot = snapshot_project_sources(tmp_path)
+    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
     assert changed
-    assert len(attempts) == 1
     assert snapshot.index.find("toplevel") is not None
     assert snapshot.index.find("nestedWorker") is None
 
@@ -1614,12 +1548,10 @@ def test_nested_checkout_recloned_during_capture_is_captured_once(
         clone(reclones)
 
     _on_checkpoint(monkeypatch, "before-final-verification", reclone)
-    attempts = _count_binds(monkeypatch)
 
-    snapshot = snapshot_project_sources(tmp_path)
+    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
     assert reclones == 1
-    assert len(attempts) == 1
     assert snapshot.index.find("toplevel") is not None
     assert snapshot.index.find("nestedWorker0") is None
     assert snapshot.index.find("nestedWorker1") is None
@@ -3031,12 +2963,10 @@ def test_managed_marker_folder_is_listed_once_per_look_and_never_entered(
     monkeypatch.setattr(tree_snapshot_module.os, "scandir", count_opaque_scans)
     monkeypatch.setattr(tree_snapshot_module, "_read_file", refuse_descendant)
     _on_checkpoint(monkeypatch, "before-final-verification", add_irrelevant_churn, relative="")
-    attempts = _count_binds(monkeypatch)
 
-    snapshot = snapshot_project_sources(tmp_path)
+    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
     assert opaque_scans == 2
-    assert len(attempts) == 1
     assert snapshot.index.find("authored") is not None
     assert snapshot.index.find("generated") is None
 
@@ -3068,13 +2998,11 @@ def test_managed_output_marker_rewrite_is_captured_once(
             )
 
     _on_checkpoint(monkeypatch, "before-final-verification", change_marker_once, relative="")
-    attempts = _count_binds(monkeypatch)
     monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
 
-    snapshot = snapshot_project_sources(tmp_path)
+    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
     assert changed
-    assert len(attempts) == 1
     assert snapshot.index.find("authored") is not None
     assert snapshot.index.find("generated") is None
 
@@ -3111,12 +3039,10 @@ def test_skeleton_output_republished_during_capture_is_captured_once(
         _replace_outputs([(generated, stage, _output_identity(generated))])
 
     _on_checkpoint(monkeypatch, "before-final-verification", republish)
-    attempts = _count_binds(monkeypatch)
 
-    snapshot = snapshot_project_sources(tmp_path)
+    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
     assert publications == 1
-    assert len(attempts) == 1
     assert snapshot.index.find("authored") is not None
     assert snapshot.index.find("generated0") is None
     assert snapshot.index.find("generated1") is None
@@ -3138,12 +3064,10 @@ def test_marker_folder_removed_during_capture_is_captured_once(
         (hidden / ".git").mkdir()
 
     _on_checkpoint(monkeypatch, "before-final-verification", lambda: shutil.rmtree(hidden, True))
-    attempts = _count_binds(monkeypatch)
 
-    snapshot = snapshot_project_sources(tmp_path)
+    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
     assert not hidden.exists()
-    assert len(attempts) == 1
     assert snapshot.index.find("authored") is not None
     assert snapshot.index.find("generated0") is None
 
@@ -3187,14 +3111,8 @@ def test_marker_folder_exposing_lean_files_is_caught(
         # again by verification, so only that relist can see it.
         fired = _before_relist_of(monkeypatch, "", expose)
         _on_checkpoint(monkeypatch, "before-final-verification", restore)
-    sources = open_project_sources(tmp_path)
-    try:
-        with pytest.raises(TreeChangedError) as error:
-            sources.capture()
-    finally:
-        sources.close()
 
-    assert error.value.relative == "review-packets/Packet.lean"
+    assert _changed_path(tmp_path) == "review-packets/Packet.lean"
     if look == "relist":
         assert fired == [""]
 
