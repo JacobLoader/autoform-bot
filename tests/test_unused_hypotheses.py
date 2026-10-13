@@ -282,7 +282,7 @@ def test_cli_reports_a_lean_root_that_cannot_be_resolved(
     blueprint = _blueprint(tmp_path, lean={"heavy": "Skel.heavy_of_weight"})
 
     assert main(["unused-hypotheses", str(blueprint), "--lean-root", "~nosuchuser-autoform/x"]) == 2
-    assert "error: Lean root ~nosuchuser-autoform/x cannot be resolved" in capsys.readouterr().err
+    assert capsys.readouterr().err == "error: Lean root cannot be resolved\n"
 
 
 _UNUSED = """\

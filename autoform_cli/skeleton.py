@@ -36,15 +36,18 @@ from urllib.parse import quote, urlsplit
 import psutil
 import tomli
 
+from ._tree_snapshot import _normalized_name
 from .graph import Graph, GraphValidationError, Node, load_graph
 from .lean import (
     MANAGED_OUTPUT_SCHEMAS,
     PACKET_SCHEMA,
     PASSAGE_SCHEMA,
+    LeanSourceError,
     SourceIndex,
     declaration_names,
     index_failure_message,
     index_project,
+    resolve_lean_root,
 )
 
 SKELETON_SCHEMA = "autoform-skeleton/v4"
@@ -1216,6 +1219,9 @@ def lean_libraries(lean_root: str | Path) -> tuple[LeanLibrary, ...]:
     workflow reads the root package name, so both manifest languages are
     handled without a second parser for Lean syntax. When both exist, Lake
     builds from ``lakefile.lean``, so that is the one read here too.
+
+    As in Lake, a library's ``srcDir`` is relative to the package's ``srcDir``,
+    which is also the source directory of a package without library targets.
     """
 
     root = Path(lean_root).expanduser().resolve()
@@ -1234,12 +1240,13 @@ def lean_libraries(lean_root: str | Path) -> tuple[LeanLibrary, ...]:
             [f"cannot safely parse the Lake configuration of {root}: it exceeds the parser's limits"]
         ) from exc
 
+    package_src = root / str(config.get("srcDir", "."))
     libraries: list[LeanLibrary] = []
     for entry in config.get("lean_lib", []) or []:
         if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
             continue
         name = entry["name"]
-        src_dir = root / str(entry.get("srcDir", "."))
+        src_dir = package_src / str(entry.get("srcDir", "."))
         roots = entry.get("roots")
         if not isinstance(roots, list) or not all(isinstance(item, str) for item in roots):
             roots = [name]
@@ -1254,7 +1261,7 @@ def lean_libraries(lean_root: str | Path) -> tuple[LeanLibrary, ...]:
     if not libraries:
         package = config.get("name")
         if isinstance(package, str) and package:
-            libraries.append(LeanLibrary(name=package, src_dir=root, roots=(package,)))
+            libraries.append(LeanLibrary(name=package, src_dir=package_src.resolve(), roots=(package,)))
     if not libraries:
         raise SkeletonError([f"the Lake configuration of {root} declares no library"])
     return tuple(libraries)
@@ -2061,7 +2068,10 @@ def extract_skeletons(
         graph = load_graph(blueprint_dir)
     except GraphValidationError as exc:
         raise SkeletonError(exc.issues) from exc
-    root = resolve_lean_root(lean_root)
+    try:
+        root = resolve_lean_root(lean_root)
+    except LeanSourceError as error:
+        raise SkeletonError([str(error)]) from error
     activity = "skeletons were being extracted"
     inputs = snapshot_inputs(graph, root)
     libraries = lean_libraries(root)
@@ -2137,16 +2147,6 @@ def check_inputs_unchanged(
     if current_graph is None or _graph_snapshot(current_graph) != snapshot.graph:
         raise SkeletonError([f"the blueprint changed while {activity}; retry after the project is idle"])
     return current_graph
-
-
-def resolve_lean_root(lean_root: str | Path) -> Path:
-    """The absolute Lean project root, or a ``SkeletonError`` saying why there is none."""
-
-    try:
-        return Path(lean_root).expanduser().resolve()
-    except RuntimeError as error:
-        # An unknown ~user, or before Python 3.13 a symbolic link loop.
-        raise SkeletonError([f"Lean root {lean_root} cannot be resolved: {error}"]) from error
 
 
 def select_lean_targets(
@@ -2689,9 +2689,20 @@ def _stage_report_output(report: SkeletonReport, destination: Path) -> tuple[Pat
 
 
 def _remove_output(path: Path) -> None:
-    """Remove one transaction-owned file or directory without following links."""
+    """Remove one transaction-owned file or directory without following links.
+
+    A directory loses its manifest last: Lean source capture skips a folder by
+    that marker, matched by folded name, so no packet may outlive it.
+    """
 
     if path.is_dir() and not path.is_symlink():
+        with os.scandir(path) as entries:
+            children = [entry for entry in entries if _normalized_name(entry.name) != PACKET_MANIFEST]
+        for child in children:
+            if child.is_dir(follow_symlinks=False):
+                shutil.rmtree(child.path)
+            else:
+                os.unlink(child.path)
         shutil.rmtree(path)
     else:
         path.unlink(missing_ok=True)
@@ -2953,6 +2964,9 @@ def write_packets(
     written: list[Path] = []
     manifest: list[dict[str, str]] = []
     passage_manifest: list[dict[str, str]] = []
+    # Written after the manifests: a capture that lists a stage before its
+    # marker is complete then finds no folder to descend into.
+    files: list[tuple[Path, str | bytes]] = []
     try:
         packet_stage = _stage_output(root)
         passages_stage = _stage_output(passages_root) if passages_root is not None else None
@@ -2963,9 +2977,8 @@ def write_packets(
             passage_path: str | None = None
             if passages_stage is not None and node.passage is not None:
                 passage_path = (node_path / "passage.txt").as_posix()
-                (passages_stage / node_path).mkdir(parents=True, exist_ok=True)
                 passage_bytes = (node.passage + "\n").encode("utf-8")
-                (passages_stage / passage_path).write_bytes(passage_bytes)
+                files.append((passages_stage / passage_path, passage_bytes))
                 passage_manifest.append(
                     {
                         "hash": _sha256_id(passage_bytes),
@@ -2976,12 +2989,11 @@ def write_packets(
                 )
             article_relative = node_path / ARTICLE_PACKET
             if node.declarations:
-                (packet_stage / node_path).mkdir(parents=True, exist_ok=True)
-                (packet_stage / article_relative).write_text(node.blind_text(), encoding="utf-8")
+                files.append((packet_stage / article_relative, node.blind_text()))
                 written.append(root / article_relative)
             for declaration in node.declarations:
                 relative = node_path / _packet_filename(declaration.name)
-                (packet_stage / relative).write_text(declaration.blind_text(), encoding="utf-8")
+                files.append((packet_stage / relative, declaration.blind_text()))
                 written.append(root / relative)
                 entry = {
                     "article_packet": article_relative.as_posix(),
@@ -3003,7 +3015,15 @@ def write_packets(
         ):
             if stage is not None:
                 payload = json.dumps({"kind": kind, kind: entries, "schema": schema}, indent=2, sort_keys=True)
-                (stage / PACKET_MANIFEST).write_text(payload + "\n", encoding="utf-8")
+                # Staged under a name that is neither the marker nor Lean source, then
+                # renamed: a capture sees no marker or the whole one, never a partial file.
+                os.replace(_stage_output(stage / PACKET_MANIFEST, payload + "\n"), stage / PACKET_MANIFEST)
+        for path, content in files:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(content, bytes):
+                path.write_bytes(content)
+            else:
+                path.write_text(content, encoding="utf-8")
         outputs = [(root, packet_stage, root_identity)]
         if passages_root is not None and passages_stage is not None:
             outputs.append((passages_root, passages_stage, passages_identity))
@@ -3069,7 +3089,6 @@ __all__ = [
     "parse_probe_output",
     "path_of",
     "render_probe",
-    "resolve_lean_root",
     "run_probe",
     "select_lean_targets",
     "snapshot_inputs",

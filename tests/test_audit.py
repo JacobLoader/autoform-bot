@@ -1178,16 +1178,30 @@ def test_audit_graph_does_not_reread_an_article_for_fences(tmp_path: Path) -> No
     assert "unclosed-code-fence" not in {finding.code for finding in result.findings}
 
 
-def test_audit_ignores_fence_like_text_in_frontmatter(tmp_path: Path) -> None:
+def test_audit_accepts_a_closed_code_fence_after_a_frontmatter_comment(tmp_path: Path) -> None:
+    # Read with the body, the frontmatter's `<!--` would close at the arrow and the closing fence would open a new one.
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)
     path = _article(blueprint, "chapter/result.md", declaration="theorem")
-    text = path.read_text(encoding="utf-8")
-    path.write_text(text.replace("---\n", "---\n# <!-- ```draft\n", 1), encoding="utf-8")
+    text = path.read_text(encoding="utf-8").replace("---\n", "---\n# <!-- draft\n", 1)
+    path.write_text(text + "\n```mermaid\ngraph TD\n  A --> B\n```\n", encoding="utf-8")
 
     codes = {finding.code for finding in audit_blueprint(blueprint).findings}
 
     assert "unclosed-code-fence" not in codes
+
+
+def test_audit_reports_an_unclosed_code_fence_after_a_frontmatter_comment(tmp_path: Path) -> None:
+    # The frontmatter is not published, so a `<!--` there cannot comment out the fence below it.
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    path = _article(blueprint, "chapter/result.md", declaration="theorem")
+    text = path.read_text(encoding="utf-8").replace("---\n", "---\n# <!-- draft\n", 1)
+    path.write_text(text + "\n```lean\n#check result\n", encoding="utf-8")
+
+    assert _finding_map(blueprint)["roadmap/chapter/result.md"] == [
+        ("unclosed-code-fence", "code fence opened on line 14 never closes")
+    ]
 
 
 def test_statement_findings_say_what_is_wrong(tmp_path: Path) -> None:

@@ -22,7 +22,6 @@ from autoform_cli._tree_snapshot import (
     TreeSnapshot,
     TreeSnapshotError,
     bind_directory_tree,
-    capture_directory_descriptor,
 )
 from autoform_cli.lean import (
     SourceLinker,
@@ -208,33 +207,20 @@ def test_hidden_lean_source_directories_are_indexed(tmp_path: Path) -> None:
     assert index_project(tmp_path).find("hiddenProof") is not None
 
 
-@pytest.mark.parametrize("directory", [".direnv", ".obsidian", ".trash", ".venv"])
+@pytest.mark.parametrize("parent", ["", "Nested/"])
+@pytest.mark.parametrize(
+    "directory",
+    [".direnv", ".git", ".lake", ".obsidian", ".trash", ".venv", ".GIT", ".LAKE", ".ObSiDiAn"],
+)
 def test_known_tooling_directories_are_not_scanned(
     tmp_path: Path,
     directory: str,
+    parent: str,
 ) -> None:
     _index(tmp_path, "def canonical : Nat := 0\n")
-    ignored = tmp_path / directory
-    ignored.mkdir()
-    try:
-        (ignored / "external").symlink_to(tmp_path.parent, target_is_directory=True)
-    except OSError:
-        pytest.skip("symlinks are unavailable")
-
-    index = index_project(tmp_path)
-
-    assert index.find("canonical") is not None
-
-
-@pytest.mark.parametrize("directory", [".GIT", ".LAKE", ".ObSiDiAn"])
-def test_case_aliases_of_tooling_directories_are_not_scanned(
-    tmp_path: Path,
-    directory: str,
-) -> None:
-    _index(tmp_path, "def canonical : Nat := 0\n")
-    ignored = tmp_path / directory
-    ignored.mkdir()
-    (ignored / "Leak.lean").write_text("def leaked : Nat := 0\n")
+    ignored = tmp_path / parent / directory
+    ignored.mkdir(parents=True)
+    (ignored / "Leak.lean").write_text("def leaked : Nat := 0\n", encoding="utf-8")
 
     index = index_project(tmp_path)
 
@@ -280,15 +266,6 @@ def test_closed_source_binding_rejects_later_capture(
 
     with pytest.raises(TreeSnapshotError, match="closed"):
         sources.capture()
-
-
-def test_missing_project_keeps_the_empty_index_contract(tmp_path: Path) -> None:
-    missing = tmp_path / "missing"
-
-    index = index_project(missing)
-
-    assert index.root == missing.resolve()
-    assert index.declarations == {}
 
 
 @pytest.mark.parametrize("root_kind", ["missing", "file"])
@@ -670,6 +647,114 @@ def test_unreadable_lean_source_is_named_by_its_relative_path(
     assert str(tmp_path) not in str(caught.value)
 
 
+def test_unsearchable_directory_is_blamed_instead_of_its_children(tmp_path: Path) -> None:
+    """A folder with read but no search permission lists its names, but every
+    lookup of one fails; the folder is at fault, not its entries."""
+
+    _require_descriptor_capture()
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root bypasses directory permissions")
+    _index(tmp_path, "def canonical : Nat := 0\n")
+    unsearchable = tmp_path / "Project" / "Sub"
+    unsearchable.mkdir()
+    (unsearchable / "Hidden.lean").write_text("def hidden : Nat := 0\n", encoding="utf-8")
+    unsearchable.chmod(0o644)
+    try:
+        with pytest.raises(
+            lean_module.LeanSourceError,
+            match=r"^permission denied: Project/Sub$",
+        ):
+            snapshot_project_sources(tmp_path)
+    finally:
+        unsearchable.chmod(0o755)
+
+
+def test_search_permission_revoked_at_any_lookup_or_open_blames_the_folder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Revoking search permission on a folder refuses every later lookup,
+    open and readlink of a name in it. Whichever of them the revocation
+    precedes, during capture or final verification, the folder is named."""
+
+    _require_descriptor_capture()
+    _index(tmp_path, "def canonical : Nat := 0\n")
+    project = tmp_path / "Project"
+    (project / "Sub").mkdir()
+    (project / "Sub" / "Nested.lean").write_text("def nested : Nat := 0\n", encoding="utf-8")
+    (project / "Link.lean").symlink_to("Basic.lean")
+    (project / "Out").mkdir()
+    (project / "Out" / "manifest.json").write_text(
+        json.dumps({"kind": "packets", "packets": [], "schema": "autoform-skeleton-packets/v2"}),
+        encoding="utf-8",
+    )
+    folders = {}
+    for relative in (".", "Project", "Project/Sub", "Project/Out"):
+        metadata = os.stat(tmp_path / relative)
+        folders[metadata.st_dev, metadata.st_ino] = relative
+    operations = 0
+    revoke_at = 0
+    revoked = None
+
+    def by_name(original):
+        def operation(path, *args, dir_fd=None, **kwargs):
+            nonlocal operations, revoked
+            if dir_fd is not None:
+                metadata = os.fstat(dir_fd)
+                folder = (metadata.st_dev, metadata.st_ino)
+                if folder in folders:
+                    operations += 1
+                    if operations == revoke_at:
+                        revoked = folder
+                    if folder == revoked:
+                        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), path)
+            return original(path, *args, dir_fd=dir_fd, **kwargs)
+
+        return operation
+
+    for name in ("stat", "open", "readlink"):
+        monkeypatch.setattr(os, name, by_name(getattr(os, name)))
+    # Lean indexing rejects the link only after the capture has read it.
+    with pytest.raises(lean_module.LeanSourceError, match="symbolic links are not supported"):
+        snapshot_project_sources(tmp_path)
+    for revoke_at in range(1, operations + 1):
+        operations = 0
+        revoked = None
+        with pytest.raises(lean_module.LeanSourceError) as caught:
+            snapshot_project_sources(tmp_path)
+        assert str(caught.value) == f"permission denied: {folders[revoked]}", revoke_at
+
+
+def test_entry_vanishing_after_a_refused_open_is_retried_as_a_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Telling who refused an open repeats the lookup; if the entry is gone
+    by then, nothing was refused for good and the capture is retried."""
+
+    _require_descriptor_capture()
+    _index(tmp_path, "def canonical : Nat := 0\n")
+    failures = [
+        ("open", PermissionError(errno.EACCES, "refused")),
+        ("stat", FileNotFoundError(errno.ENOENT, "vanished")),
+    ]
+
+    def failing(name):
+        original = getattr(os, name)
+
+        def operation(path, *args, dir_fd=None, **kwargs):
+            if dir_fd is not None and path == "Basic.lean" and failures[:1] and failures[0][0] == name:
+                raise failures.pop(0)[1]
+            return original(path, *args, dir_fd=dir_fd, **kwargs)
+
+        return operation
+
+    for name in ("open", "stat"):
+        monkeypatch.setattr(os, name, failing(name))
+    snapshot_project_sources(tmp_path)
+    assert failures == []
+
+
 def test_unsupported_entry_name_is_reported_without_retrying(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -758,56 +843,6 @@ def test_descriptor_and_portable_capture_have_identical_order(
         descriptor_snapshot.generation_revision
         == portable_snapshot.generation_revision
     )
-
-
-def test_expected_child_identity_is_checked_during_descriptor_capture(
-    tmp_path: Path,
-) -> None:
-    _require_directory_descriptors()
-    root = tmp_path / "tree"
-    child = root / "child"
-    child.mkdir(parents=True)
-    (child / "Original.lean").write_text("def original : Nat := 0\n")
-    expected = (child.stat().st_dev, child.stat().st_ino)
-    displaced = tmp_path / "displaced"
-    replacement = tmp_path / "replacement"
-    replacement.mkdir()
-    (replacement / "Replacement.lean").write_text("def replacement : Nat := 0\n")
-    binding = directory_binding_module.open_directory(root)
-    try:
-        child.rename(displaced)
-        replacement.rename(child)
-        with pytest.raises(TreeSnapshotError, match="changed while it was captured"):
-            capture_directory_descriptor(
-                binding.descriptor,
-                expected_children={"child": expected},
-            )
-    finally:
-        binding.close()
-
-
-def test_expected_child_rejects_a_case_colliding_entry(tmp_path: Path) -> None:
-    _require_directory_descriptors()
-    root = tmp_path / "tree"
-    child = root / "child"
-    child.mkdir(parents=True)
-    collision = root / "CHILD"
-    try:
-        collision.mkdir()
-    except FileExistsError:
-        pytest.skip("filesystem does not permit case-colliding directory names")
-    if collision.samefile(child):
-        pytest.skip("filesystem does not permit case-colliding directory names")
-    expected = (child.stat().st_dev, child.stat().st_ino)
-    binding = directory_binding_module.open_directory(root)
-    try:
-        with pytest.raises(TreeSnapshotError, match="changed while it was captured"):
-            capture_directory_descriptor(
-                binding.descriptor,
-                expected_children={"child": expected},
-            )
-    finally:
-        binding.close()
 
 
 def test_portable_binding_rejects_a_symlinked_ancestor(
@@ -1412,6 +1447,27 @@ def test_lean_symlink_is_refused_whether_or_not_its_target_exists(tmp_path: Path
         snapshot_project_sources(tmp_path)
 
     assert str(tmp_path) not in str(caught.value)
+
+
+def test_case_variants_of_the_lean_suffix_are_ignored(tmp_path: Path) -> None:
+    _require_descriptor_capture()
+    _index(tmp_path, "def canonical : Nat := 0\n")
+    project = tmp_path / "Project"
+    clean = snapshot_project_sources(tmp_path)
+    (project / "Y.LEAN").write_text("theorem variantY : True := trivial\n", encoding="utf-8")
+    (project / "L.Lean").symlink_to("Basic.lean")
+    os.mkfifo(project / "P.LEAN")
+    unreadable = project / "U.Lean"
+    unreadable.touch(mode=0)
+    try:
+        captured = snapshot_project_sources(tmp_path)
+    finally:
+        unreadable.chmod(0o644)
+
+    assert set(captured.index.declarations) == {"canonical"}
+    assert captured.index.line_counts == {Path("Project/Basic.lean"): 1}
+    assert captured.revision == clean.revision
+    assert captured.generation_revision == clean.generation_revision
 
 
 def test_source_digest_preserves_surrogate_escaped_filename_bytes(tmp_path: Path) -> None:
