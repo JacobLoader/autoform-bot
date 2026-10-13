@@ -18,7 +18,11 @@ from servers import batch_diagnostics as batch
 from servers.lean_runtime import LeanRuntimeConfig, LeanRuntimeServices
 from servers.lsp import server as lsp
 from tests.test_impact import _SKELETON_FIXTURE, _lean_toolchain_available
-from tests.test_shared_lean_runtime import make_lake_project, runtime_config
+from tests.test_shared_lean_runtime import (
+    _RUNTIME_CONFIG_VARIABLES,
+    make_lake_project,
+    runtime_config,
+)
 
 _requires_real_lean = pytest.mark.skipif(
     not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain"
@@ -380,8 +384,8 @@ def test_the_language_server_path_remains_available(tmp_path):
 
 
 def test_diagnostics_configuration_from_the_environment(monkeypatch):
-    monkeypatch.delenv("LEAN_LSP_CMD", raising=False)
-    monkeypatch.delenv("LEAN_DIAGNOSTICS_BACKEND", raising=False)
+    for name in _RUNTIME_CONFIG_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
     config = LeanRuntimeConfig.from_environment()
     assert config.diagnostics_command == ("lake", "--no-build", "lean")
     assert config.diagnostics_backend == "lake"

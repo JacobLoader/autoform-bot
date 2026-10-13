@@ -52,8 +52,10 @@ uv run autoform-lean-runtime stop
 finish shutting down before a subsequent `start` can replace the runtime.
 
 `lean_diagnostic_messages` checks the file with one `lake --no-build lean` run
-per call and waits until Lean exits. Imports that are not built or are out of
-date are reported with the modules to build, not built inside the call. At most
+per call and waits until Lean exits. When `LEAN_LSP_CMD` ends in `serve`, the
+check runs that command with `--no-build lean` in place of `serve`; otherwise it
+runs the `lake` on `PATH`. Imports that are not built or are out of date are
+reported with the modules to build, not built inside the call. At most
 `AUTOFORM_MAX_LEAN_PROJECTS` checks run at once. `LEAN_DIAGNOSTICS_BACKEND=lsp`
 restores the previous language-server path, which builds imports, for one
 release, after which it will be removed. `lean_hover` still uses the project's
