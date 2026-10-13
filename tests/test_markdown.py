@@ -463,9 +463,10 @@ def test_a_fence_that_never_closes_hides_no_heading() -> None:
 
 
 def test_inline_code_starting_with_three_backticks_is_not_a_fence() -> None:
-    lines = ["```x``` is inline code here.", "## Shown"]
+    # Read as an opener, the first line would pair with the later fence and hide the heading.
+    lines = ["```x``` is inline code here.", "## Shown", "```", "hidden", "```"]
 
-    assert mask_fences_and_comments(lines) == lines
+    assert mask_fences_and_comments(lines) == ["```x``` is inline code here.", "## Shown", "", "", ""]
 
 
 def test_a_fence_that_never_closes_is_text_only_from_its_own_first_line() -> None:
