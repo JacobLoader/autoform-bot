@@ -476,29 +476,20 @@ class LeanLspSession:
             f"timed out after {timeout:g}s waiting for LSP response {request_id}"
         )
 
-    def _read_message(
-        self, timeout: float = 5, *, start_timeout: float | None = None
-    ) -> dict | None:
-        """Read one bounded JSON-RPC frame within one absolute deadline.
-
-        ``start_timeout`` bounds only the wait for a frame to begin, never past
-        ``timeout``. Once its first byte arrives, the frame may take the rest of
-        ``timeout``.
-        """
+    def _read_message(self, timeout: float = 5) -> dict | None:
+        """Read one bounded JSON-RPC frame within one absolute deadline."""
         if not self.process or not self.process.stdout:
             return None
 
         import select as _select
 
         stdout_fd = self.process.stdout.fileno()
-        now = time.monotonic()
-        deadline = now + timeout
-        start_deadline = deadline if start_timeout is None else min(deadline, now + start_timeout)
+        deadline = time.monotonic() + timeout
 
         # Read Content-Length header, checking the deadline before every byte.
         header = bytearray()
         while b"\r\n\r\n" not in header:
-            remaining = (deadline if header else start_deadline) - time.monotonic()
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 if not header:
                     return None
@@ -600,12 +591,9 @@ class LeanLspSession:
             # Before the first publication, keep waiting all the way to the
             # configured deadline. After one arrives, a one-second quiet period
             # is enough to treat the latest publication as final, while still
-            # respecting the same total deadline. The quiet period bounds only
-            # the wait for the next frame to start: a frame that has started
-            # may finish within the total deadline.
-            msg = self._read_message(
-                timeout=remaining, start_timeout=1 if received else None
-            )
+            # respecting the same total deadline.
+            read_timeout = min(1 if received else 2, remaining)
+            msg = self._read_message(timeout=read_timeout)
             if msg is None:
                 if received:
                     return diagnostics
