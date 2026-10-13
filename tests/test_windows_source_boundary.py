@@ -12,7 +12,7 @@ from autoform_cli.__main__ import main
 from autoform_cli._tree_snapshot import descriptor_capture_supported
 from autoform_cli.lean import index_project, snapshot_project_sources
 from autoform_cli.render import PUBLICATION_MANIFEST
-from tests.test_render import _REPOSITORY, _commit_project, _project
+from tests.test_render import _REPOSITORY, _commit_project, _debris, _project, _tree
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows capability boundary")
@@ -104,6 +104,28 @@ def test_render_without_descriptor_capture_is_quiet_when_no_declaration_is_named
     assert manifest["lean_source_revision"] == ""
 
 
+def test_render_without_descriptor_capture_refuses_to_overwrite_a_modified_site(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _without_descriptor_capture(monkeypatch)
+    project = _project(tmp_path)
+    output = tmp_path / "site-src"
+    arguments = ["render", str(project / "blueprint"), "--output", str(output)]
+    assert main(arguments) == 0
+    (output / "README.md").write_text("edited\n", encoding="utf-8")
+    before = _tree(output)
+    capsys.readouterr()
+
+    status = main(arguments)
+
+    assert status == 1
+    assert "refusing to overwrite a modified Autoform publication" in capsys.readouterr().out
+    assert _tree(output) == before
+    assert not _debris(tmp_path)
+
+
 def test_render_explicit_lean_root_fails_closed_without_descriptor_capture(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -120,7 +142,8 @@ def test_render_explicit_lean_root_fails_closed_without_descriptor_capture(
     assert status == 1
     assert capsys.readouterr().out.splitlines() == [
         "error: Lean sources could not be indexed: "
-        "safe directory traversal is unavailable on this platform"
+        "safe directory traversal is unavailable on this platform; "
+        "run without --lean-root to publish without code links"
     ]
     assert not output.exists()
 
