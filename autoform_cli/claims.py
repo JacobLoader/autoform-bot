@@ -31,6 +31,7 @@ _WINDOWS_DRIVE_PREFIX_RE = re.compile(r"^[A-Za-z]:")
 _WINDOWS_ROOTED_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _SCRATCH_INIT_ATTEMPTS = 10
 _SCRATCH_INIT_DELAY_S = 0.05
+_LIST_ATTEMPTS = 3
 
 _GIT_ENV = {
     "GIT_AUTHOR_NAME": "autoform",
@@ -55,6 +56,10 @@ class ClaimTransportError(RuntimeError):
 
 class MalformedLeaseError(ClaimTransportError):
     """A claim ref exists, but its lease cannot be verified safely."""
+
+
+class _ClaimRefChanged(ClaimTransportError):
+    """A listed claim ref moved or was deleted before its lease was read."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -513,19 +518,40 @@ class ClaimBoard:
         )
 
     def list(self) -> list[dict[str, Any]]:
-        """Return all claim refs, including malformed and expired entries."""
+        """Return all claim refs, including malformed and expired entries.
+
+        Refs that keep changing while they are read raise ``ClaimTransportError``.
+        """
         self._ensure_scratch()
+        for _ in range(_LIST_ATTEMPTS):
+            advertised = self._advertised_claims()
+            try:
+                leases = self._read_listed(advertised)
+            except _ClaimRefChanged:
+                continue
+            if self._advertised_claims() == advertised:
+                return leases
+        raise ClaimTransportError(f"claim refs changed during each of {_LIST_ATTEMPTS} attempts to list them")
+
+    def _advertised_claims(self) -> dict[str, str]:
         proc = self._git(["ls-remote", self.repo_url, CLAIM_REF_PREFIX + "*"])
-        leases: list[dict[str, Any]] = []
+        refs: dict[str, str] = {}
         for line in proc.stdout.splitlines():
             oid, separator, ref = line.partition("\t")
             if not separator or not ref.startswith(CLAIM_REF_PREFIX):
                 continue
+            refs[ref] = oid
+        return refs
+
+    def _read_listed(self, advertised: Mapping[str, str]) -> list[dict[str, Any]]:
+        leases: list[dict[str, Any]] = []
+        for ref, oid in advertised.items():
             key = ref[len(CLAIM_REF_PREFIX) :]
             try:
                 _validate_key(key)
             except ValueError:
                 continue
+            self._fetch_listed(key, oid)
             try:
                 lease = dict(self._read_lease(key, oid))
             except MalformedLeaseError as exc:
@@ -542,6 +568,18 @@ class ClaimBoard:
             lease["_expired"] = not lease["_malformed"] and self.expired(lease)
             leases.append(lease)
         return sorted(leases, key=lambda lease: str(lease["_key"]))
+
+    def _fetch_listed(self, key: str, oid: str) -> None:
+        """Make the listed ``oid`` local, or raise ``_ClaimRefChanged`` if its ref no longer points to it."""
+        if self._git(["cat-file", "-e", oid], check=False).returncode == 0:
+            return
+        ref = self._ref(key)
+        fetch = self._git(["fetch", "--quiet", self.repo_url, f"+{ref}:{ref}"], check=False)
+        if fetch.returncode == 0 and self._git(["cat-file", "-e", oid], check=False).returncode == 0:
+            return
+        if fetch.returncode == 0 or self._remote_oid(key) != oid:
+            raise _ClaimRefChanged(key)
+        raise ClaimTransportError(f"cannot fetch claim {key!r} from the claim board: {fetch.stderr.strip()[:300]}")
 
     def cleanup(self) -> int:
         """CAS-delete leases expired at snapshot time and return the deletion count."""

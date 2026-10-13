@@ -593,6 +593,52 @@ def _refs(repo: Path) -> dict[str, str]:
     return dict(line.split(" ", 1) for line in listing.splitlines())
 
 
+@pytest.mark.parametrize(("method", "key"), [("renew", "a"), ("release", "a"), ("acquire", "c")])
+def test_list_retries_when_a_claim_ref_changes_between_ls_remote_and_fetch(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch, method: str, key: str
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire_many(["a", "b"], ttl=600)
+    before = _refs(board_repo)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+    changed: list[bool] = []
+
+    def change_before_first_fetch(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "fetch" and not changed:
+            changed.append(getattr(owner, method)(key))
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(reader, "_git", change_before_first_fetch)
+    listed = reader.list()
+
+    assert changed == [True]
+    assert _refs(board_repo) != before
+    assert {claims.CLAIM_REF_PREFIX + lease["_key"]: lease["_oid"] for lease in listed} == _refs(board_repo)
+    assert not any(lease["_malformed"] for lease in listed)
+
+
+def test_list_raises_when_claim_refs_keep_changing(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire_many(["a", "b"], ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+
+    def renew_after_each_ls_remote(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        proc = git(args, **kwargs)
+        if args[0] == "ls-remote":
+            before = _refs(board_repo)
+            assert owner.renew("a")
+            assert _refs(board_repo) != before
+        return proc
+
+    monkeypatch.setattr(reader, "_git", renew_after_each_ls_remote)
+    with pytest.raises(claims.ClaimTransportError, match="changed during each"):
+        reader.list()
+
+
 def test_acquire_many_is_all_or_nothing_when_a_peer_holds_one_key(tmp_path: Path, board_repo: Path) -> None:
     peer = _board(tmp_path, board_repo, "worker-b")
     assert peer.acquire("held", ttl=600)
