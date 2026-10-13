@@ -13,19 +13,34 @@ namespace AutoformImpact
 
 def probeOutputLimit : Nat := {output_limit}
 
-/-- Names as the CLI passes them: JSON `[request, components]` pairs, where a
-component is a string or a number. A list literal of names would be compiled,
-and the code generator gives up on one longer than about 1,500 entries. -/
+/-- A name as the CLI spells it: a JSON array of components, each a string or
+a number. -/
+def nameOf (components : Json) : Except String Name := do
+  (← components.getArr?).foldlM (init := Name.anonymous) fun name component =>
+    match component with
+    | .str part => pure (name.str part)
+    | _ => name.num <$> component.getNat?
+
+/-- Names as the CLI passes them: JSON `[request, components]` pairs. A list
+literal of names would be compiled, and the code generator gives up on one
+longer than about 1,500 entries. -/
 def requestedNames (text : String) : CommandElabM (Array Name) := do
-  let decode (entry : Json) : Except String Name := do
-    let components ← entry.getArrVal? 1 >>= (·.getArr?)
-    components.foldlM (init := Name.anonymous) fun name component =>
-      match component with
-      | .str part => pure (name.str part)
-      | _ => name.num <$> component.getNat?
+  let decode (entry : Json) : Except String Name := entry.getArrVal? 1 >>= nameOf
   match _root_.Lean.Json.parse text >>= (·.getArr?) >>= (·.mapM decode) with
   | .ok names => pure names
   | .error e => throwError ("the project module list is malformed: " ++ e)
+
+/-- The directory each `M.*` or `M.+` glob walks, with `M` and the glob, as
+JSON `[directory, components, glob]` triples, for the same reason. -/
+def globDirectories (text : String) : CommandElabM (Array (System.FilePath × Name × String)) := do
+  let decode (entry : Json) : Except String (System.FilePath × Name × String) := do
+    let directory ← entry.getArrVal? 0 >>= (·.getStr?)
+    let base ← entry.getArrVal? 1 >>= nameOf
+    let glob ← entry.getArrVal? 2 >>= (·.getStr?)
+    pure (System.FilePath.mk directory, base, glob)
+  match _root_.Lean.Json.parse text >>= (·.getArr?) >>= (·.mapM decode) with
+  | .ok directories => pure directories
+  | .error e => throwError ("the glob directory list is malformed: " ++ e)
 
 /-- Write one complete record without letting the scratch file grow past the
 CLI's output limit. The Python reader checks the limit again after exit. -/
@@ -148,7 +163,7 @@ run_cmd do
     -- another srcDir holds a file of that name).
     if {check_inventory} then
       let artifactDir := (← IO.FS.realPath {artifact_dir}).components
-      for (dir, base, glob) in ([{glob_directories}] : List (System.FilePath × Name × String)) do
+      for (dir, base, glob) in (← AutoformImpact.globDirectories {glob_directories}) do
         if (← dir.isDir) then
           Lean.forEachModuleInDir dir fun sub => do
             unless (env.getModuleIdx? (base ++ sub)).isSome do

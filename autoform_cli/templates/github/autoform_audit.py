@@ -276,7 +276,7 @@ def render_probe(
 
     if not modules:
         raise AuditInputError("refusing to render an empty kernel-trust audit")
-    target_modules = ", ".join(_lean_name(module) for module in modules)
+    target_modules = _json_modules(modules)
     # The open probe's technique: one string literal, not a Lean term.
     table = json.dumps(
         [[_json_declaration_name(entry.name), entry.article] for entry in targets],
@@ -309,12 +309,18 @@ def autoformAuditReadTargets (text : String) : Except String (Array (Name × Str
     let declName ← autoformAuditNameOf (← entry.getArrVal? 0)
     let article ← (← entry.getArrVal? 1).getStr?
     return (declName, article)
+
+/-- The root package's modules, each spelled as its components. -/
+def autoformAuditReadModules (text : String) : Except String (List Name) := do
+  (← (← _root_.Lean.Json.parse text).getArr?).toList.mapM autoformAuditNameOf
 {_AXIOM_WALK}
 -- `Lean.Environment.replay` is deprecated from v4.34 in favor of the kernel
 -- environment's; it keeps one spelling for every supported toolchain.
 set_option linter.deprecated false in
 run_cmd do
-  let targetModules : List Name := [{target_modules}]
+  let targetModules ← match autoformAuditReadModules {target_modules} with
+    | .ok modules => pure modules
+    | .error message => throwError "cannot read the module list: {{message}}"
   let allowed : List Name := [``propext, ``Classical.choice, ``Quot.sound]
   let targets ← match autoformAuditReadTargets {target_table} with
     | .ok targets => pure targets
@@ -706,7 +712,7 @@ def render_open_probe(
 
     if not modules:
         raise AuditInputError("refusing to render an empty open-statement audit")
-    target_modules = ", ".join(_lean_name(module) for module in modules)
+    target_modules = _json_modules(modules)
     # One string literal, not a Lean term: a term with thousands of entries
     # exceeds the elaborator's and code generator's recursion limits.
     table = json.dumps(
@@ -751,6 +757,10 @@ def autoformOpenAuditReadArticles (text : String) : Except String (Array (Name �
     let isOpen ← (← entry.getArrVal? 2).getBool?
     let allowedOpen ← (← (← entry.getArrVal? 3).getArr?).mapM autoformOpenAuditNameOf
     return (declName, article, isOpen, allowedOpen)
+
+/-- The root package's modules, each spelled as its components. -/
+def autoformOpenAuditReadModules (text : String) : Except String (List Name) := do
+  (← (← _root_.Lean.Json.parse text).getArr?).toList.mapM autoformOpenAuditNameOf
 {_AXIOM_WALK}
 /-- The open statements a node rests on. A constant outside the root package
 contributes none: the audit requires those to be free of `sorry`. -/
@@ -804,7 +814,9 @@ def autoformOpenAuditNameList (names : Array Name) : MessageData :=
 -- environment's; it keeps one spelling for every supported toolchain.
 set_option linter.deprecated false in
 run_cmd do
-  let targetModules : List Name := [{target_modules}]
+  let targetModules ← match autoformOpenAuditReadModules {target_modules} with
+    | .ok modules => pure modules
+    | .error message => throwError "cannot read the module list: {{message}}"
   let allowed : List Name := [``propext, ``Classical.choice, ``Quot.sound]
   let articles ← match autoformOpenAuditReadArticles {articles} with
     | .ok articles => pure articles
@@ -942,13 +954,19 @@ run_cmd do
 """
 
 
-def _lean_name(module: str) -> str:
-    result = "Name.anonymous"
-    for part in _module_parts(module, module):
-        # Lean reads a JSON surrogate pair as two NUL characters, so characters
-        # outside the Basic Multilingual Plane must stay as they are.
-        result = f"Name.str ({result}) {json.dumps(part, ensure_ascii=False)}"
-    return result
+def _json_modules(modules: tuple[str, ...]) -> str:
+    """Spell *modules* as one Lean string of JSON name components.
+
+    A list literal of names would be compiled, and Lean's code generator gives
+    up on one of more than about 1,500 entries.
+    """
+
+    # Lean reads a JSON surrogate pair as two NUL characters, so characters
+    # outside the Basic Multilingual Plane must stay as they are.
+    table = json.dumps(
+        [list(_module_parts(module, module)) for module in modules], ensure_ascii=False, separators=(",", ":")
+    )
+    return json.dumps(table, ensure_ascii=False)
 
 
 def _json_declaration_name(name: str) -> list[str | int]:

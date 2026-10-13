@@ -1363,7 +1363,7 @@ def render_probe(
         marker=PROBE_MARKER,
         output_env=PROBE_OUTPUT_ENV,
         output_limit=DEFAULT_PROBE_OUTPUT_LIMIT,
-        project_roots=", ".join(_lean_name(name) for name in sorted(set(project_roots))),
+        project_roots=_lean_requests(tuple(sorted(set(project_roots)))),
         roots=_lean_requests(roots),
     )
 
