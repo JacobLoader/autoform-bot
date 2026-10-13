@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 try:
@@ -14,6 +16,7 @@ from autoform_cli.graph import load_graph
 from autoform_cli.lean import build_linker, declaration_names
 from autoform_cli.render import render_site
 from autoform_cli.status import derive
+from tests.test_lean_sources import _git_commit
 
 
 _HREF = re.compile(r'href="([^"]+)"')
@@ -446,7 +449,10 @@ def test_roadmap_example_is_structural_not_a_completion_fixture(
 
 
 def test_setup_asset_static_site_contract(repo_root: Path, tmp_path: Path) -> None:
-    example = repo_root / _EXAMPLE
+    example = tmp_path / "consumer-project"  # links need a commit holding the rendered inputs
+    shutil.copytree(repo_root / _EXAMPLE, example)
+    subprocess.run(["git", "init", "-q"], cwd=example, check=True)
+    ref = _git_commit(example, "consumer fixture")
     site = tmp_path / "site-src"
 
     report = render_site(
@@ -454,7 +460,7 @@ def test_setup_asset_static_site_contract(repo_root: Path, tmp_path: Path) -> No
         site,
         lean_root=example,
         repository_url="https://github.com/owner/repo",
-        ref="0" * 40,
+        ref=ref,
     )
 
     assert report.unresolved == []
@@ -462,7 +468,7 @@ def test_setup_asset_static_site_contract(repo_root: Path, tmp_path: Path) -> No
     assert manifest["schema"] == "autoform-publication/v2"
     assert manifest["nodes"] == 10
     assert manifest["dependencies"] == 9
-    assert manifest["git_ref"] == "0" * 40
+    assert manifest["git_ref"] == ref
     assert manifest["coverage"]["complete"] is False
     assert manifest["coverage"]["counts"] == {
         "DECOMPOSED": 1,

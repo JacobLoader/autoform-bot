@@ -286,6 +286,7 @@ def test_creates_complete_supported_project(tmp_path: Path) -> None:
         ".lake/",
         "site/",
         "site-src/",
+        ".autoform-publication-*/",
         "*.log",
         ".claude/worktrees/",
     ]
