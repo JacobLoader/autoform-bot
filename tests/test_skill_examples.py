@@ -246,9 +246,6 @@ def test_quick_start_keeps_the_cli_agent_facing(repo_root: Path) -> None:
 def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path) -> None:
     servers = " ".join((repo_root / "servers/README.md").read_text(encoding="utf-8").split())
     setup = " ".join((repo_root / "skills/setup/SKILL.md").read_text(encoding="utf-8").split())
-    lakefile = (
-        repo_root / "skills/setup/assets/cabannes-thesis-project/lakefile.toml"
-    ).read_text(encoding="utf-8")
 
     assert "one REPL slot pool" in servers
     assert "each public REPL call gets a fresh child" in servers
@@ -294,7 +291,23 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
     assert "run `lake update repl`" in setup
     assert "commit the manifest" in setup
     assert "lake build @repl/repl" in setup
-    assert "68a3b3a059787a7db44fb1e6281e4a657efee470" in lakefile
+
+
+def test_setup_example_pins_the_repl_that_the_real_repl_job_tests(repo_root: Path) -> None:
+    # The real-REPL CI job builds this fixture, so the example's REPL pin is
+    # tested only while both pin the same revision on the same toolchain.
+    fixture = repo_root / "tests/fixtures/repl-smoke"
+    example = repo_root / _EXAMPLE
+
+    def repl_rev(project: Path) -> str:
+        lakefile = tomllib.loads((project / "lakefile.toml").read_text(encoding="utf-8"))
+        return next(entry["rev"] for entry in lakefile["require"] if entry["name"] == "repl")
+
+    def toolchain(project: Path) -> str:
+        return (project / "lean-toolchain").read_text(encoding="utf-8").strip()
+
+    assert repl_rev(example) == repl_rev(fixture)
+    assert toolchain(example) == toolchain(fixture)
 
 
 def test_setup_guidance_uses_the_offline_atomic_project_creator(repo_root: Path) -> None:
