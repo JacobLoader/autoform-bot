@@ -323,6 +323,24 @@ def test_a_chapter_places_statements_in_the_authored_narrative(tmp_path: Path) -
     assert "Additional formalization targets" not in page
 
 
+def test_inline_triple_backticks_do_not_hide_the_chapter_structure(tmp_path: Path) -> None:
+    # Only a line that starts with the backticks can be mistaken for an opening fence.
+    project = _project(tmp_path)
+    readme = project / "blueprint/roadmap/README.md"
+    readme.write_text(
+        readme.read_text(encoding="utf-8").replace(
+            "This chapter develops",
+            "```x``` is inline code here.\n\nThis chapter develops",
+        ),
+        encoding="utf-8",
+    )
+    render_site(project / "blueprint", tmp_path / "out", lean_root=project)
+
+    page = (tmp_path / "out/roadmap/README.md").read_text(encoding="utf-8")
+    assert page.index('class="bp-progress-overview"') < page.index("## Definitions") < page.index('id="base"')
+    assert "Additional formalization targets" not in page
+
+
 def test_unplaced_statements_use_an_explicit_fallback_section(tmp_path: Path) -> None:
     project = _project(tmp_path)
     roadmap = project / "blueprint/roadmap"
