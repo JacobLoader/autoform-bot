@@ -34,7 +34,7 @@ _POPEN_TYPE = subprocess.Popen
 DEFAULT_LSP_TIMEOUT = 60
 MAX_LSP_HEADER_BYTES = 16 * 1024
 MAX_LSP_MESSAGE_BYTES = 16 * 1024 * 1024
-# How long Lean's watchdog gets to stop its file workers once stdin closes.
+# How long Lean's watchdog gets to stop its file workers once its pipes close.
 LSP_EOF_GRACE_SECONDS = 2.0
 
 
@@ -150,13 +150,16 @@ class LeanLspSession:
                 # Lean's watchdog starts each file worker in its own session
                 # and stops every worker group when its stdin closes. A TERM
                 # first would kill the watchdog and orphan workers the group
-                # signal cannot reach. The leader stays unreaped while the
+                # signal cannot reach. Close stdout too: the watchdog writes
+                # during that shutdown and handles a closed pipe, but would
+                # block on a full one. The leader stays unreaped while the
                 # watchdog exits, so the PGID cannot be reused meanwhile.
-                if process.stdin is not None:
-                    try:
-                        process.stdin.close()
-                    except OSError:
-                        logger.warning("failed to close Lean LSP stdin", exc_info=True)
+                for stream in (process.stdin, process.stdout):
+                    if stream is not None:
+                        try:
+                            stream.close()
+                        except OSError:
+                            logger.warning("failed to close a Lean LSP pipe", exc_info=True)
                 _wait_for_live_process_group_exit(
                     process_group_id, time.monotonic() + LSP_EOF_GRACE_SECONDS
                 )

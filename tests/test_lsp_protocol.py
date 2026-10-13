@@ -103,9 +103,8 @@ def test_start_aborts_process_when_initialize_fails(monkeypatch):
     assert popen_kwargs["start_new_session"] is True
     assert process.killed is True
     assert process.waited is True
-    # stdin closes once to let the watchdog exit, then again with stdout.
-    assert process.stdin.close_calls == 2
-    assert process.stdout.close_calls == 1
+    # Both pipes close once to let the watchdog exit, then again in cleanup.
+    assert process.stdin.close_calls == process.stdout.close_calls == 2
     assert session.process is None
     assert session._process_group_id is None
 
@@ -495,9 +494,10 @@ def test_close_sends_exit_without_params(monkeypatch):
     assert session.process is None
 
 
-# Like Lean's watchdog: each file worker runs in its own session, and stdin
-# EOF stops every worker group before the watchdog exits. SIGTERM kills it
-# before that cleanup can run.
+# Like Lean's watchdog: each file worker runs in its own session. On stdin EOF
+# it first writes more than a pipe holds, which blocks while stdout is open but
+# unread and fails harmlessly once stdout is closed, then stops every worker
+# group and exits. SIGTERM kills it before that cleanup can run.
 _FAKE_WATCHDOG = (
     "import os, signal, subprocess, sys\n"
     "worker = subprocess.Popen(\n"
@@ -505,6 +505,10 @@ _FAKE_WATCHDOG = (
     ")\n"
     "print('worker', worker.pid, flush=True)\n"
     "sys.stdin.read()\n"
+    "try:\n"
+    "    os.write(1, b'x' * 262144)\n"
+    "except BrokenPipeError:\n"
+    "    pass\n"
     "os.killpg(worker.pid, signal.SIGKILL)\n"
     "worker.wait()\n"
 )
