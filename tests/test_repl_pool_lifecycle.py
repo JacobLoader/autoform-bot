@@ -418,15 +418,16 @@ def test_shutdown_unblocks_a_call_waiting_for_a_cold_slot(monkeypatch):
     errors = []
     waiter = threading.Thread(
         target=lambda: errors.append(
-            pytest.raises(RuntimeError, pool.run, "#check Nat").value
-        )
+            pytest.raises(RuntimeError, pool.run, "#check Nat", timeout=5).value
+        ),
+        daemon=True,
     )
     waiter.start()
     deadline = time.monotonic() + 2
     while pool._active_calls == 0 and time.monotonic() < deadline:
         time.sleep(0.01)
 
-    stopper = threading.Thread(target=pool.shutdown)
+    stopper = threading.Thread(target=pool.shutdown, daemon=True)
     stopper.start()
     waiter.join(timeout=2)
     stopper.join(timeout=2)
