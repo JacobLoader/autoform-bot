@@ -926,6 +926,14 @@ the `manifest.json`, `publication.json` and `.git` names match in any letter
 case, except `build`, which must be lowercase. The `.lean` suffix must match
 exactly, so `A.LEAN` is not indexed.
 
+Within each file the index records the declarations written with `theorem`,
+`lemma`, `def`, `abbrev`, `instance`, `structure`, `class`, `inductive`,
+`opaque`, `axiom`, `irreducible_def`, and Batteries' wanted commands
+(`Batteries.Util.ProofWanted`) `theorem_wanted`, `proof_wanted`, `def_wanted`,
+and `instance_wanted`, after any attributes and modifiers, `public` included.
+An unnamed `instance` or `instance_wanted` is not indexed. A wanted command
+states a result whose proof or construction is deferred.
+
 The Markdown files are the source of truth. Graphs and sites are derived views
 that may be regenerated at any time.
 
@@ -940,6 +948,16 @@ internally consistent, and that cited work resolves to local source
 material without escaping the blueprint. Coverage files are checked for broken
 links and explicitly declared gaps. With `--lean-root`, local declaration names
 and declaration kinds are checked against the Lean source index.
+
+A wanted target matches the intent its command mirrors: `theorem_wanted` and
+`proof_wanted` a `theorem`, `lemma`, `proposition`, or `corollary`,
+`def_wanted` a `def` or `definition`, and `instance_wanted` an `instance`. A
+theorem's wanted target can back `statement: formalized`, but no wanted target
+backs a proved article: `lean-target-wanted` reports one named by an article
+that records `proof: formalized`, or by a definition that records `statement:
+formalized`, since a stated definition counts as proved. Batteries elaborates a
+wanted command to a placeholder without `sorry`, so no `sorry` check catches
+it.
 
 ### Structure
 

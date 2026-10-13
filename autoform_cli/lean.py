@@ -41,10 +41,13 @@ from ._tree_snapshot import (
 _NAMESPACE = re.compile(r"^\s*namespace\s+(.+)$")
 _SECTION = re.compile(r"^\s*section\b\s*(\S*)")
 _END = re.compile(r"^\s*end\b\s*(\S*)")
+# The ``*_wanted`` commands are Batteries' ``Batteries.Util.ProofWanted``: each
+# states a result whose proof or construction is deferred.
 _DECLARATION = re.compile(
     r"^\s*(?:@\[[^\]]*\]\s*)*"
-    r"(?:(?:private|protected|noncomputable|partial|unsafe|scoped|local)\s+)*"
-    r"(theorem|lemma|def|abbrev|instance|structure|class|inductive|opaque|axiom|irreducible_def)\s+(.+)$"
+    r"(?:(?:public|private|protected|noncomputable|partial|unsafe|scoped|local)\s+)*"
+    r"(theorem|lemma|def|abbrev|instance|structure|class|inductive|opaque|axiom|irreducible_def"
+    r"|theorem_wanted|proof_wanted|def_wanted|instance_wanted)\s+(.+)$"
 )
 _IGNORED_DIRECTORIES = frozenset(
     {

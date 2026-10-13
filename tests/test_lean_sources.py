@@ -2214,6 +2214,34 @@ def test_irreducible_definitions_are_indexed(tmp_path: Path) -> None:
     assert index.find("A.b").keyword == "irreducible_def"
 
 
+def test_batteries_wanted_commands_are_indexed_with_their_keyword(tmp_path: Path) -> None:
+    source = [
+        "namespace W",
+        # The module system's `public`, as atlas-lean writes its wanted results.
+        "public theorem_wanted sturm (p : Nat) (hp : 0 < p) :",
+        "    p = p",
+        "private theorem_wanted lower : True",
+        "proof_wanted legacy : 1 = 1",
+        "@[simp] def_wanted η : Nat",
+        "def_wanted derived : Nat := ❰η❱ + 1",
+        "instance_wanted instFoo : Inhabited Nat",
+        "instance_wanted : Nonempty Nat",
+        "public theorem stated : True := trivial",
+        "end W",
+    ]
+    index = _index(tmp_path, "\n".join(source) + "\n")
+
+    assert {name: declaration.keyword for name, declaration in index.declarations.items()} == {
+        "W.sturm": "theorem_wanted",
+        "W.lower": "theorem_wanted",
+        "W.legacy": "proof_wanted",
+        "W.η": "def_wanted",
+        "W.derived": "def_wanted",
+        "W.instFoo": "instance_wanted",
+        "W.stated": "theorem",
+    }
+
+
 def test_anonymous_instances_are_not_mistaken_for_names(tmp_path: Path) -> None:
     index = _index(tmp_path, "instance : Inhabited Nat := ⟨0⟩\n")
 
