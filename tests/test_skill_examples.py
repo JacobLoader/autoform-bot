@@ -270,6 +270,7 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
         '`LEAN_REPL_CMD="lake exe @<name>/repl"` for a require named `<name>`, '
         "which applies to every project the runtime serves"
     ) in servers
+    assert "When `LEAN_REPL_HEADER_CMD` is unset and `LEAN_REPL_CMD` starts with a `lake` executable" in servers
     assert "header validation reuses that executable without the command's other arguments" in servers
     assert (
         "`LEAN_REPL_CMD` and `LEAN_REPL_HEADER_CMD` are node-wide and read only "

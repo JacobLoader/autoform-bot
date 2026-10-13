@@ -1888,6 +1888,15 @@ def test_absolute_lake_command_is_reused_for_header_validation(monkeypatch):
     )
 
 
+def test_explicit_header_command_overrides_a_lake_repl_command(monkeypatch):
+    monkeypatch.setenv("LEAN_REPL_CMD", "lake exe @repl/repl")
+    monkeypatch.setenv("LEAN_REPL_HEADER_CMD", "lake env lean-header")
+
+    config = LeanRuntimeConfig.from_environment()
+
+    assert config.repl_header_command == ("lake", "env", "lean-header")
+
+
 def test_wrapped_repl_command_requires_an_explicit_header_command(monkeypatch):
     monkeypatch.setenv("LEAN_REPL_CMD", "container run lake exe @repl/repl")
 
