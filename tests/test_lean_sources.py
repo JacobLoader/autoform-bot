@@ -669,27 +669,19 @@ def test_unreadable_lean_source_is_named_by_its_relative_path(
     assert str(tmp_path) not in str(caught.value)
 
 
-def _require_enforced_permission_bits() -> None:
+def test_unsearchable_directory_is_blamed_instead_of_its_children(tmp_path: Path) -> None:
+    """A folder with read but no search permission lists its names, but every
+    lookup of one fails; the folder is at fault, not its entries."""
+
     _require_descriptor_capture()
     if os.name == "nt":
         pytest.skip("chmod sets only the read-only flag on Windows")
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         pytest.skip("root bypasses directory permissions")
-
-
-@pytest.mark.parametrize("child", ["Hidden.lean", "manifest.json"])
-def test_unsearchable_directory_is_blamed_instead_of_its_children(
-    tmp_path: Path,
-    child: str,
-) -> None:
-    """A folder with read but no search permission lists its names, but every
-    lookup of one fails; the folder is at fault, not its entries."""
-
-    _require_enforced_permission_bits()
     _index(tmp_path, "def canonical : Nat := 0\n")
     unsearchable = tmp_path / "Project" / "Sub"
     unsearchable.mkdir()
-    (unsearchable / child).write_text("def hidden : Nat := 0\n", encoding="utf-8")
+    (unsearchable / "Hidden.lean").write_text("def hidden : Nat := 0\n", encoding="utf-8")
     unsearchable.chmod(0o644)
     try:
         with pytest.raises(
@@ -701,179 +693,64 @@ def test_unsearchable_directory_is_blamed_instead_of_its_children(
         unsearchable.chmod(0o755)
 
 
-@pytest.mark.parametrize(
-    ("event", "relative", "blamed"),
-    [
-        ("after-directory-list", "", "."),
-        ("after-directory-list", "Project", "Project"),
-        ("before-final-verification", "", "."),
-    ],
-)
-def test_lookup_refused_by_the_parent_blames_the_parent(
+def test_search_permission_revoked_at_any_lookup_or_open_blames_the_folder(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    event: str,
-    relative: str,
-    blamed: str,
 ) -> None:
-    """Search permission revoked after a listing refuses the lookup of every
-    listed name, during capture and during final verification."""
+    """Revoking search permission on a folder refuses every later lookup,
+    open and readlink of a name in it. Whichever of them the revocation
+    precedes, during capture or final verification, the folder is named."""
 
-    _require_enforced_permission_bits()
+    _require_descriptor_capture()
     _index(tmp_path, "def canonical : Nat := 0\n")
-    (tmp_path / "Project" / "Sub").mkdir()
-    (tmp_path / "Project" / "Sub" / "Nested.lean").write_text(
-        "def nested : Nat := 0\n",
+    project = tmp_path / "Project"
+    (project / "Sub").mkdir()
+    (project / "Sub" / "Nested.lean").write_text("def nested : Nat := 0\n", encoding="utf-8")
+    (project / "Link.lean").symlink_to("Basic.lean")
+    (project / "Out").mkdir()
+    (project / "Out" / "manifest.json").write_text(
+        json.dumps({"kind": "packets", "packets": [], "schema": "autoform-skeleton-packets/v2"}),
         encoding="utf-8",
     )
-    revoked = tmp_path / relative
-    _on_checkpoint(monkeypatch, event, lambda: revoked.chmod(0o644), relative)
-    try:
-        with pytest.raises(
-            lean_module.LeanSourceError,
-            match=rf"^permission denied: {re.escape(blamed)}$",
-        ):
+    folders = {}
+    for relative in (".", "Project", "Project/Sub", "Project/Out"):
+        metadata = os.stat(tmp_path / relative)
+        folders[metadata.st_dev, metadata.st_ino] = relative
+    operations = 0
+    revoke_at = 0
+    revoked = None
+
+    def by_name(original):
+        def operation(path, *args, dir_fd=None, **kwargs):
+            nonlocal operations, revoked
+            if dir_fd is not None:
+                metadata = os.fstat(dir_fd)
+                folder = (metadata.st_dev, metadata.st_ino)
+                if folder in folders:
+                    operations += 1
+                    if operations == revoke_at:
+                        revoked = folder
+                    if folder == revoked:
+                        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), path)
+            return original(path, *args, dir_fd=dir_fd, **kwargs)
+
+        return operation
+
+    for name in ("stat", "open", "readlink"):
+        monkeypatch.setattr(os, name, by_name(getattr(os, name)))
+    # Lean indexing rejects the link only after the capture has read it.
+    with pytest.raises(lean_module.LeanSourceError, match="symbolic links are not supported"):
+        snapshot_project_sources(tmp_path)
+    total = operations
+    for revoke_at in range(1, total + 1):
+        operations = 0
+        revoked = None
+        with pytest.raises(lean_module.LeanSourceError) as caught:
             snapshot_project_sources(tmp_path)
-    finally:
-        revoked.chmod(0o755)
-
-
-@pytest.mark.parametrize(
-    ("name", "phase"),
-    [
-        ("Basic.lean", "capture"),
-        ("Sub", "capture"),
-        ("Sub", "verification"),
-    ],
-)
-def test_open_refused_by_the_parent_blames_the_parent(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    name: str,
-    phase: str,
-) -> None:
-    """Search permission revoked between a lookup and the open of the same
-    name refuses the open; repeating the lookup shows the folder is at fault."""
-
-    _require_enforced_permission_bits()
-    _index(tmp_path, "def canonical : Nat := 0\n")
-    project = tmp_path / "Project"
-    (project / "Sub").mkdir()
-    (project / "Sub" / "Nested.lean").write_text("def nested : Nat := 0\n", encoding="utf-8")
-    armed = [phase == "capture"]
-    if phase == "verification":
-        _on_checkpoint(monkeypatch, "before-final-verification", lambda: armed.append(True))
-    original_open = os.open
-
-    def open_after_revoking(path, flags, mode=0o777, *, dir_fd=None):
-        if path == name and dir_fd is not None and armed[-1]:
-            armed.append(False)
-            project.chmod(0o644)
-        return original_open(path, flags, mode, dir_fd=dir_fd)
-
-    monkeypatch.setattr(tree_snapshot_module.os, "open", open_after_revoking)
-    try:
-        with pytest.raises(
-            lean_module.LeanSourceError,
-            match=r"^permission denied: Project$",
-        ):
-            snapshot_project_sources(tmp_path)
-    finally:
-        project.chmod(0o755)
-
-
-def test_unreadable_symbolic_link_names_itself(tmp_path: Path) -> None:
-    """Where reading a link checks the link's own permission, a refused
-    readlink whose lookup still succeeds names the link."""
-
-    _require_enforced_permission_bits()
-    if not hasattr(os, "lchmod"):
-        pytest.skip("symbolic link permissions cannot be changed")
-    _index(tmp_path, "def canonical : Nat := 0\n")
-    link = tmp_path / "Project" / "Link.lean"
-    link.symlink_to("Basic.lean")
-    os.lchmod(link, 0)
-    try:
-        try:
-            os.readlink(link)
-        except PermissionError:
-            pass
-        else:
-            pytest.skip("symbolic link read permission is not enforced")
-        with pytest.raises(
-            lean_module.LeanSourceError,
-            match=r"^permission denied: Project/Link\.lean$",
-        ):
-            snapshot_project_sources(tmp_path)
-    finally:
-        os.lchmod(link, 0o755)
-
-
-def test_lookup_after_scanning_a_child_folder_blames_the_parent(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Search permission revoked while a child folder is scanned through its
-    own descriptor refuses only the parent's final lookup of that child."""
-
-    _require_enforced_permission_bits()
-    _index(tmp_path, "def canonical : Nat := 0\n")
-    project = tmp_path / "Project"
-    (project / "Sub").mkdir()
-    (project / "Sub" / "Nested.lean").write_text("def nested : Nat := 0\n", encoding="utf-8")
-    _on_checkpoint(
-        monkeypatch,
-        "after-directory-list",
-        lambda: project.chmod(0o644),
-        "Project/Sub",
-    )
-    try:
-        with pytest.raises(
-            lean_module.LeanSourceError,
-            match=r"^permission denied: Project$",
-        ):
-            snapshot_project_sources(tmp_path)
-    finally:
-        project.chmod(0o755)
-
-
-@pytest.mark.parametrize(
-    "revoke",
-    ["before-readlink", "after-readlink"],
-)
-def test_symbolic_link_refused_by_the_parent_blames_the_parent(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    revoke: str,
-) -> None:
-    """Search permission revoked just before a link is read refuses the
-    readlink, and just after refuses the lookup that confirms the link; in
-    both cases the folder is at fault, not the link."""
-
-    _require_enforced_permission_bits()
-    _index(tmp_path, "def canonical : Nat := 0\n")
-    project = tmp_path / "Project"
-    (project / "Link.lean").symlink_to("Basic.lean")
-    original_readlink = os.readlink
-
-    def readlink_revoking(path, *, dir_fd=None):
-        if path != "Link.lean" or dir_fd is None:
-            return original_readlink(path, dir_fd=dir_fd)
-        if revoke == "before-readlink":
-            project.chmod(0o644)
-        target = original_readlink(path, dir_fd=dir_fd)
-        project.chmod(0o644)
-        return target
-
-    monkeypatch.setattr(tree_snapshot_module.os, "readlink", readlink_revoking)
-    try:
-        with pytest.raises(
-            lean_module.LeanSourceError,
-            match=r"^permission denied: Project$",
-        ):
-            snapshot_project_sources(tmp_path)
-    finally:
-        project.chmod(0o755)
+        assert (revoke_at, str(caught.value)) == (
+            revoke_at,
+            f"permission denied: {folders[revoked]}",
+        )
 
 
 def test_unsupported_entry_name_is_reported_without_retrying(
@@ -2067,14 +1944,13 @@ def test_managed_output_marker_prunes_before_any_descendant_open(
     )
     original_read = tree_snapshot_module._read_file
 
-    def refuse_descendant(parent_descriptor, name, expected, *, relative, max_bytes=None):
+    def refuse_descendant(parent_descriptor, name, expected, *, max_bytes=None):
         if name == "Packet.lean":
             raise AssertionError("managed descendants must not be opened")
         return original_read(
             parent_descriptor,
             name,
             expected,
-            relative=relative,
             max_bytes=max_bytes,
         )
 

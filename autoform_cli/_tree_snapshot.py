@@ -1207,13 +1207,15 @@ def capture_directory_descriptor(
                     metadata.st_size,
                     selection.byte_limit(relative_path),
                 )
-                data = _read_file(
-                    descriptor,
-                    name,
-                    child_identity,
-                    relative=relative,
-                    max_bytes=max_bytes,
-                )
+                try:
+                    data = _read_file(
+                        descriptor,
+                        name,
+                        child_identity,
+                        max_bytes=max_bytes,
+                    )
+                except PermissionError as error:
+                    raise _access_denied(descriptor, name, relative) from error
                 budget.add_file_bytes(len(data))
                 files.append((child_relative, data))
             elif stat.S_ISLNK(metadata.st_mode):
@@ -1402,7 +1404,7 @@ def _lookup(descriptor: int, name: str, relative: str) -> os.stat_result:
 
 
 def _access_denied(descriptor: int, name: str, relative: str) -> _PermissionDenied:
-    """Name what refused an open or readlink of *name* in *relative*.
+    """Name what refused an open, read or readlink of *name* in *relative*.
 
     Either the directory denies search permission or the entry denies access.
     Repeating only the lookup tells which: if that is refused too, the
@@ -1452,13 +1454,15 @@ def _opaque_marker(
         if not stat.S_ISREG(metadata.st_mode):
             continue
         max_bytes = budget.file_read_limit(metadata.st_size, marker.max_bytes)
-        data = _read_file(
-            descriptor,
-            name,
-            identity,
-            relative=relative,
-            max_bytes=max_bytes,
-        )
+        try:
+            data = _read_file(
+                descriptor,
+                name,
+                identity,
+                max_bytes=max_bytes,
+            )
+        except PermissionError as error:
+            raise _access_denied(descriptor, name, relative) from error
         if len(data) <= marker.max_bytes and marker.recognizes(data):
             budget.add_file_bytes(len(data))
             return (
@@ -1474,31 +1478,25 @@ def _read_file(
     name: str,
     expected: tuple[int, ...],
     *,
-    relative: str,
     max_bytes: int | None = None,
 ) -> bytes:
-    """Read the regular file *name* in the directory *relative*."""
-
     descriptor: int | None = None
     try:
-        try:
-            descriptor = os.open(name, _FILE_FLAGS, dir_fd=parent_descriptor)
-        except PermissionError as error:
-            raise _access_denied(parent_descriptor, name, relative) from error
+        descriptor = os.open(name, _FILE_FLAGS, dir_fd=parent_descriptor)
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode) or _stat_signature(opened) != expected:
             raise _TreeChanged
         stream = os.fdopen(descriptor, "rb", buffering=0, closefd=False)
         try:
             data = stream.read() if max_bytes is None else _read_prefix(stream, max_bytes + 1)
-        except PermissionError as error:
-            # Reading through the open descriptor checks only the file.
-            raise _PermissionDenied(f"{relative}/{name}" if relative else name) from error
         finally:
             stream.close()
         if (
             _stat_signature(os.fstat(descriptor)) != expected
-            or _stat_signature(_lookup(parent_descriptor, name, relative)) != expected
+            or _stat_signature(
+                os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+            )
+            != expected
         ):
             raise _TreeChanged
         return data
@@ -1546,16 +1544,16 @@ def _verify_snapshot(
         else:
             if observed != marker.identity:
                 raise _TreeChanged
-            if (
-                _read_file(
+            try:
+                data = _read_file(
                     descriptor,
                     marker.name,
                     marker.identity,
-                    relative=relative,
                     max_bytes=marker.max_bytes,
                 )
-                != marker.data
-            ):
+            except PermissionError as error:
+                raise _access_denied(descriptor, marker.name, relative) from error
+            if data != marker.data:
                 raise _TreeChanged
         marker_relative = f"{relative}/{marker.name}" if relative else marker.name
         expected_entry = expected_entries.get(marker_relative)
