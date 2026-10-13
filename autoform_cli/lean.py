@@ -12,6 +12,7 @@ and deliberately reports nothing it cannot see rather than guessing.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -148,15 +149,44 @@ def index_failure_message(error: OSError) -> str:
     return "Lean sources could not be indexed"
 
 
+def resolve_lean_root(lean_root: str | Path) -> Path:
+    """Resolve *lean_root* to the directory it names.
+
+    Raises :class:`LeanSourceError` naming why the root cannot be used, for
+    example when it does not exist or lies under a folder that cannot be
+    searched.
+    """
+
+    try:
+        root = directory_binding.lexical_absolute_path(lean_root).resolve()
+        metadata = os.stat(root)
+    except RuntimeError as error:
+        # An unknown ~user, or before Python 3.13 a symbolic link loop.
+        raise LeanSourceError("Lean root cannot be resolved") from error
+    except (FileNotFoundError, NotADirectoryError) as error:
+        raise LeanSourceError("Lean root does not exist or is not a directory") from error
+    except PermissionError as error:
+        raise LeanSourceError("permission denied while resolving the Lean root") from error
+    except (OSError, ValueError) as error:
+        if getattr(error, "errno", None) == errno.ELOOP:
+            # Python 3.13 and later resolve a symbolic link loop without raising.
+            raise LeanSourceError("Lean root cannot be resolved") from error
+        raise LeanSourceError("Lean root cannot be inspected") from error
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise LeanSourceError("Lean root does not exist or is not a directory")
+    return root
+
+
 def index_project(
     root: str | Path, *, exclude_roots: Iterable[str | Path] = ()
 ) -> SourceIndex:
-    """Scan ``*.lean`` beneath *root* and index declarations by full name."""
+    """Scan ``*.lean`` beneath *root* and index declarations by full name.
+
+    Raises :class:`LeanSourceError` when the root cannot be used or its
+    sources cannot be read.
+    """
+    root_path = resolve_lean_root(root)
     requested_root = directory_binding.lexical_absolute_path(root)
-    root_path = requested_root.resolve()
-    if not root_path.is_dir():
-        digest = hashlib.sha256(b"autoform-lean-source-index/v1\0").hexdigest()
-        return SourceIndex(root=root_path, declarations={}, source_digest=digest)
     remapped_exclusions = tuple(
         _remap_resolved_root_exclusion(requested_root, root_path, value)
         for value in exclude_roots
@@ -908,12 +938,8 @@ def build_linker(
     A supplied source snapshot never inherits a live Git ref; callers must bind
     that ref explicitly if they want permalinks.
     """
-    try:
-        requested_root = directory_binding.lexical_absolute_path(lean_root)
-        resolved_root = requested_root.resolve()
-    except RuntimeError as error:
-        # An unknown ~user, or before Python 3.13 a symbolic link loop.
-        raise LeanSourceError("Lean root cannot be resolved") from error
+    resolved_root = resolve_lean_root(lean_root)
+    requested_root = directory_binding.lexical_absolute_path(lean_root)
     remapped_exclusions = tuple(
         _remap_resolved_root_exclusion(requested_root, resolved_root, value)
         for value in exclude_roots
@@ -1276,6 +1302,7 @@ __all__ = [
     "index_failure_message",
     "index_project",
     "project_source_revision",
+    "resolve_lean_root",
     "snapshot_project_sources",
     "strip_lean_comments",
     "verify_repository_snapshot",

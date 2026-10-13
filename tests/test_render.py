@@ -2205,7 +2205,7 @@ def test_lasting_capture_failures_name_their_cause(tmp_path: Path) -> None:
 
     with pytest.raises(PublicationError, match="blueprint directory does not exist"):
         render_site(project / "bluepirnt", tmp_path / "out", lean_root=project)
-    with pytest.raises(PublicationError, match="directory root does not exist"):
+    with pytest.raises(PublicationError, match="Lean root does not exist or is not a directory"):
         render_site(project / "blueprint", tmp_path / "out", lean_root=project / "nope")
 
     alias = project / "Project/Alias.lean"

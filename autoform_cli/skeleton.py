@@ -41,10 +41,12 @@ from .lean import (
     MANAGED_OUTPUT_SCHEMAS,
     PACKET_SCHEMA,
     PASSAGE_SCHEMA,
+    LeanSourceError,
     SourceIndex,
     declaration_names,
     index_failure_message,
     index_project,
+    resolve_lean_root,
 )
 
 SKELETON_SCHEMA = "autoform-skeleton/v4"
@@ -2065,7 +2067,10 @@ def extract_skeletons(
         graph = load_graph(blueprint_dir)
     except GraphValidationError as exc:
         raise SkeletonError(exc.issues) from exc
-    root = resolve_lean_root(lean_root)
+    try:
+        root = resolve_lean_root(lean_root)
+    except LeanSourceError as error:
+        raise SkeletonError([str(error)]) from error
     activity = "skeletons were being extracted"
     inputs = snapshot_inputs(graph, root)
     libraries = lean_libraries(root)
@@ -2141,16 +2146,6 @@ def check_inputs_unchanged(
     if current_graph is None or _graph_snapshot(current_graph) != snapshot.graph:
         raise SkeletonError([f"the blueprint changed while {activity}; retry after the project is idle"])
     return current_graph
-
-
-def resolve_lean_root(lean_root: str | Path) -> Path:
-    """The absolute Lean project root, or a ``SkeletonError`` saying why there is none."""
-
-    try:
-        return Path(lean_root).expanduser().resolve()
-    except RuntimeError as error:
-        # An unknown ~user, or before Python 3.13 a symbolic link loop.
-        raise SkeletonError([f"Lean root {lean_root} cannot be resolved: {error}"]) from error
 
 
 def select_lean_targets(
@@ -3073,7 +3068,6 @@ __all__ = [
     "parse_probe_output",
     "path_of",
     "render_probe",
-    "resolve_lean_root",
     "run_probe",
     "select_lean_targets",
     "snapshot_inputs",

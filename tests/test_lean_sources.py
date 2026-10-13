@@ -269,15 +269,6 @@ def test_closed_source_binding_rejects_later_capture(
         sources.capture()
 
 
-def test_missing_project_keeps_the_empty_index_contract(tmp_path: Path) -> None:
-    missing = tmp_path / "missing"
-
-    index = index_project(missing)
-
-    assert index.root == missing.resolve()
-    assert index.declarations == {}
-
-
 @pytest.mark.parametrize("root_kind", ["missing", "file"])
 def test_direct_snapshot_names_a_stable_invalid_root(
     tmp_path: Path,

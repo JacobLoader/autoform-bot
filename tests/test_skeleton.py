@@ -1988,7 +1988,7 @@ def test_cli_reports_extraction_failures_on_stderr(tmp_path: Path, capsys) -> No
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err.startswith("error: no lakefile.toml or lakefile.lean in ")
+    assert captured.err == "error: Lean root does not exist or is not a directory\n"
 
 
 def test_cli_reports_an_invalid_report_output_without_a_traceback(
