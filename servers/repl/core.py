@@ -913,9 +913,9 @@ class LeanRepl:
     ) -> dict[str, Any]:
         """Run one public call as the only request frame on a fresh process.
 
-        Timeout messages state ``budget``, which defaults to ``timeout``. A pool
-        passes its caller's whole budget there and only the part left after
-        waiting for this slot as ``timeout``.
+        Each phase's timeout message states ``budget``, which defaults to
+        ``timeout``. A pool passes its caller's whole budget there and only the
+        part left after waiting for this slot as ``timeout``.
         """
         timeout = self.request_timeout if timeout is None else timeout
         budget = timeout if budget is None else budget
@@ -995,6 +995,11 @@ class LeanRepl:
                     except ReplStderrBacklog as error:
                         # _run_io already retired the process.
                         response = error.response
+                    except TimeoutError:
+                        # _run passes a timeout through only before the frame is fully sent.
+                        raise TimeoutError(
+                            f"Lean REPL combined command execution timed out after {budget:g} seconds"
+                        ) from None
                     _validate_command_response(
                         response,
                         context="the requested command",

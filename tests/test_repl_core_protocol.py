@@ -1433,6 +1433,19 @@ def test_disposable_call_preserves_header_request_cancellation(monkeypatch):
     assert repl.is_clean()
 
 
+def test_disposable_timeout_before_the_frame_is_sent_states_the_budget(monkeypatch):
+    with ExitStack() as stack:
+        process = _PipeProcess(stack, [])
+        repl = _disposable_repl_with_process(monkeypatch, process)
+        # Nothing becomes ready, so the write times out before the frame is sent.
+        monkeypatch.setattr(repl_core.select, "select", lambda r, w, x, timeout=None: ([], [], []))
+
+        response = repl.run_disposable("#check Nat", timeout=1, budget=3)
+
+    assert response == {"repl_error": "Lean REPL combined command execution timed out after 3 seconds"}
+    assert repl.is_clean()
+
+
 def test_disposable_timeout_after_full_write_is_not_retried(monkeypatch):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(warmup_imports=frozenset(), validate_imports=False)
