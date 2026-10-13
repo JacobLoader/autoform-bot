@@ -85,6 +85,10 @@ jobs:
         run: timeout --signal=TERM --kill-after=30s 10m uv run pytest -q tests/test_lake_artifact_audit.py tests/test_contract.py
         env:
           AUTOFORM_REQUIRE_REAL_LEAN_TESTS: "1"
+      - name: Run the LSP lifecycle checks against real Lean
+        run: timeout --signal=TERM --kill-after=30s 10m uv run pytest -q tests/test_lsp_protocol.py -k real_lean
+        env:
+          AUTOFORM_REQUIRE_REAL_LEAN_TESTS: "1"
 
   windows-hardening:
     name: Windows inspection, subprocess, and publication hardening
