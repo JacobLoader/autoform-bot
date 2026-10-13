@@ -8,6 +8,7 @@ import pytest
 
 import autoform_cli.audit as audit_module
 from autoform_cli.audit import audit_blueprint, audit_graph
+from autoform_cli.elaboration_limits import limits_in_force
 from autoform_cli.graph import Graph, Node, load_graph
 from autoform_cli.lean import LeanSourceError
 
@@ -657,6 +658,28 @@ def test_audit_reports_unbounded_and_inherited_elaboration_limits(tmp_path: Path
         "roadmap/afterSection.md": [unscoped("afterSection", *file_wide)],
         "roadmap/unbounded.md": [unbounded("unbounded", "maxHeartbeats", 37)],
     }
+
+
+def test_the_limit_scan_reads_commands_at_the_declaration_s_indentation() -> None:
+    # This file indents its commands inside the namespace. A later wrapper is
+    # not part of an earlier proof, and settings at that indentation count.
+    lines = [
+        "namespace Project",
+        "  set_option maxHeartbeats 800000",
+        "  theorem first : True := trivial",
+        "",
+        "  set_option maxHeartbeats 0 in",
+        "  theorem second : True := by",
+        "    set_option maxRecDepth 2000 in",
+        "    trivial",
+        "end Project",
+    ]
+
+    def found(line: int) -> list[tuple[str, int, str]]:
+        return [(setting.option, setting.value, setting.scope) for setting in limits_in_force(lines, line)]
+
+    assert found(3) == [("maxHeartbeats", 800000, "section")]
+    assert found(6) == [("maxHeartbeats", 0, "declaration"), ("maxRecDepth", 2000, "proof")]
 
 
 def test_audit_reads_deprecation_from_the_captured_source_generation(

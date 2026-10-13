@@ -9,9 +9,9 @@ limit, letting elaboration run indefinitely instead of failing.
 
 Like the declaration index, this is a lexical pass over comment-free source
 lines. It tracks ``namespace``/``section``/``mutual``/``end`` nesting and
-treats an indented ``set_option`` as part of the proof above it, which is
-enough for code written in the ordinary way, and it reports nothing it cannot
-see.
+reads commands at the declaration's own indentation, so a more deeply
+indented ``set_option`` is part of the proof above it. That is enough for
+code written in the ordinary way, and it reports nothing it cannot see.
 """
 
 from __future__ import annotations
@@ -77,12 +77,21 @@ def limits_in_force(lines: Sequence[str], line: int) -> tuple[LimitSetting, ...]
 
     if not 0 < line <= len(lines):
         return ()
+    # Commands start at the declaration's indentation, so a file that indents
+    # its commands inside a namespace is read the same way as one that does not.
+    target = lines[line - 1]
+    indent = len(target) - len(target.lstrip())
+
+    def is_command(text: str) -> bool:
+        stripped = text.strip()
+        return bool(stripped) and len(text) - len(text.lstrip()) <= indent and not _CONTINUATION.match(stripped)
+
     scopes: list[dict[str, LimitSetting]] = [{}]
     pending: dict[str, LimitSetting] = {}
     for number, text in enumerate(lines[: line - 1], start=1):
-        stripped = text.strip()
-        if not stripped or text[0].isspace() or _CONTINUATION.match(stripped):
+        if not is_command(text):
             continue
+        stripped = text.strip()
         rest = stripped
         while wrapper := _ANY_OPTION_IN.match(rest):
             limit = _LIMIT.match(rest)
@@ -106,8 +115,7 @@ def limits_in_force(lines: Sequence[str], line: int) -> tuple[LimitSetting, ...]
     found = [in_force[option] for option in sorted(in_force)]
     for number in range(line, len(lines) + 1):
         text = lines[number - 1]
-        stripped = text.strip()
-        if number > line and stripped and not text[0].isspace() and not _CONTINUATION.match(stripped):
+        if number > line and is_command(text):
             break
         found.extend(_setting(limit, number, "proof") for limit in _LIMIT.finditer(text))
     return tuple(found)
