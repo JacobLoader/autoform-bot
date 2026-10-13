@@ -24,7 +24,7 @@ from ._tree_snapshot import TreeSnapshotError
 from .claims import author_claim_key
 from .lean import IndexedSourceSnapshot, LeanSourceError, bind_project_source_snapshot, resolve_lean_root
 from .runtime import load_runtime_graph
-from .skeleton import LeanLibrary, SkeletonError, _lean_name, _lean_name_parts, lean_libraries
+from .skeleton import LeanLibrary, SkeletonError, _lean_name, _lean_name_parts, _lean_requests, lean_libraries
 from .work import work_context
 
 IMPACT_SCHEMA = "autoform-impact/v1"
@@ -577,7 +577,7 @@ def render_impact_probe(
         ),
         output_env=skeleton.PROBE_OUTPUT_ENV,
         output_limit=skeleton.DEFAULT_PROBE_OUTPUT_LIMIT,
-        project_modules=", ".join(_lean_name(name) for name in sorted(set(project_modules))),
+        project_modules=_lean_requests(tuple(sorted(set(project_modules)))),
     )
 
 

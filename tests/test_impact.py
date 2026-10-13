@@ -1118,10 +1118,8 @@ def test_rendered_probe_imports_modules_and_names_exact_local_modules() -> None:
     )
 
     assert source.startswith("import Demo\nimport Demo.B\n-- Autoform impact probe.")
-    assert (
-        'let projectModules : Std.HashSet Name := Std.HashSet.ofList '
-        '[Name.str (Name.anonymous) "Demo", Name.str (Name.anonymous) "Internal"]'
-    ) in source
+    # The module names reach Lean as one JSON string, not a list literal.
+    assert f"AutoformImpact.requestedNames {skeleton._lean_requests(('Demo', 'Internal'))}" in source
     assert ".isPrefixOf" not in source
     assert f'"{skeleton.PROBE_OUTPUT_ENV}"' in source
     assert IMPACT_MARKER in source
@@ -1742,9 +1740,10 @@ def test_cli_import_impact_matches_module_names_by_component(
     output = capsys.readouterr()
     assert code == 0, output.err
     assert json.loads(output.out)["affected_modules"] == ["H", "H.«a.b»"]
-    # The probe counts the dotted and numeric stems as the modules Lean builds.
-    assert 'Name.str (Name.str (Name.anonymous) "H") "a.b"' in calls[0]["probe"]
-    assert 'Name.str (Name.str (Name.anonymous) "H") "1"' in calls[0]["probe"]
+    # The probe counts the dotted and numeric stems as the modules Lean builds:
+    # each stem is one string component, not two components or a number.
+    assert '[\\"H\\", \\"a.b\\"]' in calls[0]["probe"]
+    assert '[\\"H\\", \\"1\\"]' in calls[0]["probe"]
 
 
 def test_cli_import_impact_accepts_another_spelling_of_the_lean_root(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -2431,6 +2430,18 @@ def _imp_project(root: Path) -> Path:
     (lean_root / "Imp" / "More.lean").write_text(_IMP_MORE, encoding="utf-8")
     _lake_build(lean_root)
     return lean_root
+
+
+@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+def test_impact_probe_reads_more_project_modules_than_lean_compiles_in_a_list(tmp_path: Path) -> None:
+    lean_root = _imp_project(tmp_path)
+    # Lean's code generator gives up on a list literal past about 1,500 entries.
+    modules = ("Imp", "Imp.Basic", *(f"Imp.Absent{index}" for index in range(3000)))
+    probe = render_impact_probe(imports=["Imp"], project_modules=modules)
+
+    records = parse_impact_output(skeleton.run_probe(probe, lean_root, label="impact probe"))
+
+    assert {record.module for record in records.values()} == {"Imp.Basic"}
 
 
 def _imp_roadmap(root: Path) -> Path:
