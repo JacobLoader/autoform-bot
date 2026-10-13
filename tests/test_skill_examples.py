@@ -1061,7 +1061,11 @@ def test_skills_search_shared_libraries_and_say_what_to_do_with_a_hit(repo_root:
 
     roadmap = " ".join((repo_root / "skills/roadmap/SKILL.md").read_text(encoding="utf-8").split())
     formalize = " ".join((repo_root / "skills/formalize/SKILL.md").read_text(encoding="utf-8").split())
-    assert "never replaces an article" in roadmap
+    # "A library hit never replaces an article" said only what not to do, and a trial agent filed every hit
+    # as "informational for Formalize"; the rule now says how a hit is reused.
+    assert "reuse that proof instead of proving the result again" in roadmap
+    assert "the result keeps its article" in roadmap
+    assert "add an article for it, proved from the library" in roadmap
     assert "refusal naming a library" in roadmap
     assert "Before stating an article's result" in formalize
     assert "rerun without that library" in formalize
