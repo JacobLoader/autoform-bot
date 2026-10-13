@@ -639,6 +639,40 @@ def test_list_raises_when_claim_refs_keep_changing(
         reader.list()
 
 
+def test_list_reports_a_claim_ref_to_a_non_commit_as_malformed(tmp_path: Path, board_repo: Path) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire("live", ttl=600)
+    blob = _git("hash-object", "-w", "--stdin", cwd=board_repo, input_text="not a commit")
+    _git("update-ref", claims.CLAIM_REF_PREFIX + "blob", blob, cwd=board_repo)
+
+    listed = {lease["_key"]: lease for lease in _board(tmp_path, board_repo, "worker-b").list()}
+
+    assert listed["blob"]["_malformed"] is True
+    assert listed["blob"]["_oid"] == blob
+    assert listed["live"]["_malformed"] is False
+
+
+def test_list_reports_a_failed_fetch_of_an_unchanged_claim_without_retrying(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire("a", ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+    fetches: list[list[str]] = []
+
+    def failing_fetch(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "fetch":
+            fetches.append(args)
+            return subprocess.CompletedProcess(["git", *args], 128, "", "fatal: simulated fetch failure\n")
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(reader, "_git", failing_fetch)
+    with pytest.raises(claims.ClaimTransportError, match=r"cannot fetch claim 'a'.*simulated fetch failure"):
+        reader.list()
+    assert len(fetches) == 1
+
+
 def test_acquire_many_is_all_or_nothing_when_a_peer_holds_one_key(tmp_path: Path, board_repo: Path) -> None:
     peer = _board(tmp_path, board_repo, "worker-b")
     assert peer.acquire("held", ttl=600)
