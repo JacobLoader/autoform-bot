@@ -604,13 +604,13 @@ class LeanLspSession:
             )
             diagnostics: list[dict] | None = None
             while True:
-                # Each read gets the whole remaining budget, so a frame that has
-                # started arriving is always finished, never abandoned mid-way.
+                # Each read gets the whole remaining budget, so only the
+                # operation's own deadline can cut off a frame mid-way.
                 msg = self._read_message(timeout=self._remaining(deadline, timeout))
                 if msg is None:
                     if not self.process or not self.process.stdout:
                         raise LspProtocolError(
-                            "Lean LSP process exited while waiting for diagnostics"
+                            "Lean LSP session was closed while waiting for diagnostics"
                         )
                     raise TimeoutError(
                         f"timed out after {timeout:g}s waiting for diagnostics for {uri}"
@@ -732,8 +732,10 @@ def create_lsp_server(runtime: LeanRuntimeClient) -> FastMCP:
     def lean_diagnostic_messages(project_dir: str, file_path: str) -> str:
         """Return Lean diagnostics for an in-project file.
 
-        Waits until Lean has finished checking the file, up to the runtime's
-        LEAN_LSP_TIMEOUT (60 seconds by default).
+        Waits until Lean has finished checking the file. The runtime's
+        LEAN_LSP_TIMEOUT (60 seconds by default) bounds the call, including time
+        spent behind other LSP calls on the same project; a file that needs
+        longer fails instead of returning partial diagnostics.
 
         Args:
             project_dir: Absolute path to the Lake project root.

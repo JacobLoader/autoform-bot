@@ -750,8 +750,6 @@ def test_real_lean_graceful_close_is_prompt_and_complete(tmp_path):
             session.abort()
 
 
-
-
 def _error_lines(diagnostics):
     return sorted({d["range"]["start"]["line"] for d in diagnostics if d.get("severity") == 1})
 
@@ -764,8 +762,8 @@ def test_real_lean_diagnostics_report_a_clean_file_then_its_error(tmp_path):
     session.start()
     try:
         assert session.get_diagnostics(str(main)) == []
-        # Same file again: the empty set Lean publishes when the first open is
-        # closed must not pass for this open's result.
+        # Reopening the same file in one session reports its own error. The
+        # unit tests pin the version filter that keeps stale sets out.
         main.write_text("example : 1 = 2 := rfl\n", encoding="utf-8")
         assert _error_lines(session.get_diagnostics(str(main))) == [0]
         assert session.is_alive() is True
@@ -833,6 +831,7 @@ def test_real_lean_diagnostics_wait_through_a_mathlib_import():
         pytest.skip("needs AUTOFORM_REAL_LEAN_MATHLIB_PROJECT, a built Mathlib project")
     project = Path(root).resolve()
     probe = project / "src" / "GeneratedProject" / "Issue129Probe.lean"
+    created = not probe.parent.exists()
     probe.parent.mkdir(parents=True, exist_ok=True)
     # The sleep keeps the error well past any quiet period, however fast Mathlib loads.
     probe.write_text(
@@ -845,6 +844,9 @@ def test_real_lean_diagnostics_wait_through_a_mathlib_import():
     finally:
         session.close()
         probe.unlink(missing_ok=True)
+        if created:
+            probe.parent.rmdir()
+
 
 def _publication(uri, version, diagnostics):
     return {
@@ -861,15 +863,15 @@ def _reply(request):
 _ERROR = {"range": {"start": {"line": 0, "character": 0}}, "severity": 1, "message": "type mismatch"}
 
 
-def _barrier_session(monkeypatch, script, *, timeout=60):
-    """A session whose stream plays script(request) once the barrier is written.
+def _barrier_session(monkeypatch, script):
+    """A session whose stream plays script(request, uri, version) once the barrier is written.
 
     Script entries are (silence_seconds, message). Reads advance a fake clock:
     a read offered less time than the next silence returns None at its
     deadline, as a quiet pipe does.
     """
     session = _owned_session(_FakeProcess())
-    session.config.timeout = timeout
+    session.config.timeout = 60
     clock = {"now": 0.0}
     written: list[dict] = []
     pending: list[tuple[float, dict]] = []
@@ -879,7 +881,7 @@ def _barrier_session(monkeypatch, script, *, timeout=60):
     def write(msg, timeout=30):
         written.append(msg)
         if msg.get("method") == "textDocument/waitForDiagnostics":
-            pending.extend(script(msg))
+            pending.extend(script(msg, msg["params"]["uri"], msg["params"]["version"]))
 
     def read(timeout=5):
         read_timeouts.append(timeout)
@@ -907,8 +909,7 @@ def test_diagnostics_wait_for_lean_past_an_interim_empty_set(tmp_path, monkeypat
     source = tmp_path / "Slow.lean"
     source.write_text("#eval IO.sleep 30000\nexample : 1 = 2 := rfl\n")
 
-    def script(request):
-        uri, version = request["params"]["uri"], request["params"]["version"]
+    def script(request, uri, version):
         return [
             (0, {"jsonrpc": "2.0", "id": "register_lean_watcher", "method": "client/registerCapability"}),
             (0, {"jsonrpc": "2.0", "method": "$/lean/fileProgress", "params": {}}),
@@ -922,7 +923,7 @@ def test_diagnostics_wait_for_lean_past_an_interim_empty_set(tmp_path, monkeypat
 
     assert session.get_diagnostics(str(source)) == [_ERROR]
     # Every read was offered the remaining budget, never a quiet window.
-    assert min(read_timeouts) > 2
+    assert read_timeouts == [60, 60, 60, 60, 30]
     assert _methods(written) == [
         "textDocument/didOpen",
         "textDocument/waitForDiagnostics",
@@ -937,8 +938,7 @@ def test_diagnostics_return_on_the_barrier_reply_without_waiting(tmp_path, monke
     source = tmp_path / "Clean.lean"
     source.write_text("#check Nat\n")
 
-    def script(request):
-        uri, version = request["params"]["uri"], request["params"]["version"]
+    def script(request, uri, version):
         return [(0, _publication(uri, version, [])), (0, _reply(request))]
 
     session, _, read_timeouts = _barrier_session(monkeypatch, script)
@@ -950,18 +950,18 @@ def test_diagnostics_return_on_the_barrier_reply_without_waiting(tmp_path, monke
 def test_diagnostics_ignore_the_set_left_by_an_earlier_open(tmp_path, monkeypatch):
     source = tmp_path / "Test.lean"
     source.write_text("example : 1 = 2 := rfl\n")
-    calls = []
+    versions = []
 
-    def script(request):
-        uri, version = request["params"]["uri"], request["params"]["version"]
-        calls.append(version)
-        if len(calls) == 1:
+    def script(request, uri, version):
+        versions.append(version)
+        if len(versions) == 1:
             return [(0, _publication(uri, version, [_ERROR])), (0, _reply(request))]
-        # didClose of the first open left an empty set for its version.
+        # Sets for an earlier open of this file, or for another file, must not
+        # replace this open's result wherever they arrive.
         return [
-            (0, _publication(uri, calls[0], [])),
-            (0, _publication("file:///other/Other.lean", version, [])),
             (0, _publication(uri, version, [_ERROR])),
+            (0, _publication(uri, versions[0], [])),
+            (0, _publication("file:///other/Other.lean", version, [])),
             (0, _reply(request)),
         ]
 
@@ -969,7 +969,7 @@ def test_diagnostics_ignore_the_set_left_by_an_earlier_open(tmp_path, monkeypatc
 
     assert session.get_diagnostics(str(source)) == [_ERROR]
     assert session.get_diagnostics(str(source)) == [_ERROR]
-    assert calls[1] > calls[0]
+    assert versions[1] > versions[0]
 
 
 @pytest.mark.parametrize("leftover", ["none", "other-file", "older-version"])
@@ -979,8 +979,7 @@ def test_diagnostics_fail_closed_when_lean_finishes_without_a_publication(
     source = tmp_path / "Test.lean"
     source.write_text("#check Nat\n")
 
-    def script(request):
-        uri, version = request["params"]["uri"], request["params"]["version"]
+    def script(request, uri, version):
         stream = {
             "none": [],
             "other-file": [(0, _publication("file:///other/Other.lean", version, []))],
@@ -999,8 +998,7 @@ def test_diagnostics_fail_closed_when_the_document_is_replaced(tmp_path, monkeyp
     source = tmp_path / "Test.lean"
     source.write_text("#check Nat\n")
 
-    def script(request):
-        uri, version = request["params"]["uri"], request["params"]["version"]
+    def script(request, uri, version):
         return [(0, _publication(uri, version + 1, [])), (0, _reply(request))]
 
     session, _, _ = _barrier_session(monkeypatch, script)
@@ -1015,8 +1013,7 @@ def test_diagnostics_fail_closed_on_a_barrier_error_reply(tmp_path, monkeypatch,
     source = tmp_path / "Test.lean"
     source.write_text("#check Nat\n")
 
-    def script(request):
-        uri, version = request["params"]["uri"], request["params"]["version"]
+    def script(request, uri, version):
         error = {"jsonrpc": "2.0", "id": request["id"], "error": {"code": code, "message": "worker gone"}}
         return [(0, _publication(uri, version, [_ERROR])), (0, error)]
 
@@ -1031,8 +1028,7 @@ def test_diagnostics_timeout_after_an_interim_set_fails_closed(tmp_path, monkeyp
     source = tmp_path / "Test.lean"
     source.write_text("#eval IO.sleep 300000\n")
 
-    def script(request):
-        uri, version = request["params"]["uri"], request["params"]["version"]
+    def script(request, uri, version):
         return [(0, _publication(uri, version, [_ERROR])), (120, _reply(request))]
 
     session, written, _ = _barrier_session(monkeypatch, script)
@@ -1049,8 +1045,7 @@ def test_diagnostics_skip_a_server_request_that_reuses_the_barrier_id(tmp_path, 
     source = tmp_path / "Test.lean"
     source.write_text("example : 1 = 2 := rfl\n")
 
-    def script(request):
-        uri, version = request["params"]["uri"], request["params"]["version"]
+    def script(request, uri, version):
         refresh = {"jsonrpc": "2.0", "id": request["id"], "method": "workspace/inlayHint/refresh"}
         return [(0, refresh), (0, _publication(uri, version, [_ERROR])), (0, _reply(request))]
 
@@ -1064,10 +1059,8 @@ def test_malformed_diagnostics_payload_is_protocol_error(tmp_path, monkeypatch):
     source = tmp_path / "Test.lean"
     source.write_text("#check Nat\n")
 
-    def script(request):
-        malformed = _publication(request["params"]["uri"], request["params"]["version"], [])
-        malformed["params"]["diagnostics"] = {"not": "a list"}
-        return [(0, malformed)]
+    def script(request, uri, version):
+        return [(0, _publication(uri, version, {"not": "a list"}))]
 
     session, _, _ = _barrier_session(monkeypatch, script)
 
@@ -1075,7 +1068,26 @@ def test_malformed_diagnostics_payload_is_protocol_error(tmp_path, monkeypatch):
         session.get_diagnostics(str(source))
 
 
-def test_diagnostics_report_a_server_that_exited_mid_wait(monkeypatch):
+@pytest.mark.parametrize("bad", ["missing", True, "1"])
+def test_diagnostics_reject_a_publication_without_a_document_version(tmp_path, monkeypatch, bad):
+    source = tmp_path / "Test.lean"
+    source.write_text("#check Nat\n")
+
+    def script(request, uri, version):
+        publication = _publication(uri, version, [])
+        if bad == "missing":
+            del publication["params"]["version"]
+        else:
+            publication["params"]["version"] = bad
+        return [(0, publication)]
+
+    session, _, _ = _barrier_session(monkeypatch, script)
+
+    with pytest.raises(lsp.LspProtocolError, match="has no document version"):
+        session.get_diagnostics(str(source))
+
+
+def test_diagnostics_report_a_session_closed_mid_wait(monkeypatch):
     session = _owned_session(_FakeProcess())
     monkeypatch.setattr(session, "_write_message", lambda msg, timeout=30: None)
 
@@ -1085,7 +1097,7 @@ def test_diagnostics_report_a_server_that_exited_mid_wait(monkeypatch):
 
     monkeypatch.setattr(session, "_read_message", read)
 
-    with pytest.raises(lsp.LspProtocolError, match="exited while waiting"):
+    with pytest.raises(lsp.LspProtocolError, match="closed while waiting"):
         session._collect_diagnostics("file:///tmp/Test.lean", 1, timeout=60)
 
 
@@ -1274,32 +1286,36 @@ def test_partial_lsp_frame_cannot_block_past_deadline(partial):
         reader.close()
 
 
+def _frame(msg):
+    body = json.dumps(msg).encode()
+    return f"Content-Length: {len(body)}\r\n\r\n".encode() + body
+
+
 def test_diagnostics_finish_a_frame_whose_header_straddles_a_second(tmp_path, monkeypatch):
     source = tmp_path / "Test.lean"
     source.write_text("example : 1 = 2 := rfl\n")
     read_fd, write_fd = os.pipe()
     reader = os.fdopen(read_fd, "rb", buffering=0)
-    session = lsp.LeanLspSession(lsp.LspConfig())
+    session = lsp.LeanLspSession(lsp.LspConfig(timeout=10))
     session.process = SimpleNamespace(stdout=reader)
     writers = []
 
-    def frame(msg):
-        body = json.dumps(msg).encode()
-        return f"Content-Length: {len(body)}\r\n\r\n".encode() + body
-
     def write(msg, timeout=30):
-        if msg.get("method") != "textDocument/waitForDiagnostics":
+        # Lean publishes as soon as the document opens, so feed the stream from
+        # didOpen; a reader with a quiet window hits the split header too.
+        if msg.get("method") != "textDocument/didOpen":
             return
-        uri, version = msg["params"]["uri"], msg["params"]["version"]
-        error = frame(_publication(uri, version, [_ERROR]))
+        document = msg["params"]["textDocument"]
+        error = _frame(_publication(document["uri"], document["version"], [_ERROR]))
+        os.write(write_fd, _frame(_publication(document["uri"], document["version"], [])) + error[:7])
 
-        def serve():
-            os.write(write_fd, frame(_publication(uri, version, [])) + error[:7])
+        def finish():
             # Longer than the old one-second quiet window.
-            time.sleep(1.2)
-            os.write(write_fd, error[7:] + frame(_reply(msg)))
+            time.sleep(1.5)
+            # The barrier is this fresh session's first request.
+            os.write(write_fd, error[7:] + _frame({"jsonrpc": "2.0", "id": 1, "result": {}}))
 
-        writer = threading.Thread(target=serve, daemon=True)
+        writer = threading.Thread(target=finish, daemon=True)
         writers.append(writer)
         writer.start()
 
@@ -1311,6 +1327,30 @@ def test_diagnostics_finish_a_frame_whose_header_straddles_a_second(tmp_path, mo
         for writer in writers:
             writer.join(timeout=5)
         os.close(write_fd)
+        reader.close()
+
+
+def test_diagnostics_fail_closed_when_lean_exits_mid_wait(tmp_path, monkeypatch):
+    source = tmp_path / "Test.lean"
+    source.write_text("example : 1 = 2 := rfl\n")
+    read_fd, write_fd = os.pipe()
+    reader = os.fdopen(read_fd, "rb", buffering=0)
+    session = lsp.LeanLspSession(lsp.LspConfig(timeout=10))
+    session.process = SimpleNamespace(stdout=reader)
+
+    def write(msg, timeout=30):
+        if msg.get("method") == "textDocument/waitForDiagnostics":
+            uri, version = msg["params"]["uri"], msg["params"]["version"]
+            # An interim set, then Lean dies before it finishes the file.
+            os.write(write_fd, _frame(_publication(uri, version, [_ERROR])))
+            os.close(write_fd)
+
+    monkeypatch.setattr(session, "_write_message", write)
+    try:
+        with pytest.raises(lsp.LspProtocolError, match="closed stdout"):
+            session.get_diagnostics(str(source))
+        assert session.is_alive() is False
+    finally:
         reader.close()
 
 
