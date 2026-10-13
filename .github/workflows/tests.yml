@@ -138,6 +138,11 @@ jobs:
           timeout --signal=TERM --kill-after=30s 5m \
             elan toolchain install "$(tr -d '\r\n' < lean-toolchain)"
           timeout --signal=TERM --kill-after=30s 8m lake build Mathlib Secret @repl/repl
+      - name: Install the minimum supported Lean toolchain
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=30s 5m \
+            elan toolchain install "$(tr -d '\r\n' < tests/fixtures/minimum-lean/lean-toolchain)"
       - run: uv sync --frozen --extra dev --extra repl
       - run: uv run pytest -q tests/test_real_repl.py
         env:

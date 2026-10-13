@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import subprocess
 from contextlib import suppress
 from pathlib import Path
 
@@ -14,6 +16,7 @@ from servers.repl.core import LeanRepl, LeanReplConfig
 
 
 REPL_FIXTURE = Path(__file__).parent / "fixtures" / "repl-smoke"
+MINIMUM_LEAN = Path(__file__).parent / "fixtures" / "minimum-lean"
 pytestmark = pytest.mark.skipif(
     os.environ.get("AUTOFORM_RUN_REAL_REPL_TESTS") != "1",
     reason="set AUTOFORM_RUN_REAL_REPL_TESTS=1 to run pinned REPL integration",
@@ -145,6 +148,35 @@ def test_unvalidated_calls_use_warmup_only_when_composition_is_proven(code):
         message["severity"] == "error" for message in response.get("messages", [])
     )
     assert repl.is_clean()
+
+
+@pytest.mark.parametrize(("code", "is_prelude"), [("#check Nat", False), ("prelude\nimport Init", True)])
+def test_header_parser_runs_on_the_minimum_supported_lean(code, is_prelude):
+    # The default header command, run from a project on the oldest supported
+    # Lean. Before v4.30 both headers report one plain Init import, so only
+    # isPrelude tells them apart.
+    completed = subprocess.run(
+        LeanReplConfig().header_deps_command,
+        cwd=MINIMUM_LEAN,
+        input=code.encode(),
+        capture_output=True,
+        timeout=180,
+        check=False,
+    )
+
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert json.loads(completed.stdout) == {
+        "imports": [
+            {
+                "errors": [],
+                "result": {
+                    "imports": [{"module": "Init", "importAll": False, "isExported": True, "isMeta": False}],
+                    "isModule": False,
+                    "isPrelude": is_prelude,
+                },
+            }
+        ]
+    }
 
 
 def test_runtime_calls_use_distinct_disposable_processes(runtime_dir, monkeypatch):
