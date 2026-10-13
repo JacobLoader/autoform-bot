@@ -264,8 +264,14 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
     assert "run one at a time unless `AUTOFORM_REPL_WORKERS_PER_PROJECT` is raised" in servers
     assert "A REPL worker is one concurrent call slot; an idle slot holds no Lean process" in servers
     assert "finds the REPL only through a require named `repl`" in servers
-    assert 'needs `LEAN_REPL_CMD="lake exe @<name>/repl"`' in servers
+    assert (
+        "rename the require to `repl`, or restart the runtime with "
+        '`LEAN_REPL_CMD="lake exe @<name>/repl"` for a require named `<name>`, '
+        "which applies to every project the runtime serves"
+    ) in servers
     assert "so the header command is still derived from" in servers
+    assert "both commands are node-wide and read only when the runtime starts" in servers
+    assert "after changing either, run `uv run autoform-lean-runtime stop`" in servers
     assert "one total post-admission budget" in servers
     assert "default and maximum are 240 seconds" in servers
     assert "its REPL slot pool is cached" in servers

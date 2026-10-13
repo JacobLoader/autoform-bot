@@ -58,13 +58,17 @@ by `AUTOFORM_REPL_TOTAL_WORKERS`, `AUTOFORM_REPL_WORKERS_PER_PROJECT`,
 one concurrent call slot; an idle slot holds no Lean process. The first process
 to start the runtime supplies those settings until it is stopped.
 `LEAN_REPL_CMD` selects the disposable child command. Its default,
-`lake exe @repl/repl`, finds the REPL only through a require named `repl`. A
-require with any other name needs `LEAN_REPL_CMD="lake exe @<name>/repl"`,
-which still starts with `lake`, so the header command is still derived from
-it. An absolute `lake` executable is reused for header validation; a container
-or other wrapper must also set `LEAN_REPL_HEADER_CMD` to a command that runs
+`lake exe @repl/repl`, finds the REPL only through a require named `repl`. For a
+require with any other name, rename the require to `repl`, or restart the
+runtime with `LEAN_REPL_CMD="lake exe @<name>/repl"` for a require named
+`<name>`, which applies to every project the runtime serves. That command still
+starts with `lake`, so the header command is still derived from it. An absolute
+`lake` executable is reused for header validation; a container or other wrapper
+must also set `LEAN_REPL_HEADER_CMD` to a command that runs
 `servers/repl/parse_header.lean` with the matching toolchain's `lean --run`,
-passing the source on standard input. `AUTOFORM_MAX_REPL_REQUEST_SECONDS` caps
+passing the source on standard input. Like the limits above, both commands are
+node-wide and read only when the runtime starts; after changing either, run
+`uv run autoform-lean-runtime stop`. `AUTOFORM_MAX_REPL_REQUEST_SECONDS` caps
 the REPL `timeout`; when `AUTOFORM_REPL_REQUEST_TIMEOUT` is unset, the default
 `timeout` is the lower of 240 seconds and that cap. If `LEAN_REPL_CMD` does not
 invoke `lake` and `LEAN_REPL_HEADER_CMD` is unset, if
