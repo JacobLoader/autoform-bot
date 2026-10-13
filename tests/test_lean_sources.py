@@ -862,17 +862,23 @@ def test_lean_file_removed_before_it_is_examined_is_absent(
     assert snapshot.index.find("b") is None
 
 
+@pytest.mark.parametrize("folder", ["Zed", "site"])
 def test_lean_file_present_only_during_its_folders_scan_is_caught(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    folder: str,
 ) -> None:
-    # Zed is listed without X.lean; X.lean appears before Zed's scan ends and
-    # is gone again before verification.  Only the relist at the end of Zed's
-    # scan sees it, as on the strict path.
+    # The folder is listed without X.lean; X.lean appears before the folder's
+    # scan ends and is gone again before verification.  Only the relist at the
+    # end of the folder's scan sees it, as on the strict path.  Zed holds a Lean
+    # file; site holds none, so it is relisted although it is not recorded.
     _require_descriptor_capture()
     _index(tmp_path, "def w : Nat := 0\n", "Proj/W.lean")
-    _index(tmp_path, "def b : Nat := 0\n", "Zed/B.lean")
-    transient = tmp_path / "Zed" / "X.lean"
+    if folder == "Zed":
+        _index(tmp_path, "def b : Nat := 0\n", "Zed/B.lean")
+    else:
+        _write_site(tmp_path / folder, 0)
+    transient = tmp_path / folder / "X.lean"
 
     def create() -> None:
         transient.write_text("def x : Nat := 0\n", encoding="utf-8")
@@ -884,7 +890,7 @@ def test_lean_file_present_only_during_its_folders_scan_is_caught(
 
     def checkpoint(name: str, path: str) -> None:
         original_checkpoint(name, path)
-        if name == "after-directory-list" and path == "Zed":
+        if name == "after-directory-list" and path == folder:
             create()
         elif name == "before-final-verification":
             remove()
@@ -897,7 +903,174 @@ def test_lean_file_present_only_during_its_folders_scan_is_caught(
     finally:
         sources.close()
 
-    assert error.value.relative == "Zed/X.lean"
+    assert error.value.relative == f"{folder}/X.lean"
+
+
+def _on_open_after_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    event: str,
+    name: str,
+    action: Callable[[], None],
+    *,
+    directory: bool,
+    relative: str | None = None,
+) -> list[str]:
+    """Run `action` once, just before the first descriptor-relative open of `name` after `event`."""
+    armed: list[bool] = []
+    fired: list[str] = []
+    _on_checkpoint(monkeypatch, event, lambda: armed.append(True), relative=relative)
+    original_open = os.open
+
+    def open_after_action(path, flags, mode=0o777, *, dir_fd=None):
+        opens_directory = bool(flags & getattr(os, "O_DIRECTORY", 0))
+        if (
+            armed
+            and not fired
+            and path == name
+            and dir_fd is not None
+            and opens_directory == directory
+        ):
+            fired.append(name)
+            action()
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", open_after_action)
+    return fired
+
+
+def test_folder_replaced_by_lean_file_while_it_is_walked_is_named(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An empty folder named X.lean holds no input.  Between the verification
+    # walk's stat and its open it becomes a regular X.lean file, so the open
+    # fails with ENOTDIR and the walk must look at the entry again.
+    _require_descriptor_capture()
+    _index(tmp_path, "def kept : Nat := 0\n", "Proj/A.lean")
+    folder = tmp_path / "X.lean"
+    folder.mkdir()
+
+    def replace() -> None:
+        folder.rmdir()
+        folder.write_text("def appeared : Nat := 0\n", encoding="utf-8")
+
+    fired = _on_open_after_checkpoint(
+        monkeypatch,
+        "before-final-verification",
+        "X.lean",
+        replace,
+        directory=True,
+    )
+    sources = open_project_sources(tmp_path)
+    try:
+        with pytest.raises(TreeChangedError) as error:
+            sources.capture()
+    finally:
+        sources.close()
+
+    assert fired
+    assert error.value.relative == "X.lean"
+
+
+def test_folder_removed_before_the_walk_opens_it_is_tolerated(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_descriptor_capture()
+    _index(tmp_path, "def kept : Nat := 0\n", "Proj/A.lean")
+    site = tmp_path / "site"
+    _write_site(site, 0)
+    fired = _on_open_after_checkpoint(
+        monkeypatch,
+        "before-final-verification",
+        "site",
+        lambda: shutil.rmtree(site),
+        directory=True,
+    )
+    binds = _count_binds(monkeypatch)
+
+    snapshot = snapshot_project_sources(tmp_path)
+
+    assert fired
+    assert len(binds) == 1
+    assert snapshot.index.find("kept") is not None
+
+
+def test_lean_file_removed_before_it_is_read_is_absent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # B.lean is listed and stat'ed by the scan, then removed before the scan
+    # opens it to read its bytes.
+    _require_descriptor_capture()
+    _index(tmp_path, "def a : Nat := 0\n", "Proj/A.lean")
+    _index(tmp_path, "def b : Nat := 0\n", "Proj/B.lean")
+    fired = _on_open_after_checkpoint(
+        monkeypatch,
+        "after-directory-list",
+        "B.lean",
+        lambda: (tmp_path / "Proj" / "B.lean").unlink(),
+        directory=False,
+        relative="Proj",
+    )
+    binds = _count_binds(monkeypatch)
+
+    snapshot = snapshot_project_sources(tmp_path)
+
+    assert fired
+    assert len(binds) == 1
+    assert snapshot.index.find("a") is not None
+    assert snapshot.index.find("b") is None
+
+
+@pytest.mark.parametrize("change", ["moved-away", "replaced-by-copy"])
+def test_relevant_folder_changed_during_its_parents_scan_is_caught(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    change: str,
+) -> None:
+    # Proj/Sub holds a Lean file and is restored before verification, so only
+    # the scan's own rechecks can see the change: moved-away is gone when
+    # Proj is relisted at the end of its scan, and replaced-by-copy is a
+    # different folder when Proj re-looks at Sub after descending into it.
+    _require_descriptor_capture()
+    root = tmp_path / "root"
+    _index(root, "def s : Nat := 0\n", "Proj/Sub/S.lean")
+    (root / "Proj" / "Tail").mkdir()
+    sub = root / "Proj" / "Sub"
+    away = tmp_path / "away"
+
+    def move() -> None:
+        if not away.exists():
+            sub.rename(away)
+            if change == "replaced-by-copy":
+                shutil.copytree(away, sub)
+
+    def restore() -> None:
+        if away.exists():
+            if sub.exists():
+                shutil.rmtree(sub)
+            away.rename(sub)
+
+    original_checkpoint = tree_snapshot_module._tree_snapshot_checkpoint
+    moved_at = "Proj/Tail" if change == "moved-away" else "Proj/Sub"
+
+    def checkpoint(name: str, path: str) -> None:
+        original_checkpoint(name, path)
+        if name == "after-directory-list" and path == moved_at:
+            move()
+        elif name == "before-final-verification":
+            restore()
+
+    monkeypatch.setattr(tree_snapshot_module, "_tree_snapshot_checkpoint", checkpoint)
+    sources = open_project_sources(root)
+    try:
+        with pytest.raises(TreeChangedError) as error:
+            sources.capture()
+    finally:
+        sources.close()
+
+    assert error.value.relative == "Proj/Sub"
 
 
 def test_checkout_marker_appearing_beside_lean_files_is_caught(
@@ -2719,7 +2892,8 @@ def test_oversized_managed_manifest_leaves_its_directory_indexed_at_its_read_bou
 
     index = index_project(tmp_path)
 
-    assert all(length <= 64 for length in observed_lengths)
+    # The engine refuses bytes past the bound before it asks the recognizer.
+    assert observed_lengths == []
     assert index.find("oversizedPacket") is not None
 
 
