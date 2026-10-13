@@ -843,10 +843,7 @@ def _directory_names_match(
 def descriptor_capture_supported() -> bool:
     """Whether this host can bind and capture directory trees through descriptors."""
 
-    return bool(
-        directory_binding.DIRECTORY_BINDING_SUPPORTED
-        and _DESCRIPTOR_CAPTURE_SUPPORTED
-    )
+    return directory_binding.DIRECTORY_BINDING_SUPPORTED and _DESCRIPTOR_CAPTURE_SUPPORTED
 
 
 class BoundDirectoryTree:

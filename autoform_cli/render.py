@@ -611,10 +611,14 @@ def _render_pages(
 
 
 def _capture_blueprint(blueprint: Path) -> TreeSnapshot:
-    """Read the blueprint once, through descriptors, refusing what must not be published."""
+    """Read the blueprint once, refusing what must not be published.
+
+    Through descriptors where the host has them; elsewhere (Windows) as two
+    pathname captures that must agree.
+    """
     try:
         selection = _PUBLICATION_SELECTION
-        with bind_directory_tree(blueprint, selection=selection, require_descriptor=True) as tree:
+        with bind_directory_tree(blueprint, selection=selection) as tree:
             snapshot = tree.capture()
     except TreeSnapshotError as error:
         if not blueprint.is_dir():
@@ -796,7 +800,7 @@ def _destination_state(path: Path) -> _State | None:
         raise PublicationError(["publication manifest has no valid file inventory"])
     expected = {name: digest for name, digest in expected.items() if not _is_os_metadata(name)}
     try:
-        with bind_directory_tree(path, expected_identity=identity, require_descriptor=True) as tree:
+        with bind_directory_tree(path, expected_identity=identity) as tree:
             snapshot = tree.capture()
     except TreeSnapshotError as error:
         raise PublicationError([f"could not inspect the output directory: {error}"]) from error
@@ -879,10 +883,14 @@ def _publish(
 def _locked_parent(parent: Path) -> Iterator[None]:
     """Hold the output parent's lock, waiting while another render commits beside this one.
 
-    A filesystem without advisory locks (NFS without lockd) proceeds unlocked;
-    the commit still re-checks the output it replaces.
+    A filesystem without advisory locks (NFS without lockd) or a host without
+    them (Windows) proceeds unlocked; the commit still re-checks the output it
+    replaces.
     """
-    import fcntl  # POSIX only; native Windows stops at blueprint capture
+    if os.name == "nt":
+        yield
+        return
+    import fcntl
 
     try:
         descriptor = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
@@ -944,6 +952,8 @@ def _commit(stage: Path, destination: Path, backup: Path, *, replace: bool) -> N
 
 def _exchange(first: Path, second: Path) -> None:
     """Swap two names in one step: RENAME_SWAP on macOS, RENAME_EXCHANGE on Linux."""
+    if os.name == "nt":
+        raise OSError(errno.ENOSYS, "atomic exchange is unavailable", str(second))
     library = ctypes.CDLL(None, use_errno=True)
     first_bytes, second_bytes = os.fsencode(first), os.fsencode(second)
     try:
@@ -1015,7 +1025,15 @@ def _identity(path: Path) -> tuple[int, int] | None:
 
 
 def _fsync(path: Path) -> None:
-    """Flush one file or directory; some network filesystems cannot sync a directory."""
+    """Flush one file or directory; some network filesystems cannot sync a directory.
+
+    Windows cannot open a directory to sync it, and flushes only a writable handle.
+    """
+    if os.name == "nt":
+        if path.is_file():
+            with open(path, "r+b") as handle:
+                os.fsync(handle.fileno())
+        return
     descriptor = os.open(path, os.O_RDONLY)
     try:
         os.fsync(descriptor)

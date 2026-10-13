@@ -886,11 +886,7 @@ agent and the Lean kernel.
 
 Source-aware `--lean-root` inspection requires directory-descriptor traversal.
 Platforms without that capability, including Windows, fail closed instead of
-treating repeated pathname reads as one filesystem generation. There, `render`
-without `--lean-root` does not read the Lean sources: it publishes without code
-links, and when a published statement names a `lean:` declaration it warns and
-`--require-declarations` makes it exit 1. Render on Linux or macOS to publish
-code links. Declaration
+treating repeated pathname reads as one filesystem generation. Declaration
 locations and source revisions come from the same retained capture. Recognized
 skeleton packet/passages directories are identified by their bounded managed
 manifest before descendants are read; publication-output policy remains with
@@ -1493,4 +1489,9 @@ output (the repository root for `--output site-src`); render never indexes it
 as Lean source and the setup ignore rules cover it, but it may hold the previous
 site, so inspect it before deleting it. (On macOS `fsync` does not flush the
 drive's cache, so a power loss can still lose the newest site.) Native Windows
-cannot run `autoform render`.
+has no directory-descriptor traversal. There render reads the blueprint and the
+output as two pathname captures that must agree, commits through the backup
+swap without a lock, and reads the Lean sources only for an explicit
+`--lean-root`, which then fails closed. Without one it publishes no code
+links; when a published statement names a `lean:` declaration it warns, and
+`--require-declarations` makes it exit 1.
