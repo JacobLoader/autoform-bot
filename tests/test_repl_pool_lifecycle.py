@@ -139,7 +139,7 @@ def test_request_timeout_includes_waiting_for_an_idle_worker(monkeypatch):
 
 def test_pool_subtracts_queue_time_from_the_disposable_call(monkeypatch):
     observed = []
-    times = iter((0.0, 0.0, 2.0))
+    clock = {"now": 0.0}
 
     class FakeRepl:
         def __init__(self, config):
@@ -156,8 +156,15 @@ def test_pool_subtracts_queue_time_from_the_disposable_call(monkeypatch):
             pass
 
     monkeypatch.setattr(repl_pool, "LeanRepl", FakeRepl)
-    monkeypatch.setattr(repl_pool.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(repl_pool.time, "monotonic", lambda: clock["now"])
     pool = repl_pool.LeanReplPool(repl_pool.LeanReplPoolConfig(num_repls=1))
+    take_slot = pool._idle.get
+
+    def wait_for_slot(*args, **kwargs):
+        clock["now"] += 2
+        return take_slot(*args, **kwargs)
+
+    monkeypatch.setattr(pool._idle, "get", wait_for_slot)
 
     assert pool.run("#check Nat", timeout=10) == {"messages": []}
     assert observed == [8]
@@ -182,8 +189,15 @@ def test_queued_call_timeout_states_the_callers_budget(monkeypatch):
     monkeypatch.setattr(repl, "start", lambda **kwargs: None)
     monkeypatch.setattr(repl, "_run", run)
     # The wait for an idle slot takes 2 of the caller's 10 seconds.
-    times = iter((0.0, 0.0))
-    monkeypatch.setattr(repl_pool.time, "monotonic", lambda: next(times, 2.0))
+    clock = {"now": 0.0}
+    take_slot = pool._idle.get
+
+    def wait_for_slot(*args, **kwargs):
+        clock["now"] += 2
+        return take_slot(*args, **kwargs)
+
+    monkeypatch.setattr(repl_pool.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(pool._idle, "get", wait_for_slot)
     try:
         assert pool.run("#check Nat", timeout=10) == {
             "repl_error": "Lean REPL combined command execution timed out after 10 seconds",
