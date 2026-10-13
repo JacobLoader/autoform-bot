@@ -33,6 +33,7 @@ ALLOWED_IMPORTS = frozenset({"Mathlib", "Aesop", "Batteries", "LeanSearchClient"
 WARMUP_IMPORTS = frozenset({"Mathlib"})
 _VALID_DIAGNOSTIC_SEVERITIES = frozenset({"trace", "info", "warning", "error"})
 _STDERR_TAIL_BYTES = 200
+_HEADER_FAILURE_DETAIL_CHARS = 200
 _PUBLIC_DIAGNOSTIC_FIELDS = frozenset({"severity", "data", "pos", "endPos"})
 _PUBLIC_SORRY_FIELDS = frozenset({"goal", "pos", "endPos"})
 # Runs Lean's own header parser, which the REPL uses, on the source on stdin.
@@ -424,6 +425,22 @@ def _communicate_bounded(
     # whole group is retired before reaping its leader, or a reused numeric
     # PGID could be signalled after the parser leaves a descendant behind.
     return bytes(stdout), bytes(stderr)
+
+
+def _header_failure_detail(stdout: bytes, stderr: bytes, returncode: int) -> str:
+    """Return the last non-empty line of stderr, else of stdout, bounded.
+
+    A launcher that cannot start ends its stderr with the exception after a
+    traceback, and Lean prints elaboration errors on stdout.
+    """
+    for output in (stderr, stdout):
+        lines = output.decode(errors="replace").splitlines()
+        detail = next((line.strip() for line in reversed(lines) if line.strip()), "")
+        if detail:
+            if len(detail) > _HEADER_FAILURE_DETAIL_CHARS:
+                detail = detail[:_HEADER_FAILURE_DETAIL_CHARS] + "..."
+            return detail
+    return f"exit status {returncode}"
 
 
 @dataclass(frozen=True)
@@ -1004,8 +1021,7 @@ class LeanRepl:
         self.close(deadline=deadline)
         returncode = process.returncode
         if returncode != 0:
-            detail = stderr.decode(errors="replace").strip().splitlines()
-            raise ValueError(detail[0] if detail else f"exit status {returncode}")
+            raise ValueError(_header_failure_detail(stdout, stderr, returncode))
         return _decode_header_analysis(stdout)
 
     def run_disposable(

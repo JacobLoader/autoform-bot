@@ -1252,6 +1252,44 @@ def test_disposable_call_rejects_what_lean_reports_before_starting(
 
 
 @pytest.mark.parametrize(
+    ("stdout", "stderr", "detail"),
+    [
+        # The launcher outside lake env, where LEAN_SYSROOT is unset.
+        (
+            "",
+            "Traceback (most recent call last):\n"
+            '  File "<string>", line 1, in <module>\n'
+            "KeyError: 'LEAN_SYSROOT'\n",
+            "KeyError: 'LEAN_SYSROOT'",
+        ),
+        # Lean prints elaboration errors on stdout.
+        (
+            "parse_header.lean:14:3: error: unknown constant 'Lean.Parser.parseHeader'\n\n",
+            "",
+            "parse_header.lean:14:3: error: unknown constant 'Lean.Parser.parseHeader'",
+        ),
+        ("", "", "exit status 1"),
+        ("", "x" * 1000, "x" * repl_core._HEADER_FAILURE_DETAIL_CHARS + "..."),
+    ],
+)
+def test_failed_header_command_reports_its_last_output_line(monkeypatch, stdout, stderr, detail):
+    repl = repl_core.LeanRepl(
+        repl_core.LeanReplConfig(
+            warmup_imports=frozenset(),
+            header_deps_command=_fake_header_deps(stdout, returncode=1, stderr=stderr),
+        )
+    )
+    monkeypatch.setattr(
+        repl,
+        "start",
+        lambda *args, **kwargs: pytest.fail("a failed header check must not start Lean"),
+    )
+
+    assert repl.run_disposable("#check Nat") == {"repl_error": f"Rejected Lean header: {detail}"}
+    assert repl.is_clean()
+
+
+@pytest.mark.parametrize(
     "code",
     [
         "/- note -/ import Unsafe\n#check Nat",
