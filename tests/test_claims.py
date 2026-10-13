@@ -982,3 +982,176 @@ def test_single_key_push_is_unchanged_and_batches_push_atomically(
             f"{refs[two]}:{two}",
         ],
     ]
+
+
+def _plant_ref_lock(repo: Path, ref: str) -> Path:
+    """Leave the lock file a Git process that stopped while updating ``ref`` would leave."""
+    lock = repo / f"{ref}.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("")
+    return lock
+
+
+@pytest.mark.parametrize(
+    ("operation", "locked"),
+    [
+        (lambda board: board.acquire("free", ttl=600), "free"),
+        (lambda board: board.renew("held", ttl=600), "held"),
+        (lambda board: board.release("held"), "held"),
+        (lambda board: board.acquire_many(["other", "free"], ttl=600), "free"),
+        (lambda board: board.renew_many(["held", "held-too"], ttl=600), "held"),
+        (lambda board: board.release_many(["held", "held-too"]), "held"),
+    ],
+    ids=["acquire", "renew", "release", "acquire_many", "renew_many", "release_many"],
+)
+def test_a_stale_ref_lock_refuses_the_update_names_its_file_and_stays(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch, operation, locked: str
+) -> None:
+    monkeypatch.setattr(claims, "_LOCK_GRACE_S", 0.1)
+    board = _board(tmp_path, board_repo, "worker-a")
+    assert board.acquire_many(["held", "held-too"], ttl=600)
+    lock = _plant_ref_lock(board_repo, claims.CLAIM_REF_PREFIX + locked)
+    before = _refs(board_repo)
+
+    with pytest.raises(claims.ClaimRefLockedError) as raised:
+        operation(board)
+
+    message = str(raised.value)
+    assert message.startswith(f"Git lock file {lock.resolve()} (modified ")
+    assert f"blocks updates of {claims.CLAIM_REF_PREFIX}{locked}. " in message
+    assert message.endswith("if no Git process is using the claim board, delete it and retry")
+    assert lock.exists()
+    assert _refs(board_repo) == before
+
+
+def test_once_the_operator_deletes_a_stale_ref_lock_the_claim_proceeds(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claims, "_LOCK_GRACE_S", 0.1)
+    board = _board(tmp_path, board_repo, "worker-a")
+    lock = _plant_ref_lock(board_repo, claims.CLAIM_REF_PREFIX + "node")
+    with pytest.raises(claims.ClaimRefLockedError):
+        board.acquire("node", ttl=600)
+    assert board.read("node") is None
+
+    lock.unlink()
+
+    assert board.acquire("node", ttl=600)
+    assert board.holds("node")
+
+
+def test_a_ref_lock_released_within_the_grace_is_a_lost_race(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claims, "_LOCK_GRACE_S", 60.0)
+    board = _board(tmp_path, board_repo, "worker-a")
+    lock = _plant_ref_lock(board_repo, claims.CLAIM_REF_PREFIX + "node")
+    existing_locks = claims.ClaimBoard._existing_locks
+    seen: list[list[claims.ClaimRefLock]] = []
+
+    def peer_push_finishes(paths: dict[Path, str]) -> list[claims.ClaimRefLock]:
+        # The peer whose update held the lock when our push failed lets go
+        # after the first look.
+        seen.append(existing_locks(paths))
+        lock.unlink(missing_ok=True)
+        return seen[-1]
+
+    monkeypatch.setattr(claims.ClaimBoard, "_existing_locks", staticmethod(peer_push_finishes))
+
+    assert not board.acquire("node", ttl=600)
+    assert [[found.path for found in locks] for locks in seen] == [[lock.resolve()], []]
+    assert board.read("node") is None
+
+
+def test_a_lost_race_to_create_a_claim_is_refused_rather_than_an_error(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    board = _board(tmp_path, board_repo, "worker-a")
+    board._ensure_scratch()
+    rival = _git("commit-tree", _git("mktree", cwd=board_repo, input_text=""), "-m", "rival", cwd=board_repo)
+    ref = claims.CLAIM_REF_PREFIX + "node"
+    # As in the atomic test above, the rival claim passes our lease check and
+    # meets the remote's own check inside the ref transaction.
+    hooks = board.scratch / "hooks"
+    hooks.mkdir(exist_ok=True)
+    hook = hooks / "pre-push"
+    hook.write_text(f'#!/bin/sh\ncat >/dev/null\nexec git --git-dir="{board_repo}" update-ref {ref} {rival}\n')
+    hook.chmod(0o755)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(hooks))
+
+    assert not board.acquire("node", ttl=600)
+    assert _refs(board_repo) == {ref: rival}
+
+
+def test_a_packed_refs_lock_blocks_releasing_claims(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claims, "_LOCK_GRACE_S", 0.1)
+    board = _board(tmp_path, board_repo, "worker-a")
+    assert board.acquire("node", ttl=600)
+    before = _refs(board_repo)
+    lock = _plant_ref_lock(board_repo, "packed-refs")
+
+    with pytest.raises(claims.ClaimRefLockedError, match="blocks releasing claims"):
+        board.release("node")
+
+    assert lock.exists()
+    assert _refs(board_repo) == before
+
+
+def test_a_stale_ref_lock_never_lets_a_takeover_replace_a_lease(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claims, "_LOCK_GRACE_S", 0.1)
+    monkeypatch.setattr(claims.time, "time", lambda: 1_000.0)
+    _plant_lease(board_repo, "expired")
+    _plant_lease(board_repo, "live", expires_at=2_000.0)
+    before = _refs(board_repo)
+    for key in ("expired", "live"):
+        _plant_ref_lock(board_repo, claims.CLAIM_REF_PREFIX + key)
+    board = _board(tmp_path, board_repo, "worker-a")
+
+    assert not board.acquire("live", ttl=600)
+    with pytest.raises(claims.ClaimRefLockedError):
+        board.acquire("expired", ttl=600)
+    with pytest.raises(claims.ClaimRefLockedError):
+        board.acquire("live", ttl=600, steal=True)
+
+    assert _refs(board_repo) == before
+
+
+def test_cleanup_keeps_a_lease_a_lock_file_blocks_and_removes_the_rest(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claims.time, "time", lambda: 1_000.0)
+    for key in ("locked", "free"):
+        _plant_lease(board_repo, key)
+    key_lock = _plant_ref_lock(board_repo, claims.CLAIM_REF_PREFIX + "locked")
+    board = _board(tmp_path, board_repo, "worker-a")
+
+    assert board.cleanup() == 1
+    assert list(_refs(board_repo)) == [claims.CLAIM_REF_PREFIX + "locked"]
+
+    key_lock.unlink()
+    _plant_ref_lock(board_repo, "packed-refs")
+
+    assert board.cleanup() == 0
+    assert list(_refs(board_repo)) == [claims.CLAIM_REF_PREFIX + "locked"]
+
+def test_ref_locks_lists_claim_and_packed_refs_locks_only(tmp_path: Path, board_repo: Path) -> None:
+    board = _board(tmp_path, board_repo, "worker-a")
+    valid = _plant_ref_lock(board_repo, claims.CLAIM_REF_PREFIX + "author/node")
+    malformed = _plant_ref_lock(board_repo, claims.CLAIM_REF_PREFIX + "bad..key")
+    packed = _plant_ref_lock(board_repo, "packed-refs")
+    (board_repo / claims.CLAIM_REF_PREFIX / "directory.lock").mkdir()
+    _plant_ref_lock(board_repo, "refs/heads/main")
+
+    assert [(lock.path, lock.ref) for lock in board.ref_locks()] == [
+        (packed.resolve(), "packed-refs"),
+        (valid.resolve(), claims.CLAIM_REF_PREFIX + "author/node"),
+        (malformed.resolve(), claims.CLAIM_REF_PREFIX + "bad..key"),
+    ]
+    assert board.acquire("author/other", ttl=600)
+    assert claims.ClaimBoard("https://example.invalid/claims.git", "worker-a", tmp_path / "remote").ref_locks() == []

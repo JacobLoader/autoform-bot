@@ -32,6 +32,10 @@ _WINDOWS_ROOTED_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _SCRATCH_INIT_ATTEMPTS = 10
 _SCRATCH_INIT_DELAY_S = 0.05
 _LIST_ATTEMPTS = 3
+# A peer's push holds a ref's lock file for milliseconds; one that outlasts
+# this grace after a failed push is reported as blocking the claim.
+_LOCK_GRACE_S = 2.0
+_LOCK_POLL_S = 0.05
 
 _GIT_ENV = {
     "GIT_AUTHOR_NAME": "autoform",
@@ -44,6 +48,8 @@ _CAS_REJECTIONS = (
     "fetch first",
     "remote ref updated since checkout",
     "cannot lock ref",
+    # Git 2.53, unlike 2.50, reports a lost race to create a ref with only this.
+    "reference already exists",
 )
 # When the remote aborts an atomic push, every ref reports "atomic transaction
 # failed"; only this error line names the ref whose expected value was gone.
@@ -60,6 +66,24 @@ class MalformedLeaseError(ClaimTransportError):
 
 class _ClaimRefChanged(ClaimTransportError):
     """A listed claim ref moved or was deleted before its lease was read."""
+
+
+class ClaimRefLockedError(ClaimTransportError):
+    """A Git lock file on a local claim board blocks a claim update."""
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimRefLock:
+    """A Git lock file in a local claim board: ``ref`` is a claim ref or ``packed-refs``."""
+
+    path: Path
+    ref: str
+    modified: float
+
+    def describe(self) -> str:
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.modified))
+        blocked = "releasing claims" if self.ref == "packed-refs" else f"updates of {self.ref}"
+        return f"Git lock file {self.path} (modified {stamp}) blocks {blocked}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,6 +367,69 @@ class ClaimBoard:
         message = json.dumps(lease, sort_keys=True, separators=(",", ":"), allow_nan=False)
         return self._git(["commit-tree", tree, "-m", message]).stdout.strip()
 
+    def _ref_store(self) -> Path | None:
+        """Return the Git directory holding a local board's refs, or None for a remote board."""
+        if _repository_is_remote(self.repo_url):
+            return None
+        try:
+            proc = subprocess.run(
+                ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                cwd=self.repo_url,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        return Path(proc.stdout.strip()) if proc.returncode == 0 else None
+
+    def ref_locks(self) -> list[ClaimRefLock]:
+        """Return every Git lock file under a local board's claim refs, and its ``packed-refs.lock``.
+
+        Git leaves a lock file behind when a process stops while updating a
+        ref, and refuses every later update of that ref until someone deletes
+        it. Git records no owner that could prove a lock abandoned, so locks
+        are reported, never deleted. A remote board's files are not visible.
+        """
+        store = self._ref_store()
+        if store is None:
+            return []
+        paths = {store / "packed-refs.lock": "packed-refs"}
+        for directory, _, files in os.walk(store / CLAIM_REF_PREFIX):
+            for name in files:
+                if name.endswith(".lock"):
+                    path = Path(directory) / name
+                    paths[path] = path.relative_to(store).as_posix()[: -len(".lock")]
+        return self._existing_locks(paths)
+
+    @staticmethod
+    def _existing_locks(paths: Mapping[Path, str]) -> list[ClaimRefLock]:
+        locks: list[ClaimRefLock] = []
+        for path, ref in paths.items():
+            try:
+                locks.append(ClaimRefLock(path, ref, path.lstat().st_mtime))
+            except OSError:
+                continue
+        return sorted(locks, key=lambda lock: str(lock.path))
+
+    def _blocking_locks(self, updates: Sequence[tuple[str, str | None, str]]) -> list[ClaimRefLock]:
+        """Return the lock files that still block a failed push's refs after the grace.
+
+        ``packed-refs.lock`` blocks only deletions.
+        """
+        store = self._ref_store()
+        if store is None:
+            return []
+        paths = {store / f"{self._ref(key)}.lock": self._ref(key) for key, _, _ in updates}
+        if any(not new for _, _, new in updates):
+            paths[store / "packed-refs.lock"] = "packed-refs"
+        deadline = time.monotonic() + _LOCK_GRACE_S
+        while True:
+            locks = self._existing_locks(paths)
+            if not locks or time.monotonic() >= deadline:
+                return locks
+            time.sleep(_LOCK_POLL_S)
+
     def _cas_push(self, key: str, old: str | None, new: str) -> bool:
         return self._cas_push_refs([(key, old, new)]).ok
 
@@ -355,7 +442,9 @@ class ClaimBoard:
         """Push ``(key, old, new)`` updates, each leased on its observed ``old``; empty ``new`` deletes.
 
         With ``atomic`` the remote applies every update or none. A lost
-        compare-and-swap is a failed result; anything else raises.
+        compare-and-swap is a failed result; anything else raises, including
+        ``ClaimRefLockedError`` for a local board's lock file that outlasts the
+        grace, which Git's message alone cannot tell apart from a lost race.
         """
         keys_by_ref = {self._ref(key): key for key, _, _ in updates}
         proc = self._git(
@@ -372,6 +461,13 @@ class ClaimBoard:
         )
         if proc.returncode == 0:
             return ClaimBatchResult(True)
+        locks = self._blocking_locks(updates)
+        if locks:
+            raise ClaimRefLockedError(
+                f"{'; '.join(lock.describe() for lock in locks)}. Git leaves a lock file behind when a process "
+                "stops while updating a ref; if no Git process is using the claim board, "
+                f"delete {'them' if len(locks) > 1 else 'it'} and retry"
+            )
         detail = f"{proc.stdout}\n{proc.stderr}".strip()
         if atomic and "does not support --atomic" in detail:
             # Falling back to separate pushes could leave a partial claim set.
@@ -586,11 +682,21 @@ class ClaimBoard:
         raise ClaimTransportError(f"cannot fetch claim {key!r} from the claim board: {fetch.stderr.strip()[:300]}")
 
     def cleanup(self) -> int:
-        """CAS-delete leases expired at snapshot time and return the deletion count."""
+        """CAS-delete leases expired at snapshot time and return the deletion count.
+
+        A lease whose ref, or the board's ``packed-refs``, has a lock file stays,
+        as :meth:`ref_locks` reports, instead of failing the whole cleanup.
+        """
+        locked = {lock.ref for lock in self.ref_locks()}
+        if "packed-refs" in locked:
+            return 0
         removed = 0
         for lease in self.list():
-            if not lease["_malformed"] and lease["_expired"] and self._cas_push(
-                str(lease["_key"]), str(lease["_oid"]), ""
+            if (
+                not lease["_malformed"]
+                and lease["_expired"]
+                and self._ref(str(lease["_key"])) not in locked
+                and self._cas_push(str(lease["_key"]), str(lease["_oid"]), "")
             ):
                 removed += 1
         return removed
@@ -673,6 +779,8 @@ __all__ = [
     "CLAIM_TTL_S",
     "ClaimBatchResult",
     "ClaimBoard",
+    "ClaimRefLock",
+    "ClaimRefLockedError",
     "ClaimTransportError",
     "Heartbeat",
     "MalformedLeaseError",
