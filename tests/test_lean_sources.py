@@ -741,16 +741,12 @@ def test_search_permission_revoked_at_any_lookup_or_open_blames_the_folder(
     # Lean indexing rejects the link only after the capture has read it.
     with pytest.raises(lean_module.LeanSourceError, match="symbolic links are not supported"):
         snapshot_project_sources(tmp_path)
-    total = operations
-    for revoke_at in range(1, total + 1):
+    for revoke_at in range(1, operations + 1):
         operations = 0
         revoked = None
         with pytest.raises(lean_module.LeanSourceError) as caught:
             snapshot_project_sources(tmp_path)
-        assert (revoke_at, str(caught.value)) == (
-            revoke_at,
-            f"permission denied: {folders[revoked]}",
-        )
+        assert str(caught.value) == f"permission denied: {folders[revoked]}", revoke_at
 
 
 def test_unsupported_entry_name_is_reported_without_retrying(
