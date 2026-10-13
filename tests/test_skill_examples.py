@@ -255,6 +255,8 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
     assert "toolchain runs Lean's own header" in servers
     assert "unrecognized parser response fails closed" in servers
     assert "names that remain quoted or path-like after Lean parsing are refused" in servers
+    assert "The allowlist is a policy check, not a sandbox" in servers
+    assert "`Init` alone provides file and process IO" in servers
     assert "package-qualified `@repl/repl` target" in servers
     assert "finds the REPL only through a require named `repl`" in servers
     assert 'needs `LEAN_REPL_CMD="lake exe @<name>/repl"`' in servers

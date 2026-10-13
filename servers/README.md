@@ -22,10 +22,12 @@ which the REPL also uses, on the submitted source. Every import it reports is
 validated, and a rejected or unrecognized parser response fails closed.
 Allowlisted imports require plain, nonempty canonical module components; names
 that remain quoted or path-like after Lean parsing are refused instead of being
-reduced to a misleading allowlisted root. The header check runs as one extra
-short Lean process per call and counts toward the same request budget as the
-rest of the call. Execution names the package-qualified `@repl/repl` target so a
-project target cannot shadow it.
+reduced to a misleading allowlisted root. The allowlist is a policy check, not a
+sandbox: each call runs with the runtime user's privileges, and `Init` alone
+provides file and process IO, for example `#eval IO.Process.run`. The header
+check runs as one extra short Lean process per call and counts toward the same
+request budget as the rest of the call. Execution names the package-qualified
+`@repl/repl` target so a project target cannot shadow it.
 
 REPL children and LSP processes remain lazy. A cold tool call stays pending
 while Lean warms up, so no `/repl-start`, `/lsp-start`, or model-side sleep is
