@@ -773,8 +773,8 @@ use although its statement changes meaning. They join `claim_targets` too. A
 which cannot use the revised one, and it cannot record `statement: retracted`.
 A revision is contained exactly when the selected article's target is its only
 claim target. A Markdown path reaches the revised declarations when it ends at
-the revised article or at an article that names one of them or, when none names
-it, owns it; missing dependency paths are counted the same way. Project
+the revised article, at an article that names one of them, or, when none names
+it, at an owner; missing dependency paths are counted the same way. Project
 locality is an exact inventory of regular repository source modules, never a
 namespace-prefix guess. The inventory skips nested Git checkouts, ignored
 directories such as `build`, and symlinked directories, so the probe refuses a
