@@ -867,7 +867,8 @@ def _print_project_inspection(result) -> None:
         print(f"Lean: {_human_text(result.lean_toolchain)}")
     if result.mathlib is not None:
         mathlib = result.mathlib
-        where = mathlib.dir if mathlib.type == "path" else f"{mathlib.input_rev} @ {mathlib.rev} ({mathlib.url})"
+        revision = mathlib.rev if mathlib.input_rev is None else f"{mathlib.input_rev} @ {mathlib.rev}"
+        where = mathlib.dir if mathlib.type == "path" else f"{revision} ({mathlib.url})"
         print(f"Mathlib: {_human_text(where)} [{mathlib.source}]")
     if result.autoform_paths:
         print(f"Autoform: {', '.join(result.autoform_paths)}")
