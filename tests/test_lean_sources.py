@@ -1423,6 +1423,58 @@ def test_verification_walk_charges_capture_limits(
     assert len(binds) == 2
 
 
+@pytest.mark.parametrize("excluded", [".lake", "build"])
+def test_rechecks_do_not_walk_excluded_folders(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    excluded: str,
+) -> None:
+    _require_descriptor_capture()
+    _index(tmp_path, "def kept : Nat := 0\n", "Proj/A.lean")
+    (tmp_path / excluded).mkdir()
+    for number in range(10):
+        (tmp_path / excluded / f"Out{number}.lean").write_text(f"def out{number} : Nat := 0\n", encoding="utf-8")
+    binds = _count_binds(monkeypatch)
+
+    # Proj, the excluded folder and Proj/A.lean: three entries per pass, so
+    # walking the excluded folder's ten entries would exceed the limit.
+    snapshot = snapshot_project_sources(tmp_path, limits=TreeCaptureLimits(max_entries=5))
+
+    assert len(binds) == 1
+    assert snapshot.index.find("kept") is not None
+    assert snapshot.index.find("out0") is None
+
+
+def test_folder_refused_to_a_selected_recheck_is_not_accepted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_descriptor_capture()
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root bypasses directory permissions")
+    _index(tmp_path, "def kept : Nat := 0\n", "Proj/A.lean")
+    site = tmp_path / "site"
+    site.mkdir()
+
+    def refuse() -> None:
+        if os.access(site, os.W_OK):
+            (site / "New.lean").write_text("def appeared : Nat := 0\n", encoding="utf-8")
+            site.chmod(0)
+
+    _on_checkpoint(monkeypatch, "before-final-verification", refuse)
+    monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
+    binds = _count_binds(monkeypatch)
+    try:
+        # The verification cannot look into site, so the attempt is a change;
+        # the retry's scan then reports the lasting refusal.
+        with pytest.raises(lean_module.LeanSourceError, match=r"^permission denied: site$"):
+            snapshot_project_sources(tmp_path)
+    finally:
+        site.chmod(0o755)
+
+    assert len(binds) == 2
+
+
 def test_snapshot_retries_a_root_replaced_while_it_is_bound(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
