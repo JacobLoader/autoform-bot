@@ -1165,6 +1165,16 @@ check passes`. A declaration the kernel rejects fails with `kernel replay of the
 root package failed: ...`, which names the first one; the workflow's scan for
 the kernel-check bypass option is only lexical.
 
+Both audits refuse an unsafe or partial root-package declaration with `unsafe
+or partial declaration: NAME`, and report a `partial def` under its own name.
+For every computable recursive definition, structural, well-founded, or
+`partial`, Lean adds a partial copy `NAME._unsafe_rec` for the compiler to run.
+The audits skip these copies: the kernel refuses a safe declaration that refers
+to one, and the kernel replay skips them too, so it refuses such a declaration
+added with kernel checking off. A `lean:` name that is one still fails, with
+`NAME [ID] is Lean's compiled copy of a recursive definition; name the
+definition itself`.
+
 The probe runs no project code. Its header imports only the toolchain's Lean,
 and the workflow runs it with plain `lean`, not `lake env lean`, passing the
 project's search path in `AUTOFORM_AUDIT_LEAN_PATH`. The probe refuses to run

@@ -142,6 +142,9 @@ def test_archive_modules_are_sorted_and_probe_fails_on_zero_declarations(
     assert "import Fixture" not in probe
     assert 'Name.str (Name.anonymous) "Fixture", Name.str (Name.str (Name.anonymous) "Fixture") "Basic"' in probe
     assert 'throwError "kernel-trust audit found no root-package declarations"' in probe
+    assert "isRoot declName && !autoformAuditCompiledCopy declName info" in probe
+    assert "isRoot declName && autoformAuditCompiledCopy declName info" in probe
+    assert "autoformAuditUnsafeOrPartial env declName info" in probe
     assert "info.isUnsafe || info.isPartial" in probe
     assert "Lean.collectAxioms" not in probe
     assert "autoformAuditAxioms env declName" in probe
@@ -965,6 +968,7 @@ _DEPENDENCY_LEAN = """theorem Dep.dep_sorry : True := sorry
 theorem Dep.dep_clean : True := trivial
 theorem Dep.dep_native : 10 + 10 = 20 := by native_decide
 unsafe def Dep.dep_unsafe : Nat := 0
+partial def Dep.dep_partial (n : Nat) : Nat := Dep.dep_partial (n + 1)
 """
 
 _OPEN_LEAN = """import Dep
@@ -1090,6 +1094,89 @@ run_cmd liftCoreM <| addDecl (.thmDecl
 theorem Fixture.uses_bogus : False := Fixture.bogus
 """
 
+# Lean compiles each of these definitions through a partial `_unsafe_rec` copy,
+# which both probes once refused as an unsafe or partial declaration.
+_RECURSIVE_LEAN = """namespace Fixture
+
+def countdown : Nat → Nat
+  | 0 => 0
+  | n + 1 => countdown n
+
+def halve (n : Nat) : Nat :=
+  if h : n < 2 then 0 else 1 + halve (n - 2)
+termination_by n
+decreasing_by omega
+
+mutual
+def isEven : Nat → Bool
+  | 0 => true
+  | n + 1 => isOdd n
+def isOdd : Nat → Bool
+  | 0 => false
+  | n + 1 => isEven n
+end
+
+theorem countdown_zero : countdown 0 = 0 := rfl
+
+end Fixture
+"""
+
+# A `partial def` is a safe opaque whose `_unsafe_rec` copy is partial, and the
+# probes once named only the copy. An `unsafe def`, an unsafe constant with a
+# copy's name, and a partial constant with an ordinary name, added by a root
+# run_cmd with kernel checking on, must fail under their own names too. An
+# opaque whose `_unsafe_rec` companion is unsafe, not partial, must not.
+_PARTIAL_LEAN = """import Lean.Elab.Command
+
+namespace Fixture
+
+partial def loop (n : Nat) : Nat := loop (n + 1)
+
+unsafe def raw : Nat := 0
+
+opaque ordinaryWithNamedCompanion : Nat
+
+unsafe def ordinaryWithNamedCompanion._unsafe_rec : Nat := 1
+
+theorem fine : True := trivial
+
+end Fixture
+
+open Lean Elab Command
+
+run_cmd liftCoreM <| addDecl (.mutualDefnDecl [
+  { name := `Fixture.spin, levelParams := [], type := mkConst ``False,
+    value := mkConst `Fixture.spin, hints := .opaque, safety := .partial }])
+"""
+
+# Two compiled copies the root scan skips: Lean's own for `countdown`, and a
+# partial `False` that refers to itself, which a root run_cmd can add with
+# kernel checking on. Each must still fail as a lean: target. A theorem of
+# `False` whose proof is the second, added with kernel checking off, passes
+# every other check; only the kernel replay, which leaves the copies out,
+# refuses it.
+_COPY_LEAN = """import Lean.Elab.Command
+
+namespace Fixture
+
+def countdown : Nat → Nat
+  | 0 => 0
+  | n + 1 => countdown n
+
+end Fixture
+
+open Lean Elab Command
+
+run_cmd liftCoreM <| addDecl (.mutualDefnDecl [
+  { name := `Fixture.cheat._unsafe_rec, levelParams := [], type := mkConst ``False,
+    value := mkConst `Fixture.cheat._unsafe_rec, hints := .opaque, safety := .partial }])
+
+set_option debug.skip""" + """KernelTC true in
+run_cmd liftCoreM <| addDecl (.thmDecl
+  { name := `Fixture.uses_copy, levelParams := [], type := mkConst ``False,
+    value := mkConst `Fixture.cheat._unsafe_rec })
+"""
+
 
 @pytest.fixture(scope="module")
 def open_projects(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tuple[Path, Path]]:
@@ -1111,6 +1198,9 @@ def open_projects(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tuple[P
         ("clash", _CLASH_LEAN),
         ("strict", _STRICT_LEAN),
         ("unchecked", _UNCHECKED_LEAN),
+        ("recursive", _RECURSIVE_LEAN),
+        ("partial", _PARTIAL_LEAN),
+        ("copy", _COPY_LEAN),
     ):
         project = root / name
         _write(project / "lean-toolchain", _TOOLCHAIN)
@@ -1379,6 +1469,7 @@ def test_strict_probe_requires_every_target_and_checks_non_root_ones(
             _article("unimported", ["Fixture.unimported"]),
             _article("native", ["Dep.dep_native"]),
             _article("unsafe", ["Dep.dep_unsafe"]),
+            _article("partial", ["Dep.dep_partial"]),
             _article("sorry", ["Dep.dep_sorry"]),
         ],
     )
@@ -1397,6 +1488,7 @@ def test_strict_probe_requires_every_target_and_checks_non_root_ones(
     for message in (
         "Dep.dep_native [native] is outside the root package and depends on unexpected axiom ",
         "Dep.dep_unsafe [unsafe] is outside the root package and is unsafe or partial",
+        "Dep.dep_partial [partial] is outside the root package and is unsafe or partial",
         "Dep.dep_sorry [sorry] is outside the root package and depends on unexpected axiom sorryAx",
         "root-package declarations failed the kernel-trust audit",
     ):
@@ -1432,7 +1524,13 @@ def test_both_probes_refuse_a_target_that_names_one_of_their_own_helpers(
     # The probe declares its helpers itself, so the build never compiled them.
     # A lean: name that matched one once passed as a clean declaration outside
     # the root package.
-    walk_helpers = ["autoformAuditBlockOf", "autoformAuditEdges", "autoformAuditAxioms"]
+    walk_helpers = [
+        "autoformAuditBlockOf",
+        "autoformAuditEdges",
+        "autoformAuditAxioms",
+        "autoformAuditCompiledCopy",
+        "autoformAuditUnsafeOrPartial",
+    ]
     strict_helpers = ["autoformAuditNameOf", "autoformAuditReadTargets", *walk_helpers]
     open_helpers = [
         "autoformOpenAuditNameOf",
@@ -1467,6 +1565,7 @@ def test_open_probe_checks_the_axioms_of_a_target_outside_the_root_package(
             _article("core", ["Nat.add_comm"]),
             _article("native", ["Dep.dep_native"]),
             _article("unsafe", ["Dep.dep_unsafe"]),
+            _article("partial", ["Dep.dep_partial"]),
             _article("sorry", ["Dep.dep_sorry"]),
         ),
     )
@@ -1477,12 +1576,98 @@ def test_open_probe_checks_the_axioms_of_a_target_outside_the_root_package(
         "sorry-free: Nat.add_comm [core]",
         "Dep.dep_native [native] is outside the root package and depends on unexpected axiom ",
         "Dep.dep_unsafe [unsafe] is outside the root package and is unsafe or partial",
+        "Dep.dep_partial [partial] is outside the root package and is unsafe or partial",
         "Dep.dep_sorry [sorry] is outside the root package and depends on sorry",
         "root-package declarations failed the open-statement audit",
     ):
         assert message in output
     assert "sorry-free: Dep." not in output
     assert "unexpected axiom sorryAx" not in output
+
+
+def test_both_probes_accept_computable_recursive_definitions(
+    helper: ModuleType, open_projects: dict[str, tuple[Path, Path]]
+) -> None:
+    project = open_projects["recursive"]
+    for audited, messages in (
+        (_strict_audit(helper, project, None), ["kernel trust clean ("]),
+        (
+            _audit(helper, project, _contract(_article("countdown-zero", ["Fixture.countdown_zero"]))),
+            [
+                "sorry-free: Fixture.countdown_zero [countdown-zero]",
+                "kernel trust clean except declared open statements (",
+            ],
+        ),
+    ):
+        output = audited.stdout + audited.stderr
+        assert audited.returncode == 0, output
+        assert _ends_with_the_success_line(audited.stdout), audited.stdout
+        for message in messages:
+            assert message in output
+        assert "_unsafe_rec" not in output
+
+
+def test_both_probes_report_a_partial_def_under_its_own_name(
+    helper: ModuleType, open_projects: dict[str, tuple[Path, Path]]
+) -> None:
+    project = open_projects["partial"]
+    for audited, summary in (
+        (_strict_audit(helper, project, None), "root-package declarations failed the kernel-trust audit"),
+        (
+            _audit(helper, project, _contract(_article("fine", ["Fixture.fine"]))),
+            "root-package declarations failed the open-statement audit",
+        ),
+    ):
+        output = audited.stdout + audited.stderr
+        assert audited.returncode != 0, output
+        assert "unsafe or partial declaration: Fixture.loop" in output
+        assert "unsafe or partial declaration: Fixture.raw" in output
+        assert "unsafe or partial declaration: Fixture.spin" in output
+        assert "unsafe or partial declaration: Fixture.ordinaryWithNamedCompanion._unsafe_rec" in output
+        assert not any(
+            line.rstrip().endswith("unsafe or partial declaration: Fixture.ordinaryWithNamedCompanion")
+            for line in output.splitlines()
+        ), output
+        assert summary in output
+        assert "Fixture.loop._unsafe_rec" not in output
+
+
+def test_both_probes_refuse_a_target_that_names_a_compiled_copy(
+    helper: ModuleType, open_projects: dict[str, tuple[Path, Path]]
+) -> None:
+    project = open_projects["copy"]
+    targets = [
+        _article("countdown", ["Fixture.countdown._unsafe_rec"]),
+        _article("cheat", ["Fixture.cheat._unsafe_rec"]),
+    ]
+    for audited, summary in (
+        (_strict_audit(helper, project, targets), "root-package declarations failed the kernel-trust audit"),
+        (_audit(helper, project, _contract(*targets)), "root-package declarations failed the open-statement audit"),
+    ):
+        output = audited.stdout + audited.stderr
+        assert audited.returncode != 0, output
+        for name, article in (
+            ("Fixture.countdown._unsafe_rec", "countdown"),
+            ("Fixture.cheat._unsafe_rec", "cheat"),
+        ):
+            assert (
+                f"{name} [{article}] is Lean's compiled copy of a recursive definition; name the definition itself"
+            ) in output
+        assert summary in output
+        assert "sorry-free:" not in output
+
+
+def test_both_probes_refuse_an_unchecked_theorem_that_uses_a_compiled_copy(
+    helper: ModuleType, open_projects: dict[str, tuple[Path, Path]]
+) -> None:
+    rejected = "kernel replay of the root package failed: while replaying declaration 'Fixture.uses_copy'"
+    for audited, summary in _both_probes(helper, open_projects["copy"], [_article("uses-copy", ["Fixture.uses_copy"])]):
+        output = audited.stdout + audited.stderr
+        assert audited.returncode != 0, output
+        assert rejected in output
+        assert summary in output
+        assert "sorry-free:" not in output
+        assert "kernel trust clean" not in output
 
 
 def test_both_probes_replay_the_root_package_through_the_kernel(
