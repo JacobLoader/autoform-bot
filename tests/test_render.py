@@ -21,13 +21,14 @@ import autoform_cli.lean as lean_module
 import autoform_cli.render as render_module
 from autoform_cli._tree_snapshot import TreeChangedError
 from autoform_cli.coverage import COVERAGE_DISPOSITIONS
-from autoform_cli.graph import load_graph
+from autoform_cli.graph import GraphValidationError, load_graph
 from autoform_cli.lean import LeanSourceError, _normalize_remote
 from autoform_cli.render import (
     PUBLICATION_MANIFEST,
     PublicationError,
     _COVERAGE_SUMMARY_ORDER,
     _completion_percentage,
+    load_publication_source,
     publication_source_revision,
     render_site,
 )
@@ -1125,6 +1126,22 @@ def test_implementation_notes_stay_out_of_the_published_wiki(tmp_path: Path) -> 
         encoding="utf-8"
     )
     assert publication_source_revision(blueprint) == with_public_page
+
+
+def test_an_orphaned_implementation_note_stops_the_render(tmp_path: Path) -> None:
+    """Render and the dashboard read a copy without hidden files, but still check the notes."""
+    project = _project(tmp_path)
+    blueprint = project / "blueprint"
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / "af_0123456789abcdef01234567.md").write_text("Mathlib gap.\n", encoding="utf-8")
+
+    with pytest.raises(GraphValidationError, match="names no roadmap article"):
+        render_site(blueprint, tmp_path / "out", lean_root=project)
+    with pytest.raises(GraphValidationError, match="names no roadmap article"):
+        load_publication_source(blueprint)
+
+    assert not (tmp_path / "out").exists()
 
 
 @pytest.mark.parametrize(

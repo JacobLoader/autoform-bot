@@ -40,7 +40,7 @@ from ._tree_snapshot import (
     bind_directory_tree,
 )
 from .coverage import COVERAGE_DISPOSITIONS, CoverageSummary, load_coverage
-from .graph import Graph, GraphValidationError, Node, load_graph
+from .graph import Graph, GraphValidationError, Node, _implementation_note_issues, load_graph
 from .lean import (
     SourceLinker,
     declaration_names,
@@ -681,11 +681,20 @@ def _private_copy(
 
 
 def _load_graph(copy: Path, blueprint: Path) -> Graph:
+    """Load the copy's graph, then check the vault's implementation notes as ``load_graph`` would.
+
+    The notes are hidden, so the copy lacks them. Nothing is published or hashed
+    from them, so reading them in place changes no output.
+    """
     try:
-        return load_graph(copy)
+        graph = load_graph(copy)
     except GraphValidationError as error:
         issues = [issue.replace(str(copy), str(blueprint)) for issue in error.issues]
         raise GraphValidationError(issues) from None
+    article_ids = {node.article_id: node.id for node in graph.nodes.values() if node.article_id is not None}
+    if issues := _implementation_note_issues(blueprint, article_ids):
+        raise GraphValidationError(issues)
+    return graph
 
 
 def load_publication_source(blueprint_dir: str | Path) -> tuple[str, Graph]:
