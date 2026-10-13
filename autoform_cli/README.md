@@ -1566,6 +1566,7 @@ article and dependency counts, available views, and whether capture used a
 retained directory descriptor or the documented portable best-effort path. It
 contains no timestamp or absolute path, so identical inputs on the same
 filesystem-capability class produce identical output files.
-Rendering reads only one retained source snapshot. Later edits cannot mix into
-the output; they instead make the dashboard report the built site as stale
-until it is rendered again.
+Rendering publishes only one retained source snapshot; it reads the vault's
+hidden implementation notes in place only to validate them. Later edits cannot
+mix into the output; they instead make the dashboard report the built site as
+stale until it is rendered again.

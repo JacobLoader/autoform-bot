@@ -126,7 +126,7 @@ proof-only prerequisites under `## Proof depends on`. Assign durable
 `autoform migrate article-ids blueprint --write` after creating the pages to
 add deterministic IDs.
 Articles hold only frontmatter and informal mathematics; put Lean-side findings
-such as Mathlib gaps, prior art, and declaration names in
+such as Mathlib gaps, prior art, and candidate declaration names in
 `blueprint/.implementation-notes/<article_id>.md`, never a transcript, a secret,
 or a machine-local path. The hidden per-article file
 stays out of the mathematical wiki and remains valid when the article moves.
@@ -159,9 +159,7 @@ the article's `blueprint/.implementation-notes/<article_id>.md` and retract the
 article the same way, so it returns to the frontier as a statement phase flagged
 as a revision, and leave the Lean change to Formalize, which follows the
 [revision contract](../../autoform_cli/README.md#revision-contract); this skill
-edits only Markdown. For a large source, divide independent sections among
-available agents while retaining one owner for global coverage and dependency
-consistency.
+edits only Markdown.
 
 `open_statements` in `roadmap/README.md` is a project policy; absent means
 strict. `allowed` lets a theorem's statement land with a `sorry` proof, so
