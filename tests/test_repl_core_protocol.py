@@ -725,6 +725,13 @@ def _repl_with_process(process: _PipeProcess, *, chunk_size: int = 4096, max_buf
     return repl
 
 
+def _disposable_repl_with_process(monkeypatch, process: _PipeProcess, **config):
+    """Return a repl whose disposable call starts on ``process``."""
+    repl = _repl_with_process(process, **config)
+    monkeypatch.setattr(repl, "start", lambda **kwargs: setattr(repl, "process", process))
+    return repl
+
+
 def _patch_pipe_reads(monkeypatch, process: _PipeProcess):
     real_read = os.read
 
@@ -1065,6 +1072,100 @@ def test_disposable_call_does_not_return_a_result_before_verified_cleanup(monkey
         repl.run_disposable("#check Nat", timeout=1)
 
     assert error.value.result == {"messages": []}
+
+
+_MALFORMED_RESPONSE = {
+    "repl_error": "Lean REPL returned a malformed response for the requested command.",
+    "outcome_unknown": True,
+}
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected"),
+    [
+        ({"message": "bad"}, {"repl_error": "bad"}),
+        ([], _MALFORMED_RESPONSE),
+        (repl_core.ReplOutcomeUnknown("x"), {"repl_error": "x", "outcome_unknown": True}),
+        (repl_core.ReplStderrBacklog("x", {"message": "bad"}), {"repl_error": "bad"}),
+        (repl_core.ReplStderrBacklog("x", []), _MALFORMED_RESPONSE),
+        (
+            repl_core.ReplStderrBacklog(
+                "x",
+                {"env": 7, "sorries": [{"goal": "False", "proofState": 9}]},
+            ),
+            {"sorries": [{"goal": "False"}]},
+        ),
+    ],
+)
+def test_disposable_call_maps_each_response_outcome_without_a_retry(
+    monkeypatch, outcome, expected
+):
+    repl = repl_core.LeanRepl(
+        repl_core.LeanReplConfig(validate_imports=False, warmup_imports=frozenset())
+    )
+    frames = []
+
+    def run(**kwargs):
+        frames.append(kwargs["code"])
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(repl, "start", lambda **kwargs: None)
+    monkeypatch.setattr(repl, "_run", run)
+
+    assert repl.run_disposable("#eval 1", timeout=1) == expected
+    assert frames == ["#eval 1"]
+
+
+@pytest.mark.parametrize(
+    "raw_response",
+    [
+        {},
+        {"messages": []},
+        {"messages": {}},
+        {
+            "env": 1,
+            "messages": [
+                {
+                    "severity": [],
+                    "data": "boom",
+                    "pos": {"line": 1, "column": 1},
+                }
+            ],
+        },
+        {
+            "env": 1,
+            "messages": [
+                {
+                    "severity": {},
+                    "data": "boom",
+                    "pos": {"line": 1, "column": 1},
+                }
+            ],
+        },
+        {"env": True},
+        {"sorries": [{"goal": "False"}]},
+    ],
+)
+def test_disposable_call_reports_every_malformed_response_as_unknown(
+    monkeypatch, raw_response
+):
+    repl = repl_core.LeanRepl(
+        repl_core.LeanReplConfig(validate_imports=False, warmup_imports=frozenset())
+    )
+    frames = []
+    monkeypatch.setattr(repl, "start", lambda **kwargs: None)
+    monkeypatch.setattr(
+        repl,
+        "_run",
+        lambda **kwargs: frames.append(kwargs["code"]) or raw_response,
+    )
+
+    result = repl.run_disposable("#eval 1", timeout=1)
+
+    assert result["outcome_unknown"] is True
+    assert frames == ["#eval 1"]
 
 
 def test_disposable_call_rejects_import_before_starting_a_process(monkeypatch):
@@ -1683,6 +1784,28 @@ def test_response_timeout_after_full_write_is_not_retried(monkeypatch):
     assert repl.process is None
 
 
+def test_disposable_timeout_after_full_write_is_not_retried(monkeypatch):
+    repl = repl_core.LeanRepl(
+        repl_core.LeanReplConfig(warmup_imports=frozenset(), validate_imports=False)
+    )
+    calls = []
+    monkeypatch.setattr(repl, "start", lambda **kwargs: setattr(repl, "process", object()))
+    monkeypatch.setattr(repl, "close", lambda **kwargs: setattr(repl, "process", None))
+
+    def fail_after_send(code, env_id, timeout, mark_sent):
+        calls.append((code, env_id))
+        mark_sent()
+        raise TimeoutError("response timed out")
+
+    monkeypatch.setattr(repl, "_run_io", fail_after_send)
+    response = repl.run_disposable("#eval 1", timeout=1)
+
+    assert response["outcome_unknown"] is True
+    assert "fully sent" in response["repl_error"]
+    assert calls == [("#eval 1", None)]
+    assert repl.process is None
+
+
 def test_cleanup_failure_after_full_write_preserves_unknown_outcome(monkeypatch):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(
@@ -1718,6 +1841,36 @@ def test_cleanup_failure_after_full_write_preserves_unknown_outcome(monkeypatch)
     assert response["outcome_unknown"] is True
     assert "process cleanup also failed" in response["repl_error"]
     assert close_calls == 2
+    assert repl.process is not None
+
+
+def test_disposable_cleanup_failure_after_full_write_keeps_the_unknown_outcome(monkeypatch):
+    repl = repl_core.LeanRepl(
+        repl_core.LeanReplConfig(warmup_imports=frozenset(), validate_imports=False)
+    )
+    close_calls = 0
+
+    def close(**kwargs):
+        nonlocal close_calls
+        close_calls += 1
+        # The slot is clean when the call begins; every later cleanup fails.
+        if close_calls > 1:
+            raise RuntimeError("cleanup failed")
+
+    def fail_after_send(code, env_id, timeout, mark_sent):
+        mark_sent()
+        raise TimeoutError("response timed out")
+
+    monkeypatch.setattr(repl, "close", close)
+    monkeypatch.setattr(repl, "start", lambda **kwargs: setattr(repl, "process", object()))
+    monkeypatch.setattr(repl, "_run_io", fail_after_send)
+
+    with pytest.raises(repl_core.ReplCleanupError) as error:
+        repl.run_disposable("#eval 1", timeout=1)
+
+    assert error.value.result["outcome_unknown"] is True
+    assert "process cleanup also failed" in error.value.result["repl_error"]
+    assert close_calls == 3
     assert repl.process is not None
 
 
@@ -2021,6 +2174,19 @@ def test_process_stderr_overflow_without_a_response_is_not_retried(monkeypatch):
         assert repl.process is None
 
 
+def test_disposable_stderr_overflow_without_a_response_is_not_retried(monkeypatch):
+    with ExitStack() as stack:
+        process = _PipeProcess(stack, [], stderr=b"x" * 32)
+        repl = _disposable_repl_with_process(monkeypatch, process, max_buffer_bytes=16)
+        _patch_pipe_reads(monkeypatch, process)
+
+        response = repl.run_disposable("#check Nat", timeout=1)
+
+        assert "execution outcome is unknown and was not retried" in response["repl_error"]
+        assert response["outcome_unknown"] is True
+        assert repl.process is None
+
+
 def test_explicit_environment_preserves_an_unknown_outcome(monkeypatch):
     with ExitStack() as stack:
         process = _PipeProcess(stack, [], stderr=b"x" * 32)
@@ -2315,6 +2481,22 @@ def test_backlog_response_drops_environment_owned_by_the_recycled_process(monkey
         assert repl.process is None
 
 
+def test_disposable_backlog_response_drops_the_environment_of_the_retired_process(monkeypatch):
+    with ExitStack() as stack:
+        process = _PipeProcess(
+            stack,
+            [b'{"env":9,"messages":[]}\n\n'],
+            stderr=b"e" * 64,
+        )
+        repl = _disposable_repl_with_process(monkeypatch, process, chunk_size=30, max_buffer_bytes=32)
+        _patch_pipe_reads(monkeypatch, process)
+
+        response = repl.run_disposable("#check Nat", timeout=5)
+
+        assert response == {"messages": []}
+        assert repl.process is None
+
+
 def test_env_scoped_request_refuses_to_outlive_the_recycled_process(monkeypatch):
     with ExitStack() as stack:
         process = _PipeProcess(stack, [b'{"env": 9, "messages": []}\n\n'], stderr=b"e" * 40)
@@ -2487,6 +2669,20 @@ def test_invalid_json_with_a_stderr_backlog_is_not_retried(monkeypatch):
         assert process.stderr_bytes == b"e" * 4
 
 
+def test_disposable_invalid_json_with_a_stderr_backlog_is_not_retried(monkeypatch):
+    with ExitStack() as stack:
+        process = _PipeProcess(stack, [b"not-json\n\n"], stderr=b"e" * 40)
+        repl = _disposable_repl_with_process(monkeypatch, process, chunk_size=18, max_buffer_bytes=20)
+        _patch_pipe_reads(monkeypatch, process)
+
+        response = repl.run_disposable("#check Nat", timeout=5)
+
+        assert response["outcome_unknown"] is True
+        assert "response frame was malformed" in response["repl_error"]
+        assert repl.process is None
+        assert process.stderr_bytes == b"e" * 4
+
+
 def test_wire_protocol_rejects_invalid_json(monkeypatch):
     with ExitStack() as stack:
         process = _PipeProcess(stack, [b"not-json\n\n"])
@@ -2511,6 +2707,25 @@ def test_wire_protocol_rejects_noncanonical_response_json(monkeypatch, response)
         _patch_pipe_reads(monkeypatch, process)
 
         result = repl.run("#check Nat", timeout=1)
+
+        assert result["outcome_unknown"] is True
+        assert repl.process is None
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        b'{"env":1,"env":2}\n\n',
+        b'{"env":NaN}\n\n',
+    ],
+)
+def test_disposable_call_rejects_noncanonical_response_json(monkeypatch, response):
+    with ExitStack() as stack:
+        process = _PipeProcess(stack, [response])
+        repl = _disposable_repl_with_process(monkeypatch, process)
+        _patch_pipe_reads(monkeypatch, process)
+
+        result = repl.run_disposable("#check Nat", timeout=1)
 
         assert result["outcome_unknown"] is True
         assert repl.process is None
@@ -2595,6 +2810,35 @@ def test_request_timeout_reaps_a_slow_to_exit_process_without_cleanup_failure(
         assert repl.process is None
         assert repl._process_group_id is None
         assert repl._retire_pending is False
+    finally:
+        repl.close()
+
+
+def test_disposable_timeout_reaps_a_slow_to_exit_process_without_cleanup_failure(
+    monkeypatch,
+):
+    real_kill = repl_core._kill_subprocesses
+
+    def slow_reap(process, process_group_id, deadline=None):
+        # A large Lean process needs real time to exit after SIGKILL.
+        if deadline is not None and deadline - time.monotonic() < 0.5:
+            raise RuntimeError("timed out reaping the Lean REPL process")
+        real_kill(process, process_group_id, deadline)
+
+    monkeypatch.setattr(repl_core, "_kill_subprocesses", slow_reap)
+    repl = repl_core.LeanRepl(
+        repl_core.LeanReplConfig(
+            repl_command=[sys.executable, "-c", _RESPONSIVE_FAKE_REPL],
+            warmup_imports=frozenset(),
+            validate_imports=False,
+        )
+    )
+    try:
+        response = repl.run_disposable("HANG", timeout=0.5)
+
+        assert response.get("outcome_unknown") is True
+        assert "cleanup also failed" not in response["repl_error"]
+        assert repl.is_clean()
     finally:
         repl.close()
 
