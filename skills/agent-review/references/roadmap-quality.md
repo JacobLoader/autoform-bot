@@ -9,7 +9,8 @@ scope against the sources, then inspect the fine DAG and its coarse roadmap.
    substitutes for the source.
 2. Run `autoform check` and inspect the project, chapter, and node-neighborhood
    graphs.
-3. Inspect every milestone and every node in the requested review scope.
+3. Inspect every milestone and every node in the requested review scope, with
+   its hidden `blueprint/.implementation-notes/<article_id>.md` when present.
 4. Distinguish statement prerequisites from proof-only prerequisites.
 5. Run `autoform search`, described in the
    [search contract](../../../autoform_cli/README.md#search-contract), for each
@@ -51,6 +52,9 @@ scope against the sources, then inspect the fine DAG and its coarse roadmap.
 - Frontmatter asserts only verified facts. Readiness and completion remain
   derived from the DAG.
 - Uncertainty, Mathlib candidates, and unresolved source questions are explicit.
+  Articles hold only frontmatter and informal mathematics, so Mathlib candidates
+  and other Lean-side findings are in the article's implementation note, never
+  in the article.
 
 ## Scores and verdict
 
