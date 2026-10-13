@@ -920,12 +920,13 @@ def test_audit_graph_does_not_reread_an_article_for_fences(tmp_path: Path) -> No
     assert "unclosed-code-fence" not in {finding.code for finding in result.findings}
 
 
-def test_audit_ignores_fence_like_text_in_frontmatter(tmp_path: Path) -> None:
+def test_audit_accepts_a_closed_code_fence_after_a_frontmatter_comment(tmp_path: Path) -> None:
+    # Read with the body, the frontmatter's `<!--` would close at the arrow and the closing fence would open a new one.
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)
     path = _article(blueprint, "chapter/result.md", declaration="theorem")
-    text = path.read_text(encoding="utf-8")
-    path.write_text(text.replace("---\n", "---\n# <!-- ```draft\n", 1), encoding="utf-8")
+    text = path.read_text(encoding="utf-8").replace("---\n", "---\n# <!-- draft\n", 1)
+    path.write_text(text + "\n```mermaid\ngraph TD\n  A --> B\n```\n", encoding="utf-8")
 
     codes = {finding.code for finding in audit_blueprint(blueprint).findings}
 
