@@ -1509,7 +1509,7 @@ def test_a_statement_written_below_a_section_is_still_published(tmp_path: Path) 
     project = _project(tmp_path)
     (project / "blueprint/roadmap/top.md").write_text(
         "---\ndeclaration: theorem\nlean: Project.top\n---\n\n"
-        "## Depends on\n\n- [Base](base.md)\n\n# Top\n\nThe main result.\n",
+        "## Sources\n\nA citation.\n\n# Top\n\nThe main result.\n\n## Depends on\n\n- [Base](base.md)\n",
         encoding="utf-8",
     )
     render_site(project / "blueprint", tmp_path / "out", lean_root=project)

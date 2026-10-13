@@ -407,7 +407,7 @@ def _article(path: Path, node: RuntimeNode) -> tuple[str, str]:
 
 @lru_cache(maxsize=4096)
 def _title(title: str) -> str:
-    """Return a title as the page shows it, since a reader searches for what they read."""
+    """Return a title without its Markdown markup, as a chapter heading shows it."""
 
     # Most titles are plain words and need no renderer. One the renderer reads
     # as a block of its own, such as a numbered item, is matched as written.

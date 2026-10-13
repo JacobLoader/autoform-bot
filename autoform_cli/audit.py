@@ -292,7 +292,7 @@ def _statement_finding(statement: str) -> tuple[str, str] | None:
     if not _has_substance(prose):
         # A subheading names what follows; alone it states nothing.
         if not any(line.strip() and not _HEADING.match(line) for line in _content_lines(statement)):
-            return "missing-statement-text", "formalizable article has no statement text before its first H2 section"
+            return "missing-statement-text", "formalizable article has no statement text outside its H2 sections"
         return "empty-statement-text", "formalizable article's statement has no prose with a letter or digit"
     if _is_placeholder(prose):
         return (
