@@ -12,6 +12,7 @@ and deliberately reports nothing it cannot see rather than guessing.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -53,7 +54,6 @@ _IGNORED_DIRECTORIES = frozenset(
         ".obsidian",
         ".trash",
         ".venv",
-        "lake-packages",
     }
 )
 # ``Build`` can be a Lean namespace directory, so only this spelling is ignored.
@@ -148,15 +148,44 @@ def index_failure_message(error: OSError) -> str:
     return "Lean sources could not be indexed"
 
 
+def resolve_lean_root(lean_root: str | Path) -> Path:
+    """Resolve *lean_root* to the directory it names.
+
+    Raises :class:`LeanSourceError` naming why the root cannot be used, for
+    example when it does not exist or lies under a folder that cannot be
+    searched.
+    """
+
+    try:
+        root = directory_binding.lexical_absolute_path(lean_root).resolve()
+        metadata = os.stat(root)
+    except RuntimeError as error:
+        # An unknown ~user, or before Python 3.13 a symbolic link loop.
+        raise LeanSourceError("Lean root cannot be resolved") from error
+    except (FileNotFoundError, NotADirectoryError) as error:
+        raise LeanSourceError("Lean root does not exist or is not a directory") from error
+    except PermissionError as error:
+        raise LeanSourceError("permission denied while resolving the Lean root") from error
+    except (OSError, ValueError) as error:
+        if getattr(error, "errno", None) == errno.ELOOP:
+            # Python 3.13 and later resolve a symbolic link loop without raising.
+            raise LeanSourceError("Lean root cannot be resolved") from error
+        raise LeanSourceError("Lean root cannot be inspected") from error
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise LeanSourceError("Lean root does not exist or is not a directory")
+    return root
+
+
 def index_project(
     root: str | Path, *, exclude_roots: Iterable[str | Path] = ()
 ) -> SourceIndex:
-    """Scan ``*.lean`` beneath *root* and index declarations by full name."""
+    """Scan ``*.lean`` beneath *root* and index declarations by full name.
+
+    Raises :class:`LeanSourceError` when the root cannot be used or its
+    sources cannot be read.
+    """
+    root_path = resolve_lean_root(root)
     requested_root = directory_binding.lexical_absolute_path(root)
-    root_path = requested_root.resolve()
-    if not root_path.is_dir():
-        digest = hashlib.sha256(b"autoform-lean-source-index/v1\0").hexdigest()
-        return SourceIndex(root=root_path, declarations={}, source_digest=digest)
     remapped_exclusions = tuple(
         _remap_resolved_root_exclusion(requested_root, root_path, value)
         for value in exclude_roots
@@ -478,6 +507,8 @@ def _lean_snapshot_includes(
     # servers do, so ``A.LEAN`` is not a Lean source even on a case-insensitive
     # volume where ``import A`` could open it.
     if stat.S_ISLNK(mode):
+        # Editor lock links (``.#Name.lean``) are never read, so they are skipped;
+        # any other ``.lean`` link, live or dangling, is captured and refused.
         return (
             relative.suffix == ".lean"
             and not relative.name.startswith(".#")
@@ -511,19 +542,10 @@ def _indexed_source_snapshot(
     snapshot: TreeSnapshot,
     excluded: tuple[PurePosixPath, ...],
 ) -> IndexedSourceSnapshot:
-    # Editor lock links (``.#Name.lean``) are never read, so they are skipped;
-    # any other ``.lean`` link, live or dangling, is refused.
-    tolerated_links = frozenset(
-        relative
-        for relative, _target in snapshot.symlinks
-        if PurePosixPath(relative).suffix == ".lean"
-        and PurePosixPath(relative).name.startswith(".#")
-    )
     unsupported = [
         (relative, reason)
         for relative, reason in snapshot.unsupported_entries()
         if PurePosixPath(relative).suffix == ".lean"
-        and relative not in tolerated_links
     ]
     if unsupported:
         relative, reason = unsupported[0]
@@ -559,14 +581,13 @@ def _indexed_source_snapshot(
             line_counts=line_counts,
         ),
         source_digest,
-        _lean_generation_revision(snapshot, tolerated_links),
+        _lean_generation_revision(snapshot),
         tuple(source_files),
     )
 
 
 def _lean_generation_revision(
     snapshot: TreeSnapshot,
-    tolerated_links: frozenset[str],
 ) -> str:
     """Hash only effective Lean inputs and their ancestor directories."""
 
@@ -574,11 +595,7 @@ def _lean_generation_revision(
         return PurePosixPath(relative_text).suffix == ".lean"
 
     files = tuple(entry for entry in snapshot.files if retained_entry(entry[0]))
-    symlinks = tuple(
-        entry
-        for entry in snapshot.symlinks
-        if retained_entry(entry[0]) and entry[0] not in tolerated_links
-    )
+    symlinks = tuple(entry for entry in snapshot.symlinks if retained_entry(entry[0]))
     special = tuple(entry for entry in snapshot.special if retained_entry(entry[0]))
     placeholders = tuple(path for path in snapshot.placeholders if retained_entry(path))
     omitted = tuple(entry for entry in snapshot.omitted if retained_entry(entry[0]))
@@ -829,12 +846,8 @@ def build_linker(
     A supplied source snapshot never inherits a live Git ref; callers must bind
     that ref explicitly if they want permalinks.
     """
-    try:
-        requested_root = directory_binding.lexical_absolute_path(lean_root)
-        resolved_root = requested_root.resolve()
-    except RuntimeError as error:
-        # An unknown ~user, or before Python 3.13 a symbolic link loop.
-        raise LeanSourceError("Lean root cannot be resolved") from error
+    resolved_root = resolve_lean_root(lean_root)
+    requested_root = directory_binding.lexical_absolute_path(lean_root)
     remapped_exclusions = tuple(
         _remap_resolved_root_exclusion(requested_root, resolved_root, value)
         for value in exclude_roots
@@ -1197,6 +1210,7 @@ __all__ = [
     "index_failure_message",
     "index_project",
     "project_source_revision",
+    "resolve_lean_root",
     "snapshot_project_sources",
     "strip_lean_comments",
     "verify_repository_snapshot",

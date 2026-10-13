@@ -134,6 +134,7 @@ def test_json_report_has_a_stable_shape(tmp_path: Path) -> None:
         "release": "lean-v4.32.2-mathlib-v4.32.2",
         "status": "supported",
     }
+    assert (payload["mathlib"]["input_rev"], payload["mathlib"]["rev"]) == ("v4.32.2", COMMIT)
 
 
 @pytest.mark.parametrize(
@@ -430,6 +431,91 @@ def test_url_credentials_are_redacted_and_never_match(tmp_path: Path, capsys) ->
     assert "hunter2" not in result.to_json() + capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    ("suffix", "redacted"), [("?token=hunter2#hunter2", "?***"), ("#hunter2", "#***")], ids=["query", "fragment"]
+)
+@pytest.mark.parametrize("source", ["lake-manifest.json", ".lake/package-overrides.json"], ids=["manifest", "override"])
+def test_url_query_and_fragment_are_redacted_and_never_match(
+    tmp_path: Path, capsys, source: str, suffix: str, redacted: str
+) -> None:
+    # Dropping the query or fragment would leave the catalog's URL, which reports `supported`.
+    secret = MATHLIB_URL + suffix
+    if source == "lake-manifest.json":
+        root = _project(tmp_path, manifest=(_mathlib(url=secret),))
+    else:
+        root = _project(tmp_path)
+        _write_overrides(root, _mathlib(url=secret))
+
+    result = inspect_project(root)
+    main(["project", "inspect", str(root)])
+    main(["project", "inspect", str(root), "--json"])
+    captured = capsys.readouterr()
+
+    assert result.mathlib.source == source
+    assert result.mathlib.url == MATHLIB_URL + redacted
+    assert result.compatibility.status == "unlisted"
+    assert f"Mathlib: v4.32.2 @ {COMMIT} ({MATHLIB_URL}{redacted}) [{source}]" in captured.out
+    assert "hunter2" not in result.to_json() + captured.out + captured.err
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com?user=alice@corp.example&token=hunter2",
+        "https://example.com#me@corp.example&token=hunter2",
+        "https://alice:hun#ter2@github.com/leanprover-community/mathlib4",
+        "https://alice:hun?ter2@github.com/leanprover-community/mathlib4?token=hunter2",
+    ],
+    ids=["query-with-at", "fragment-with-at", "fragment-in-password", "query-in-password"],
+)
+@pytest.mark.parametrize("source", ["lake-manifest.json", ".lake/package-overrides.json"], ids=["manifest", "override"])
+def test_url_with_a_query_or_fragment_before_its_at_sign_keeps_only_its_scheme(
+    tmp_path: Path, capsys, source: str, url: str
+) -> None:
+    # Masking the credentials first would swallow the marker, and masking the query first would expose `alice:hun`.
+    if source == "lake-manifest.json":
+        root = _project(tmp_path, manifest=(_mathlib(url=url),))
+    else:
+        root = _project(tmp_path)
+        _write_overrides(root, _mathlib(url=url))
+
+    result = inspect_project(root)
+    main(["project", "inspect", str(root)])
+    main(["project", "inspect", str(root), "--json"])
+    captured = capsys.readouterr()
+
+    assert result.mathlib.source == source
+    assert result.mathlib.url == "https://***"
+    assert result.compatibility.status == "unlisted"
+    output = result.to_json() + captured.out + captured.err
+    assert not any(secret in output for secret in ("hunter2", "ter2", "alice"))
+
+
+@pytest.mark.parametrize(
+    ("requested", "locked"),
+    [
+        (MATHLIB_URL + "?token=a", MATHLIB_URL + "?token=b"),
+        (MATHLIB_URL.replace("://", "://token=a@"), MATHLIB_URL.replace("://", "://token=b@")),
+    ],
+    ids=["query", "credentials"],
+)
+def test_requirement_git_url_is_compared_with_the_lock_before_redaction(
+    tmp_path: Path, capsys, requested: str, locked: str
+) -> None:
+    # Lake compares the URLs as written, so equal redacted URLs do not make the lock current.
+    lakefile = LAKEFILE.replace('scope = "leanprover-community"', f'git = "{requested}"')
+    root = _project(tmp_path, lakefile=lakefile, manifest=(_mathlib(url=locked),))
+
+    result = inspect_project(root)
+    main(["project", "inspect", str(root)])
+    main(["project", "inspect", str(root), "--json"])
+    captured = capsys.readouterr()
+
+    assert "lake-manifest-stale" in _codes(result)
+    output = result.to_json() + captured.out + captured.err
+    assert "token=a" not in output and "token=b" not in output
+
+
 def test_escaped_mathlib_spelling_is_the_same_package(tmp_path: Path) -> None:
     lakefile = LAKEFILE.replace('name = "mathlib"', 'name = "«mathlib»"')
     result = inspect_project(_project(tmp_path, lakefile=lakefile, manifest=(_mathlib(name="«mathlib»"),)))
@@ -686,7 +772,7 @@ def test_override_is_not_parsed_on_lakes_no_manifest_update_path(tmp_path: Path)
 
     assert result.ok
     assert result.compatibility.status == "indeterminate"
-    assert "invalid-lake-manifest" not in _codes(result)
+    assert "invalid-package-overrides" not in _codes(result)
 
 
 def test_override_without_mathlib_leaves_the_manifest_in_charge(tmp_path: Path) -> None:
@@ -754,6 +840,8 @@ def test_invalid_override_file_blocks_a_supported_answer(tmp_path: Path) -> None
 
     assert not result.ok
     assert result.compatibility.status == "indeterminate"
+    assert "invalid-package-overrides" in _codes(result)
+    assert "invalid-lake-manifest" not in _codes(result)
 
 
 @pytest.mark.parametrize("version", [5, 6, "0.6.0"])
@@ -793,8 +881,10 @@ def test_legacy_override_file_cannot_fall_through_to_supported_manifest(tmp_path
 
     assert result.ok
     assert result.compatibility.status == "indeterminate"
-    assert "unsupported-lake-manifest" in _codes(result)
-    warning = next(diagnostic for diagnostic in result.diagnostics if diagnostic.code == "unsupported-lake-manifest")
+    assert "unsupported-package-overrides" in _codes(result)
+    warning = next(
+        diagnostic for diagnostic in result.diagnostics if diagnostic.code == "unsupported-package-overrides"
+    )
     assert "package-overrides.json" in warning.message
     assert "lake update" not in warning.message
 
@@ -2117,6 +2207,16 @@ def test_cli_reports_and_exit_codes(tmp_path: Path, capsys) -> None:
     (root / "lean-toolchain").unlink()
     assert main(["project", "inspect", str(root)]) == 1
     assert "error[missing-lean-toolchain]" in capsys.readouterr().err
+
+
+def test_human_report_omits_a_missing_input_revision(tmp_path: Path, capsys) -> None:
+    root = _project(tmp_path, manifest=(_mathlib(input_rev=None),))
+
+    assert main(["project", "inspect", str(root)]) == 0
+
+    captured = capsys.readouterr()
+    assert f"Mathlib: {COMMIT} ({MATHLIB_URL}) [lake-manifest.json]" in captured.out
+    assert "None" not in captured.out + captured.err
 
 
 def test_human_report_escapes_characters_that_could_forge_lines(tmp_path: Path, capsys) -> None:

@@ -41,10 +41,12 @@ from .lean import (
     MANAGED_OUTPUT_SCHEMAS,
     PACKET_SCHEMA,
     PASSAGE_SCHEMA,
+    LeanSourceError,
     SourceIndex,
     declaration_names,
     index_failure_message,
     index_project,
+    resolve_lean_root,
 )
 
 SKELETON_SCHEMA = "autoform-skeleton/v4"
@@ -1216,6 +1218,9 @@ def lean_libraries(lean_root: str | Path) -> tuple[LeanLibrary, ...]:
     workflow reads the root package name, so both manifest languages are
     handled without a second parser for Lean syntax. When both exist, Lake
     builds from ``lakefile.lean``, so that is the one read here too.
+
+    As in Lake, a library's ``srcDir`` is relative to the package's ``srcDir``,
+    which is also the source directory of a package without library targets.
     """
 
     root = Path(lean_root).expanduser().resolve()
@@ -1234,12 +1239,13 @@ def lean_libraries(lean_root: str | Path) -> tuple[LeanLibrary, ...]:
             [f"cannot safely parse the Lake configuration of {root}: it exceeds the parser's limits"]
         ) from exc
 
+    package_src = root / str(config.get("srcDir", "."))
     libraries: list[LeanLibrary] = []
     for entry in config.get("lean_lib", []) or []:
         if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
             continue
         name = entry["name"]
-        src_dir = root / str(entry.get("srcDir", "."))
+        src_dir = package_src / str(entry.get("srcDir", "."))
         roots = entry.get("roots")
         if not isinstance(roots, list) or not all(isinstance(item, str) for item in roots):
             roots = [name]
@@ -1254,7 +1260,7 @@ def lean_libraries(lean_root: str | Path) -> tuple[LeanLibrary, ...]:
     if not libraries:
         package = config.get("name")
         if isinstance(package, str) and package:
-            libraries.append(LeanLibrary(name=package, src_dir=root, roots=(package,)))
+            libraries.append(LeanLibrary(name=package, src_dir=package_src.resolve(), roots=(package,)))
     if not libraries:
         raise SkeletonError([f"the Lake configuration of {root} declares no library"])
     return tuple(libraries)
@@ -2061,7 +2067,10 @@ def extract_skeletons(
         graph = load_graph(blueprint_dir)
     except GraphValidationError as exc:
         raise SkeletonError(exc.issues) from exc
-    root = resolve_lean_root(lean_root)
+    try:
+        root = resolve_lean_root(lean_root)
+    except LeanSourceError as error:
+        raise SkeletonError([str(error)]) from error
     activity = "skeletons were being extracted"
     inputs = snapshot_inputs(graph, root)
     libraries = lean_libraries(root)
@@ -2137,16 +2146,6 @@ def check_inputs_unchanged(
     if current_graph is None or _graph_snapshot(current_graph) != snapshot.graph:
         raise SkeletonError([f"the blueprint changed while {activity}; retry after the project is idle"])
     return current_graph
-
-
-def resolve_lean_root(lean_root: str | Path) -> Path:
-    """The absolute Lean project root, or a ``SkeletonError`` saying why there is none."""
-
-    try:
-        return Path(lean_root).expanduser().resolve()
-    except RuntimeError as error:
-        # An unknown ~user, or before Python 3.13 a symbolic link loop.
-        raise SkeletonError([f"Lean root {lean_root} cannot be resolved: {error}"]) from error
 
 
 def select_lean_targets(
@@ -3069,7 +3068,6 @@ __all__ = [
     "parse_probe_output",
     "path_of",
     "render_probe",
-    "resolve_lean_root",
     "run_probe",
     "select_lean_targets",
     "snapshot_inputs",

@@ -1035,6 +1035,31 @@ def test_a_package_without_library_targets_is_its_own_library(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(
+    ("lakefile", "src_dir"),
+    [
+        pytest.param(
+            'name = "proj"\nsrcDir = "pkgsrc"\n\n[[lean_lib]]\nname = "Proj"\nsrcDir = "lib"\n',
+            "pkgsrc/lib",
+            id="library",
+        ),
+        pytest.param('name = "Proj"\nsrcDir = "pkgsrc"\n', "pkgsrc", id="package-only"),
+    ],
+)
+def test_libraries_nest_under_the_package_source_directory(tmp_path: Path, lakefile: str, src_dir: str) -> None:
+    project = tmp_path / "project"
+    (project / src_dir).mkdir(parents=True)
+    (project / "lakefile.toml").write_text(lakefile, encoding="utf-8")
+    (project / src_dir / "Proj.lean").write_text("", encoding="utf-8")
+
+    libraries = lean_libraries(project)
+
+    # Lake joins a library's srcDir onto the package's srcDir, not onto the project root.
+    assert libraries[0].src_dir == (project / src_dir).resolve()
+    assert module_of(project / src_dir / "Proj.lean", libraries) == "Proj"
+    assert path_of("Proj", libraries, project) == f"{src_dir}/Proj.lean"
+
+
+@pytest.mark.parametrize(
     "toml_11",
     [
         pytest.param('leanOptions = { autoImplicit = false, }\n', id="inline-trailing-comma"),
@@ -1116,6 +1141,31 @@ def test_a_failed_translation_reports_the_error_rather_than_lakes_info_line(tmp_
         lean_libraries(project)
 
     assert caught.value.issues == (f"lake translate-config failed: {error}",)
+
+
+def _project_with_a_package_source_directory(tmp_path: Path) -> Path:
+    """lakefile.lean puts the package's sources under ``pkgsrc`` and gives its library no srcDir of its own."""
+
+    project = tmp_path / "project"
+    project.mkdir()
+    shutil.copy(_FIXTURE / "lean-toolchain", project / "lean-toolchain")
+    (project / "lakefile.lean").write_text(
+        'import Lake\nopen Lake DSL\n\npackage proj where\n  srcDir := "pkgsrc"\n\nlean_lib Proj\n', encoding="utf-8"
+    )
+    return project
+
+
+def test_lakefile_lean_libraries_nest_under_the_package_source_directory(tmp_path: Path, monkeypatch) -> None:
+    project = _project_with_a_package_source_directory(tmp_path)
+    # lake translate-config writes the package's srcDir as a top-level key.
+    monkeypatch.setattr(
+        "autoform_cli.skeleton._translate_lakefile",
+        lambda _root: b'name = "proj"\nsrcDir = "pkgsrc"\n\n[[lean_lib]]\nname = "Proj"\n',
+    )
+
+    (library,) = lean_libraries(project)
+
+    assert (library.name, library.src_dir) == ("Proj", project.resolve() / "pkgsrc")
 
 
 def test_a_project_without_a_lakefile_is_refused(tmp_path: Path) -> None:
@@ -1938,7 +1988,7 @@ def test_cli_reports_extraction_failures_on_stderr(tmp_path: Path, capsys) -> No
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err.startswith("error: no lakefile.toml or lakefile.lean in ")
+    assert captured.err == "error: Lean root does not exist or is not a directory\n"
 
 
 def test_cli_reports_an_invalid_report_output_without_a_traceback(
@@ -2233,6 +2283,15 @@ def test_lakefile_lean_wins_through_lake_translate_config(tmp_path: Path) -> Non
     (library,) = lean_libraries(project)
 
     assert (library.name, library.src_dir, library.roots) == ("FromLean", project.resolve() / "lean-src", ("LeanRoot",))
+
+
+@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+def test_package_source_directory_nests_libraries_through_lake_translate_config(tmp_path: Path) -> None:
+    project = _project_with_a_package_source_directory(tmp_path)
+
+    (library,) = lean_libraries(project)
+
+    assert (library.name, library.src_dir) == ("Proj", project.resolve() / "pkgsrc")
 
 
 def test_required_real_lean_tests_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:

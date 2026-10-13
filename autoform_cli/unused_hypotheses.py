@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .graph import GraphValidationError, load_graph
-from .lean import index_failure_message, index_project
+from .lean import LeanSourceError, index_failure_message, index_project, resolve_lean_root
 from .skeleton import (
     DEFAULT_PROBE_TIMEOUT,
     PROBE_OUTPUT_ENV,
@@ -38,7 +38,6 @@ from .skeleton import (
     check_inputs_unchanged,
     lean_libraries,
     locate_declaration,
-    resolve_lean_root,
     run_probe,
     select_lean_targets,
     snapshot_inputs,
@@ -161,7 +160,10 @@ def find_unused_hypotheses(
         graph = load_graph(blueprint_dir)
     except GraphValidationError as exc:
         raise SkeletonError(exc.issues) from exc
-    root = resolve_lean_root(lean_root)
+    try:
+        root = resolve_lean_root(lean_root)
+    except LeanSourceError as error:
+        raise SkeletonError([str(error)]) from error
     _, selected, _ = select_lean_targets(graph, node_ids)
     # An answer is about the inputs it was computed from. If they change while
     # Lean runs, it may describe a state that no longer exists.

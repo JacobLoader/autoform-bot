@@ -285,7 +285,7 @@ def test_invalid_lean_root_is_a_sanitized_lean_failure(tmp_path: Path) -> None:
 
     assert not result.clean
     assert _checks(result)["runtime"][0]
-    assert _checks(result)["lean targets"] == (False, "1 finding(s): invalid-lean-root")
+    assert _checks(result)["lean targets"] == (False, "Lean root does not exist or is not a directory")
     assert str(tmp_path) not in result.to_json()
 
     loop = tmp_path / "lean-loop"
@@ -295,7 +295,11 @@ def test_invalid_lean_root_is_a_sanitized_lean_failure(tmp_path: Path) -> None:
         pytest.skip("symbolic links are unavailable")
     loop_result = diagnose_project(project, lean_root=loop)
     assert len(loop_result.checks) == 6
-    assert _checks(loop_result)["lean targets"] == (False, "1 finding(s): invalid-lean-root")
+    if os.name == "nt":
+        # Windows reports a symbolic link loop by its own error code.
+        assert not _checks(loop_result)["lean targets"][0]
+    else:
+        assert _checks(loop_result)["lean targets"] == (False, "Lean root cannot be resolved")
     assert str(tmp_path) not in loop_result.to_json()
 
 

@@ -195,7 +195,16 @@ commit, `--force` to overwrite, and `--json` for machine-readable output.
 An existing root `.gitignore` must be a bounded single-link regular file;
 missing Autoform rules are appended through one retained descriptor. If an
 append cannot be fully reverified, the error says it may be partial and the
-file must be inspected before retrying.
+file must be inspected before retrying. Before writing anything, even with
+`--force`, `init` refuses an existing entry that differs from a path it manages
+only in letter case or Unicode form, such as a `Blueprint/` Lean library or
+`MkDocs.yml`: Git and Linux CI see only the exact spelling, while a
+case-insensitive filesystem resolves the managed path to the variant. `init`
+also refuses when it cannot list a directory on a path it manages. A root
+`Readme.md` or `readme.md` is refused, not skipped like an existing `README.md`.
+The vault is always `blueprint/`, so a Lean library named `Blueprint` needs a
+different library name (its lakefile `lean_lib`, root module and imports), not
+a lowercase rename.
 
 Create or inspect a Lean project and list Autoform's bundled known-good release pairs:
 
@@ -892,31 +901,48 @@ skeleton packet/passages directories are identified by their bounded managed
 manifest before descendants are read; publication-output policy remains with
 the publication feature rather than this source layer.
 
+Automatically detected Git permalinks are emitted only for captured files whose
+bytes equal the blob at the stable detected commit. Dirty, untracked, missing,
+or concurrently checked-out files keep local declaration locations but receive
+no URL. An explicitly supplied ref remains a caller attestation.
+
+Lean indexing reads the whole Lean root or nothing. It stops with an error,
+rather than indexing what it could, when an entry it must read cannot be read
+safely: a `.lean` file that cannot be read, a folder that cannot be listed or
+searched, a `.lean` entry that is a symbolic link or a special file (editor
+lock links named `.#*.lean` are skipped), or an unreadable `manifest.json`
+below the root, which is read to recognize skeleton output folders. `render`
+also stops at an unreadable `publication.json` below the root, which it reads
+to recognize rendered sites. These stops apply in every folder the walk
+enters, so an unreadable folder of unrelated files inside the Lean root stops
+indexing too; other files are never read. `render` without `--lean-root` uses
+the blueprint's parent folder as the Lean root. To clear a stop, fix the
+permissions, or move the entry out of the Lean root or into a folder the walk
+skips: `.direnv`, `.git`, `.lake`, `.obsidian`, `.trash`, `.venv`,
+`lake-packages`, `build`, a folder below the root that holds a `.git` entry, a
+recognized skeleton output folder, or, for `render`, a rendered site. There is
+no command-line option to exclude other folders. The skipped folder names and
+the `manifest.json`, `publication.json` and `.git` names match in any letter
+case, except `build`, which must be lowercase. The `.lean` suffix must match
+exactly, so `A.LEAN` is not indexed.
+
 A capture rechecks only what the index uses: each captured `.lean` file must
 keep its metadata, and each folder that holds `.lean` entries must keep its
 device, inode, file type and the names of the `.lean` entries and folders it
-holds for the index. Any other folder under the Lean root, such as a generated
-site, `mkdocs` output, skeleton output or a nested Git checkout, may change,
-vanish or be rebuilt during a capture, and temporary files that editors write
-beside sources are ignored unless they are `.lean` files. Whatever is at such
-a path when it is rechecked must be hidden by a recognized marker (a `.git`
-entry, a skeleton manifest, or render's publication manifest while render
-indexes) or hold no `.lean` entry, so a folder that loses its marker and
+holds for the index. Any other folder, such as a generated site, `mkdocs`
+output, skeleton output or a nested Git checkout, may change, vanish or be
+rebuilt during a capture, and files other than `.lean` sources may change
+anywhere. Whatever is at such a path when it is rechecked must be a folder the
+walk skips or hold no `.lean` entry, so a folder that loses its marker and
 exposes `.lean` files is a change. A capture that sees Lean inputs change is
 retried; when every attempt changes, the error names the changed paths it can
 attribute, relative to the Lean root, for example `Lean sources kept changing
 while they were indexed; changed: Proj/A.lean`. A change seen only as a failed
 lookup, such as a file removed just before it is rechecked, carries no path.
-A capture is not one atomic filesystem
-generation: a `.lean` file or marker that appears at a path after the capture
-last looked there, or in a folder after the final check listed it, is not
-seen, so coordinated moves across folders can yield a set of sources that no
-single state had.
-
-Automatically detected Git permalinks are emitted only for captured files whose
-bytes equal the blob at the stable detected commit. Dirty, untracked, missing,
-or concurrently checked-out files keep local declaration locations but receive
-no URL. An explicitly supplied ref remains a caller attestation.
+A capture is not one atomic filesystem generation: a `.lean` file or marker
+that appears at a path after the capture last looked there, or in a folder
+after the final check listed it, is not seen, so coordinated moves across
+folders can yield a set of sources that no single state had.
 
 The Markdown files are the source of truth. Graphs and sites are derived views
 that may be regenerated at any time.
@@ -1470,6 +1496,12 @@ fields. Temporary claims and local dashboard hooks may fall back to the path ID,
 but durable execution records and routes must require `article_id` until the
 path-move migration is complete. Operational state remains private and excluded
 from runtime snapshots and publication.
+
+Projection fails when an article's bytes no longer match the digest recorded
+when the graph was loaded, so a source revision never labels node data parsed
+from older bytes. A hand-built node without a digest makes no snapshot claim:
+its `source_sha256` stays null and the revision covers whatever bytes its
+article holds at projection time.
 
 ## Publication contract
 
