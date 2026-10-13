@@ -474,12 +474,15 @@ def _lean_snapshot_includes(
 ) -> bool:
     if _lean_path_is_excluded(relative, excluded):
         return False
+    # The suffix is compared exactly, as Lake's module globs, skeleton and the
+    # servers do, so ``A.LEAN`` is not a Lean source even on a case-insensitive
+    # volume where ``import A`` could open it.
     if stat.S_ISLNK(mode):
         return (
-            relative.suffix.casefold() == ".lean"
+            relative.suffix == ".lean"
             and not relative.name.startswith(".#")
         )
-    return stat.S_ISDIR(mode) or relative.suffix.casefold() == ".lean"
+    return stat.S_ISDIR(mode) or relative.suffix == ".lean"
 
 
 def _lean_path_is_excluded(
@@ -513,13 +516,13 @@ def _indexed_source_snapshot(
     tolerated_links = frozenset(
         relative
         for relative, _target in snapshot.symlinks
-        if PurePosixPath(relative).suffix.casefold() == ".lean"
+        if PurePosixPath(relative).suffix == ".lean"
         and PurePosixPath(relative).name.startswith(".#")
     )
     unsupported = [
         (relative, reason)
         for relative, reason in snapshot.unsupported_entries()
-        if PurePosixPath(relative).suffix.casefold() == ".lean"
+        if PurePosixPath(relative).suffix == ".lean"
         and relative not in tolerated_links
     ]
     if unsupported:
@@ -532,7 +535,7 @@ def _indexed_source_snapshot(
     digest = hashlib.sha256(b"autoform-lean-source-index/v1\0")
     for relative_text, data in snapshot.files:
         relative = PurePosixPath(relative_text)
-        if relative.suffix.casefold() != ".lean" or _lean_path_is_excluded(
+        if relative.suffix != ".lean" or _lean_path_is_excluded(
             relative,
             excluded,
         ):
@@ -568,7 +571,7 @@ def _lean_generation_revision(
     """Hash only effective Lean inputs and their ancestor directories."""
 
     def retained_entry(relative_text: str) -> bool:
-        return PurePosixPath(relative_text).suffix.casefold() == ".lean"
+        return PurePosixPath(relative_text).suffix == ".lean"
 
     files = tuple(entry for entry in snapshot.files if retained_entry(entry[0]))
     symlinks = tuple(

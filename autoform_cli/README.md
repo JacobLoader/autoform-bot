@@ -1430,8 +1430,11 @@ graph counts, reference invariants, roadmap audit, and optional local Lean
 targets. It exits zero only when every required check passes. Omitting
 `--lean-root` records an explicit advisory pass; supplying it performs only a
 lexical local-source check, not a Lean build, kernel check, or proof-honesty
-review. The bundled example intentionally exits nonzero while its declared
-coverage still holds `MAPPED` rows.
+review. Only the `lean targets` check reads Lean sources, once. It holds every
+finding that needs the Lean root, including `node-too-large`, and an unusable
+Lean root or unreadable source fails only that check. The bundled example
+intentionally exits nonzero while its declared coverage still holds `MAPPED`
+rows.
 
 This command is strictly read-only and local. It does not invoke Git, GitHub,
 subprocesses, network services, claims, queues, reviews, recovery state,

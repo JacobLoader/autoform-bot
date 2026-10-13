@@ -237,33 +237,20 @@ def test_hidden_lean_source_directories_are_indexed(tmp_path: Path) -> None:
     assert index_project(tmp_path).find("hiddenProof") is not None
 
 
-@pytest.mark.parametrize("directory", [".direnv", ".obsidian", ".trash", ".venv"])
+@pytest.mark.parametrize("parent", ["", "Nested/"])
+@pytest.mark.parametrize(
+    "directory",
+    [".direnv", ".git", ".lake", ".obsidian", ".trash", ".venv", "lake-packages", ".GIT", ".LAKE", ".ObSiDiAn"],
+)
 def test_known_tooling_directories_are_not_scanned(
     tmp_path: Path,
     directory: str,
+    parent: str,
 ) -> None:
     _index(tmp_path, "def canonical : Nat := 0\n")
-    ignored = tmp_path / directory
-    ignored.mkdir()
-    try:
-        (ignored / "external").symlink_to(tmp_path.parent, target_is_directory=True)
-    except OSError:
-        pytest.skip("symlinks are unavailable")
-
-    index = index_project(tmp_path)
-
-    assert index.find("canonical") is not None
-
-
-@pytest.mark.parametrize("directory", [".GIT", ".LAKE", ".ObSiDiAn"])
-def test_case_aliases_of_tooling_directories_are_not_scanned(
-    tmp_path: Path,
-    directory: str,
-) -> None:
-    _index(tmp_path, "def canonical : Nat := 0\n")
-    ignored = tmp_path / directory
-    ignored.mkdir()
-    (ignored / "Leak.lean").write_text("def leaked : Nat := 0\n")
+    ignored = tmp_path / parent / directory
+    ignored.mkdir(parents=True)
+    (ignored / "Leak.lean").write_text("def leaked : Nat := 0\n", encoding="utf-8")
 
     index = index_project(tmp_path)
 
@@ -2493,6 +2480,27 @@ def test_lean_symlink_is_refused_whether_or_not_its_target_exists(tmp_path: Path
         snapshot_project_sources(tmp_path)
 
     assert str(tmp_path) not in str(caught.value)
+
+
+def test_case_variants_of_the_lean_suffix_are_ignored(tmp_path: Path) -> None:
+    _require_descriptor_capture()
+    _index(tmp_path, "def canonical : Nat := 0\n")
+    project = tmp_path / "Project"
+    clean = snapshot_project_sources(tmp_path)
+    (project / "Y.LEAN").write_text("theorem variantY : True := trivial\n", encoding="utf-8")
+    (project / "L.Lean").symlink_to("Basic.lean")
+    os.mkfifo(project / "P.LEAN")
+    unreadable = project / "U.Lean"
+    unreadable.touch(mode=0)
+    try:
+        captured = snapshot_project_sources(tmp_path)
+    finally:
+        unreadable.chmod(0o644)
+
+    assert set(captured.index.declarations) == {"canonical"}
+    assert captured.index.line_counts == {Path("Project/Basic.lean"): 1}
+    assert captured.revision == clean.revision
+    assert captured.generation_revision == clean.generation_revision
 
 
 def test_source_digest_preserves_surrogate_escaped_filename_bytes(tmp_path: Path) -> None:
