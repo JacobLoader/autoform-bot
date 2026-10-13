@@ -16,11 +16,16 @@ from autoform_cli.graph import load_graph
 from autoform_cli.lean import build_linker, declaration_names
 from autoform_cli.render import render_site
 from autoform_cli.status import derive
+from servers.repl.core import ALLOWED_IMPORTS
 from tests.test_lean_sources import _git_commit
 
 
 _HREF = re.compile(r'href="([^"]+)"')
 _EXAMPLE = Path("skills/setup/assets/cabannes-thesis-project")
+# Upstream tag v4.32.0 of leanprover-community/repl points at this commit:
+# `git ls-remote --tags https://github.com/leanprover-community/repl.git`
+# lists refs/tags/v4.32.0 at it.
+_REPL_V4_32_0_COMMIT = "68a3b3a059787a7db44fb1e6281e4a657efee470"
 
 
 def test_root_readme_uses_the_canonical_repository(repo_root: Path) -> None:
@@ -326,6 +331,97 @@ def test_quick_start_keeps_the_cli_agent_facing(repo_root: Path) -> None:
     assert "uv run autoform" not in quick_start
 
 
+def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path) -> None:
+    servers = " ".join((repo_root / "servers/README.md").read_text(encoding="utf-8").split())
+    setup = " ".join((repo_root / "skills/setup/SKILL.md").read_text(encoding="utf-8").split())
+
+    assert "one REPL slot pool" in servers
+    assert "each public REPL call gets a fresh child" in servers
+    assert "no process-owned environment or proof-state handle survives" in servers
+    assert "toolchain runs Lean's own header" in servers
+    assert "unrecognized parser response fails closed" in servers
+    for root in sorted(ALLOWED_IMPORTS):
+        assert f"`{root}`" in servers, root
+    assert "(a plain `Init` import is ignored)" in servers
+    assert "names that remain quoted or path-like after Lean parsing are refused" in servers
+    assert "The allowlist is a policy check, not a sandbox" in servers
+    assert "`Init` alone provides file and process IO" in servers
+    assert "package-qualified `@repl/repl` target" in servers
+    assert "Every REPL call starts Lean afresh" in servers
+    assert "so it takes at least as long as `import Mathlib` on the node" in servers
+    assert "run one at a time unless `AUTOFORM_REPL_WORKERS_PER_PROJECT` is raised" in servers
+    assert "A REPL worker is one concurrent call slot; an idle slot holds no Lean process" in servers
+    assert "finds the REPL only through a require named `repl`" in servers
+    assert (
+        "rename the require to `repl`, or restart the runtime with "
+        '`LEAN_REPL_CMD="lake exe @<name>/repl"` for a require named `<name>`, '
+        "which applies to every project the runtime serves"
+    ) in servers
+    assert (
+        "A project with no REPL require, as `autoform project new` and `init` leave it, "
+        "fails every REPL call until it adds one as the "
+        "[setup skill](../skills/setup/SKILL.md) describes"
+    ) in servers
+    assert "When `LEAN_REPL_HEADER_CMD` is unset and `LEAN_REPL_CMD` starts with a `lake` executable" in servers
+    assert "header validation reuses that executable without the command's other arguments" in servers
+    assert "`LEAN_REPL_CMD` and `LEAN_REPL_HEADER_CMD` are node-wide and read only when the runtime starts" in servers
+    assert "after changing either, run `uv run autoform-lean-runtime stop`" in servers
+    assert (
+        "The next process to start the runtime, an MCP adapter serving a tool call or "
+        "`uv run autoform-lean-runtime start`, must have the new values in its environment"
+    ) in servers
+    assert "`uv run autoform-lean-runtime status` shows the resolved commands under `config`" in servers
+    assert "one total post-admission budget" in servers
+    assert "it and its cap default to 240 seconds" in servers
+    assert "its REPL slot pool is cached" in servers
+    assert "does not mean a REPL subprocess remains resident" in servers
+    assert "`LEAN_REPL_HEADER_CMD`" in servers
+    assert "is the lower of 240 seconds and that cap" in servers
+    assert "If `LEAN_REPL_CMD` does not start with a `lake` executable" in servers
+    assert (
+        "`AUTOFORM_REPL_REQUEST_TIMEOUT` exceeds that cap, or if that cap does not fit "
+        "the response budget below, the runtime refuses to start"
+    ) in servers
+    assert "`AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` (default 15 minutes)" in servers
+    assert "`leanprover-community/repl` at an immutable revision" in setup
+    assert "the commit of the upstream tag that names the project's Lean version" in setup
+    assert "failing that, its `vX.Y.0` release" in setup
+    assert "git ls-remote --tags https://github.com/leanprover-community/repl.git" in setup
+    assert "if neither exists, ask the user instead of guessing" in setup
+    assert "Name the require `repl`" in setup
+    assert "which finds the package only under its require name" in setup
+    assert "run `lake update repl`" in setup
+    assert "commit the manifest" in setup
+    assert "lake build @repl/repl" in setup
+
+
+def test_setup_example_pins_the_repl_that_the_real_repl_job_tests(repo_root: Path) -> None:
+    # The real-REPL CI job builds this fixture, so the example's REPL pin is
+    # tested only while both pin the same revision on the same toolchain.
+    fixture = repo_root / "tests/fixtures/repl-smoke"
+    example = repo_root / _EXAMPLE
+
+    def repl_revs(project: Path) -> tuple[str, str]:
+        lakefile = tomllib.loads((project / "lakefile.toml").read_text(encoding="utf-8"))
+        manifest = json.loads((project / "lake-manifest.json").read_text(encoding="utf-8"))
+        required = next(entry["rev"] for entry in lakefile["require"] if entry["name"] == "repl")
+        locked = next(entry["rev"] for entry in manifest["packages"] if entry["name"] == "repl")
+        return required, locked
+
+    def toolchain(project: Path) -> str:
+        return (project / "lean-toolchain").read_text(encoding="utf-8").strip()
+
+    for project in (example, fixture):
+        assert repl_revs(project) == (_REPL_V4_32_0_COMMIT, _REPL_V4_32_0_COMMIT), project
+    assert toolchain(example) == toolchain(fixture)
+    # The docs name the tag rather than the commit, so they hold only while
+    # every pin above is that tag's commit.
+    setup = " ".join((repo_root / "skills/setup/SKILL.md").read_text(encoding="utf-8").split())
+    readme = " ".join((example / "README.md").read_text(encoding="utf-8").split())
+    assert "the bundled example pins the commit of tag `v4.32.0`" in setup
+    assert "the upstream REPL commit tagged `v4.32.0`" in readme
+
+
 def test_setup_guidance_uses_the_offline_atomic_project_creator(repo_root: Path) -> None:
     setup_root = repo_root / "skills" / "setup"
     setup = (setup_root / "SKILL.md").read_text(encoding="utf-8")
@@ -465,10 +561,15 @@ def test_setup_asset_is_a_repo_shaped_thesis_vault(repo_root: Path) -> None:
     assert (example / "src/CabannesThesis.lean").is_file()
     assert (example / "src/CabannesThesis/Basic.lean").is_file()
     toolchain = (example / "lean-toolchain").read_text(encoding="utf-8").strip()
-    manifest = tomllib.loads((example / "lakefile.toml").read_text(encoding="utf-8"))
+    lakefile = tomllib.loads((example / "lakefile.toml").read_text(encoding="utf-8"))
+    manifest = json.loads((example / "lake-manifest.json").read_text(encoding="utf-8"))
     assert toolchain == "leanprover/lean4:v4.32.2"
-    assert manifest["require"][0]["rev"] == "v4.32.2"
-    assert manifest["lean_lib"][0]["srcDir"] == "src"
+    requirements = {entry["name"]: entry for entry in lakefile["require"]}
+    packages = {entry["name"]: entry for entry in manifest["packages"]}
+    assert requirements["mathlib"]["rev"] == "v4.32.2"
+    assert requirements["repl"]["rev"] == packages["repl"]["inputRev"]
+    assert packages["repl"]["rev"] == requirements["repl"]["rev"]
+    assert lakefile["lean_lib"][0]["srcDir"] == "src"
 
 
 def test_roadmap_example_is_structural_not_a_completion_fixture(

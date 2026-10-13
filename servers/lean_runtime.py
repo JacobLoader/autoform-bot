@@ -45,10 +45,9 @@ from servers.lsp.server import (
     LeanLspSession,
     format_lsp_diagnostics,
 )
-from servers.repl.core import DEFAULT_REPL_STARTUP_TIMEOUT, format_repl_response
+from servers.repl.core import default_header_command, format_repl_response
 from servers.repl.pool import (
     DEFAULT_RAM_FRACTION,
-    DEFAULT_STARTUP_STAGGER_SECONDS,
     LeanReplPool,
     LeanReplPoolConfig,
     LeanReplPoolStartupError,
@@ -62,7 +61,7 @@ DEFAULT_MAX_PROJECTS = 4
 DEFAULT_IDLE_SECONDS = 30 * 60
 DEFAULT_LSP_TIMEOUT = 60.0
 DEFAULT_MAX_LSP_REQUEST_SECONDS = 600.0
-DEFAULT_REPL_REQUEST_TIMEOUT = 30.0
+DEFAULT_REPL_REQUEST_TIMEOUT = 240.0
 DEFAULT_MAX_REPL_REQUEST_SECONDS = 240.0
 DEFAULT_RPC_READ_TIMEOUT = 10.0
 DEFAULT_MAX_CONNECTIONS = 64
@@ -88,12 +87,8 @@ class _FailedResourceCreation:
 
 
 def _repl_creation_budget(worker_count: int) -> float:
-    """Bound victim cleanup, cold startup, and failed-start cleanup."""
-    return (
-        worker_count * DEFAULT_REPL_STARTUP_TIMEOUT
-        + max(0, worker_count - 1) * DEFAULT_STARTUP_STAGGER_SECONDS
-        + 2 * worker_count * REPL_WORKER_CLOSE_BUDGET
-    )
+    """Bound cleanup of an evicted pool; cold slots spawn no subprocesses."""
+    return worker_count * REPL_WORKER_CLOSE_BUDGET
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -147,6 +142,7 @@ class LeanRuntimeConfig:
     repl_workers_per_project: int
     repl_project_limit: int
     repl_command: tuple[str, ...]
+    repl_header_command: tuple[str, ...]
     lsp_command: tuple[str, ...]
     lsp_timeout: float
     max_lsp_request_seconds: float
@@ -185,19 +181,32 @@ class LeanRuntimeConfig:
                 "AUTOFORM_REPL_TOTAL_WORKERS"
             )
         repl_project_limit = min(max_projects, total_workers // workers_per_project)
-        repl_command = tuple(shlex.split(os.environ.get("LEAN_REPL_CMD", "lake exe repl")))
+        repl_command = tuple(shlex.split(os.environ.get("LEAN_REPL_CMD", "lake exe @repl/repl")))
+        raw_header_command = os.environ.get("LEAN_REPL_HEADER_CMD")
         lsp_command = tuple(shlex.split(os.environ.get("LEAN_LSP_CMD", "lake serve")))
         if not repl_command:
             raise ValueError("LEAN_REPL_CMD must not be empty")
+        if raw_header_command is not None:
+            repl_header_command = tuple(shlex.split(raw_header_command))
+            if not repl_header_command:
+                raise ValueError("LEAN_REPL_HEADER_CMD must not be empty")
+        elif Path(repl_command[0]).name == "lake":
+            repl_header_command = tuple(default_header_command(repl_command[0]))
+        else:
+            raise ValueError(
+                "LEAN_REPL_HEADER_CMD must be set when LEAN_REPL_CMD does not "
+                "start with a `lake` executable"
+            )
         if not lsp_command:
             raise ValueError("LEAN_LSP_CMD must not be empty")
-        repl_request_timeout = _positive_float(
-            "AUTOFORM_REPL_REQUEST_TIMEOUT",
-            DEFAULT_REPL_REQUEST_TIMEOUT,
-        )
         max_repl_request_seconds = _positive_float(
             "AUTOFORM_MAX_REPL_REQUEST_SECONDS",
             DEFAULT_MAX_REPL_REQUEST_SECONDS,
+        )
+        # The default follows a lowered maximum, so the maximum can be set alone.
+        repl_request_timeout = _positive_float(
+            "AUTOFORM_REPL_REQUEST_TIMEOUT",
+            min(DEFAULT_REPL_REQUEST_TIMEOUT, max_repl_request_seconds),
         )
         if repl_request_timeout > max_repl_request_seconds:
             raise ValueError(
@@ -226,7 +235,7 @@ class LeanRuntimeConfig:
         ):
             raise ValueError(
                 "AUTOFORM_RUNTIME_RESPONSE_TIMEOUT is too small for the configured "
-                "REPL worker startup and request limits"
+                "REPL pool replacement and request limits"
             )
         if (
             LSP_CLOSE_BUDGET
@@ -246,6 +255,7 @@ class LeanRuntimeConfig:
             repl_workers_per_project=workers_per_project,
             repl_project_limit=max(1, repl_project_limit),
             repl_command=repl_command,
+            repl_header_command=repl_header_command,
             lsp_command=lsp_command,
             lsp_timeout=lsp_timeout,
             max_lsp_request_seconds=max_lsp_request_seconds,
@@ -270,6 +280,7 @@ class LeanRuntimeConfig:
             "repl_workers_per_project": self.repl_workers_per_project,
             "repl_project_limit": self.repl_project_limit,
             "repl_command": list(self.repl_command),
+            "repl_header_command": list(self.repl_header_command),
             "lsp_command": list(self.lsp_command),
             "lsp_timeout": self.lsp_timeout,
             "max_lsp_request_seconds": self.max_lsp_request_seconds,
@@ -818,8 +829,8 @@ class LeanRuntimeServices:
                     LeanReplPoolConfig(
                         cwd=str(project_dir),
                         repl_command=list(self.config.repl_command),
+                        header_command=list(self.config.repl_header_command),
                         num_repls=self.config.repl_workers_per_project,
-                        max_retries=0,
                     )
                 )
             except LeanReplPoolStartupError as error:
@@ -846,6 +857,7 @@ class LeanRuntimeServices:
             lambda pool: pool.shutdown(),
             max_entries=self.config.repl_project_limit,
             idle_seconds=self.config.idle_seconds,
+            is_valid=lambda pool: not pool.requires_retirement,
             start_sweeper=start_sweepers,
         )
         try:
@@ -886,13 +898,19 @@ class LeanRuntimeServices:
                     "timeout exceeds the node-wide limit of "
                     f"{self.config.max_repl_request_seconds:g} seconds"
                 )
-            with self.repl_projects.lease(
-                project_dir,
+            root = resolve_lean_project_dir(project_dir)
+            with self.repl_projects.lease_resolved(
+                root,
                 acquisition_timeout=self._acquisition_timeout(effective_timeout),
                 creation_budget=self.repl_creation_budget,
             ) as pool:
                 assert pool is not None
-                return format_repl_response(pool.run(code, timeout=effective_timeout))
+                try:
+                    result = pool.run(code, timeout=effective_timeout)
+                finally:
+                    if pool.requires_retirement:
+                        self.repl_projects.invalidate_resolved(root, pool)
+                return format_repl_response(result)
         if method == "repl.status":
             project_dir = self._string_param(params, "project_dir")
             with self.repl_projects.observe(project_dir) as (pool, state):

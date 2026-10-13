@@ -27,6 +27,37 @@ from servers.lean_runtime import (
     ProjectResourceBusyError,
 )
 from servers.lsp.server import LeanLspSession, LspConfig
+from servers.repl.core import LEAN_HEADER_LAUNCHER, LEAN_HEADER_PARSER
+
+# Every variable LeanRuntimeConfig.from_environment reads.
+_RUNTIME_CONFIG_VARIABLES = (
+    "AUTOFORM_MAX_LEAN_PROJECTS",
+    "AUTOFORM_LEAN_IDLE_SECONDS",
+    "AUTOFORM_REPL_TOTAL_WORKERS",
+    "LEAN_NUM_REPLS",
+    "AUTOFORM_REPL_WORKERS_PER_PROJECT",
+    "LEAN_REPL_CMD",
+    "LEAN_REPL_HEADER_CMD",
+    "LEAN_LSP_CMD",
+    "AUTOFORM_MAX_REPL_REQUEST_SECONDS",
+    "AUTOFORM_REPL_REQUEST_TIMEOUT",
+    "LEAN_LSP_TIMEOUT",
+    "AUTOFORM_MAX_LSP_REQUEST_SECONDS",
+    "AUTOFORM_RUNTIME_RESPONSE_TIMEOUT",
+    "AUTOFORM_RUNTIME_READ_TIMEOUT",
+    "AUTOFORM_RUNTIME_MAX_CONNECTIONS",
+)
+
+
+@pytest.fixture(autouse=True)
+def default_runtime_configuration(monkeypatch):
+    """Start every test, and every runtime it boots, from the defaults.
+
+    Otherwise a value exported in the developer's shell, valid or not, changes
+    which check a configuration test reaches.
+    """
+    for name in _RUNTIME_CONFIG_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
 
 
 def make_lake_project(tmp_path, name: str):
@@ -44,6 +75,7 @@ def runtime_config(**overrides):
         "repl_workers_per_project": 1,
         "repl_project_limit": 2,
         "repl_command": ("lake", "exe", "repl"),
+        "repl_header_command": ("lake", "env", "python", "-c", "header"),
         "lsp_command": ("lake", "serve"),
         "lsp_timeout": 60.0,
         "max_lsp_request_seconds": 600.0,
@@ -62,6 +94,7 @@ class FakePool:
         self.root = root
         self.capacity = 1
         self._shutdown = False
+        self.requires_retirement = False
         self.calls = []
 
     def run(self, code, **kwargs):
@@ -594,10 +627,10 @@ def test_repl_status_field_cancellation_releases_pin_without_refreshing_ttl(tmp_
         services.close()
 
 
-def test_shared_runtime_disables_ambiguous_repl_retries(tmp_path, monkeypatch):
+def test_runtime_passes_the_header_command_to_each_pool(tmp_path, monkeypatch):
     from servers import lean_runtime
 
-    project = make_lake_project(tmp_path, "at-most-once")
+    project = make_lake_project(tmp_path, "header-command")
     configs = []
 
     class CapturingPool(FakePool):
@@ -616,7 +649,9 @@ def test_shared_runtime_disables_ambiguous_repl_retries(tmp_path, monkeypatch):
             "repl.run",
             {"project_dir": str(project), "code": "#check Nat", "timeout": 1},
         )
-        assert configs[0].max_retries == 0
+        assert configs[0].header_command == list(
+            services.config.repl_header_command
+        )
     finally:
         services.close()
 
@@ -1147,61 +1182,87 @@ def test_late_startup_moves_directly_to_retirement(tmp_path):
     cache.close()
 
 
-def test_partial_repl_startup_transfers_cleanup_without_masking_the_error(
-    tmp_path, monkeypatch
-):
-    from servers.repl import pool as repl_pool_module
-
-    project = make_lake_project(tmp_path, "partial-repl-startup")
-    startup_error = ValueError("injected REPL startup failure")
+def test_dirty_repl_generation_transfers_to_retirement_before_lease_release(tmp_path):
+    project = make_lake_project(tmp_path, "dirty-repl-generation")
+    root = project.resolve()
+    poisoned = threading.Event()
+    release_result = threading.Event()
     cleanup_started = threading.Event()
     release_cleanup = threading.Event()
-    workers = []
+    pools = []
 
-    class FakeRepl:
-        def __init__(self, config):
-            self.close_calls = 0
-            workers.append(self)
+    class RetiringPool(FakePool):
+        def __init__(self, project_root):
+            super().__init__(project_root)
+            self.shutdown_calls = 0
+            pools.append(self)
 
-        def start(self):
-            raise startup_error
+        def run(self, code, **kwargs):
+            self.calls.append((code, kwargs))
+            self.requires_retirement = True
+            self._shutdown = True
+            poisoned.set()
+            assert release_result.wait(timeout=5)
+            return {"messages": []}
 
-        def close(self):
-            self.close_calls += 1
-            if self.close_calls == 1:
-                raise RuntimeError("injected first cleanup failure")
+        def shutdown(self):
+            self.shutdown_calls += 1
             cleanup_started.set()
             if not release_cleanup.wait(timeout=5):
                 raise RuntimeError("test did not release cleanup")
 
-    monkeypatch.setattr(repl_pool_module, "LeanRepl", FakeRepl)
     services = LeanRuntimeServices(
         runtime_config(),
+        repl_factory=RetiringPool,
         lsp_factory=FakeLsp,
         start_sweepers=False,
     )
-    try:
-        started = time.monotonic()
-        with pytest.raises(ValueError, match="injected REPL startup failure") as raised:
+    results = []
+    first = threading.Thread(
+        target=lambda: results.append(
             services.dispatch(
                 "repl.run",
                 {"project_dir": str(project), "code": "#check Nat", "timeout": None},
             )
-        assert raised.value is startup_error
-        # Cleanup on the request thread would block on its release event.
-        assert time.monotonic() - started < 1.5
+        )
+    )
+    try:
+        first.start()
+        assert poisoned.wait(timeout=1)
+
+        # is_valid fences the interval after poisoning but before dispatch's
+        # finally invalidates the still-active cache lease.
+        with pytest.raises(ProjectResourceBusyError):
+            with services.repl_projects.lease_resolved(
+                root,
+                acquisition_timeout=0.05,
+                creation_budget=0,
+            ):
+                pytest.fail("a poisoned REPL generation admitted another lease")
+        assert len(pools) == 1
+
+        release_result.set()
+        first.join(timeout=2)
+        assert not first.is_alive()
+        assert results == ["Compiles successfully"]
         assert cleanup_started.wait(timeout=1)
-        assert services.repl_projects.stats()["retiring"] == [str(project.resolve())]
+        assert services.repl_projects.stats()["retiring"] == [str(root)]
 
         with pytest.raises(ProjectResourceBusyError):
-            with services.repl_projects.lease(str(project), acquisition_timeout=0.05):
-                pytest.fail("partial cleanup released project capacity early")
-        assert len(workers) == 1
+            with services.repl_projects.lease_resolved(
+                root,
+                acquisition_timeout=0.05,
+                creation_budget=0,
+            ):
+                pytest.fail("retirement cleanup overlapped a replacement")
+        assert len(pools) == 1
     finally:
+        release_result.set()
         release_cleanup.set()
+        first.join(timeout=2)
         services.close()
 
-    assert workers[0].close_calls == 2
+    assert pools[0].shutdown_calls == 1
 
 
 def test_partial_lsp_startup_transfers_cleanup_without_masking_the_error(
@@ -1780,7 +1841,9 @@ def test_response_timeout_is_never_retried(runtime_dir, monkeypatch):
     [
         ("LEAN_NUM_REPLS", "-1", "nonnegative integer"),
         ("LEAN_REPL_CMD", "   ", "must not be empty"),
+        ("LEAN_REPL_HEADER_CMD", "   ", "LEAN_REPL_HEADER_CMD must not be empty"),
         ("AUTOFORM_LEAN_IDLE_SECONDS", "nan", "finite nonnegative"),
+        ("AUTOFORM_MAX_REPL_REQUEST_SECONDS", "900", "too small"),
         ("LEAN_LSP_TIMEOUT", "601", "cannot exceed"),
         ("AUTOFORM_RUNTIME_RESPONSE_TIMEOUT", "100", "too small"),
     ],
@@ -1798,11 +1861,79 @@ def test_per_project_workers_cannot_exceed_node_budget(monkeypatch):
         LeanRuntimeConfig.from_environment()
 
 
-def test_response_budget_includes_replacement_and_failed_pool_cleanup(monkeypatch):
+def test_default_repl_command_is_package_qualified():
+    config = LeanRuntimeConfig.from_environment()
+
+    assert config.repl_command == (
+        "lake",
+        "exe",
+        "@repl/repl",
+    )
+    assert config.repl_header_command[:2] == ("lake", "env")
+    assert config.repl_request_timeout == 240.0
+
+
+def test_absolute_lake_command_is_reused_for_header_validation(monkeypatch):
+    monkeypatch.setenv("LEAN_REPL_CMD", "/opt/lean/bin/lake exe @repl/repl")
+
+    config = LeanRuntimeConfig.from_environment()
+
+    assert config.repl_header_command == (
+        "/opt/lean/bin/lake",
+        "env",
+        sys.executable,
+        "-c",
+        LEAN_HEADER_LAUNCHER,
+        LEAN_HEADER_PARSER,
+    )
+
+
+def test_explicit_header_command_overrides_a_lake_repl_command(monkeypatch):
+    monkeypatch.setenv("LEAN_REPL_CMD", "lake exe @repl/repl")
+    monkeypatch.setenv("LEAN_REPL_HEADER_CMD", "lake env lean-header")
+
+    config = LeanRuntimeConfig.from_environment()
+
+    assert config.repl_header_command == ("lake", "env", "lean-header")
+
+
+def test_wrapped_repl_command_requires_an_explicit_header_command(monkeypatch):
+    monkeypatch.setenv("LEAN_REPL_CMD", "container run lake exe @repl/repl")
+
+    with pytest.raises(
+        ValueError,
+        match="LEAN_REPL_HEADER_CMD must be set when LEAN_REPL_CMD does not start with a `lake` executable",
+    ):
+        LeanRuntimeConfig.from_environment()
+
+    monkeypatch.setenv("LEAN_REPL_HEADER_CMD", "container run lake env lean-header")
+    assert LeanRuntimeConfig.from_environment().repl_header_command == (
+        "container",
+        "run",
+        "lake",
+        "env",
+        "lean-header",
+    )
+
+
+def test_lowered_repl_maximum_lowers_only_the_default_timeout(monkeypatch):
+    monkeypatch.setenv("AUTOFORM_MAX_REPL_REQUEST_SECONDS", "120")
+
+    config = LeanRuntimeConfig.from_environment()
+
+    assert config.max_repl_request_seconds == 120.0
+    assert config.repl_request_timeout == 120.0
+
+    monkeypatch.setenv("AUTOFORM_REPL_REQUEST_TIMEOUT", "180")
+    with pytest.raises(ValueError, match="AUTOFORM_REPL_REQUEST_TIMEOUT cannot exceed"):
+        LeanRuntimeConfig.from_environment()
+
+
+def test_response_budget_includes_pool_replacement_cleanup(monkeypatch):
     monkeypatch.setenv("AUTOFORM_REPL_TOTAL_WORKERS", "3")
     monkeypatch.setenv("AUTOFORM_REPL_WORKERS_PER_PROJECT", "3")
-    monkeypatch.setenv("AUTOFORM_RUNTIME_RESPONSE_TIMEOUT", "860")
-    with pytest.raises(ValueError, match="REPL worker startup"):
+    monkeypatch.setenv("AUTOFORM_RUNTIME_RESPONSE_TIMEOUT", "299")
+    with pytest.raises(ValueError, match="REPL pool replacement"):
         LeanRuntimeConfig.from_environment()
 
 
