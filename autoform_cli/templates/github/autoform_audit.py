@@ -270,7 +270,8 @@ def render_probe(
 
     Each of *targets*, the ``lean:`` names of the strict policy's assumption
     contract, must be a declaration of the build. The root scan covers those in
-    the root package; any other gets the same safety and axiom checks.
+    the root package; any other gets the same safety and axiom checks. A target
+    that names one of Lean's compiled ``_unsafe_rec`` copies is refused.
     """
 
     if not modules:
@@ -327,9 +328,9 @@ run_cmd do
   let mut badSafety : Array Name := #[]
   let mut badAxioms : Array (Name × Name) := #[]
   for (declName, info) in env.constants do
-    if isRoot declName then
+    if isRoot declName && !autoformAuditCompiledCopy declName info then
       checked := checked + 1
-      if info.isUnsafe || info.isPartial then
+      if autoformAuditUnsafeOrPartial env declName info then
         badSafety := badSafety.push declName
       for usedAxiom in (← axiomsOf declName) do
         unless allowed.contains usedAxiom do
@@ -339,8 +340,13 @@ run_cmd do
     | none =>
       errors := errors.push m!"{{declName}} [{{article}}] is not a declaration of the Lean build; fix the article's lean: name or build the module that declares it"
     | some info =>
+      -- No article states a compiled copy, and the root scan skips them, so a target that names one,
+      -- in or outside the root package, is refused here and checked no further.
+      if autoformAuditCompiledCopy declName info then
+        errors := errors.push m!"{{declName}} [{{article}}] is Lean's compiled copy of a recursive definition; name the definition itself"
+        continue
       unless isRoot declName do
-        if info.isUnsafe || info.isPartial then
+        if autoformAuditUnsafeOrPartial env declName info then
           errors := errors.push m!"{{declName}} [{{article}}] is outside the root package and is unsafe or partial"
         for usedAxiom in (← axiomsOf declName) do
           if (env.find? usedAxiom).isNone then
@@ -431,6 +437,20 @@ def autoformAuditAxioms (env : Environment) (declName : Name) :
       modify (·.insert node (axioms.qsort Name.lt))
       stack := stack.pop
   return ((← get).get? start).getD #[]
+
+/-- For every computable recursive definition, `partial def` included, Lean adds
+a partial copy `X._unsafe_rec` for the compiler to run. No safe declaration can
+refer to one, and the kernel replay skips them, so the root scan skips them too.
+A `lean:` target that names one is still refused. -/
+def autoformAuditCompiledCopy (declName : Name) (info : ConstantInfo) : Bool :=
+  info.isPartial && (Compiler.isUnsafeRecName? declName).isSome
+
+/-- Whether a declaration is unsafe or partial, as the skeleton probe reads
+safety: a `partial def` is a safe `opaque` whose compiled copy is partial, so
+the audit refuses it under its own name. -/
+def autoformAuditUnsafeOrPartial (env : Environment) (declName : Name) (info : ConstantInfo) : Bool :=
+  info.isUnsafe || info.isPartial ||
+    ((info matches .opaqueInfo _) && (env.find? (Compiler.mkUnsafeRecName declName)).any (·.isPartial))
 """
 
 
@@ -738,7 +758,8 @@ partial def autoformOpenAuditOpenHits (env : Environment) (isRoot : Name → Boo
     (node : Name) : StateM (Std.HashMap Name (Array Name)) (Array Name) := do
   if let some known := (← get).get? node then
     return known
-  -- In progress. Only unsafe recursion comes back here, and the audit rejects it.
+  -- In progress. Only recursion through unsafe or partial constants comes back here, and every root that
+  -- reaches it fails the safety check or the kernel replay.
   modify (·.insert node #[])
   let mut hits : Array Name := if openSet.contains node then #[node] else #[]
   for used in autoformAuditEdges env openSet node do
@@ -799,8 +820,8 @@ run_cmd do
       if let some (.thmInfo _) := env.find? declName then
         openSet := openSet.insert declName
   let mut roots : Array Name := #[]
-  for (declName, _) in env.constants do
-    if isRoot declName then
+  for (declName, info) in env.constants do
+    if isRoot declName && !autoformAuditCompiledCopy declName info then
       roots := roots.push declName
   roots := roots.qsort Name.lt
   let mut hitCache : Std.HashMap Name (Array Name) := {{}}
@@ -811,7 +832,7 @@ run_cmd do
   for declName in roots do
     let some info := env.find? declName | continue
     let reported := errors.size
-    if info.isUnsafe || info.isPartial then
+    if autoformAuditUnsafeOrPartial env declName info then
       errors := errors.push m!"unsafe or partial declaration: {{declName}}"
     let usedAxioms ← axiomsOf declName
     for usedAxiom in usedAxioms do
@@ -854,8 +875,12 @@ run_cmd do
     | none =>
       errors := errors.push m!"{{declName}} [{{article}}] is not a declaration of the Lean build; fix the article's lean: name or build the module that declares it"
     | some info =>
+      -- As in the strict probe, a target that names a compiled copy is refused and checked no further.
+      if autoformAuditCompiledCopy declName info then
+        errors := errors.push m!"{{declName}} [{{article}}] is Lean's compiled copy of a recursive definition; name the definition itself"
+        continue
       if !isRoot declName then
-        if info.isUnsafe || info.isPartial then
+        if autoformAuditUnsafeOrPartial env declName info then
           errors := errors.push m!"{{declName}} [{{article}}] is outside the root package and is unsafe or partial"
         for usedAxiom in (← axiomsOf declName) do
           if (env.find? usedAxiom).isNone then
