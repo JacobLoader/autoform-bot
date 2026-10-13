@@ -1479,7 +1479,7 @@ def test_both_probes_replay_the_root_package_through_the_kernel(
         assert "sorry-free:" not in output
 
 
-# Each writes MARKER and exits 0 once the probe sets the trigger, so a probe
+# Each writes MARKER and exits 0 once the test sets the trigger, so a probe
 # that ran it would pass without a word.
 _TRIGGER = "AUTOFORM_AUDIT_TEST_TRIGGER"
 
@@ -1712,7 +1712,7 @@ def test_both_probes_find_an_axiom_a_dependency_reaches_through_a_mutual_inducti
     helper: ModuleType, hostile_projects: dict[str, tuple[Path, Path]]
 ) -> None:
     # On v4.32.2 `collectAxioms` reads the axiom tables the modules store, and
-    # `MDep`'s leaves `MDep.Bad` out of `MDep.B0`'s, so the probe on main passed this.
+    # `MDep`'s leaves `MDep.Bad` out of `MDep.B0`'s, so the probe before #190 passed this.
     for audited, summary in _both_probes(helper, hostile_projects["mutual-axiom"], [_article("t0", ["Fixture.t0"])]):
         output = audited.stdout + audited.stderr
         assert audited.returncode != 0, output

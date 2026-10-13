@@ -1179,11 +1179,13 @@ declares`, or for a `lean:` name outside the root package with `NAME [ID] is
 outside the root package and depends on X, which no module of the build
 declares`. The walk takes a mutual inductive block as one node, so each type and
 constructor of the block gets the axioms of the whole block. It imports the
-toolchain's `Init` along with the build, so a build that declares a core name of
-its own, such as `propext`, fails to load with `environment already contains
-'propext'` instead of passing the axiom allowlist, which compares names. Lean
-does let a theorem stand in for another module's axiom of the same name and
-type, which the module system relies on, so a theorem restating an axiom such as
+toolchain's `Init` along with the build, so a core name that the build declares
+itself, such as `propext`, cannot pass the axiom allowlist, which compares
+names: a differing declaration fails to load with `environment already contains
+'propext'`, and an identical copy of a theorem or of a Prop-valued axiom is
+merged with the toolchain's own constant. Lean does let a
+theorem stand in for another module's axiom of the same name and type, which the
+module system relies on, so a theorem restating an axiom such as
 `Lean.trustCompiler`, whose type is `True`, fails with `M declares a theorem N
 in place of the axiom K declares; rename one of them so the audit can run`. A
 root module whose first component names an entry of the toolchain's library,
@@ -1262,6 +1264,9 @@ python3 .github/autoform_audit.py --open-statements /tmp/autoform-assumptions.js
 AUTOFORM_AUDIT_LEAN_PATH="$(lake env printenv LEAN_PATH)" LEAN_ABORT_ON_PANIC=1 \
   lean /tmp/autoform-probe.lean
 ```
+
+The audit passes only when `lean` exits 0 and the last line it prints is the
+`kernel trust clean ...` line; the workflow checks both.
 
 ## Claim contract
 
