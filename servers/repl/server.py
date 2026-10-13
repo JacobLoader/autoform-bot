@@ -15,14 +15,19 @@ def create_repl_server(runtime: LeanRuntimeClient) -> FastMCP:
 
     @server.tool
     def run_lean_code(project_dir: str, code: str, timeout: float | None = None) -> str:
-        """Compile a Lean snippet in a fresh project-scoped REPL process.
+        """Compile a Lean snippet in a fresh Lean REPL process for the project.
+
+        ``import Mathlib`` is added in front unless the snippet starts with
+        ``module`` or ``prelude`` or already has ``import Mathlib``. Imports
+        must come from Mathlib, Aesop, Batteries, or LeanSearchClient.
 
         Args:
             project_dir: Absolute path to the Lake project root.
             code: Lean code to execute.
-            timeout: Optional total post-admission timeout in seconds. It
-                covers the idle-slot wait, Lean header validation, disposable
-                child startup, generated imports, and submitted code.
+            timeout: Optional seconds for the whole call: waiting for a free
+                slot, the header check, starting Lean, the imports, and the
+                code. The default and maximum are 240 seconds unless the
+                operator changes them.
         """
         return runtime.request(
             "repl.run",
