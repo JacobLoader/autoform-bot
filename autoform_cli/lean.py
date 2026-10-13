@@ -481,14 +481,17 @@ def _lean_snapshot_includes(
 ) -> bool:
     if _lean_path_is_excluded(relative, excluded):
         return False
+    # The suffix is compared exactly, as Lake's module globs, skeleton and the
+    # servers do, so ``A.LEAN`` is not a Lean source even on a case-insensitive
+    # volume where ``import A`` could open it.
     if stat.S_ISLNK(mode):
         return (
-            relative.suffix.casefold() == ".lean"
+            relative.suffix == ".lean"
             and not relative.name.startswith(".#")
         )
     return (
         stat.S_ISDIR(mode)
-        or relative.suffix.casefold() == ".lean"
+        or relative.suffix == ".lean"
         or (
             len(relative.parts) > 1
             and _is_managed_output_manifest_name(relative.name)
@@ -572,7 +575,7 @@ def _indexed_source_snapshot(
     tolerated_links = frozenset(
         relative
         for relative, _target in snapshot.symlinks
-        if PurePosixPath(relative).suffix.casefold() == ".lean"
+        if PurePosixPath(relative).suffix == ".lean"
         and not in_ignored_root(relative)
         and PurePosixPath(relative).name.startswith(".#")
     )
@@ -580,7 +583,7 @@ def _indexed_source_snapshot(
         (relative, reason)
         for relative, reason in snapshot.unsupported_entries()
         if not in_ignored_root(relative)
-        and PurePosixPath(relative).suffix.casefold() == ".lean"
+        and PurePosixPath(relative).suffix == ".lean"
         and relative not in tolerated_links
     ]
     if unsupported:
@@ -593,7 +596,7 @@ def _indexed_source_snapshot(
     digest = hashlib.sha256(b"autoform-lean-source-index/v1\0")
     for relative_text, data in snapshot.files:
         relative = PurePosixPath(relative_text)
-        if relative.suffix.casefold() != ".lean" or _lean_path_is_excluded(
+        if relative.suffix != ".lean" or _lean_path_is_excluded(
             relative,
             excluded,
         ):
@@ -633,7 +636,7 @@ def _lean_generation_revision(
 
     def retained_entry(relative_text: str) -> bool:
         relative = PurePosixPath(relative_text)
-        return relative.suffix.casefold() == ".lean" and not _path_is_within_roots(
+        return relative.suffix == ".lean" and not _path_is_within_roots(
             relative,
             ignored_roots,
         )
