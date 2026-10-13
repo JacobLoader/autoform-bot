@@ -66,9 +66,8 @@ _HEADING_ID = re.compile(r"<h[1-6][^>]*\bid=\"([^\"]*)\"", re.IGNORECASE)
 EXTERNAL_SCHEMES = frozenset({"http", "https"})
 
 HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
-FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+FENCE = re.compile(r"^ {0,3}(`{3,}(?=[^`]*$)|~{3,})")
 INLINE_CODE = re.compile(r"(`+).*?\1")
-HTML_COMMENT = re.compile(r"<!--.*?(?:-->|$)", re.DOTALL)
 
 #: A closing fence carries nothing but its marker. ``pymdownx.superfences`` keeps
 #: ````` trailing`` inside the code block, so treating it as a closer would expose
@@ -479,10 +478,11 @@ class ArticleSection:
 class ArticleParts:
     """An article body split at its published H2 headings.
 
-    ``statement`` is everything between the frontmatter and the first H2, with
-    the H1 title line removed. It is the author's Markdown, untouched apart from
-    surrounding blank lines, so a caller that publishes it publishes what was
-    written and indentation keeps its meaning.
+    ``statement`` is everything no H2 section holds: the text between the
+    frontmatter and the first H2, and the text under an H1 title written below
+    an H2, with the title line removed. It is the author's Markdown, untouched
+    apart from surrounding blank lines, so a caller that publishes it publishes
+    what was written and indentation keeps its meaning.
     """
 
     statement: str
@@ -507,8 +507,7 @@ def article_parts(text: str) -> ArticleParts:
     masked = mask_fences_and_comments(body)
 
     title = next((index for index, line in enumerate(masked) if _heading_level(line) == 1), None)
-    starts = [index for index, line in enumerate(masked) if _heading_level(line) == 2]
-    breaks = sorted([*starts, *(() if title is None else (title,))])
+    breaks = [index for index, line in enumerate(masked) if index == title or _heading_level(line) == 2]
 
     # The statement is whatever no section holds: the text before the first
     # heading and the text under the title. A title written below a section
@@ -656,17 +655,35 @@ def local_target_issue(
 def mask_fences_and_comments(lines: list[str]) -> list[str]:
     """Return ``lines`` with fenced blocks and HTML comments blanked.
 
-    This is how the graph, the audit and the page agree on which headings and
-    links an article has. The site draws a fence without a closing line as
-    plain text, with the headings and links after it in view, so such a fence
-    hides nothing here.
+    This is how the graph and the audit agree on which headings and links an
+    article has. A fence without a closing line is read as plain text, so it
+    hides nothing here. A one-article page draws it the same way, but a chapter
+    page can pair it with a later article's fence, so the audit reports it as
+    ``unclosed-code-fence``.
     """
 
     return _mask_fences_and_comments(lines, set(), unclosed_fence_is_text=True)
 
 
+def first_unclosed_fence(lines: list[str]) -> int | None:
+    """Return the index of the first fence line that never closes, if any."""
+
+    unclosed: set[int] = set()
+    _mask_fences_and_comments(
+        lines,
+        set(),
+        unclosed_fence_is_text=True,
+        unclosed_openers=unclosed,
+    )
+    return min(unclosed, default=None)
+
+
 def _mask_fences_and_comments(
-    lines: list[str], hidden: set[int], *, unclosed_fence_is_text: bool = False
+    lines: list[str],
+    hidden: set[int],
+    *,
+    unclosed_fence_is_text: bool = False,
+    unclosed_openers: set[int] | None = None,
 ) -> list[str]:
     masked: list[str] = []
     fence: tuple[str, int] | None = None
@@ -682,6 +699,8 @@ def _mask_fences_and_comments(
         if index == len(lines):
             # Read on from the fence's first line as text.
             unclosed[fence[0]] = fence[1]
+            if unclosed_openers is not None:
+                unclosed_openers.add(opened[0])
             index, in_comment = opened
             del masked[index:]
             hidden.difference_update(range(index, len(lines)))
@@ -783,7 +802,6 @@ __all__ = [
     "FENCE",
     "FENCE_CLOSE",
     "HEADING",
-    "HTML_COMMENT",
     "INLINE_CODE",
     "LINK",
     "SITE_EXTENSIONS",
@@ -809,5 +827,6 @@ __all__ = [
     "rendered_visible_text",
     "site_converter",
     "strip_line_comments",
+    "first_unclosed_fence",
     "visible_prose",
 ]

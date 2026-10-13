@@ -9,8 +9,10 @@ import pytest
 from autoform_cli.__main__ import main
 from autoform_cli.graph import (
     GraphValidationError,
+    _containment_cycles,
     load_graph,
 )
+from autoform_cli.runtime import RuntimeProjectionError, load_runtime_graph
 
 
 def _node_text(body: str, **metadata: str) -> str:
@@ -479,6 +481,93 @@ def test_check_cli_reports_validation_errors(tmp_path: Path) -> None:
     assert "error: bad: missing H1 title" in result.stdout
 
 
+def test_check_refuses_a_symlinked_readme_instead_of_hanging(tmp_path: Path) -> None:
+    """Issue #58: this README made `a` and `a/b` each other's parent, and check never returned."""
+    blueprint = tmp_path / "blueprint"
+    _roadmap_page(blueprint, "README.md", "# Root\n")
+    _roadmap_page(blueprint, "a/b/README.md", "# B\n")
+    _roadmap_page(blueprint, "a/b/notes.txt", "# A\n")
+    try:
+        (blueprint / "roadmap" / "a" / "README.md").symlink_to("b/notes.txt")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    result = subprocess.run(
+        [sys.executable, "-m", "autoform_cli", "check", str(blueprint)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 1
+    assert "error: roadmap contains a symbolic link: roadmap/a/README.md" in result.stdout
+    assert str(tmp_path) not in result.stdout
+
+
+def test_check_and_runtime_refuse_the_same_roadmap_symlinks(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "base.md", "# Base\n")
+    outside = tmp_path / "figure.png"
+    outside.write_bytes(b"png")
+    try:
+        (blueprint / "roadmap" / "figure.png").symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    with pytest.raises(GraphValidationError, match="roadmap contains a symbolic link: roadmap/figure.png"):
+        load_graph(blueprint)
+    with pytest.raises(RuntimeProjectionError, match="roadmap contains a symbolic link: roadmap/figure.png"):
+        load_runtime_graph(blueprint)
+
+
+def test_check_and_runtime_refuse_a_symlinked_roadmap_directory(tmp_path: Path) -> None:
+    _roadmap_page(tmp_path / "real", "README.md", "# Root\n")
+    blueprint = tmp_path / "blueprint"
+    blueprint.mkdir()
+    try:
+        (blueprint / "roadmap").symlink_to(tmp_path / "real" / "roadmap", target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    with pytest.raises(GraphValidationError, match="roadmap contains a symbolic link: roadmap$"):
+        load_graph(blueprint)
+    with pytest.raises(RuntimeProjectionError, match="roadmap contains a symbolic link: roadmap$"):
+        load_runtime_graph(blueprint)
+
+
+def test_a_readme_symlink_outside_the_roadmap_contains_nothing(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    _roadmap_page(project / "blueprint", "README.md", "# Root\n")
+    _roadmap_page(project / "blueprint", "a.md", "# A\n")
+    try:
+        (project / "README.md").symlink_to("blueprint/roadmap/README.md")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    assert load_graph(project / "blueprint").nodes["roadmap"].parent is None
+
+
+def test_load_graph_refuses_a_containment_cycle_before_depths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    _roadmap_page(blueprint, "README.md", "# Root\n")
+    _roadmap_page(blueprint, "a.md", "# A\n")
+    monkeypatch.setattr("autoform_cli.graph._article_parents", lambda *_: {"roadmap": "a", "a": "roadmap"})
+    monkeypatch.setattr("autoform_cli.graph._article_depth", lambda *_: pytest.fail("depth walked a containment cycle"))
+
+    with pytest.raises(GraphValidationError, match="a: containment cycle: a -> roadmap -> a"):
+        load_graph(blueprint)
+
+
+def test_containment_cycles_are_reported_once_per_cycle() -> None:
+    parents: dict[str, str | None] = {"a": "a/b", "a/b": "a", "c": "a", "roadmap": None}
+
+    assert _containment_cycles(parents) == ["a: containment cycle: a -> a/b -> a"]
+    assert _containment_cycles({"a": "roadmap", "roadmap": None}) == []
+
+
 def test_check_cli_reports_source_index_io_failure_before_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -578,6 +667,196 @@ def test_a_chapter_whose_articles_are_all_in_buckets_is_still_refused(tmp_path: 
         load_graph(tmp_path / "blueprint")
 
     assert "orphan: chapter directory holds 1 article(s) but no README.md" in str(caught.value)
+
+
+@pytest.mark.parametrize("name", ["agents.md", "AGENTS.md"])
+def test_agents_filenames_remain_ordinary_articles(tmp_path: Path, name: str) -> None:
+    roadmap = tmp_path / "blueprint" / "roadmap"
+    roadmap.mkdir(parents=True)
+    (roadmap / name).write_text(f"# {name}\n", encoding="utf-8")
+
+    graph = load_graph(tmp_path / "blueprint")
+
+    assert list(graph.nodes) == [Path(name).stem]
+
+
+def test_implementation_notes_are_keyed_by_durable_article_id(tmp_path: Path) -> None:
+    """A hidden per-article note survives a roadmap path move."""
+    blueprint = tmp_path / "blueprint"
+    roadmap = blueprint / "roadmap"
+    (roadmap / "chapter").mkdir(parents=True)
+    (roadmap / "moved").mkdir()
+    (roadmap / "README.md").write_text("---\n---\n\n# Roadmap\n", encoding="utf-8")
+    (roadmap / "chapter" / "README.md").write_text("---\n---\n\n# Chapter\n", encoding="utf-8")
+    (roadmap / "moved" / "README.md").write_text("---\n---\n\n# Moved\n", encoding="utf-8")
+    article_id = "af_0123456789abcdef01234567"
+    (roadmap / "chapter" / "result.md").write_text(
+        f"---\narticle_id: {article_id}\ndeclaration: theorem\n---\n\n# Result\n",
+        encoding="utf-8",
+    )
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{article_id}.md").write_text(
+        "Mathlib has no `Project.result` yet.\n", encoding="utf-8"
+    )
+    (notes / ".DS_Store").write_bytes(b"finder metadata")
+
+    graph = load_graph(blueprint)
+    assert sorted(graph.nodes) == ["chapter", "chapter/result", "moved", "roadmap"]
+
+    (roadmap / "chapter" / "result.md").rename(roadmap / "moved" / "result.md")
+
+    moved = load_graph(blueprint)
+    assert moved.nodes["moved/result"].article_id == article_id
+
+
+@pytest.mark.parametrize(
+    ("filename", "contents", "message"),
+    [
+        ("result.md", "route\n", "must be named <article_id>.md"),
+        ("af_0123456789abcdef01234567.txt", "route\n", "must be named <article_id>.md"),
+        (
+            "af_111111111111111111111111.md",
+            "route\n",
+            "names no roadmap article; restore the article_id of an article that still exists",
+        ),
+        ("af_0123456789abcdef01234567.md", "\n", "empty implementation note"),
+        ("af_0123456789abcdef01234567.md", "\ufeff\u200b\n", "empty implementation note"),
+    ],
+)
+def test_implementation_notes_fail_closed(
+    tmp_path: Path, filename: str, contents: str, message: str
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    roadmap = blueprint / "roadmap"
+    roadmap.mkdir(parents=True)
+    article_id = "af_0123456789abcdef01234567"
+    (roadmap / "result.md").write_text(
+        f"---\narticle_id: {article_id}\ndeclaration: theorem\n---\n\n# Result\n",
+        encoding="utf-8",
+    )
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / filename).write_text(contents, encoding="utf-8")
+
+    with pytest.raises(GraphValidationError, match=message):
+        load_graph(blueprint)
+
+
+def test_implementation_notes_directory_has_canonical_spelling(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    roadmap = blueprint / "roadmap"
+    roadmap.mkdir(parents=True)
+    article_id = "af_0123456789abcdef01234567"
+    (roadmap / "result.md").write_text(
+        f"---\narticle_id: {article_id}\ndeclaration: theorem\n---\n\n# Result\n",
+        encoding="utf-8",
+    )
+    notes = blueprint / ".Implementation-Notes"
+    notes.mkdir()
+    (notes / f"{article_id}.md").write_text("route\n", encoding="utf-8")
+
+    with pytest.raises(GraphValidationError, match="noncanonical implementation notes"):
+        load_graph(blueprint)
+
+
+def test_implementation_note_must_be_utf8(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    roadmap = blueprint / "roadmap"
+    roadmap.mkdir(parents=True)
+    article_id = "af_0123456789abcdef01234567"
+    (roadmap / "result.md").write_text(
+        f"---\narticle_id: {article_id}\ndeclaration: theorem\n---\n\n# Result\n",
+        encoding="utf-8",
+    )
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{article_id}.md").write_bytes(b"\xff")
+
+    with pytest.raises(GraphValidationError, match="cannot read implementation note"):
+        load_graph(blueprint)
+
+
+def test_implementation_note_must_not_be_a_symlink(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    roadmap = blueprint / "roadmap"
+    roadmap.mkdir(parents=True)
+    article_id = "af_0123456789abcdef01234567"
+    (roadmap / "result.md").write_text(
+        f"---\narticle_id: {article_id}\ndeclaration: theorem\n---\n\n# Result\n",
+        encoding="utf-8",
+    )
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    target = tmp_path / "note.md"
+    target.write_text("route\n", encoding="utf-8")
+    try:
+        (notes / f"{article_id}.md").symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    with pytest.raises(GraphValidationError, match="must be a regular file"):
+        load_graph(blueprint)
+
+
+def test_hidden_entries_beside_implementation_notes_are_ignored(tmp_path: Path) -> None:
+    """Editors leave hidden lock symlinks, such as Emacs's `.#<name>`, beside a note."""
+    blueprint = tmp_path / "blueprint"
+    roadmap = blueprint / "roadmap"
+    roadmap.mkdir(parents=True)
+    article_id = "af_0123456789abcdef01234567"
+    (roadmap / "result.md").write_text(
+        f"---\narticle_id: {article_id}\ndeclaration: theorem\n---\n\n# Result\n",
+        encoding="utf-8",
+    )
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{article_id}.md").write_text("route\n", encoding="utf-8")
+    try:
+        (notes / f".#{article_id}.md").symlink_to("user@host.4242:1760000000")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    assert list(load_graph(blueprint).nodes) == ["result"]
+
+
+def test_implementation_notes_directory_must_not_be_a_symlink(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    roadmap = blueprint / "roadmap"
+    roadmap.mkdir(parents=True)
+    article_id = "af_0123456789abcdef01234567"
+    (roadmap / "result.md").write_text(
+        f"---\narticle_id: {article_id}\ndeclaration: theorem\n---\n\n# Result\n",
+        encoding="utf-8",
+    )
+    target = tmp_path / "notes"
+    target.mkdir()
+    try:
+        (blueprint / ".implementation-notes").symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    with pytest.raises(GraphValidationError, match="directory must not be a symlink"):
+        load_graph(blueprint)
+
+
+def test_article_error_does_not_misreport_its_note_as_orphaned(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    roadmap = blueprint / "roadmap"
+    roadmap.mkdir(parents=True)
+    article_id = "af_0123456789abcdef01234567"
+    (roadmap / "result.md").write_text(
+        f"---\narticle_id: {article_id}\ndeclaration: theorem\n---\n\nNo H1.\n",
+        encoding="utf-8",
+    )
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{article_id}.md").write_text("route\n", encoding="utf-8")
+
+    with pytest.raises(GraphValidationError) as caught:
+        load_graph(blueprint)
+
+    assert caught.value.issues == ("result: missing H1 title",)
 
 
 @pytest.mark.parametrize(

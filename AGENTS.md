@@ -26,9 +26,11 @@ workflow and cross-file maintenance.
 - Develop the plugin here and exercise installed behavior in an independent Lean
   consumer checkout. The bundled Cabannes thesis is a compatibility example,
   never a source of product-specific exceptions.
-- Markdown under `blueprint/` is the authored roadmap and dependency graph.
-  Rendered sites, Mermaid graphs, dashboards, and runtime projections are
-  derived views, not another durable scheduler or graph.
+- Markdown under `blueprint/roadmap/` is the authored roadmap and dependency
+  graph. Versioned implementation handoffs live only in hidden, per-article
+  files under `blueprint/.implementation-notes/`; they are not mathematics or
+  graph state. Rendered sites, Mermaid graphs, dashboards, and runtime
+  projections are derived views, not another durable scheduler or graph.
 - In consumer formalization work, Lean imports are allowed. Follow Formalize's
   `autoform work import-impact` policy: claim the article/module, check reported
   claim keys for active conflicts, and expand ownership only for validated

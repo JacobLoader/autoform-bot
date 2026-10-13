@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -13,8 +14,16 @@ from types import ModuleType
 
 import pytest
 
+from tests.test_impact import _lean_toolchain_available
+
 
 _TEMPLATE = Path("autoform_cli/templates/github/autoform_audit.py")
+# The toolchain the real-Lean CI job installs.
+_TOOLCHAIN = (Path(__file__).parent / "fixtures" / "skeleton-project" / "lean-toolchain").read_text(
+    encoding="utf-8"
+).strip() + "\n"
+# Under AUTOFORM_REQUIRE_REAL_LEAN_TESTS=1 this raises instead of returning False.
+_REAL_LEAN = _lean_toolchain_available()
 
 
 def _load_helper(repo_root: Path) -> ModuleType:
@@ -129,10 +138,29 @@ def test_archive_modules_are_sorted_and_probe_fails_on_zero_declarations(
     probe = helper.render_probe(modules)
 
     assert modules == ("Fixture", "Fixture.Basic")
-    assert probe.startswith("import Fixture\nimport Fixture.Basic\n")
+    assert probe.startswith("import Lean.Elab.Command\nimport Lean.Data.Json\nimport Lean.Replay\n\n")
+    assert "import Fixture" not in probe
+    assert 'Name.str (Name.anonymous) "Fixture", Name.str (Name.str (Name.anonymous) "Fixture") "Basic"' in probe
     assert 'throwError "kernel-trust audit found no root-package declarations"' in probe
     assert "info.isUnsafe || info.isPartial" in probe
-    assert "Lean.collectAxioms" in probe
+    assert "Lean.collectAxioms" not in probe
+    assert "autoformAuditAxioms env declName" in probe
+
+
+@pytest.mark.parametrize("character", [chr(0x7F), chr(0x85), chr(0xDCFF)])
+def test_module_names_with_control_characters_or_lone_surrogates_are_refused(
+    helper: ModuleType, character: str
+) -> None:
+    # Such a component would reach the probe's Lean source as it is.
+    with pytest.raises(helper.AuditInputError, match="invalid module name"):
+        helper._module_parts(f"Fixture.«{character}»", "lib/lean/Fixture.ilean")
+
+
+def test_both_probes_spell_module_names_outside_the_basic_multilingual_plane(helper: ModuleType) -> None:
+    # Lean reads a JSON surrogate pair such as \ud835\udd3d as two NUL characters.
+    for probe in (helper.render_probe(("Fixture.𝔽",)), helper.render_open_probe(("Fixture.𝔽",), ())):
+        assert 'Name.str (Name.str (Name.anonymous) "Fixture") "𝔽"' in probe
+        assert "\\ud835" not in probe
 
 
 @pytest.mark.parametrize(
@@ -236,13 +264,28 @@ def _run(project: Path, *command: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, cwd=project, capture_output=True, text=True, timeout=180)
 
 
-@pytest.mark.skipif(shutil.which("lake") is None, reason="Lake is not installed")
+def _run_probe(project: Path, probe: Path, **env: str) -> subprocess.CompletedProcess[str]:
+    """Run *probe* as the audit step does: plain lean, given Lake's search path."""
+
+    clean = {key: value for key, value in os.environ.items() if key != "LEAN_PATH"}
+    lean_path = subprocess.run(
+        ["lake", "env", "printenv", "LEAN_PATH"], cwd=project, env=clean, capture_output=True, text=True, timeout=180
+    )
+    assert lean_path.returncode == 0, lean_path.stdout + lean_path.stderr
+    clean["AUTOFORM_AUDIT_LEAN_PATH"] = lean_path.stdout.rstrip("\n")
+    clean["LEAN_ABORT_ON_PANIC"] = "1"
+    return subprocess.run(
+        ["lean", str(probe)], cwd=project, env={**clean, **env}, capture_output=True, text=True, timeout=180
+    )
+
+
+@pytest.mark.skipif(not _REAL_LEAN, reason="needs lake and the fixture's Lean toolchain")
 def test_real_toml_build_uses_target_src_dir_globs_and_import_closure(
     helper: ModuleType, tmp_path: Path
 ) -> None:
     project = tmp_path / "toml-project"
     project.mkdir()
-    _write(project / "lean-toolchain", "leanprover/lean4:v4.32.2\n")
+    _write(project / "lean-toolchain", _TOOLCHAIN)
     _write(
         project / "lakefile.toml",
         '''name = "TomlFixture"
@@ -289,17 +332,18 @@ srcDir = "app-src"
 
     probe = project / "probe.lean"
     probe.write_text(helper.render_probe(modules), encoding="utf-8")
-    audited = _run(project, "lake", "env", "lean", str(probe))
+    audited = _run_probe(project, probe)
     assert audited.returncode == 0, audited.stdout + audited.stderr
+    assert _ends_with_the_success_line(audited.stdout), audited.stdout
 
 
-@pytest.mark.skipif(shutil.which("lake") is None, reason="Lake is not installed")
+@pytest.mark.skipif(not _REAL_LEAN, reason="needs lake and the fixture's Lean toolchain")
 def test_root_package_clean_excludes_stale_custom_artifacts(
     helper: ModuleType, tmp_path: Path
 ) -> None:
     project = tmp_path / "stale-project"
     project.mkdir()
-    _write(project / "lean-toolchain", "leanprover/lean4:v4.32.2\n")
+    _write(project / "lean-toolchain", _TOOLCHAIN)
     _write(
         project / "lakefile.lean",
         '''import Lake
@@ -330,11 +374,11 @@ lean_lib «Fresh»
     assert helper.modules_from_archive(archive, "StaleFixture") == ("Fresh",)
 
 
-@pytest.mark.skipif(shutil.which("lake") is None, reason="Lake is not installed")
+@pytest.mark.skipif(not _REAL_LEAN, reason="needs lake and the fixture's Lean toolchain")
 def test_real_lean_manifest_supports_custom_build_dir(helper: ModuleType, tmp_path: Path) -> None:
     dependency = tmp_path / "dependency"
     dependency.mkdir()
-    _write(dependency / "lean-toolchain", "leanprover/lean4:v4.32.2\n")
+    _write(dependency / "lean-toolchain", _TOOLCHAIN)
     _write(
         dependency / "lakefile.lean",
         '''import Lake
@@ -347,7 +391,7 @@ lean_lib «Dependency»
 
     project = tmp_path / "lean-project"
     project.mkdir()
-    _write(project / "lean-toolchain", "leanprover/lean4:v4.32.2\n")
+    _write(project / "lean-toolchain", _TOOLCHAIN)
     _write(
         project / "lakefile.lean",
         '''import Lake
@@ -391,8 +435,9 @@ lean_lib «PublicApi» where
 
     probe = project / "probe.lean"
     probe.write_text(helper.render_probe(modules), encoding="utf-8")
-    audited = _run(project, "lake", "env", "lean", str(probe))
+    audited = _run_probe(project, probe)
     assert audited.returncode == 0, audited.stdout + audited.stderr
+    assert _ends_with_the_success_line(audited.stdout), audited.stdout
 
 
 def test_example_and_template_helpers_are_identical(repo_root: Path) -> None:
@@ -429,8 +474,21 @@ def _audit_step(workflow: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
+_WORKFLOW = Path(__file__).parents[1] / "autoform_cli/templates/github/workflows/autoform-verify.yml"
+
+
+def _ends_with_the_success_line(stdout: str) -> bool:
+    """Whether *stdout* ends as the audit step requires, by the step's own pattern."""
+
+    found = re.search(r"grep -Eq '([^']+)'", _audit_step(_WORKFLOW))
+    assert found
+    lines = stdout.splitlines()
+    return bool(lines) and re.search(found.group(1), lines[-1]) is not None
+
+
 # Stubs for the step's commands: uvx answers as an AUTOFORM_REF with or without
-# `work assumptions`, or as a failed fetch; python3 stands in for the audit.
+# `work assumptions`, or as a failed fetch; python3 stands in for the audit, and
+# lean for the probe, which prints STUB_PROBE_OUTPUT and exits STUB_PROBE_EXIT.
 _STUB_UVX = """#!/bin/sh
 case "$STUB_REF" in
   old)
@@ -447,7 +505,7 @@ esac
 _STUB_LAKE = """#!/bin/sh
 case "$1" in
   pack) : > "$2" ;;
-  env) printf '%s\\n' "$@" > "$STUB_LOG/lake" ;;
+  env) printf '%s\\n' "$@" > "$STUB_LOG/lake"; echo "/stub/lean/path" ;;
 esac
 """
 _STUB_PYTHON = """#!/bin/sh
@@ -456,6 +514,55 @@ if [ "$1" = "--policy" ]; then echo "$STUB_POLICY"; exit 0; fi
 printf '%s\\n' "$@" > "$STUB_LOG/audit"
 case "$1" in --*) cp "$2" "$STUB_LOG/contract" ;; esac
 """
+_STUB_LEAN = """#!/bin/sh
+printf '%s\\n' "${LEAN_PATH-unset}" "${LEAN_ABORT_ON_PANIC-unset}" "$AUTOFORM_AUDIT_LEAN_PATH" "$@" > "$STUB_LOG/lean"
+printf '%s' "$STUB_PROBE_OUTPUT"
+exit "${STUB_PROBE_EXIT:-0}"
+"""
+_CLEAN = "kernel trust clean (1 root-package declaration(s) audited)\n"
+_OPEN_CLEAN = (
+    "kernel trust clean except declared open statements "
+    "(1 root-package declaration(s) audited; 0 open statement(s), 0 conditional declaration(s))\n"
+)
+
+
+def _run_audit_step(
+    repo_root: Path, tmp_path: Path, ref: str, policy: str, probe_output: str = _CLEAN, probe_exit: int = 0
+) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
+    workflow = repo_root / "skills/setup/assets/cabannes-thesis-project/.github/workflows/autoform-verify.yml"
+    script = tmp_path / "step.sh"
+    script.write_text(_audit_step(workflow), encoding="utf-8")
+    stubs = tmp_path / "bin"
+    for name, text in (("uvx", _STUB_UVX), ("lake", _STUB_LAKE), ("python3", _STUB_PYTHON), ("lean", _STUB_LEAN)):
+        _write(stubs / name, text)
+        (stubs / name).chmod(0o755)
+    project, runner_temp, log = tmp_path / "project", tmp_path / "runner-temp", tmp_path / "log"
+    for directory in (project, runner_temp, log):
+        directory.mkdir()
+    env = {
+        "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}",
+        "RUNNER_TEMP": str(runner_temp),
+        "AUTOFORM_SOURCE": "https://example.invalid/autoform-bot.git",
+        "AUTOFORM_REF": "0" * 40,
+        "AUTOFORM_ROOT_PACKAGE": "Root",
+        "STUB_REF": ref,
+        "STUB_POLICY": policy,
+        "STUB_LOG": str(log),
+        "STUB_PROBE_OUTPUT": probe_output,
+        "STUB_PROBE_EXIT": str(probe_exit),
+    }
+
+    # The step sets no `shell:`, so GitHub runs it with `bash -e {0}` and only
+    # the step's own `set -euo pipefail` turns pipefail on.
+    result = subprocess.run(
+        ["bash", "-e", str(script)],
+        cwd=project,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    return result, runner_temp, log
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash is not installed")
@@ -472,35 +579,8 @@ case "$1" in --*) cp "$2" "$STUB_LOG/contract" ;; esac
 def test_audit_step_falls_back_only_for_a_ref_without_work_assumptions(
     repo_root: Path, tmp_path: Path, ref: str, policy: str, audit: list[str] | None
 ) -> None:
-    workflow = repo_root / "skills/setup/assets/cabannes-thesis-project/.github/workflows/autoform-verify.yml"
-    script = tmp_path / "step.sh"
-    script.write_text(_audit_step(workflow), encoding="utf-8")
-    stubs = tmp_path / "bin"
-    for name, text in (("uvx", _STUB_UVX), ("lake", _STUB_LAKE), ("python3", _STUB_PYTHON)):
-        _write(stubs / name, text)
-        (stubs / name).chmod(0o755)
-    project, runner_temp, log = tmp_path / "project", tmp_path / "runner-temp", tmp_path / "log"
-    for directory in (project, runner_temp, log):
-        directory.mkdir()
-    env = {
-        "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}",
-        "RUNNER_TEMP": str(runner_temp),
-        "AUTOFORM_SOURCE": "https://example.invalid/autoform-bot.git",
-        "AUTOFORM_REF": "0" * 40,
-        "AUTOFORM_ROOT_PACKAGE": "Root",
-        "STUB_REF": ref,
-        "STUB_POLICY": policy,
-        "STUB_LOG": str(log),
-    }
-
-    result = subprocess.run(
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(script)],
-        cwd=project,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
+    success = _OPEN_CLEAN if policy == "allowed" else _CLEAN
+    result, runner_temp, log = _run_audit_step(repo_root, tmp_path, ref, policy, success)
 
     warned = "::warning::AUTOFORM_REF predates autoform work assumptions" in result.stdout
     assert warned == (audit is not None and ref == "old")
@@ -510,6 +590,7 @@ def test_audit_step_falls_back_only_for_a_ref_without_work_assumptions(
         assert "error:" in result.stderr
         assert not (log / "audit").exists()
         assert not (log / "lake").exists()
+        assert not (log / "lean").exists()
         return
     assert result.returncode == 0, result.stdout + result.stderr
     recorded = (log / "audit").read_text(encoding="utf-8").splitlines()
@@ -517,7 +598,40 @@ def test_audit_step_falls_back_only_for_a_ref_without_work_assumptions(
     assert (log / "contract").exists() == (ref == "new")
     if ref == "new":
         assert json.loads((log / "contract").read_text(encoding="utf-8")) == {"articles": []}
-    assert (log / "lake").read_text(encoding="utf-8").splitlines() == ["env", "lean", recorded[-1]]
+    # Lake only reports the search path; plain lean runs the probe with it, and
+    # a panic aborts the probe.
+    assert (log / "lake").read_text(encoding="utf-8").splitlines() == ["env", "printenv", "LEAN_PATH"]
+    assert (log / "lean").read_text(encoding="utf-8").splitlines() == ["unset", "1", "/stub/lean/path", recorded[-1]]
+    assert result.stdout.endswith(success)
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash is not installed")
+@pytest.mark.parametrize(
+    "probe_output",
+    ["", "sorry-free: Fixture.a [a]\n", _CLEAN + "later\n", "not " + _CLEAN, "kernel trust clean\n"],
+)
+def test_audit_step_fails_when_the_probe_exits_0_without_its_success_line(
+    repo_root: Path, tmp_path: Path, probe_output: str
+) -> None:
+    result, runner_temp, log = _run_audit_step(repo_root, tmp_path, "new", "forbidden", probe_output)
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "the audit probe did not end with its success line" in result.stderr
+    assert (log / "lean").exists()
+    assert list(runner_temp.iterdir()) == []
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash is not installed")
+def test_audit_step_fails_when_the_probe_exits_nonzero_after_its_success_line(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    # 134 is the status of a probe that LEAN_ABORT_ON_PANIC aborted.
+    result, runner_temp, _ = _run_audit_step(repo_root, tmp_path, "new", "forbidden", probe_exit=134)
+
+    assert result.returncode == 134, result.stdout + result.stderr
+    assert result.stdout.endswith(_CLEAN)
+    assert "the audit probe did not end with its success line" not in result.stderr
+    assert list(runner_temp.iterdir()) == []
 
 
 def _roadmap(blueprint: Path, text: str | bytes) -> None:
@@ -730,7 +844,7 @@ def test_target_contract_refuses_anything_but_the_strict_policy(
         helper.load_target_contract(path)
 
 
-def test_strict_probe_embeds_its_targets_and_guards_its_helpers(helper: ModuleType, tmp_path: Path) -> None:
+def test_strict_probe_embeds_its_targets_and_imports_the_build_itself(helper: ModuleType, tmp_path: Path) -> None:
     contract = _contract_file(
         tmp_path / "contract.json",
         _contract(_article('odd "id"', ["Fixture.«a.b c»", "Fixture.x.1"]), open_statements=False),
@@ -744,13 +858,20 @@ def test_strict_probe_embeds_its_targets_and_guards_its_helpers(helper: ModuleTy
         [["Fixture", "a.b c"], 'odd "id"'],
         [["Fixture", "x", 1], 'odd "id"'],
     ]
-    assert "for helper in [``autoformAuditNameOf, ``autoformAuditReadTargets] do" in probe
     assert "is not a declaration of the Lean build" in probe
     old_form = helper.render_probe(("Fixture",))
     assert 'autoformAuditReadTargets "[]" with' in old_form
     for text in (probe, old_form, helper.render_open_probe(("Fixture",), ())):
         assert "Lean.Environment.replay rootConstants base" in text
         assert "kernel replay of the root package failed" in text
+        assert "kernel replay of the root package skipped" in text
+        assert "searchPathRef.set (libDir :: projectEntries)" in text
+        assert "with another library on the search path" in text
+        assert "(loadExts := false)" in text
+        assert "({ module := `Init } : Import)" in text
+        assert "is declared by an imported module" not in text
+        # The replay runs compiled code, so it comes after every check.
+        assert text.rindex("depends on unexpected axiom") < text.index("Lean.Environment.replay rootConstants")
 
 
 def test_open_probe_spells_names_as_components(helper: ModuleType, tmp_path: Path) -> None:
@@ -770,7 +891,8 @@ def test_open_probe_spells_names_as_components(helper: ModuleType, tmp_path: Pat
         [["Fixture", "a.b c"], "open", True, [["Fixture", "a.b c"]]],
         [["Fixture", "x", 1], 'odd "id" \\', False, [["Fixture", "a.b c"]]],
     ]
-    assert probe.startswith("import Fixture\n")
+    assert probe.startswith("import Lean.Elab.Command\n")
+    assert "import Fixture" not in probe
     assert "kernel trust clean except declared open statements" in probe
     assert "kernel trust clean (" not in probe
     with pytest.raises(helper.AuditInputError, match="empty open-statement audit"):
@@ -918,7 +1040,8 @@ def {parser} (_ : String) : Except String Lean.Json :=
   Lean.Json.parse {table}
 """
 
-# A root constant with a helper's name, so the probe's own definition fails.
+# A root constant with a helper's name, which once made the probe's own
+# definition fail.
 _CLASH_LEAN = """import Lean.Data.Json
 
 namespace Fixture
@@ -952,7 +1075,7 @@ theorem Fixture.after_exit : False := sorry
 
 _UNIMPORTED_LEAN = "theorem Fixture.unimported : False := sorry\n"
 
-# A declaration the kernel never checked. Neither collectAxioms nor the safety
+# A declaration the kernel never checked. Neither the axiom walk nor the safety
 # scan can tell; the workflow's lexical bypass check is not part of the probe.
 _UNCHECKED_LEAN = """import Lean.Elab.Command
 
@@ -970,11 +1093,11 @@ theorem Fixture.uses_bogus : False := Fixture.bogus
 
 @pytest.fixture(scope="module")
 def open_projects(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tuple[Path, Path]]:
-    if shutil.which("lake") is None:
-        pytest.skip("Lake is not installed")
+    if not _REAL_LEAN:
+        pytest.skip("needs lake and the fixture's Lean toolchain")
     root = tmp_path_factory.mktemp("open-statements")
     dependency = root / "dependency"
-    _write(dependency / "lean-toolchain", "leanprover/lean4:v4.32.2\n")
+    _write(dependency / "lean-toolchain", _TOOLCHAIN)
     _write(dependency / "lakefile.toml", 'name = "Dep"\ndefaultTargets = ["Dep"]\n\n[[lean_lib]]\nname = "Dep"\n')
     _write(dependency / "Dep.lean", _DEPENDENCY_LEAN)
     projects: dict[str, tuple[Path, Path]] = {}
@@ -990,7 +1113,7 @@ def open_projects(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tuple[P
         ("unchecked", _UNCHECKED_LEAN),
     ):
         project = root / name
-        _write(project / "lean-toolchain", "leanprover/lean4:v4.32.2\n")
+        _write(project / "lean-toolchain", _TOOLCHAIN)
         _write(
             project / "lakefile.toml",
             'name = "Fixture"\ndefaultTargets = ["Fixture"]\n\n'
@@ -1020,7 +1143,7 @@ def _audit(
         text = helper.render_open_probe(modules, helper.load_assumption_contract(path))
     probe = directory / "probe.lean"
     probe.write_text(text, encoding="utf-8")
-    return _run(directory, "lake", "env", "lean", str(probe))
+    return _run_probe(directory, probe)
 
 
 _OPEN_ARTICLE = _article("open", ["Fixture.open_stmt"], is_open=True, allowed=["Fixture.open_stmt"])
@@ -1054,6 +1177,7 @@ def test_open_probe_accepts_declared_open_statements_and_reductions(
     assert "kernel trust clean except declared open statements (" in output
     assert "; 2 open statement(s), 1 conditional declaration(s))" in output
     assert "kernel trust clean (" not in output
+    assert _ends_with_the_success_line(audited.stdout), audited.stdout
 
 
 @pytest.mark.parametrize(
@@ -1195,7 +1319,7 @@ def test_open_probe_reads_its_table_with_the_library_parser(
     assert "kernel trust clean" not in output
 
 
-def test_open_probe_refuses_a_helper_name_an_imported_module_declares(
+def test_open_probe_audits_a_build_that_declares_its_helper_names(
     helper: ModuleType, open_projects: dict[str, tuple[Path, Path]]
 ) -> None:
     audited = _audit(
@@ -1206,10 +1330,9 @@ def test_open_probe_refuses_a_helper_name_an_imported_module_declares(
 
     output = audited.stdout + audited.stderr
     assert audited.returncode != 0, output
-    assert (
-        "autoformOpenAuditReadArticles is declared by an imported module instead of this probe; "
-        "rename that declaration so the audit can run"
-    ) in output
+    assert "Fixture.cheat contains sorry but is not an open statement" in output
+    assert "Fixture.fully depends on sorry outside every declared open statement" in output
+    assert "is declared by an imported module" not in output
     assert "kernel trust clean" not in output
 
 
@@ -1236,14 +1359,16 @@ def _strict_audit(
         text = helper.render_probe(modules, helper.load_target_contract(path))
     probe = directory / "probe.lean"
     probe.write_text(text, encoding="utf-8")
-    return _run(directory, "lake", "env", "lean", str(probe))
+    return _run_probe(directory, probe)
 
 
 def test_strict_probe_requires_every_target_and_checks_non_root_ones(
     helper: ModuleType, open_projects: dict[str, tuple[Path, Path]]
 ) -> None:
     # Without targets the strict audit passes: every sorry it can see is gone.
-    assert _strict_audit(helper, open_projects["strict"], None).returncode == 0
+    passed = _strict_audit(helper, open_projects["strict"], None)
+    assert passed.returncode == 0, passed.stdout + passed.stderr
+    assert _ends_with_the_success_line(passed.stdout), passed.stdout
     audited = _strict_audit(
         helper,
         open_projects["strict"],
@@ -1276,7 +1401,8 @@ def test_strict_probe_requires_every_target_and_checks_non_root_ones(
         "root-package declarations failed the kernel-trust audit",
     ):
         assert message in output
-    for name in ("Fixture.clean", "Dep.dep_clean", "Nat.add_comm", "kernel replay"):
+    assert "kernel replay of the root package skipped: it runs once every other check passes" in output
+    for name in ("Fixture.clean", "Dep.dep_clean", "Nat.add_comm", "kernel replay of the root package failed"):
         assert name not in output
 
     passed = _strict_audit(
@@ -1284,19 +1410,19 @@ def test_strict_probe_requires_every_target_and_checks_non_root_ones(
     )
     assert passed.returncode == 0, passed.stdout + passed.stderr
     assert "kernel trust clean (2 root-package declaration(s) audited)" in passed.stdout + passed.stderr
+    assert _ends_with_the_success_line(passed.stdout), passed.stdout
 
 
-def test_strict_probe_refuses_a_helper_name_an_imported_module_declares(
+def test_strict_probe_audits_a_build_that_declares_its_helper_names(
     helper: ModuleType, open_projects: dict[str, tuple[Path, Path]]
 ) -> None:
     audited = _strict_audit(helper, open_projects["clash"], [_article("fully", ["Fixture.fully"])])
 
     output = audited.stdout + audited.stderr
     assert audited.returncode != 0, output
-    assert (
-        "autoformAuditReadTargets is declared by an imported module instead of this probe; "
-        "rename that declaration so the audit can run"
-    ) in output
+    assert "Fixture.cheat depends on unexpected axiom sorryAx" in output
+    assert "Fixture.fully depends on unexpected axiom sorryAx" in output
+    assert "is declared by an imported module" not in output
     assert "kernel trust clean" not in output
 
 
@@ -1306,12 +1432,12 @@ def test_both_probes_refuse_a_target_that_names_one_of_their_own_helpers(
     # The probe declares its helpers itself, so the build never compiled them.
     # A lean: name that matched one once passed as a clean declaration outside
     # the root package.
-    strict_helpers = ["autoformAuditNameOf", "autoformAuditReadTargets"]
+    walk_helpers = ["autoformAuditBlockOf", "autoformAuditEdges", "autoformAuditAxioms"]
+    strict_helpers = ["autoformAuditNameOf", "autoformAuditReadTargets", *walk_helpers]
     open_helpers = [
         "autoformOpenAuditNameOf",
         "autoformOpenAuditReadArticles",
-        "autoformOpenAuditBlockOf",
-        "autoformOpenAuditEdges",
+        *walk_helpers,
         "autoformOpenAuditOpenHits",
         "autoformOpenAuditReachesFailed",
         "autoformOpenAuditNameList",
@@ -1383,3 +1509,281 @@ def test_both_probes_replay_the_root_package_through_the_kernel(
         assert len(errors) == 2, output
         assert rejected in errors[0] and summary in errors[1]
         assert "sorry-free:" not in output
+
+
+# Each writes MARKER and exits 0 once the test sets the trigger, so a probe
+# that ran it would pass without a word.
+_TRIGGER = "AUTOFORM_AUDIT_TEST_TRIGGER"
+
+_INITIALIZER_LEAN = """initialize do
+  if (← IO.getEnv "AUTOFORM_AUDIT_TEST_TRIGGER").isSome then
+    IO.FS.writeFile MARKER "initializer ran\\n"
+    IO.Process.exit 0
+"""
+
+# The kernel decides `Lean.reduceBool Dep.evil = true` by running this code. It
+# sits in a dependency because a replay runs it only from the replay's base,
+# which holds the modules outside the root package.
+_NATIVE_DEP_LEAN = """unsafe def Dep.evilImpl (_ : Unit) : Bool :=
+  match unsafeIO (do
+      if (← IO.getEnv "AUTOFORM_AUDIT_TEST_TRIGGER").isSome then
+        IO.FS.writeFile MARKER "native code ran\\n"
+        IO.Process.exit 0
+      pure true) with
+  | .ok value => value
+  | .error _ => true
+
+@[implemented_by Dep.evilImpl] opaque Dep.evilSpec : Unit → Bool
+
+def Dep.evil : Bool := Dep.evilSpec ()
+"""
+
+_MUTUAL_DEP_LEAN = """axiom MDep.Bad : Type
+
+mutual
+inductive MDep.A0 : Type where
+  | mk : MDep.Bad → MDep.B0 → MDep.A0
+  | base : MDep.A0
+inductive MDep.B0 : Type where
+  | mk : MDep.A0 → MDep.B0
+end
+"""
+
+# A declaration whose proof names a constant that no module declares.
+_DANGLING_LEAN = """import Lean.Elab.Command
+
+open Lean Elab Command
+
+set_option debug.skip""" + """KernelTC true in
+run_cmd liftCoreM <| addDecl (.thmDecl
+  { name := `Fixture.dangling, levelParams := [], type := mkConst ``True, value := mkConst `Fixture.ghost })
+"""
+
+
+@pytest.fixture(scope="module")
+def hostile_projects(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tuple[Path, Path]]:
+    if not _REAL_LEAN:
+        pytest.skip("needs lake and the fixture's Lean toolchain")
+    root = tmp_path_factory.mktemp("hostile")
+    projects: dict[str, tuple[Path, Path]] = {}
+    for name, files, lib in (
+        (
+            "initializer",
+            {"Fixture.lean": "import Fixture.Init\ntheorem Fixture.cheat : 2 + 2 = 5 := sorry\n",
+             "Fixture/Init.lean": _INITIALIZER_LEAN},
+            'name = "Fixture"\n',
+        ),
+        (
+            "native",
+            {"Fixture.lean": "import EvilDep\ntheorem Fixture.t : Lean.reduceBool Dep.evil = true := rfl\n",
+             "evildep/lean-toolchain": _TOOLCHAIN,
+             "evildep/lakefile.toml": 'name = "evildep"\ndefaultTargets = ["EvilDep"]\n\n[[lean_lib]]\nname = "EvilDep"\n',
+             "evildep/EvilDep.lean": _NATIVE_DEP_LEAN},
+            'name = "Fixture"\n\n[[require]]\nname = "evildep"\npath = "evildep"\n',
+        ),
+        (
+            "core-named",
+            {"Lean/Hack.lean": _INITIALIZER_LEAN + "theorem Lean.Hack.cheat : 2 + 2 = 5 := sorry\n"},
+            'name = "Fixture"\nroots = ["Lean.Hack"]\n',
+        ),
+        (
+            # A dependency that declares an axiom and a mutual inductive using it.
+            "mutual-axiom",
+            {"Fixture.lean": "import MDep\ntheorem Fixture.t0 : ∀ _ : MDep.B0, True := fun _ => trivial\n",
+             "mdep/lean-toolchain": _TOOLCHAIN,
+             "mdep/lakefile.toml": 'name = "mdep"\ndefaultTargets = ["MDep"]\n\n[[lean_lib]]\nname = "MDep"\n',
+             "mdep/MDep.lean": _MUTUAL_DEP_LEAN},
+            'name = "Fixture"\n\n[[require]]\nname = "mdep"\npath = "mdep"\n',
+        ),
+        ("dangling", {"Fixture.lean": _DANGLING_LEAN}, 'name = "Fixture"\n'),
+        (
+            # A theorem of `True` in place of Init's `Lean.trustCompiler`, which
+            # `Lean.reduceBool` depends on.
+            "trust-theorem",
+            {"Fixture.lean": "import Fixture.Trust\nimport EvilDep\ntheorem Fixture.t : Lean.reduceBool Dep.evil = true := rfl\n",
+             "Fixture/Trust.lean": "prelude\nimport Init.Prelude\ntheorem Lean.trustCompiler : True := True.intro\n",
+             "evildep/lean-toolchain": _TOOLCHAIN,
+             "evildep/lakefile.toml": 'name = "evildep"\ndefaultTargets = ["EvilDep"]\n\n[[lean_lib]]\nname = "EvilDep"\n',
+             "evildep/EvilDep.lean": _NATIVE_DEP_LEAN},
+            'name = "Fixture"\n\n[[require]]\nname = "evildep"\npath = "evildep"\n',
+        ),
+        (
+            "prelude",
+            {"Fixture.lean": "prelude\nimport Fixture.Core\ntheorem Fixture.cheat (p : Prop) : p := propext p\n",
+             "Fixture/Core.lean": "prelude\naxiom propext (p : Prop) : p\n"},
+            'name = "Fixture"\n',
+        ),
+        (
+            # A dependency library whose clean `Fixture` comes first on the search path.
+            "shadow",
+            {"Fixture.lean": "theorem Fixture.cheat : 2 + 2 = 5 := sorry\n",
+             "evildep/lean-toolchain": _TOOLCHAIN,
+             "evildep/lakefile.toml": 'name = "evildep"\n\n[[lean_lib]]\nname = "Shadow"\nroots = ["Fixture"]\nsrcDir = "src"\n',
+             "evildep/src/Fixture.lean": "theorem Fixture.cheat : 2 + 2 = 4 := rfl\n"},
+            'name = "Fixture"\nneeds = ["evildep/Shadow"]\n\n[[require]]\nname = "evildep"\npath = "evildep"\n',
+        ),
+    ):
+        project = root / name
+        marker = json.dumps(str(project / "marker"))
+        _write(project / "lean-toolchain", _TOOLCHAIN)
+        _write(project / "lakefile.toml", f'name = "Fixture"\ndefaultTargets = ["Fixture"]\n\n[[lean_lib]]\n{lib}')
+        for path, source in files.items():
+            _write(project / path, source.replace("MARKER", marker))
+        built = _run(project, "lake", "build")
+        assert built.returncode == 0, built.stdout + built.stderr
+        archive = project / "root.tgz"
+        packed = _run(project, "lake", "pack", str(archive))
+        assert packed.returncode == 0, packed.stdout + packed.stderr
+        projects[name] = (project, archive)
+    return projects
+
+
+def _both_probes(
+    helper: ModuleType, project: tuple[Path, Path], articles: list[dict[str, object]]
+) -> list[tuple[subprocess.CompletedProcess[str], str]]:
+    return [
+        (_strict_audit(helper, project, articles), "root-package declarations failed the kernel-trust audit"),
+        (_audit(helper, project, _contract(*articles)), "root-package declarations failed the open-statement audit"),
+    ]
+
+
+def test_both_probes_run_no_initializer_of_the_build(
+    helper: ModuleType, hostile_projects: dict[str, tuple[Path, Path]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(_TRIGGER, "1")
+    project = hostile_projects["initializer"]
+    for audited, summary in _both_probes(helper, project, [_article("cheat", ["Fixture.cheat"])]):
+        output = audited.stdout + audited.stderr
+        assert audited.returncode != 0, output
+        assert (
+            "Fixture.cheat depends on unexpected axiom sorryAx" in output
+            or "Fixture.cheat contains sorry but is not an open statement" in output
+        ), output
+        assert summary in output
+        assert "kernel trust clean" not in output
+        assert not (project[0] / "marker").exists()
+
+
+def test_both_probes_reject_native_reduction_without_running_it(
+    helper: ModuleType, hostile_projects: dict[str, tuple[Path, Path]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(_TRIGGER, "1")
+    project = hostile_projects["native"]
+    for audited, summary in _both_probes(helper, project, [_article("t", ["Fixture.t"])]):
+        output = audited.stdout + audited.stderr
+        assert audited.returncode != 0, output
+        assert "Fixture.t depends on unexpected axiom Lean.trustCompiler" in output
+        assert "kernel replay of the root package skipped: it runs once every other check passes" in output
+        assert summary in output
+        assert "kernel trust clean" not in output
+        assert not (project[0] / "marker").exists()
+
+
+def test_both_probes_refuse_a_root_module_named_after_the_toolchain_library(
+    helper: ModuleType, hostile_projects: dict[str, tuple[Path, Path]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(_TRIGGER, "1")
+    project = hostile_projects["core-named"]
+    assert helper.modules_from_archive(project[1], "Fixture") == ("Lean.Hack",)
+    for audited, _ in _both_probes(helper, project, [_article("cheat", ["Lean.Hack.cheat"])]):
+        output = audited.stdout + audited.stderr
+        assert audited.returncode != 0, output
+        assert (
+            "root module Lean.Hack shares its first component Lean with the toolchain's library; "
+            "rename the module so the audit can run"
+        ) in output
+        assert "kernel trust clean" not in output
+        assert not (project[0] / "marker").exists()
+
+
+def test_both_probes_refuse_a_root_module_another_library_also_provides(
+    helper: ModuleType, hostile_projects: dict[str, tuple[Path, Path]]
+) -> None:
+    project = hostile_projects["shadow"]
+    assert helper.modules_from_archive(project[1], "Fixture") == ("Fixture",)
+    for audited, _ in _both_probes(helper, project, [_article("cheat", ["Fixture.cheat"])]):
+        output = audited.stdout + audited.stderr
+        assert audited.returncode != 0, output
+        message = next((line for line in output.splitlines() if "with another library on the search path" in line), "")
+        assert (
+            "root module Fixture shares its first component Fixture with another library on the search path ("
+            in message
+        ), output
+        assert message.endswith("); rename the module so the audit can run"), output
+        # The dependency's library comes first, as Lake lists it.
+        dependency = str((project[0] / "evildep/.lake/build/lib/lean").resolve())
+        root = str((project[0] / ".lake/build/lib/lean").resolve())
+        assert f"({dependency}, {root})" in message, output
+        assert "kernel trust clean" not in output
+
+
+def test_both_probes_refuse_a_build_that_declares_a_core_name_of_its_own(
+    helper: ModuleType, hostile_projects: dict[str, tuple[Path, Path]]
+) -> None:
+    # The build never imports Init, so its `propext` would match the allowlist by name.
+    for audited, _ in _both_probes(helper, hostile_projects["prelude"], [_article("cheat", ["Fixture.cheat"])]):
+        output = audited.stdout + audited.stderr
+        assert audited.returncode != 0, output
+        assert "environment already contains 'propext'" in output
+        assert "kernel trust clean" not in output
+
+
+def test_both_probes_refuse_a_theorem_in_place_of_an_axiom(
+    helper: ModuleType, hostile_projects: dict[str, tuple[Path, Path]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Lean keeps the theorem under the axiom's module, so without the refusal the
+    # axiom check passes `Fixture.t` and the replay runs the dependency's code.
+    monkeypatch.setenv(_TRIGGER, "1")
+    project = hostile_projects["trust-theorem"]
+    for audited, _ in _both_probes(helper, project, [_article("t", ["Fixture.t"])]):
+        output = audited.stdout + audited.stderr
+        assert audited.returncode != 0, output
+        assert (
+            "Fixture.Trust declares a theorem Lean.trustCompiler in place of the axiom Init.Core declares; "
+            "rename one of them so the audit can run"
+        ) in output
+        assert "kernel trust clean" not in output
+        assert not (project[0] / "marker").exists()
+
+
+def test_both_probes_find_an_axiom_a_dependency_reaches_through_a_mutual_inductive(
+    helper: ModuleType, hostile_projects: dict[str, tuple[Path, Path]]
+) -> None:
+    # On v4.32.2 `collectAxioms` reads the axiom tables the modules store, and
+    # `MDep`'s leaves `MDep.Bad` out of `MDep.B0`'s, so the probe before #190 passed this.
+    for audited, summary in _both_probes(helper, hostile_projects["mutual-axiom"], [_article("t0", ["Fixture.t0"])]):
+        output = audited.stdout + audited.stderr
+        assert audited.returncode != 0, output
+        assert "Fixture.t0 depends on unexpected axiom MDep.Bad" in output
+        assert summary in output
+        assert "kernel trust clean" not in output
+
+
+def test_both_probes_fail_closed_on_a_constant_no_module_declares(
+    helper: ModuleType, hostile_projects: dict[str, tuple[Path, Path]]
+) -> None:
+    for audited, summary in _both_probes(helper, hostile_projects["dangling"], [_article("d", ["Fixture.dangling"])]):
+        output = audited.stdout + audited.stderr
+        assert audited.returncode != 0, output
+        assert "Fixture.dangling depends on Fixture.ghost, which no module of the build declares" in output
+        assert summary in output
+        assert "kernel trust clean" not in output
+
+
+def test_both_probes_refuse_to_run_outside_the_audit_step(
+    helper: ModuleType, open_projects: dict[str, tuple[Path, Path]]
+) -> None:
+    directory, archive = open_projects["strict"]
+    modules = helper.modules_from_archive(archive, "Fixture")
+    probe = directory / "refused.lean"
+    without = {key: value for key, value in os.environ.items() if key not in {"LEAN_PATH", "AUTOFORM_AUDIT_LEAN_PATH"}}
+    for text in (helper.render_probe(modules), helper.render_open_probe(modules, ())):
+        probe.write_text(text, encoding="utf-8")
+        through_lake = _run(directory, "lake", "env", "lean", str(probe))
+        assert through_lake.returncode != 0
+        assert "LEAN_PATH is set, so this probe's imports may come from the project" in through_lake.stdout
+        bare = subprocess.run(
+            ["lean", str(probe)], cwd=directory, env=without, capture_output=True, text=True, timeout=180
+        )
+        assert bare.returncode != 0
+        assert "AUTOFORM_AUDIT_LEAN_PATH is not set" in bare.stdout

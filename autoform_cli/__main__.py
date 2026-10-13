@@ -15,7 +15,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from . import status
-from .article_identity import plan_article_ids
+from .article_identity import ArticleIdWriteError, plan_article_ids, write_article_ids
 from .audit import audit_blueprint
 from .claims import CLAIM_TTL_S, ClaimBoard, ClaimTransportError, author_claim_key
 from .doctor import diagnose_project
@@ -45,6 +45,7 @@ from .skeleton import (
     write_packets,
     write_skeleton_report,
 )
+from .unused_hypotheses import find_unused_hypotheses, format_unused_hypotheses
 from .work import WORK_SCHEMA, WorkError, assumption_contract, list_ready_work, work_context
 
 
@@ -241,7 +242,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     search.add_argument(
         "query",
         help="one quoted argument; every word, with filler such as 'of' dropped and common endings cut, "
-        "must occur in an article's title, Lean name, path, or statement; put -- before one starting with -",
+        "must occur in an article's title, Lean name, path, or statement, or in a containing article's title; "
+        "put -- before one starting with -",
     )
     search.add_argument("--lean-root", type=Path, help="resolve local Lean declaration targets")
     search.add_argument(
@@ -282,17 +284,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     claim_cleanup = claim_subparsers.add_parser("cleanup")
     _add_claim_board_arguments(claim_cleanup)
 
-    migrate = subparsers.add_parser("migrate", help="inspect authored migration contracts")
+    migrate = subparsers.add_parser("migrate", help="plan or apply authored migrations")
     migrate_subparsers = migrate.add_subparsers(dest="migrate_command", required=True)
     article_ids = migrate_subparsers.add_parser(
         "article-ids",
-        help="plan durable roadmap article identifiers without writing files",
+        help="plan durable roadmap article identifiers, or add them with --write",
     )
     article_ids.add_argument("blueprint_dir")
-    article_ids.add_argument(
+    article_ids_mode = article_ids.add_mutually_exclusive_group()
+    article_ids_mode.add_argument(
         "--check",
         action="store_true",
         help="fail when an article is missing article_id frontmatter",
+    )
+    article_ids_mode.add_argument(
+        "--write",
+        action="store_true",
+        help="add each planned article_id to the frontmatter of the article missing one",
     )
     article_ids.add_argument("--json", action="store_true", help="write stable machine-readable output")
 
@@ -341,6 +349,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         "the Lake freshness check before it has its own budget",
     )
 
+    unused = subparsers.add_parser(
+        "unused-hypotheses",
+        help="report the hypotheses that the proof of each theorem the blueprint names never uses",
+    )
+    unused.add_argument("blueprint_dir")
+    unused.add_argument(
+        "--lean-root",
+        type=Path,
+        required=True,
+        help="built Lean project whose declarations the blueprint names",
+    )
+    unused.add_argument(
+        "--node",
+        action="append",
+        dest="nodes",
+        metavar="ID",
+        help="restrict to one article id (repeatable)",
+    )
+    unused.add_argument("--json", action="store_true", help="write stable machine-readable output")
+    unused.add_argument(
+        "--timeout",
+        type=_positive_seconds,
+        metavar="SECONDS",
+        help=f"seconds the Lean probe may run (default {DEFAULT_PROBE_TIMEOUT:g}); "
+        "the Lake freshness check before it has its own budget",
+    )
+
     render = subparsers.add_parser("render", help="build the publishable blueprint")
     render.add_argument("blueprint_dir")
     render.add_argument("-o", "--output", default="site-src", help="output directory")
@@ -377,6 +412,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _migrate(args)
     if args.command == "skeleton":
         return _skeleton(args)
+    if args.command == "unused-hypotheses":
+        return _unused_hypotheses(args)
     if args.command == "render":
         return _render(args)
     return 2
@@ -1001,7 +1038,20 @@ def _migrate(args: argparse.Namespace) -> int:
     if args.migrate_command != "article-ids":
         return 2
     try:
+        if args.write:
+            # Beside --json, stdout carries only the plan, so the writes go to stderr.
+            stream = sys.stderr if args.json else sys.stdout
+            for entry in write_article_ids(args.blueprint_dir):
+                print(f"{entry.article_path}: added article_id {entry.article_id}", file=stream)
         plan = plan_article_ids(args.blueprint_dir)
+    except ArticleIdWriteError as error:
+        for entry in error.written:
+            print(f"{entry.article_path}: added article_id {entry.article_id}", file=sys.stderr)
+        for issue in error.issues:
+            print(f"error: {issue}", file=sys.stderr)
+        if error.written:
+            print(f"error: added {len(error.written)} article_id(s) before stopping", file=sys.stderr)
+        return 2
     except GraphValidationError as error:
         for issue in error.issues:
             print(f"error: {issue}", file=sys.stderr)
@@ -1075,6 +1125,22 @@ def _skeleton(args: argparse.Namespace) -> int:
         print(report.to_json())
     else:
         print(format_report(report, lean_root=args.lean_root), end="")
+    return 0 if report.clean else 1
+
+
+def _unused_hypotheses(args: argparse.Namespace) -> int:
+    try:
+        report = find_unused_hypotheses(
+            args.blueprint_dir,
+            lean_root=args.lean_root,
+            node_ids=tuple(args.nodes) if args.nodes else None,
+            timeout=args.timeout or DEFAULT_PROBE_TIMEOUT,
+        )
+    except SkeletonError as exc:
+        for issue in exc.issues:
+            print(f"error: {issue}", file=sys.stderr)
+        return 2
+    print(report.to_json() if args.json else format_unused_hypotheses(report), end="\n" if args.json else "")
     return 0 if report.clean else 1
 
 

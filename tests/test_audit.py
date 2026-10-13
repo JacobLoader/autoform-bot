@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 import autoform_cli.audit as audit_module
-from autoform_cli.audit import audit_blueprint
+from autoform_cli.audit import audit_blueprint, audit_graph
+from autoform_cli.graph import Graph, Node, load_graph
 from autoform_cli.lean import LeanSourceError
 
 
@@ -111,6 +113,260 @@ def test_clean_audit_has_stable_machine_readable_representation(tmp_path: Path) 
     assert first.as_dict()["findings"] == []
     assert second.to_json() == first.to_json()
     assert str(tmp_path) not in first.to_json()
+
+
+def test_audit_rejects_implementation_notes_left_after_proof(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    article_id = "af_0123456789abcdef01234567"
+    _article(
+        blueprint,
+        "result.md",
+        article_id=article_id,
+        declaration="theorem",
+        statement="formalized",
+        proof="formalized",
+        lean="Project.result",
+    )
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    note = notes / f"{article_id}.md"
+    note.write_text("route\n", encoding="utf-8")
+
+    findings = _finding_map(blueprint)["roadmap/result.md"]
+    assert findings == [
+        (
+            "stale-implementation-note",
+            f"completed implementation scope still has .implementation-notes/{article_id}.md; delete it",
+        )
+    ]
+
+    note.unlink()
+    assert audit_blueprint(blueprint).clean
+
+
+def test_audit_allows_implementation_notes_while_work_is_unproved(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    article_id = "af_0123456789abcdef01234567"
+    _article(
+        blueprint,
+        "result.md",
+        article_id=article_id,
+        declaration="theorem",
+        statement="formalized",
+        lean="Project.result",
+    )
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{article_id}.md").write_text("next route\n", encoding="utf-8")
+
+    assert audit_blueprint(blueprint).clean
+
+
+@pytest.mark.parametrize(("proof_complete", "stale"), [(False, False), (True, True)])
+def test_container_note_is_stale_when_its_formalizable_subtree_is_proved(
+    tmp_path: Path, proof_complete: bool, stale: bool
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    container_id = "af_0123456789abcdef01234567"
+    _article(blueprint, "chapter/README.md", article_id=container_id)
+    child_metadata = {
+        "article_id": "af_89abcdef0123456701234567",
+        "declaration": "theorem",
+        "statement": "formalized",
+        "lean": "Project.result",
+    }
+    if proof_complete:
+        child_metadata["proof"] = "formalized"
+    _article(blueprint, "chapter/result.md", **child_metadata)
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{container_id}.md").write_text("chapter route\n", encoding="utf-8")
+
+    codes = {finding.code for finding in audit_blueprint(blueprint).findings}
+
+    assert ("stale-implementation-note" in codes) is stale
+
+
+def test_container_note_stays_while_a_nested_formalizable_article_is_unproved(
+    tmp_path: Path,
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    container_id = "af_0123456789abcdef01234567"
+    _article(blueprint, "chapter/README.md", article_id=container_id)
+    _article(
+        blueprint,
+        "chapter/done.md",
+        article_id="af_100000000000000000000000",
+        declaration="theorem",
+        statement="formalized",
+        proof="formalized",
+        lean="Project.done",
+    )
+    _article(blueprint, "chapter/section/README.md", article_id="af_200000000000000000000000")
+    _article(
+        blueprint,
+        "chapter/section/open.md",
+        article_id="af_300000000000000000000000",
+        declaration="theorem",
+        statement="formalized",
+        lean="Project.open",
+    )
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{container_id}.md").write_text("chapter route\n", encoding="utf-8")
+
+    assert audit_blueprint(blueprint).clean
+
+
+@pytest.mark.parametrize("leaf", ["a.md", "z.md"])
+def test_container_note_stays_while_a_direct_article_is_unproved_beside_a_proved_section(
+    tmp_path: Path, leaf: str
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    container_id = "af_0123456789abcdef01234567"
+    _article(blueprint, "chapter/README.md", article_id=container_id)
+    _article(
+        blueprint,
+        f"chapter/{leaf}",
+        article_id="af_100000000000000000000000",
+        declaration="theorem",
+        statement="formalized",
+        lean="Project.open",
+    )
+    _article(blueprint, "chapter/section/README.md", article_id="af_200000000000000000000000")
+    _article(
+        blueprint,
+        "chapter/section/done.md",
+        article_id="af_300000000000000000000000",
+        declaration="theorem",
+        statement="formalized",
+        proof="formalized",
+        lean="Project.done",
+    )
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{container_id}.md").write_text("chapter route\n", encoding="utf-8")
+
+    assert audit_blueprint(blueprint).clean
+
+
+@pytest.mark.parametrize("unproved_first", [True, False])
+def test_container_note_stays_while_any_sibling_is_unproved(
+    tmp_path: Path, unproved_first: bool
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    container_id = "af_0123456789abcdef01234567"
+    _article(blueprint, "chapter/README.md", article_id=container_id)
+    proved = {"declaration": "theorem", "statement": "formalized", "proof": "formalized"}
+    unproved = {"declaration": "theorem", "statement": "formalized"}
+    first, second = (unproved, proved) if unproved_first else (proved, unproved)
+    _article(blueprint, "chapter/a.md", article_id="af_100000000000000000000000", lean="Project.a", **first)
+    _article(blueprint, "chapter/b.md", article_id="af_200000000000000000000000", lean="Project.b", **second)
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{container_id}.md").write_text("chapter route\n", encoding="utf-8")
+
+    assert audit_blueprint(blueprint).clean
+
+
+def test_container_note_without_formalizable_descendants_is_not_stale(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    container_id = "af_0123456789abcdef01234567"
+    _article(blueprint, "chapter/README.md", article_id=container_id)
+    _article(blueprint, "chapter/overview.md", article_id="af_89abcdef0123456701234567")
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{container_id}.md").write_text("chapter plan\n", encoding="utf-8")
+
+    codes = {finding.code for finding in audit_blueprint(blueprint).findings}
+
+    assert "stale-implementation-note" not in codes
+
+
+def test_container_note_audit_handles_deep_containment_iteratively(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir(parents=True)
+    article_id = "af_0123456789abcdef01234567"
+    (notes / f"{article_id}.md").write_text("deep route\n", encoding="utf-8")
+    nodes: dict[str, Node] = {}
+    for index in range(1_200):
+        node_id = f"n{index}"
+        nodes[node_id] = Node(
+            id=node_id,
+            title=node_id,
+            path=blueprint / "roadmap" / f"{node_id}.md",
+            dependencies=(),
+            parent=f"n{index - 1}" if index else None,
+            depth=index,
+            article_id=article_id if index == 0 else None,
+            declaration="theorem" if index == 1_199 else None,
+            statement_formalized=index == 1_199,
+            proof_formalized=index == 1_199,
+            lean="Project.result" if index == 1_199 else None,
+        )
+    graph = Graph(blueprint_dir=blueprint, nodes=nodes)
+    monkeypatch.setattr(
+        audit_module,
+        "_read_article",
+        lambda _path: audit_module._ArticleShape("A precise mathematical statement.", True),
+    )
+
+    result = audit_graph(graph, coverage_findings=[])
+
+    assert any(finding.code == "stale-implementation-note" for finding in result.findings)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "af_111111111111111111111111.md",
+        "bad name.md",
+        pytest.param(
+            "bad:name.md",
+            marks=pytest.mark.skipif(os.name == "nt", reason="colon is not a Windows filename"),
+        ),
+    ],
+)
+def test_audit_reports_invalid_note_at_its_blueprint_path(
+    tmp_path: Path, filename: str
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    _article(blueprint, "result.md")
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / filename).write_text("orphan\n", encoding="utf-8")
+
+    result = audit_blueprint(blueprint)
+
+    assert [(finding.article_path, finding.code) for finding in result.findings] == [
+        (f".implementation-notes/{filename}", "invalid-graph")
+    ]
+
+
+def test_audit_reports_a_misplaced_notes_directory_where_it_is(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    article_id = "af_0123456789abcdef01234567"
+    _article(blueprint, "result.md", article_id=article_id, declaration="theorem")
+    misplaced = blueprint / "roadmap" / ".implementation-notes"
+    misplaced.mkdir()
+    (misplaced / f"{article_id}.md").write_text("Mathlib gap.\n", encoding="utf-8")
+
+    paths = {finding.article_path for finding in audit_blueprint(blueprint).findings}
+
+    assert f"roadmap/.implementation-notes/{article_id}.md" in paths
+    assert ".implementation-notes" not in paths
 
 
 def test_audit_reports_formalizable_structure(tmp_path: Path) -> None:
@@ -829,6 +1085,9 @@ def test_audit_reports_a_placeholder_statement(tmp_path: Path, prose: str) -> No
         "[ ](missing.md)",
         "![diagram](diagram.png)",
         "...",
+        "Setting\n=======",
+        "> ### Setting",
+        "- ### Setting",
     ],
 )
 def test_audit_reports_a_statement_that_shows_a_reader_nothing(tmp_path: Path, prose: str) -> None:
@@ -863,9 +1122,72 @@ def test_audit_reports_one_statement_finding_at_a_time(tmp_path: Path) -> None:
     assert _statement_codes(tmp_path, "<!-- TODO -->") == {"missing-statement-text"}
 
 
-def test_a_statement_the_site_publishes_from_a_fence_that_never_closes_is_not_missing(tmp_path: Path) -> None:
-    assert _statement_codes(tmp_path, "```\nFor all n, P(n) holds.") == set()
-    assert _statement_codes(tmp_path, "```\nTODO") == {"placeholder-statement-text"}
+def test_a_statement_from_a_fence_that_never_closes_keeps_its_statement_finding(tmp_path: Path) -> None:
+    assert _statement_codes(tmp_path, "```\nFor all n, P(n) holds.") == {"unclosed-code-fence"}
+    assert _statement_codes(tmp_path, "```\nTODO") == {
+        "placeholder-statement-text",
+        "unclosed-code-fence",
+    }
+
+
+def test_audit_reports_an_unclosed_code_fence(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    path = _article(blueprint, "chapter/result.md", declaration="theorem")
+    path.write_text(path.read_text(encoding="utf-8") + "\n```lean\n#check result\n", encoding="utf-8")
+
+    assert _finding_map(blueprint)["roadmap/chapter/result.md"] == [
+        ("unclosed-code-fence", "code fence opened on line 13 never closes")
+    ]
+
+
+def test_audit_reports_an_unclosed_code_fence_in_a_chapter_article(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    _article(blueprint, "chapter/result.md", declaration="theorem")
+    readme = blueprint / "roadmap" / "chapter" / "README.md"
+    readme.write_text("# Chapter\n\n```text\nsketch\n", encoding="utf-8")
+
+    assert ("unclosed-code-fence", "code fence opened on line 3 never closes") in _finding_map(blueprint)[
+        "roadmap/chapter/README.md"
+    ]
+
+
+def test_audit_does_not_treat_inline_backticks_as_a_fence(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    path = _article(blueprint, "chapter/result.md", declaration="theorem")
+    path.write_text(path.read_text(encoding="utf-8") + "\n```x``` is inline code here.\n", encoding="utf-8")
+
+    codes = {
+        code
+        for code, _reason in _finding_map(blueprint).get(path.relative_to(blueprint).as_posix(), [])
+    }
+    assert "unclosed-code-fence" not in codes
+
+
+def test_audit_graph_does_not_reread_an_article_for_fences(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    path = _article(blueprint, "chapter/result.md", declaration="theorem")
+    graph = load_graph(blueprint)
+    path.unlink()
+
+    result = audit_module.audit_graph(graph)
+
+    assert "unclosed-code-fence" not in {finding.code for finding in result.findings}
+
+
+def test_audit_ignores_fence_like_text_in_frontmatter(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    path = _article(blueprint, "chapter/result.md", declaration="theorem")
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace("---\n", "---\n# <!-- ```draft\n", 1), encoding="utf-8")
+
+    codes = {finding.code for finding in audit_blueprint(blueprint).findings}
+
+    assert "unclosed-code-fence" not in codes
 
 
 def test_statement_findings_say_what_is_wrong(tmp_path: Path) -> None:
@@ -878,7 +1200,7 @@ def test_statement_findings_say_what_is_wrong(tmp_path: Path) -> None:
     findings = _finding_map(blueprint)
 
     assert findings["roadmap/chapter/none.md"] == [
-        ("missing-statement-text", "formalizable article has no statement text before its first H2 section")
+        ("missing-statement-text", "formalizable article has no statement text outside its H2 sections")
     ]
     assert findings["roadmap/chapter/todo.md"] == [
         (
@@ -900,9 +1222,14 @@ def test_audit_leaves_a_placeholder_alone_outside_formalizable_articles(tmp_path
     assert "roadmap/chapter/README.md" not in _finding_map(blueprint)
 
 
-def test_bundled_example_has_no_statement_text_finding(repo_root: Path) -> None:
+def test_bundled_example_has_no_statement_or_unclosed_fence_finding(repo_root: Path) -> None:
     blueprint = repo_root / "skills" / "setup" / "assets" / "cabannes-thesis-project" / "blueprint"
 
     codes = {finding.code for finding in audit_blueprint(blueprint).findings}
 
-    assert not codes & {"missing-statement-text", "empty-statement-text", "placeholder-statement-text"}
+    assert not codes & {
+        "missing-statement-text",
+        "empty-statement-text",
+        "placeholder-statement-text",
+        "unclosed-code-fence",
+    }
