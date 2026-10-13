@@ -61,9 +61,9 @@ to start the runtime supplies those settings until it is stopped.
 `lake exe @repl/repl`, finds the REPL only through a require named `repl`. For a
 require with any other name, rename the require to `repl`, or restart the
 runtime with `LEAN_REPL_CMD="lake exe @<name>/repl"` for a require named
-`<name>`, which applies to every project the runtime serves. That command still
-starts with `lake`, so the header command is still derived from it. An absolute
-`lake` executable is reused for header validation; a container or other wrapper
+`<name>`, which applies to every project the runtime serves. If `LEAN_REPL_CMD`
+starts with a `lake` executable, absolute or not, header validation reuses that
+executable without the command's other arguments. A container or other wrapper
 must also set `LEAN_REPL_HEADER_CMD` to a command that runs
 `servers/repl/parse_header.lean` with the matching toolchain's `lean --run`,
 passing the source on standard input. Like the limits above, both commands are
@@ -71,12 +71,12 @@ node-wide and read only when the runtime starts; after changing either, run
 `uv run autoform-lean-runtime stop`. `AUTOFORM_MAX_REPL_REQUEST_SECONDS` caps
 the REPL `timeout`; when `AUTOFORM_REPL_REQUEST_TIMEOUT` is unset, the default
 `timeout` is the lower of 240 seconds and that cap. If `LEAN_REPL_CMD` does not
-invoke `lake` and `LEAN_REPL_HEADER_CMD` is unset, if
+start with a `lake` executable and `LEAN_REPL_HEADER_CMD` is unset, if
 `AUTOFORM_MAX_REPL_REQUEST_SECONDS` exceeds 240, or if an explicit
 `AUTOFORM_REPL_REQUEST_TIMEOUT` exceeds that cap, the runtime refuses to start,
 so the LSP tools are unavailable as well.
-`AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` bounds project admission, the tool
-operation, and a safety margin. Failed cleanup transfers to a retained
-background reaper and may continue past that response budget rather than
-allowing an overlapping replacement. A `warm` REPL project means its REPL
+`AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` (default 15 minutes) bounds project
+admission, the tool operation, and a safety margin. Failed cleanup transfers to
+a retained background reaper and may continue past that response budget rather
+than allowing an overlapping replacement. A `warm` REPL project means its REPL
 slot pool is cached; it does not mean a REPL subprocess remains resident.

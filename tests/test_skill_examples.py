@@ -269,7 +269,7 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
         '`LEAN_REPL_CMD="lake exe @<name>/repl"` for a require named `<name>`, '
         "which applies to every project the runtime serves"
     ) in servers
-    assert "so the header command is still derived from" in servers
+    assert "header validation reuses that executable without the command's other arguments" in servers
     assert "both commands are node-wide and read only when the runtime starts" in servers
     assert "after changing either, run `uv run autoform-lean-runtime stop`" in servers
     assert "one total post-admission budget" in servers
@@ -278,7 +278,9 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
     assert "does not mean a REPL subprocess remains resident" in servers
     assert "`LEAN_REPL_HEADER_CMD`" in servers
     assert "is the lower of 240 seconds and that cap" in servers
+    assert "If `LEAN_REPL_CMD` does not start with a `lake` executable" in servers
     assert "`AUTOFORM_REPL_REQUEST_TIMEOUT` exceeds that cap, the runtime refuses to start" in servers
+    assert "`AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` (default 15 minutes)" in servers
     assert "`leanprover-community/repl` at an immutable revision" in setup
     assert "Name the require `repl`" in setup
     assert "which finds the package only under its require name" in setup
