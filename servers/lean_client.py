@@ -1,8 +1,8 @@
 """Client and bootstrap logic for Autoform's node-local Lean runtime.
 
 The two public MCP processes are intentionally short-lived stdio adapters.  A
-small detached process owns the expensive Lean REPL pools and LSP sessions and
-is reached through a private Unix-domain socket.
+small detached process owns the warm LSP sessions and the per-project REPL slot
+pools, and is reached through a private Unix-domain socket.
 """
 
 from __future__ import annotations
