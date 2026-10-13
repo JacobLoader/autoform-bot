@@ -809,6 +809,73 @@ def test_unreadable_symbolic_link_names_itself(tmp_path: Path) -> None:
         os.lchmod(link, 0o755)
 
 
+def test_lookup_after_scanning_a_child_folder_blames_the_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Search permission revoked while a child folder is scanned through its
+    own descriptor refuses only the parent's final lookup of that child."""
+
+    _require_enforced_permission_bits()
+    _index(tmp_path, "def canonical : Nat := 0\n")
+    project = tmp_path / "Project"
+    (project / "Sub").mkdir()
+    (project / "Sub" / "Nested.lean").write_text("def nested : Nat := 0\n", encoding="utf-8")
+    _on_checkpoint(
+        monkeypatch,
+        "after-directory-list",
+        lambda: project.chmod(0o644),
+        "Project/Sub",
+    )
+    try:
+        with pytest.raises(
+            lean_module.LeanSourceError,
+            match=r"^permission denied: Project$",
+        ):
+            snapshot_project_sources(tmp_path)
+    finally:
+        project.chmod(0o755)
+
+
+@pytest.mark.parametrize(
+    "revoke",
+    ["before-readlink", "after-readlink"],
+)
+def test_symbolic_link_refused_by_the_parent_blames_the_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    revoke: str,
+) -> None:
+    """Search permission revoked just before a link is read refuses the
+    readlink, and just after refuses the lookup that confirms the link; in
+    both cases the folder is at fault, not the link."""
+
+    _require_enforced_permission_bits()
+    _index(tmp_path, "def canonical : Nat := 0\n")
+    project = tmp_path / "Project"
+    (project / "Link.lean").symlink_to("Basic.lean")
+    original_readlink = os.readlink
+
+    def readlink_revoking(path, *, dir_fd=None):
+        if path != "Link.lean" or dir_fd is None:
+            return original_readlink(path, dir_fd=dir_fd)
+        if revoke == "before-readlink":
+            project.chmod(0o644)
+        target = original_readlink(path, dir_fd=dir_fd)
+        project.chmod(0o644)
+        return target
+
+    monkeypatch.setattr(tree_snapshot_module.os, "readlink", readlink_revoking)
+    try:
+        with pytest.raises(
+            lean_module.LeanSourceError,
+            match=r"^permission denied: Project$",
+        ):
+            snapshot_project_sources(tmp_path)
+    finally:
+        project.chmod(0o755)
+
+
 def test_unsupported_entry_name_is_reported_without_retrying(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
