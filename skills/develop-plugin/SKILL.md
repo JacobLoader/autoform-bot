@@ -19,8 +19,8 @@ package configs. Update the private creation bundle, catalog identity, and
 complete `lake update` manifest together; run `lake build`.
 A direct-Mathlib-only manifest is invalid.
 
-Source indexes, revisions, and links form one evidence boundary: retain
-descriptors because repeated pathname reads are not a generation boundary.
+Retain descriptors for source indexes, revisions, and links: repeated pathname
+reads are not a generation boundary (Windows render omits code links).
 Read bounded outputs before descendants, keep each marker schema in its owning
 feature, and require links to match the blob at the stable detected commit.
 
