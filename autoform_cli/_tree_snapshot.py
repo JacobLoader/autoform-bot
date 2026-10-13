@@ -4,26 +4,16 @@ With descriptor capture, only the root descriptor is retained: each descended
 directory is opened by name through its parent when it is walked, listed again
 when its walk ends, and reopened the same way by a final verification.
 Captured files are rechecked by their full ``stat`` signature and directories
-by ``(dev, ino, file type)``.  By default every descended directory must also
-keep its full list of names.  The contents of a directory with a recognized
-opaque marker are never examined; by default its marker is rechecked by
-signature and bytes, or only by entry kind for a presence-only marker.  A
-selection with ``unselected_may_change`` narrows this to what it selects:
-only selected entries and the directories that contain them are compared.
-Any other directory, including one hidden by a recognized marker, may change,
-vanish or be rebuilt; whatever is at its path when it is looked at again must
-be hidden by a recognized marker or hold no selected entry.
+by ``(dev, ino, file type)``; ``TreeSelection`` says what else must stay put.
 
-A capture is not one atomic generation.  An entry that is present at a path
-only after the walk last looked at that path (when it listed or relisted the
-parent, or examined the entry) and before verification reached it is not
-seen, so coordinated moves across directories between those checks can yield
-a set of entries that no single state had.  Verification lists each directory
-once, before it walks that directory's children, so an entry that appears in
-a directory after that listing is not seen either.  With
-``unselected_may_change`` a recognized marker is subject to the same windows,
-so a directory that is hidden by a marker whenever it is looked at may expose
-selected entries in between.
+A capture is not one atomic generation.  An entry present at a path only after
+the walk last looked at that path (when it listed or relisted the parent, or
+examined the entry) and before verification reached it is not seen, and
+verification lists each directory once, before it walks that directory's
+children, so an entry that appears in a directory after that listing is not
+seen either.  Coordinated moves across directories between those checks can
+therefore yield a set of entries that no single state had.  With
+``unselected_may_change`` a recognized marker is subject to the same windows.
 """
 
 from __future__ import annotations
@@ -576,17 +566,18 @@ class TreeSelection:
     """Select which paths are descended into and captured as bytes.
 
     By default a capture proves the whole descended tree stable: every
-    descended folder keeps its identity and full list of names.  With
-    ``unselected_may_change`` it proves stable only what it selected: the
+    descended folder keeps its identity and full list of names, and a
+    recognized marker keeps its signature and bytes (its entry kind, for a
+    presence-only marker).
+
+    With ``unselected_may_change`` it proves stable only what it selected: the
     entries ``include`` or ``placeholder`` capture and the folders that
-    contain them.  Any other descended folder may change, vanish or be
-    rebuilt during the capture, provided that whatever is at its path when it
-    is rechecked is hidden by a recognized opaque marker or holds no selected
-    entry.  A folder hidden by a marker contributes no selected entry, so it
-    is treated the same way and its marker is not kept.  Such folders leave
-    no trace in the snapshot or its revisions, and ``opaque_directories``
-    stays empty.
-    Its end-of-folder recheck skips an unselected entry that keeps the
+    contain them.  Any other descended folder, including one hidden by a
+    recognized marker, may change, vanish or be rebuilt during the capture,
+    provided that whatever is at its path when it is rechecked is hidden by a
+    recognized marker or holds no selected entry.  Such folders leave no trace
+    in the snapshot or its revisions, and ``opaque_directories`` stays empty.
+    The end-of-folder recheck skips an unselected entry that keeps the
     ``(dev, ino, file type)`` the scan saw, so ``include`` and ``placeholder``
     must not depend on other mode bits.  This mode needs directory-descriptor
     traversal and does not record omitted entries.
@@ -611,9 +602,10 @@ class OpaqueDirectoryMarker:
     """A bounded marker that makes its containing directory opaque.
 
     The capture engine reads this small, immutable surface before it visits any
-    descendants.  A recognized marker is then verified by identity, without
-    replaying ``recognizes`` or depending on churn elsewhere in that output
-    directory.  A presence-only marker accepts any entry kind without reading
+    descendants.  By default a recognized marker is then verified by identity,
+    without replaying ``recognizes`` or depending on churn elsewhere in that
+    output directory; with ``TreeSelection.unselected_may_change`` it is not
+    kept, and each later look recognizes it afresh.  A presence-only marker accepts any entry kind without reading
     it; this is for directory sentinels such as a nested checkout's ``.git``.
     """
 
