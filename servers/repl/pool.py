@@ -130,7 +130,9 @@ class LeanReplPool:
         deadline = time.monotonic() + timeout if timeout is not None else None
         with self._condition:
             if self._shutdown:
-                raise RuntimeError("Lean REPL pool is shut down")
+                raise RuntimeError(
+                    "Lean REPL pool is shut down; this call did not start and can be retried"
+                )
             self._active_calls += 1
 
         repl: LeanRepl | None = None
@@ -149,12 +151,16 @@ class LeanReplPool:
             if candidate is _SHUTDOWN:
                 # Hand the wakeup to the next waiter.
                 self._idle.put(_SHUTDOWN)
-                raise RuntimeError("Lean REPL pool is shut down")
+                raise RuntimeError(
+                    "Lean REPL pool is shut down; this call did not start and can be retried"
+                )
             repl = candidate
 
             with self._condition:
                 if self._shutdown:
-                    raise RuntimeError("Lean REPL pool is shut down")
+                    raise RuntimeError(
+                        "Lean REPL pool is shut down; this call did not start and can be retried"
+                    )
 
             remaining = None if deadline is None else deadline - time.monotonic()
             if remaining is not None and remaining <= 0:

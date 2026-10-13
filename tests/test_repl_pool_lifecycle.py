@@ -402,7 +402,7 @@ def test_shutdown_unblocks_a_call_waiting_for_a_cold_slot(monkeypatch):
     assert not waiter.is_alive()
     assert not stopper.is_alive()
     assert len(errors) == 1
-    assert "pool is shut down" in str(errors[0])
+    assert str(errors[0]) == "Lean REPL pool is shut down; this call did not start and can be retried"
 
 
 def test_shutdown_waits_for_checked_out_worker_before_closing_or_draining(monkeypatch):
