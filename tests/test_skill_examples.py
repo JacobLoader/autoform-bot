@@ -250,6 +250,7 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
         repo_root / "skills/setup/assets/cabannes-thesis-project/lakefile.toml"
     ).read_text(encoding="utf-8")
 
+    assert "one REPL slot pool" in servers
     assert "each public REPL call gets a fresh child" in servers
     assert "no process-owned environment or proof-state handle survives" in servers
     assert "toolchain runs Lean's own header" in servers
@@ -261,11 +262,13 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
     assert "Every REPL call starts Lean afresh" in servers
     assert "so it takes at least as long as `import Mathlib` on the node" in servers
     assert "run one at a time unless `AUTOFORM_REPL_WORKERS_PER_PROJECT` is raised" in servers
+    assert "A REPL worker is one concurrent call slot; an idle slot holds no Lean process" in servers
     assert "finds the REPL only through a require named `repl`" in servers
     assert 'needs `LEAN_REPL_CMD="lake exe @<name>/repl"`' in servers
     assert "so the header command is still derived from" in servers
     assert "one total post-admission budget" in servers
     assert "default and maximum are 240 seconds" in servers
+    assert "its REPL slot pool is cached" in servers
     assert "does not mean a REPL subprocess remains resident" in servers
     assert "`LEAN_REPL_HEADER_CMD`" in servers
     assert "is the lower of 240 seconds and that cap" in servers
