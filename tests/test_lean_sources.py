@@ -1023,6 +1023,106 @@ def test_lean_file_removed_before_it_is_read_is_absent(
     assert snapshot.index.find("b") is None
 
 
+@pytest.mark.parametrize("step", ["lookup", "examine"])
+@pytest.mark.parametrize("kind", ["file", "folder", "link"])
+def test_lean_entry_dropped_as_vanished_and_back_at_its_folders_relist_is_caught(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    step: str,
+) -> None:
+    # The scan finds the entry gone at its lookup, or when it examines it (the
+    # open of a file or folder, the readlink of a link), and drops it.  The
+    # entry is back right after that call, so Proj's relist at the end of
+    # its scan lists it, and it is gone again before verification.  Only that
+    # relist can see it, by examining the name it dropped.
+    _require_descriptor_capture()
+    _index(tmp_path, "def a : Nat := 0\n", "Proj/A.lean")
+    if kind == "file":
+        name = "B.lean"
+        _index(tmp_path, "def b : Nat := 0\n", "Proj/B.lean")
+        expected = "Proj/B.lean"
+    elif kind == "folder":
+        name = "Sub"
+        _index(tmp_path, "def s : Nat := 0\n", "Proj/Sub/S.lean")
+        expected = "Proj/Sub/S.lean"
+    else:
+        name = "L.lean"
+        (tmp_path / "Proj" / name).symlink_to("A.lean")
+        expected = "Proj/L.lean"
+    entry = tmp_path / "Proj" / name
+
+    def remove() -> None:
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink(missing_ok=True)
+
+    def restore() -> None:
+        if kind == "file":
+            entry.write_text("def b : Nat := 1\n", encoding="utf-8")
+        elif kind == "link":
+            entry.symlink_to("A.lean")
+        else:
+            entry.mkdir()
+            (entry / "S.lean").write_text("def s : Nat := 1\n", encoding="utf-8")
+
+    armed: list[bool] = []
+    fired: list[str] = []
+    original_checkpoint = tree_snapshot_module._tree_snapshot_checkpoint
+
+    def checkpoint(event: str, path: str) -> None:
+        original_checkpoint(event, path)
+        if event == "after-directory-list" and path == "Proj":
+            armed.append(True)
+        elif event == "before-final-verification":
+            remove()
+
+    def around(call, path, *args, **kwargs):
+        if armed and not fired and path == name and kwargs.get("dir_fd") is not None:
+            fired.append(step)
+            remove()
+            try:
+                return call(path, *args, **kwargs)
+            finally:
+                restore()
+        return call(path, *args, **kwargs)
+
+    original_stat = os.stat
+    original_open = os.open
+    original_readlink = os.readlink
+    examine = "readlink" if kind == "link" else "open"
+
+    def stat_once(path, *args, **kwargs):
+        if step == "lookup":
+            return around(original_stat, path, *args, **kwargs)
+        return original_stat(path, *args, **kwargs)
+
+    def open_once(path, *args, **kwargs):
+        if step == "examine" and examine == "open":
+            return around(original_open, path, *args, **kwargs)
+        return original_open(path, *args, **kwargs)
+
+    def readlink_once(path, *args, **kwargs):
+        if step == "examine" and examine == "readlink":
+            return around(original_readlink, path, *args, **kwargs)
+        return original_readlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(tree_snapshot_module, "_tree_snapshot_checkpoint", checkpoint)
+    monkeypatch.setattr(os, "stat", stat_once)
+    monkeypatch.setattr(os, "open", open_once)
+    monkeypatch.setattr(os, "readlink", readlink_once)
+    sources = open_project_sources(tmp_path)
+    try:
+        with pytest.raises(TreeChangedError) as error:
+            sources.capture()
+    finally:
+        sources.close()
+
+    assert fired == [step]
+    assert error.value.relative == expected
+
+
 @pytest.mark.parametrize("change", ["moved-away", "replaced-by-copy"])
 def test_relevant_folder_changed_during_its_parents_scan_is_caught(
     tmp_path: Path,

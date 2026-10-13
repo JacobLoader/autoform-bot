@@ -1217,12 +1217,16 @@ def capture_directory_descriptor(
             directories.append(_DirectoryRecord(relative, identity, names))
         _tree_snapshot_checkpoint("after-directory-list", relative)
         relevant_names: list[str] = []
+        # Listed names the scan dropped because they had vanished; the relist at
+        # the end of this folder's scan examines them again.
+        vanished: set[str] = set()
         for name in names:
             child_relative = f"{relative}/{name}" if relative else name
             try:
                 metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
             except OSError as error:
                 if _vanished_in_selected_capture(error, selection):
+                    vanished.add(name)
                     continue
                 raise _entry_error(error, child_relative)
             child_identity = _stat_signature(metadata)
@@ -1243,6 +1247,7 @@ def capture_directory_descriptor(
                         raise _PermissionDenied(child_relative) from error
                     except OSError as error:
                         if selected_only and error.errno in _VANISHED_ERRNOS:
+                            vanished.add(name)
                             continue
                         raise _entry_error(error, child_relative)
                     opened = os.fstat(child_descriptor)
@@ -1313,6 +1318,7 @@ def capture_directory_descriptor(
                     raise _TreeChanged(child_relative) from error
                 except OSError as error:
                     if _vanished_in_selected_capture(error, selection):
+                        vanished.add(name)
                         continue
                     raise _entry_error(error, child_relative)
                 budget.add_file_bytes(len(data))
@@ -1325,6 +1331,7 @@ def capture_directory_descriptor(
                     )
                 except OSError as error:
                     if _vanished_in_selected_capture(error, selection):
+                        vanished.add(name)
                         continue
                     raise _entry_error(error, child_relative)
                 if link_identity != child_identity:
@@ -1342,6 +1349,7 @@ def capture_directory_descriptor(
                 depth=depth,
                 listed=names,
                 kept=relevant_names,
+                dropped=vanished,
                 selection=selection,
                 budget=recheck_budget,
             )
@@ -1609,16 +1617,18 @@ def _recheck_scanned_directory(
     depth: int,
     listed: tuple[str, ...],
     kept: list[str],
+    dropped: set[str],
     selection: TreeSelection,
     budget: _CaptureBudget,
 ) -> None:
     """Relist a folder once its scan ends, in selected-entry mode.
 
     Its recorded names must still be present, it must not have become opaque,
-    and every name that appeared since its scan listing must hold no selected
-    entry.  This is the selected-mode form of the strict end-of-folder relist,
-    and like it bounds the undetected window of this folder to the time
-    between this relist and its verification.
+    and every name that appeared since its scan listing, or that the scan
+    dropped as vanished, must hold no selected entry.  This is the
+    selected-mode form of the strict end-of-folder relist, and like it bounds
+    the undetected window of this folder to the time between this relist and
+    its verification.
     """
 
     names = _relist_directory(
@@ -1634,7 +1644,7 @@ def _recheck_scanned_directory(
             raise _TreeChanged(f"{relative}/{name}" if relative else name)
     scanned = set(listed)
     for name in names:
-        if name not in scanned:
+        if name not in scanned or name in dropped:
             _require_no_inputs(
                 descriptor,
                 name,
