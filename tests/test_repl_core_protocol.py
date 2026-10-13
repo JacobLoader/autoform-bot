@@ -578,8 +578,22 @@ def test_disposable_call_uses_one_decreasing_phase_budget(monkeypatch):
     ]
 
 
-@pytest.mark.parametrize("expired_phase", ["startup", "command"])
-def test_disposable_timeout_names_the_expired_phase(monkeypatch, expired_phase):
+@pytest.mark.parametrize(
+    ("expired_phase", "expected"),
+    [
+        ("header", {"repl_error": "Lean REPL header validation timed out after 1 seconds"}),
+        ("startup", {"repl_error": "Lean REPL disposable child startup timed out after 1 seconds"}),
+        ("command", {"repl_error": "Lean REPL combined command execution timed out after 1 seconds"}),
+        (
+            "dispatched",
+            {
+                "repl_error": "Lean REPL combined command execution timed out after 1 seconds",
+                "outcome_unknown": True,
+            },
+        ),
+    ],
+)
+def test_disposable_timeout_names_the_expired_phase(monkeypatch, expired_phase, expected):
     clock = {"now": 0.0}
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(warmup_imports=frozenset())
@@ -592,6 +606,8 @@ def test_disposable_timeout_names_the_expired_phase(monkeypatch, expired_phase):
         repl._process_group_id = None
 
     def check_header(code, deadline):
+        if expired_phase == "header":
+            raise TimeoutError("timed out checking the Lean header")
         if expired_phase == "startup":
             clock["now"] = 2
         return repl_core._LeanHeaderAnalysis((), True)
@@ -600,18 +616,17 @@ def test_disposable_timeout_names_the_expired_phase(monkeypatch, expired_phase):
         if expired_phase == "command":
             clock["now"] = 2
 
+    def run(**kwargs):
+        if expired_phase != "dispatched":
+            pytest.fail("expired budget dispatched the command")
+        raise repl_core.ReplOutcomeUnknown("transport failed") from TimeoutError()
+
     monkeypatch.setattr(repl, "close", close)
     monkeypatch.setattr(repl, "_check_header", check_header)
     monkeypatch.setattr(repl, "start", start)
-    monkeypatch.setattr(
-        repl,
-        "_run",
-        lambda **kwargs: pytest.fail("expired budget dispatched the command"),
-    )
+    monkeypatch.setattr(repl, "_run", run)
 
-    result = repl.run_disposable("#check Nat", timeout=1)
-
-    assert expired_phase in result["repl_error"]
+    assert repl.run_disposable("#check Nat", timeout=1) == expected
 
 
 def test_disposable_backlog_adjusts_prefixed_positions(monkeypatch):
@@ -1443,8 +1458,10 @@ def test_disposable_timeout_after_full_write_is_not_retried(monkeypatch):
     monkeypatch.setattr(repl, "_run_io", fail_after_send)
     response = repl.run_disposable("#eval 1", timeout=1)
 
-    assert response["outcome_unknown"] is True
-    assert "fully sent" in response["repl_error"]
+    assert response == {
+        "repl_error": "Lean REPL combined command execution timed out after 1 seconds",
+        "outcome_unknown": True,
+    }
     assert calls == [("#eval 1", None)]
     assert repl.process is None
 
@@ -1470,11 +1487,13 @@ def test_disposable_cleanup_failure_after_full_write_keeps_the_unknown_outcome(m
     monkeypatch.setattr(repl, "start", lambda **kwargs: setattr(repl, "process", object()))
     monkeypatch.setattr(repl, "_run_io", fail_after_send)
 
-    with pytest.raises(repl_core.ReplCleanupError) as error:
+    with pytest.raises(repl_core.ReplCleanupError, match="retirement is required: cleanup failed") as error:
         repl.run_disposable("#eval 1", timeout=1)
 
-    assert error.value.result["outcome_unknown"] is True
-    assert "process cleanup also failed" in error.value.result["repl_error"]
+    assert error.value.result == {
+        "repl_error": "Lean REPL combined command execution timed out after 1 seconds",
+        "outcome_unknown": True,
+    }
     assert close_calls == 3
     assert repl.process is not None
 

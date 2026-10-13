@@ -946,6 +946,10 @@ class LeanRepl:
                         header = self._check_header(code, deadline)
                     except ValueError as error:
                         result = {"repl_error": f"Rejected Lean header: {error}"}
+                    except TimeoutError:
+                        raise TimeoutError(
+                            f"Lean REPL header validation timed out after {timeout:g} seconds"
+                        ) from None
                     else:
                         modules = header.modules
                         accepts_leading_imports = header.accepts_leading_imports
@@ -1009,8 +1013,14 @@ class LeanRepl:
             except ReplCommandError as error:
                 result = {"repl_error": str(error)}
             except (ReplProtocolError, ReplOutcomeUnknown) as error:
+                if isinstance(error.__cause__, TimeoutError):
+                    # _run reports a timeout after dispatch as a transport
+                    # failure with the budget left at dispatch.
+                    message = f"Lean REPL combined command execution timed out after {timeout:g} seconds"
+                else:
+                    message = _with_repl_require_hint(str(error))
                 result = {
-                    "repl_error": _with_repl_require_hint(str(error)),
+                    "repl_error": message,
                     "outcome_unknown": True,
                 }
             except (ReplProcessExited, TimeoutError, RuntimeError, OSError) as error:
