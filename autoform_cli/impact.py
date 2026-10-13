@@ -816,8 +816,19 @@ class ModuleImportImpactReport:
 
     @property
     def article_local(self) -> bool:
-        listed = {article.id for article in (*self.affected_articles, *self.unresolved_articles)}
-        return self.selected_affected and listed <= {self.article.id}
+        """Whether the scope stays inside the selected article.
+
+        It holds when the selected article is affected, nothing else is a claim
+        target (no other article names or owns an affected declaration, and no
+        unowned helper is affected), and no other article has unresolved
+        declarations whose scope is unknown.
+        """
+
+        return (
+            self.selected_affected
+            and not self.affected_claim_targets
+            and all(article.id == self.article.id for article in self.unresolved_articles)
+        )
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -1046,7 +1057,7 @@ def compute_module_import_impact(
     affected_set = set(affected_modules)
     resolve = _resolver(records)
     named: dict[str, list[str]] = {}
-    affected_articles: list[ModuleImpactedArticle] = []
+    touched: dict[str, set[str]] = {}
     unresolved_articles: list[ImpactedArticle] = []
     for article in articles:
         resolved_names: list[str] = []
@@ -1069,22 +1080,21 @@ def compute_module_import_impact(
             )
         for resolved in resolved_names:
             named.setdefault(resolved, []).append(article.id)
-        article_modules = {records[resolved].module for resolved in resolved_names}
-        touched = tuple(sorted(article_modules & affected_set))
-        if touched:
-            affected_articles.append(
-                ModuleImpactedArticle(
-                    article.id,
-                    article.article_id,
-                    article.claim_target,
-                    touched,
-                )
-            )
-    affected_articles.sort(key=lambda article: article.id)
+        touched[article.id] = {records[resolved].module for resolved in resolved_names} & affected_set
+    # An article also owns, through the parent chain, the helpers it names no
+    # declaration for, such as a structure's API lemmas in a later module.
+    for record in records.values():
+        if record.module in affected_set and record.name not in named:
+            for owner in _owners(record, records, named):
+                touched[owner].add(record.module)
+    affected_articles = tuple(
+        ModuleImpactedArticle(article.id, article.article_id, article.claim_target, tuple(sorted(touched[article.id])))
+        for article in sorted(articles, key=lambda article: article.id)
+        if touched[article.id]
+    )
     unresolved_articles.sort(key=lambda article: article.id)
 
     module_claim_target = _module_claim_target(module)
-    article_by_id = {article.id: article for article in articles}
     affected_helpers = tuple(
         ModuleImpactedHelper(record.name, record.module, _helper_claim_target(record.name))
         for record in sorted(records.values(), key=lambda record: record.name)
@@ -1102,13 +1112,6 @@ def compute_module_import_impact(
                     if article.claim_target != selected.claim_target
                 ),
                 *(helper.claim_target for helper in affected_helpers),
-                *(
-                    article_by_id[owner].claim_target
-                    for record in records.values()
-                    if record.module in affected_set and record.name not in named
-                    for owner in _owners(record, records, named)
-                    if owner in article_by_id and owner != selected.id
-                ),
             }
         )
     )
@@ -1125,7 +1128,7 @@ def compute_module_import_impact(
         module=module,
         module_claim_target=module_claim_target,
         affected_modules=affected_modules,
-        affected_articles=tuple(affected_articles),
+        affected_articles=affected_articles,
         unresolved_articles=tuple(unresolved_articles),
         affected_unowned_helpers=affected_helpers,
         affected_claim_targets=affected_claim_targets,
@@ -1584,7 +1587,7 @@ def format_module_import_impact(report: ModuleImportImpactReport) -> list[str]:
         article for article in report.affected_articles if article.id != report.article.id
     )
     if report.article_local:
-        lines.append("Article scope: no other article names a declaration in the reverse-import scope.")
+        lines.append("Article scope: no other article and no unowned helper is in the reverse-import scope.")
     elif other_articles:
         lines.append("Affected articles:")
         lines.extend(

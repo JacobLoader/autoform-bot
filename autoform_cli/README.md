@@ -814,6 +814,15 @@ declarations absent from the loaded environment without globally blocking
 unrelated edits, while every `affected_unowned_helpers` entry includes its own
 claim target and key.
 
+`article` is the selected article (`id`, `article_id`, `claim_target`), and
+`module_claim_key` is the claim key of `module_claim_target`.
+`affected_articles` lists each article that names, or owns through the parent
+chain, a declaration in an affected module, with those `modules`;
+`selected_affected` says whether the selected article is one of them.
+`article_local` holds only when it is, `affected_claim_targets` is empty, and
+no other article has unresolved declarations, like `contained` in
+`work impact`.
+
 Imports are allowed regardless of reported breadth. Follow the
 [Formalize import workflow](../skills/formalize/SKILL.md#import-edits) for
 baseline evidence, conflict checks, claim lifecycle, and post-build review.

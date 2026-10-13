@@ -131,6 +131,10 @@ def test_import_edits_use_reported_scope_instead_of_a_blanket_ban(
     assert "`unresolved_articles`" in cli
     assert "without globally blocking unrelated edits" in cli
     assert "`affected_unowned_helpers` entry includes its own claim target and key" in cli
+    assert "`module_claim_key` is the claim key of `module_claim_target`" in cli
+    assert "names, or owns through the parent chain, a declaration in an affected module" in cli
+    assert "`selected_affected` says whether the selected article is one of them" in cli
+    assert "`article_local` holds only when it is, `affected_claim_targets` is empty" in cli
     assert "`autoform claim list --worker-id WORKER`" in cli
     assert "Imports are allowed regardless of reported breadth" in cli
     assert "Formalize import workflow" in cli

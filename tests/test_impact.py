@@ -251,6 +251,57 @@ def test_module_import_impact_reports_unresolved_local_articles_as_unknown_scope
     )
 
 
+def test_module_import_impact_lists_articles_through_the_helpers_they_own() -> None:
+    # chapter/x names the structure; its API lemma lives in the edited module,
+    # so x is affected through the lemma it owns, not through a name.
+    records = {
+        "Demo.A.Foo": _rec("Demo.A.Foo", "inductive", module="Demo.A"),
+        "Demo.A.Foo.lemma": _rec("Demo.A.Foo.lemma", module="Demo.B", parent="Demo.A.Foo"),
+        "Demo.B.main": _rec("Demo.B.main", module="Demo.B"),
+    }
+    modules = {
+        "Demo.A": ModuleEvidence("Demo.A", "/project/Demo/A.lean"),
+        "Demo.B": ModuleEvidence("Demo.B", "/project/Demo/B.lean", ("Demo.A",)),
+    }
+    articles = (
+        ImpactArticle("chapter/sel", None, ("Demo.B.main",)),
+        ImpactArticle("chapter/x", "af_x", ("Demo.A.Foo",)),
+    )
+
+    report = compute_module_import_impact(records, modules, articles, articles[0], "Demo.B", source_revision="rev")
+
+    assert [(article.id, article.modules) for article in report.affected_articles] == [
+        ("chapter/sel", ("Demo.B",)),
+        ("chapter/x", ("Demo.B",)),
+    ]
+    assert report.affected_claim_targets == ("af_x",)
+    assert report.affected_unowned_helpers == ()
+    assert report.article_local is False
+    assert "  chapter/x [af_x]: Demo.B" in format_module_import_impact(report)
+
+
+def test_module_import_impact_is_not_article_local_with_an_unowned_helper() -> None:
+    records = {
+        "Demo.main": _rec("Demo.main"),
+        "Demo.helper": _rec("Demo.helper"),
+    }
+    modules = {"Demo": ModuleEvidence("Demo", "/project/Demo.lean")}
+    selected = ImpactArticle("chapter/sel", None, ("Demo.main",))
+
+    report = compute_module_import_impact(records, modules, (selected,), selected, "Demo", source_revision="rev")
+    assert report.affected_claim_targets == (_lean_key("Demo.helper"),)
+    assert report.article_local is False
+
+    alone = compute_module_import_impact(
+        {"Demo.main": records["Demo.main"]}, modules, (selected,), selected, "Demo", source_revision="rev"
+    )
+    assert alone.article_local is True
+    assert (
+        "Article scope: no other article and no unowned helper is in the reverse-import scope."
+        in format_module_import_impact(alone)
+    )
+
+
 def test_constructor_edges_carry_an_inductive_s_meaning() -> None:
     records = _records(
         _rec("A.Size", "def"),
