@@ -26,6 +26,7 @@ def main : IO Unit := do
       (toJson imp).setObjVal! "module" (toJson (Name.toStringWithSep "." true imp.module))
     -- Before v4.30 an ordinary header and `prelude` followed by `import Init`
     -- both report one plain `Init` import, so also say whether `prelude` is there.
+    -- `header` is `module? prelude? import*`, so `header.raw[1]` is the optional `prelude`.
     let result := (toJson moduleHeader).setObjVal! "imports" (toJson imports)
       |>.setObjVal! "isPrelude" (toJson !header.raw[1].isNone)
     entry := entry.setObjVal! "result" result

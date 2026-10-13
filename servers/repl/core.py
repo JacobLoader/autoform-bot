@@ -1164,7 +1164,7 @@ class LeanRepl:
                         ) from cleanup_error
 
             if request_error is not None:
-                raise request_error.with_traceback(request_error.__traceback__)
+                raise request_error
             return result
 
     def run(self, code: str, env_id: int | None = None, timeout: float | None = None) -> dict[str, Any]:
