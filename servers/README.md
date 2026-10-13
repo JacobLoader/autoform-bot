@@ -58,10 +58,13 @@ which still starts with `lake`, so the header command is still derived from
 it. An absolute `lake` executable is reused for header validation; a container
 or other wrapper must also set `LEAN_REPL_HEADER_CMD` to a command that runs
 `servers/repl/parse_header.lean` with the matching toolchain's `lean --run`,
-passing the source on standard input. If `LEAN_REPL_CMD` does not invoke `lake`
-and `LEAN_REPL_HEADER_CMD` is unset, or if `AUTOFORM_MAX_REPL_REQUEST_SECONDS`
-exceeds 240, the runtime refuses to start, so the LSP tools are unavailable as
-well.
+passing the source on standard input. `AUTOFORM_MAX_REPL_REQUEST_SECONDS` caps
+the REPL `timeout`; when `AUTOFORM_REPL_REQUEST_TIMEOUT` is unset, the default
+`timeout` is the lower of 240 seconds and that cap. If `LEAN_REPL_CMD` does not
+invoke `lake` and `LEAN_REPL_HEADER_CMD` is unset, if
+`AUTOFORM_MAX_REPL_REQUEST_SECONDS` exceeds 240, or if an explicit
+`AUTOFORM_REPL_REQUEST_TIMEOUT` exceeds that cap, the runtime refuses to start,
+so the LSP tools are unavailable as well.
 `AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` bounds project admission, the tool
 operation, and a safety margin. Failed cleanup transfers to a retained
 background reaper and may continue past that response budget rather than

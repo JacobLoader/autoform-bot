@@ -207,10 +207,6 @@ class LeanRuntimeConfig:
             )
         if not lsp_command:
             raise ValueError("LEAN_LSP_CMD must not be empty")
-        repl_request_timeout = _positive_float(
-            "AUTOFORM_REPL_REQUEST_TIMEOUT",
-            DEFAULT_REPL_REQUEST_TIMEOUT,
-        )
         max_repl_request_seconds = _positive_float(
             "AUTOFORM_MAX_REPL_REQUEST_SECONDS",
             DEFAULT_MAX_REPL_REQUEST_SECONDS,
@@ -220,6 +216,11 @@ class LeanRuntimeConfig:
                 "AUTOFORM_MAX_REPL_REQUEST_SECONDS cannot exceed "
                 f"{DEFAULT_MAX_REPL_REQUEST_SECONDS:g} seconds"
             )
+        # The default follows a lowered maximum, so the maximum can be set alone.
+        repl_request_timeout = _positive_float(
+            "AUTOFORM_REPL_REQUEST_TIMEOUT",
+            min(DEFAULT_REPL_REQUEST_TIMEOUT, max_repl_request_seconds),
+        )
         if repl_request_timeout > max_repl_request_seconds:
             raise ValueError(
                 "AUTOFORM_REPL_REQUEST_TIMEOUT cannot exceed "

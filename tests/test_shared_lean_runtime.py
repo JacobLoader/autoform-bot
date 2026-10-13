@@ -1879,6 +1879,20 @@ def test_wrapped_repl_command_requires_an_explicit_header_command(monkeypatch):
     )
 
 
+def test_lowered_repl_maximum_lowers_only_the_default_timeout(monkeypatch):
+    monkeypatch.delenv("AUTOFORM_REPL_REQUEST_TIMEOUT", raising=False)
+    monkeypatch.setenv("AUTOFORM_MAX_REPL_REQUEST_SECONDS", "120")
+
+    config = LeanRuntimeConfig.from_environment()
+
+    assert config.max_repl_request_seconds == 120.0
+    assert config.repl_request_timeout == 120.0
+
+    monkeypatch.setenv("AUTOFORM_REPL_REQUEST_TIMEOUT", "180")
+    with pytest.raises(ValueError, match="AUTOFORM_REPL_REQUEST_TIMEOUT cannot exceed"):
+        LeanRuntimeConfig.from_environment()
+
+
 def test_response_budget_includes_pool_replacement_cleanup(monkeypatch):
     monkeypatch.setenv("AUTOFORM_REPL_TOTAL_WORKERS", "3")
     monkeypatch.setenv("AUTOFORM_REPL_WORKERS_PER_PROJECT", "3")

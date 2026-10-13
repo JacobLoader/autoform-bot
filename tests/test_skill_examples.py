@@ -263,7 +263,8 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
     assert "default and maximum are 240 seconds" in servers
     assert "does not mean a REPL subprocess remains resident" in servers
     assert "`LEAN_REPL_HEADER_CMD`" in servers
-    assert "the runtime refuses to start" in servers
+    assert "is the lower of 240 seconds and that cap" in servers
+    assert "`AUTOFORM_REPL_REQUEST_TIMEOUT` exceeds that cap, the runtime refuses to start" in servers
     assert "`leanprover-community/repl` at an immutable revision" in setup
     assert "Name the require `repl`" in setup
     assert "which finds the package only under its require name" in setup
