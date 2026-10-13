@@ -27,7 +27,7 @@ feature, and require links to match the blob at the stable detected commit.
 For claim coordination, local publication views, generated mirrors, and pin or
 release policy, read [repository contracts](references/repository-contracts.md).
 
-Normally run:
+Run:
 
 ```bash
 make lint
