@@ -657,6 +657,114 @@ def test_unreadable_lean_source_is_named_by_its_relative_path(
     assert str(tmp_path) not in str(caught.value)
 
 
+def test_unsearchable_directory_is_blamed_instead_of_its_children(tmp_path: Path) -> None:
+    """A folder with read but no search permission lists its names, but every
+    lookup of one fails; the folder is at fault, not its entries."""
+
+    _require_descriptor_capture()
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root bypasses directory permissions")
+    _index(tmp_path, "def canonical : Nat := 0\n")
+    unsearchable = tmp_path / "Project" / "Sub"
+    unsearchable.mkdir()
+    (unsearchable / "Hidden.lean").write_text("def hidden : Nat := 0\n", encoding="utf-8")
+    unsearchable.chmod(0o644)
+    try:
+        with pytest.raises(
+            lean_module.LeanSourceError,
+            match=r"^permission denied: Project/Sub$",
+        ):
+            snapshot_project_sources(tmp_path)
+    finally:
+        unsearchable.chmod(0o755)
+
+
+def test_search_permission_revoked_at_any_lookup_or_open_blames_the_folder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Revoking search permission on a folder refuses every later lookup,
+    open and readlink of a name in it. Whichever of them the revocation
+    precedes, during capture or final verification, the folder is named."""
+
+    _require_descriptor_capture()
+    _index(tmp_path, "def canonical : Nat := 0\n")
+    project = tmp_path / "Project"
+    (project / "Sub").mkdir()
+    (project / "Sub" / "Nested.lean").write_text("def nested : Nat := 0\n", encoding="utf-8")
+    (project / "Link.lean").symlink_to("Basic.lean")
+    (project / "Out").mkdir()
+    (project / "Out" / "manifest.json").write_text(
+        json.dumps({"kind": "packets", "packets": [], "schema": "autoform-skeleton-packets/v2"}),
+        encoding="utf-8",
+    )
+    folders = {}
+    for relative in (".", "Project", "Project/Sub", "Project/Out"):
+        metadata = os.stat(tmp_path / relative)
+        folders[metadata.st_dev, metadata.st_ino] = relative
+    operations = 0
+    revoke_at = 0
+    revoked = None
+
+    def by_name(original):
+        def operation(path, *args, dir_fd=None, **kwargs):
+            nonlocal operations, revoked
+            if dir_fd is not None:
+                metadata = os.fstat(dir_fd)
+                folder = (metadata.st_dev, metadata.st_ino)
+                if folder in folders:
+                    operations += 1
+                    if operations == revoke_at:
+                        revoked = folder
+                    if folder == revoked:
+                        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), path)
+            return original(path, *args, dir_fd=dir_fd, **kwargs)
+
+        return operation
+
+    for name in ("stat", "open", "readlink"):
+        monkeypatch.setattr(os, name, by_name(getattr(os, name)))
+    # Lean indexing rejects the link only after the capture has read it.
+    with pytest.raises(lean_module.LeanSourceError, match="symbolic links are not supported"):
+        snapshot_project_sources(tmp_path)
+    for revoke_at in range(1, operations + 1):
+        operations = 0
+        revoked = None
+        with pytest.raises(lean_module.LeanSourceError) as caught:
+            snapshot_project_sources(tmp_path)
+        assert str(caught.value) == f"permission denied: {folders[revoked]}", revoke_at
+
+
+def test_entry_vanishing_after_a_refused_open_is_retried_as_a_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Telling who refused an open repeats the lookup; if the entry is gone
+    by then, nothing was refused for good and the capture is retried."""
+
+    _require_descriptor_capture()
+    _index(tmp_path, "def canonical : Nat := 0\n")
+    failures = [
+        ("open", PermissionError(errno.EACCES, "refused")),
+        ("stat", FileNotFoundError(errno.ENOENT, "vanished")),
+    ]
+
+    def failing(name):
+        original = getattr(os, name)
+
+        def operation(path, *args, dir_fd=None, **kwargs):
+            if dir_fd is not None and path == "Basic.lean" and failures[:1] and failures[0][0] == name:
+                raise failures.pop(0)[1]
+            return original(path, *args, dir_fd=dir_fd, **kwargs)
+
+        return operation
+
+    for name in ("open", "stat"):
+        monkeypatch.setattr(os, name, failing(name))
+    snapshot_project_sources(tmp_path)
+    assert failures == []
+
+
 def test_unsupported_entry_name_is_reported_without_retrying(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
