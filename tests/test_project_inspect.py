@@ -134,6 +134,7 @@ def test_json_report_has_a_stable_shape(tmp_path: Path) -> None:
         "release": "lean-v4.32.2-mathlib-v4.32.2",
         "status": "supported",
     }
+    assert (payload["mathlib"]["input_rev"], payload["mathlib"]["rev"]) == ("v4.32.2", COMMIT)
 
 
 @pytest.mark.parametrize(
