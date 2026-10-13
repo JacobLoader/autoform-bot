@@ -504,6 +504,53 @@ def test_audit_validates_lean_targets_only_when_root_is_supplied(tmp_path: Path)
     ]
 
 
+def test_audit_accepts_wanted_targets_as_statements_but_not_proofs(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    articles = {
+        "stated.md": {"declaration": "theorem", "statement": "formalized", "lean": "W.stated"},
+        "corollary.md": {"declaration": "corollary", "statement": "formalized", "lean": "W.legacy"},
+        "proved.md": {"declaration": "theorem", "statement": "formalized", "proof": "formalized", "lean": "W.proved"},
+        "signature.md": {"declaration": "def", "lean": "W.signature"},
+        "defined.md": {"declaration": "definition", "statement": "formalized", "lean": "W.defined"},
+        "instance.md": {"declaration": "instance", "lean": "W.instFoo"},
+        "wrong-kind.md": {"declaration": "theorem", "statement": "formalized", "lean": "W.signature"},
+    }
+    for relative, metadata in articles.items():
+        _article(blueprint, relative, **metadata)
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    source = [
+        "namespace W",
+        "public theorem_wanted stated : True",
+        "proof_wanted legacy : True",
+        "theorem_wanted proved : True",
+        "def_wanted signature : Nat",
+        "def_wanted defined : Nat",
+        "instance_wanted instFoo : Inhabited Nat",
+        "end W",
+    ]
+    (lean_root / "Wanted.lean").write_text("\n".join(source) + "\n", encoding="utf-8")
+
+    def wanted(name: str, keyword: str, claim: str) -> list[tuple[str, str]]:
+        return [
+            (
+                "lean-target-wanted",
+                f"lean target {name} is a {keyword}, which defers its proof or construction, so it cannot back {claim}",
+            )
+        ]
+
+    assert _finding_map(blueprint, lean_root=lean_root) == {
+        "roadmap/proved.md": wanted("W.proved", "theorem_wanted", "proof: formalized"),
+        "roadmap/defined.md": wanted(
+            "W.defined", "def_wanted", "statement: formalized, which proves a definition"
+        ),
+        "roadmap/wrong-kind.md": [
+            ("lean-target-kind-mismatch", "Lean target kind def_wanted does not match declaration intent theorem")
+        ],
+    }
+
+
 def test_audit_reports_lean_targets_declared_deprecated(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)
@@ -511,6 +558,7 @@ def test_audit_reports_lean_targets_declared_deprecated(tmp_path: Path) -> None:
         "same-line.md": "Project.sameLine",
         "line-above.md": "Project.lineAbove",
         "multi-line.md": "Project.multiLine",
+        "public.md": "Project.publicOld",
         "fresh.md": "Project.fresh",
         "decoy.md": "Project.decoy",
         "after-previous.md": "Project.afterPrevious",
@@ -534,6 +582,9 @@ def test_audit_reports_lean_targets_declared_deprecated(tmp_path: Path) -> None:
         '  deprecated "use [Project.fresh] instead" (since := "2025-01-01")]',
         "-- removed after the next release",
         "theorem Project.multiLine : True := trivial",
+        "",
+        "@[deprecated Project.fresh]",
+        "public theorem Project.publicOld : True := trivial",
         "",
         '-- @[deprecated Project.fresh (since := "2025-01-01")]',
         "/- @[deprecated Project.fresh] -/",
@@ -563,6 +614,7 @@ def test_audit_reports_lean_targets_declared_deprecated(tmp_path: Path) -> None:
         "roadmap/same-line.md": deprecated("Project.sameLine"),
         "roadmap/line-above.md": deprecated("Project.lineAbove"),
         "roadmap/multi-line.md": deprecated("Project.multiLine"),
+        "roadmap/public.md": deprecated("Project.publicOld"),
     }
 
 
