@@ -95,7 +95,7 @@ class ConstantRecord:
 
 @dataclass(frozen=True, slots=True)
 class ModuleEvidence:
-    """One loaded root module, its direct local imports, and loaded artifact."""
+    """One loaded root module, its direct local imports, and its loaded artifact."""
 
     module: str
     source_path: str
@@ -125,7 +125,8 @@ def parse_impact_output(text: str, *, allow_empty: bool = False) -> dict[str, Co
     """Return the probe's strictly validated records, keyed by constant name.
 
     A record whose value the probe could not read fails closed: the users of
-    whatever that value mentions could not be traced.
+    whatever that value mentions could not be traced. ``allow_empty`` accepts a
+    run with no project-local constants, which module evidence can still answer.
     """
 
     records: dict[str, ConstantRecord] = {}
@@ -191,7 +192,7 @@ def _constant_record(payload: object) -> ConstantRecord:
 def parse_module_evidence(text: str) -> dict[str, ModuleEvidence]:
     """Return the probe's complete, strictly validated loaded-local graph.
 
-    Only direct imports recorded by Lean are exposed.  Requiring every named
+    Only direct imports recorded by Lean are exposed. Requiring every named
     local import to have its own record makes the result a closed graph rather
     than a collection of independently plausible edges.
     """
@@ -537,10 +538,11 @@ def render_impact_probe(
     """Render the Lean program that records every project-local constant.
 
     Given ``artifact_dir``, the root package's Lean artifact directory, the
-    probe also emits module evidence and refuses a root-package module
-    outside ``project_modules``: a loaded one whose OLean lies under
-    ``artifact_dir``, or one found by walking a ``glob_directories`` entry,
-    the directory of an ``M.*`` or ``M.+`` glob with ``M`` and the glob.
+    probe also emits module evidence and refuses a root-package module the
+    captured inventory lacks: a loaded module outside ``project_modules`` whose
+    OLean lies under ``artifact_dir``, or a module the probe did not load that
+    it finds by walking a ``glob_directories`` entry. Each entry is the
+    directory of an ``M.*`` or ``M.+`` glob, with ``M`` and the glob.
     """
 
     modules = sorted(set(imports))
@@ -798,9 +800,8 @@ class ModuleImportImpactReport:
 
     @property
     def article_local(self) -> bool:
-        return self.selected_affected and {article.id for article in self.affected_articles} <= {
-            self.article.id
-        } and not any(article.id != self.article.id for article in self.unresolved_articles)
+        listed = {article.id for article in (*self.affected_articles, *self.unresolved_articles)}
+        return self.selected_affected and listed <= {self.article.id}
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -1012,9 +1013,9 @@ def compute_module_import_impact(
 
     Imports change the environment of the edited module and every project
     module that imports it, transitively, which covers what an added import
-    can affect.  Removing an import can also drop modules from the build,
+    can affect. Removing an import can also drop modules from the build,
     transitively, when only imports bring them in, as under a library's
-    roots; this scope does not list them.  It never refuses the edit merely
+    roots; this scope does not list them. It never refuses the edit merely
     because the scope is larger than one article.
     """
 
@@ -1426,9 +1427,8 @@ def revision_impact(
         require_modules=False,
         require_default_declarations=not declarations,
     )
+    # Without --declaration, _load_impact_evidence refused an article that names none.
     names = tuple(dict.fromkeys(declarations)) or evidence.selected.declarations
-    if not names:
-        raise ImpactError(f"{evidence.selected.id} names no lean: declaration; pass --declaration NAME")
     return compute_impact(
         evidence.records,
         evidence.articles,
@@ -1597,23 +1597,15 @@ def format_module_import_impact(report: ModuleImportImpactReport) -> list[str]:
     if report.affected_claim_targets:
         lines.append(
             "Check active claims or semantic changes for: "
-            + ", ".join(
-                f"{target} (key {key})"
-                for target, key in zip(
-                    report.affected_claim_targets,
-                    report.affected_claim_keys,
-                )
-            )
+            + _keyed(report.affected_claim_targets, report.affected_claim_keys)
         )
-    lines.append(
-        "Required claims for the import edit: "
-        + ", ".join(
-            f"{target} (key {key})"
-            for target, key in zip(report.claim_targets, report.claim_keys)
-        )
-    )
+    lines.append("Required claims for the import edit: " + _keyed(report.claim_targets, report.claim_keys))
     return lines
 
 
 def _label(node_id: str, article_id: str | None) -> str:
     return f"{node_id} [{article_id}]" if article_id else node_id
+
+
+def _keyed(targets: Sequence[str], keys: Sequence[str]) -> str:
+    return ", ".join(f"{target} (key {key})" for target, key in zip(targets, keys))

@@ -64,24 +64,23 @@ an effective module header or import change, run `autoform work import-impact`
 as documented in the CLI reference. Capture baseline skeleton evidence for its
 currently built, named affected articles. The report covers added imports, so
 when an edit removes an import, also baseline the articles of modules only that
-import kept in the build. Compare the report's claim keys with the JSON
-from `autoform claim list --worker-id WORKER`: another owner's live affected
-claim is a conflict, and malformed evidence is unverifiable. Then atomically
-acquire the required article and module `claim_targets`; an already-held
-same-worker article claim is upgraded, not released first. Recheck affected
-keys after acquisition and before integration. These checks are best-effort
-coordination, not a lock on downstream articles. Do not acquire or edit them
-merely because they are listed; treat reported unresolved declarations as
-unknown validation scope, not proof they are unaffected. Disclosure alone is
-not a conflict or failed validation. After rebuilding,
-repeat the skeleton evidence and use Agent Review to judge semantic changes. An
-expired valid claim is not active. If any article actually needs changes,
-atomically acquire the full held set plus its targets. On any acquisition
-refusal or recheck conflict, release the complete currently held import set
-before waiting or reporting, unless handing off an existing verified candidate
-under the later handoff contract. Renew, hand off, and release the full import
-claim set together. Stop for an active conflict or failed validation, not for a
-blanket import rule.
+import kept in the build. Compare the report's claim keys with the JSON from
+`autoform claim list --worker-id WORKER`: another owner's live affected claim is
+a conflict, and malformed evidence is unverifiable. Then atomically acquire the
+required article and module `claim_targets`; an already-held same-worker
+article claim is upgraded, not released first. Recheck affected keys after
+acquisition and before integration. These checks are best-effort coordination,
+not a lock on downstream articles. Do not acquire or edit them merely because
+they are listed; treat reported unresolved declarations as unknown validation
+scope, not proof they are unaffected. Disclosure alone is not a conflict or
+failed validation. After rebuilding, repeat the skeleton evidence and use Agent
+Review to judge semantic changes. An expired valid claim is not active. If any
+article actually needs changes, atomically acquire the full held set plus its
+targets. On a refused import-claim acquisition or a recheck conflict, release
+the complete currently held import set before waiting or reporting, unless
+handing off an existing verified candidate under the later handoff contract.
+Renew, hand off, and release the full import claim set together. Stop for an
+active conflict or failed validation, not for a blanket import rule.
 
 After acquiring the claim, bring the worktree up to date with the shared branch
 and reload `work context`. Before editing, require the same `phase`, `blockers`,
@@ -215,11 +214,12 @@ since other clones read their frontier from the remote. Without authority to
 update or push that branch, or when integration fails, keep the set and report
 the branch, commit, complete claim set, and worker ID for handoff instead of
 making the leaf look free. The integrator renews, integrates, and releases a
-handed-off set with `--worker-id` set to the reported ID; if the lease has lapsed, it acquires
-the complete set under its own ID and repeats the reload gate before integrating.
-Release the complete set once the result is visible that way, or when abandoning
-the leaf without a candidate. For ordinary work that set is just the article;
-for an import edit it also includes the module and any validated expansion.
+handed-off set with `--worker-id` set to the reported ID; if the lease has
+lapsed, it acquires the complete set under its own ID and repeats the reload
+gate before integrating. Release the complete set once the result is visible
+that way, or when abandoning the leaf without a candidate. For ordinary work
+that set is just the article; for an import edit it also includes the module
+and any validated expansion.
 
 Re-read the work frontier from the updated shared branch and repeat while
 independent ready leaves and authorized capacity remain. Stop when the frontier

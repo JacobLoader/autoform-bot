@@ -126,7 +126,7 @@ run_cmd do
   let written ← IO.mkRef 0
   try
     -- Module ownership and direct imports come from the loaded environment,
-    -- not source syntax.  Emit even modules with no declarations so the
+    -- not source syntax. Emit even modules with no declarations so the
     -- evidence is a closed graph over every loaded project module.
     if {emit_module_evidence} then
       let sourceSearchPath ← getSrcSearchPath

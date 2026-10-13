@@ -145,7 +145,7 @@ def test_import_edits_use_reported_scope_instead_of_a_blanket_ban(
     assert "An expired valid claim is not active" in formalize
     assert "Disclosure alone is not a conflict or failed validation" in formalize
     assert "atomically acquire the full held set plus its targets" in formalize
-    assert "On any acquisition refusal or recheck conflict" in formalize
+    assert "On a refused import-claim acquisition or a recheck conflict" in formalize
     assert "release the complete currently held import set before waiting or reporting" in formalize
     assert "unless handing off an existing verified candidate" in formalize
     assert "Renew, hand off, and release the full import claim set together" in formalize

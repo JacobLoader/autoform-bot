@@ -2338,6 +2338,11 @@ end Imp
 """
 
 
+def _lake_build(root: Path) -> None:
+    build = subprocess.run(["lake", "build"], cwd=root, capture_output=True, text=True, timeout=600, check=False)
+    assert build.returncode == 0, build.stdout + build.stderr
+
+
 def _imp_project(root: Path) -> Path:
     """A built Lean project whose glob selects a module its root never imports."""
 
@@ -2353,8 +2358,7 @@ def _imp_project(root: Path) -> Path:
     (lean_root / "Imp" / "Extra.lean").write_text(_IMP_EXTRA, encoding="utf-8")
     (lean_root / "Imp" / "Alias.lean").write_text(_IMP_ALIAS, encoding="utf-8")
     (lean_root / "Imp" / "More.lean").write_text(_IMP_MORE, encoding="utf-8")
-    build = subprocess.run(["lake", "build"], cwd=lean_root, capture_output=True, text=True, timeout=600, check=False)
-    assert build.returncode == 0, build.stdout + build.stderr
+    _lake_build(lean_root)
     return lean_root
 
 
@@ -2547,8 +2551,7 @@ def test_import_impact_refuses_a_glob_module_the_inventory_lacks(tmp_path: Path,
     ):
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_text(text, encoding="utf-8")
-    build = subprocess.run(["lake", "build"], cwd=root, capture_output=True, text=True, timeout=600, check=False)
-    assert build.returncode == 0, build.stdout + build.stderr
+    _lake_build(root)
     skipped = {"build": "Demo.build.X", "Sym": "Demo.Sym.Y", "Mid": "Demo.Mid.X"}
     for module in skipped.values():
         assert (root / ".lake/build/lib/lean" / Path(*module.split("."))).with_suffix(".olean").is_file()
@@ -2595,8 +2598,7 @@ def test_import_impact_reads_modules_whose_names_need_quotes(tmp_path: Path, cap
     (root / "H.lean").write_text("".join(f"import H.«{stem}»\n" for stem in stems), encoding="utf-8")
     for index, stem in enumerate(stems):
         (root / "H" / f"{stem}.lean").write_text(f"def H.v{index} : Nat := {index}\n", encoding="utf-8")
-    build = subprocess.run(["lake", "build"], cwd=root, capture_output=True, text=True, timeout=600, check=False)
-    assert build.returncode == 0, build.stdout + build.stderr
+    _lake_build(root)
     project = tmp_path / "roadmap"
     _write_article(project, "README.md", title="Chapter", metadata=["article_id: af_0000000000000000000000c0"])
     _write_article(project, "stem.md", metadata=["declaration: definition", "statement: formalized", "lean: H.v2"])
@@ -2635,8 +2637,7 @@ def test_import_impact_reads_a_library_nested_in_another_srcdir(tmp_path: Path, 
     ):
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_text(text, encoding="utf-8")
-    build = subprocess.run(["lake", "build"], cwd=root, capture_output=True, text=True, timeout=600, check=False)
-    assert build.returncode == 0, build.stdout + build.stderr
+    _lake_build(root)
     project = tmp_path / "roadmap"
     _write_article(project, "README.md", title="Chapter", metadata=["article_id: af_0000000000000000000000c0"])
     for name, lean in (("b.md", "Demo.Basic.b"), ("t.md", "Tests.t")):

@@ -11,7 +11,7 @@ import socket
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 
 from . import status
@@ -23,8 +23,6 @@ from .dashboard import publication_bound_live_state, serve_dashboard
 from .graph import GraphValidationError, load_graph
 from .impact import (
     ImpactError,
-    ImpactReport,
-    ModuleImportImpactReport,
     format_impact,
     format_module_import_impact,
     module_import_impact,
@@ -676,10 +674,8 @@ def _project(args: argparse.Namespace) -> int:
 def _work(args: argparse.Namespace) -> int:
     if args.work_command == "assumptions":
         return _work_assumptions(args)
-    if args.work_command == "impact":
+    if args.work_command in {"impact", "import-impact"}:
         return _work_impact(args)
-    if args.work_command == "import-impact":
-        return _work_import_impact(args)
     # Only loading the roadmap can fail on the project's paths; printing the
     # result stays outside, so an output error is not reported as one.
     try:
@@ -850,43 +846,23 @@ def _work_assumptions(args: argparse.Namespace) -> int:
 
 
 def _work_impact(args: argparse.Namespace) -> int:
-    return _run_impact_command(
-        lambda: revision_impact(
-            args.target,
-            args.selector,
-            lean_root=args.lean_root,
-            declarations=args.declarations,
-            timeout=args.timeout,
-        ),
-        json_output=args.json,
-        formatter=format_impact,
-    )
-
-
-def _work_import_impact(args: argparse.Namespace) -> int:
-    return _run_impact_command(
-        lambda: module_import_impact(
-            args.target,
-            args.selector,
-            args.module,
-            lean_root=args.lean_root,
-            timeout=args.timeout,
-        ),
-        json_output=args.json,
-        formatter=format_module_import_impact,
-    )
-
-
-def _run_impact_command(
-    query: Callable[[], ImpactReport | ModuleImportImpactReport],
-    *,
-    json_output: bool,
-    formatter: Callable[[ImpactReport | ModuleImportImpactReport], list[str]],
-) -> int:
-    """Run either freshness-bound impact query through one error contract."""
-
     try:
-        report = query()
+        if args.work_command == "impact":
+            report = revision_impact(
+                args.target,
+                args.selector,
+                lean_root=args.lean_root,
+                declarations=args.declarations,
+                timeout=args.timeout,
+            )
+        else:
+            report = module_import_impact(
+                args.target,
+                args.selector,
+                args.module,
+                lean_root=args.lean_root,
+                timeout=args.timeout,
+            )
     except (GraphValidationError, RuntimeProjectionError) as error:
         for issue in error.issues:
             print(f"error: {_human_text(issue)}", file=sys.stderr)
@@ -904,10 +880,11 @@ def _run_impact_command(
         print("error: project, blueprint, or Lean root path cannot be read", file=sys.stderr)
         return 2
 
-    if json_output:
+    if args.json:
         print(report.to_json())
         return 0
-    for line in formatter(report):
+    lines = format_impact(report) if args.work_command == "impact" else format_module_import_impact(report)
+    for line in lines:
         print(_human_text(line))
     return 0
 

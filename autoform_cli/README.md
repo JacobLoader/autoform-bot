@@ -789,11 +789,12 @@ autoform work import-impact SELECTOR MODULE [TARGET] --lean-root PATH [--json] [
 its Lake freshness check may refresh build hash sidecars. `SELECTOR` identifies
 the working article and `MODULE` the module whose effective header would change.
 Lean supplies the loaded module graph; Autoform binds every node to its captured
-root source and configured root-package artifact so dependencies cannot shadow it.
-The command refuses a loaded root-package module whose source the captured
-inventory lacks, and a module an `M.*` or `M.+` glob finds that the inventory
-lacks, which Lake builds even when nothing imports it; the inventory skips
-nested Git checkouts, ignored directories such as `build`, and symlinked
+root source and configured root-package artifact so dependencies cannot shadow
+it. The probe imports project modules, so run it only in a trusted checkout or
+sandbox. The command refuses a loaded root-package module whose source the
+captured inventory lacks, and a module an `M.*` or `M.+` glob finds that the
+inventory lacks, which Lake builds even when nothing imports it; the inventory
+skips nested Git checkouts, ignored directories such as `build`, and symlinked
 directories. `affected_modules` is therefore complete over the root libraries'
 loaded Lake roots/globs, not dormant source files outside that build boundary.
 It holds `MODULE` and every loaded module that imports it, directly or
@@ -804,14 +805,14 @@ reached is no longer built. The report does not list such modules.
 
 JSON uses `autoform-module-import-impact/v1` and binds the graph with
 `module_graph_revision`; `module_scope` is `loaded-root-library-graph`.
-Required `claim_targets` contain only the selected
-article and a stable `module_claim_target` resource,
-`lean-module/<lowercase-slug>-<sha256[:16]>`. `affected_claim_targets` are
-downstream warnings, not pre-emptive ownership requirements; `claim_keys` and
-`affected_claim_keys` match the JSON from `autoform claim list --worker-id
-WORKER`. `unresolved_articles` reports local declarations absent from the
-loaded environment without globally blocking unrelated edits, while every
-`affected_unowned_helpers` entry includes its own claim target and key.
+Required `claim_targets` contain only the selected article and a stable
+`module_claim_target` resource, `lean-module/<lowercase-slug>-<sha256[:16]>`.
+`affected_claim_targets` are downstream warnings, not pre-emptive ownership
+requirements; `claim_keys` and `affected_claim_keys` match the JSON from
+`autoform claim list --worker-id WORKER`. `unresolved_articles` reports local
+declarations absent from the loaded environment without globally blocking
+unrelated edits, while every `affected_unowned_helpers` entry includes its own
+claim target and key.
 
 Imports are allowed regardless of reported breadth. Follow the
 [Formalize import workflow](../skills/formalize/SKILL.md#import-edits) for
