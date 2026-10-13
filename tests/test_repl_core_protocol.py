@@ -479,8 +479,8 @@ def test_disposable_call_uses_one_frame_and_removes_process_handles(monkeypatch)
         lambda code, deadline: repl_core._LeanHeaderAnalysis((), True),
     )
 
-    def run(code, env_id, timeout):
-        calls.append((code, env_id, timeout))
+    def run(code, timeout):
+        calls.append(code)
         return {
             "env": 4,
             "messages": [
@@ -533,9 +533,7 @@ def test_disposable_call_uses_one_frame_and_removes_process_handles(monkeypatch)
         ],
     }
     assert len(starts) == 1
-    assert len(calls) == 1
-    assert calls[0][0] == "import Mathlib\n#check Nat"
-    assert calls[0][1] is None
+    assert calls == ["import Mathlib\n#check Nat"]
     assert len(closes) == 2
 
 
@@ -557,7 +555,7 @@ def test_disposable_call_uses_one_decreasing_phase_budget(monkeypatch):
         budgets.append("startup")
         clock["now"] = 5
 
-    def run(code, env_id, timeout):
+    def run(code, timeout):
         budgets.append(("command", timeout, code))
         return {"env": 1, "messages": []}
 
@@ -1296,7 +1294,7 @@ def test_disposable_call_prefixes_warmup_only_onto_proven_ordinary_headers(monke
     frames = []
     monkeypatch.setattr(repl, "start", lambda: None)
 
-    def run_frame(code, env_id, timeout):
+    def run_frame(code, timeout):
         frames.append(code)
         return {"env": 1, "messages": [], "sorries": []}
 
@@ -1452,8 +1450,8 @@ def test_disposable_timeout_after_full_write_is_not_retried(monkeypatch):
     calls = []
     monkeypatch.setattr(repl, "start", lambda: setattr(repl, "process", object()))
 
-    def fail_after_send(code, env_id, timeout, mark_sent):
-        calls.append((code, env_id))
+    def fail_after_send(code, timeout, mark_sent):
+        calls.append(code)
         mark_sent()
         raise TimeoutError("response timed out")
 
@@ -1464,7 +1462,7 @@ def test_disposable_timeout_after_full_write_is_not_retried(monkeypatch):
         "repl_error": "Lean REPL combined command execution timed out after 1 seconds",
         "outcome_unknown": True,
     }
-    assert calls == [("#eval 1", None)]
+    assert calls == ["#eval 1"]
     assert repl.process is None
 
 
@@ -1481,7 +1479,7 @@ def test_disposable_cleanup_failure_after_full_write_keeps_the_unknown_outcome(m
         if close_calls > 1:
             raise RuntimeError("cleanup failed")
 
-    def fail_after_send(code, env_id, timeout, mark_sent):
+    def fail_after_send(code, timeout, mark_sent):
         mark_sent()
         raise TimeoutError("response timed out")
 
@@ -1508,7 +1506,7 @@ def test_run_closes_and_reraises_cancellation(monkeypatch, request_sent):
     repl.process = object()
     retired = []
 
-    def cancel(code, env_id, timeout, mark_sent):
+    def cancel(code, timeout, mark_sent):
         if request_sent:
             mark_sent()
         raise asyncio.CancelledError
@@ -1517,7 +1515,7 @@ def test_run_closes_and_reraises_cancellation(monkeypatch, request_sent):
     monkeypatch.setattr(repl, "close", lambda **kwargs: retired.append(True))
 
     with pytest.raises(asyncio.CancelledError):
-        repl._run("#check Nat", env_id=None, timeout=1)
+        repl._run("#check Nat", timeout=1)
 
     assert retired == [True]
 
@@ -1540,7 +1538,7 @@ def test_run_preserves_cancellation_when_cleanup_fails(monkeypatch):
     )
 
     with pytest.raises(asyncio.CancelledError) as raised:
-        repl._run("#check Nat", env_id=None, timeout=1)
+        repl._run("#check Nat", timeout=1)
 
     if hasattr(raised.value, "add_note"):
         assert raised.value.__notes__ == [
@@ -1554,10 +1552,10 @@ def test_wire_protocol_accepts_response_split_across_reads(monkeypatch):
         repl = _repl_with_process(process, chunk_size=8)
         _patch_pipe_reads(monkeypatch, process)
 
-        assert repl._run("#check Nat", env_id=3, timeout=1) == {"messages": []}
+        assert repl._run("#check Nat", timeout=1) == {"messages": []}
 
         request = process._stdin_read.read(4096)
-        assert json.loads(request.decode().strip()) == {"cmd": "#check Nat", "env": 3}
+        assert json.loads(request.decode().strip()) == {"cmd": "#check Nat"}
 
 
 def test_wire_protocol_rechecks_deadline_before_dispatch_delimiter(monkeypatch):
@@ -1583,7 +1581,6 @@ def test_wire_protocol_rechecks_deadline_before_dispatch_delimiter(monkeypatch):
         with pytest.raises(TimeoutError, match="while writing"):
             repl._run_io(
                 "#check Nat",
-                env_id=None,
                 timeout=1,
                 mark_sent=lambda: sent.append(True),
             )
@@ -1610,7 +1607,7 @@ def test_final_delimiter_write_failure_has_unknown_outcome(monkeypatch):
         monkeypatch.setattr(repl, "close", lambda **kwargs: retired.append(True))
 
         with pytest.raises(repl_core.ReplOutcomeUnknown, match="fully sent"):
-            repl._run("#check Nat", env_id=None, timeout=1)
+            repl._run("#check Nat", timeout=1)
 
         request = os.read(process._stdin_read.fileno(), 4096)
         assert request.endswith(b"\n") and not request.endswith(b"\n\n")
@@ -1624,7 +1621,7 @@ def test_wire_protocol_retires_process_on_unsolicited_second_frame(monkeypatch):
         _patch_pipe_reads(monkeypatch, process)
 
         with pytest.raises(repl_core.ReplOutcomeUnknown, match="unsolicited bytes"):
-            repl._run("#check Nat", env_id=3, timeout=1)
+            repl._run("#check Nat", timeout=1)
 
         assert repl.process is None
 
@@ -1642,7 +1639,7 @@ def test_wire_protocol_exchanges_one_frame_over_real_pipes():
 
         worker = threading.Thread(target=serve_request, daemon=True)
         worker.start()
-        assert repl._run("#check Nat", env_id=None, timeout=1) == {"env": 1}
+        assert repl._run("#check Nat", timeout=1) == {"env": 1}
         worker.join(timeout=1)
         assert not worker.is_alive()
         assert bytes(request) == b'{"cmd": "#check Nat"}\n\n'
@@ -1669,7 +1666,7 @@ def test_wire_protocol_rechecks_stdout_before_dispatching_a_complete_request_bod
         monkeypatch.setattr(repl_core.os, "write", write_body_then_emit_stdout)
 
         with pytest.raises(repl_core.ReplProcessExited, match="unsolicited stdout"):
-            repl._run("#check Nat", env_id=None, timeout=1)
+            repl._run("#check Nat", timeout=1)
 
         os.set_blocking(process._stdin_read.fileno(), False)
         written = os.read(process._stdin_read.fileno(), 4096)
@@ -1689,7 +1686,7 @@ def test_wire_protocol_preserves_utf8_split_across_reads(monkeypatch):
         repl = _repl_with_process(process, chunk_size=7)
         _patch_pipe_reads(monkeypatch, process)
 
-        result = repl._run("#check Nat", env_id=None, timeout=1)
+        result = repl._run("#check Nat", timeout=1)
 
     assert result["messages"][0]["data"] == "Nat → Nat"
 
@@ -1702,7 +1699,7 @@ def test_wire_protocol_reports_a_bounded_stderr_tail_on_premature_eof(monkeypatc
         _patch_pipe_reads(monkeypatch, process)
 
         with pytest.raises(repl_core.ReplOutcomeUnknown) as error:
-            repl._run("#check Nat", env_id=None, timeout=1)
+            repl._run("#check Nat", timeout=1)
 
     assert str(error.value).endswith(stderr[-repl_core._STDERR_TAIL_BYTES :].decode())
     assert "discarded-prefix" not in str(error.value)
@@ -1727,7 +1724,7 @@ def test_wire_protocol_services_stdout_while_stderr_remains_readable(monkeypatch
         # captured. stderr cannot be drained to a boundary though, so the
         # process is retired and the response travels on the backlog error.
         with pytest.raises(repl_core.ReplStderrBacklog) as error:
-            repl._run("#check Nat", env_id=None, timeout=1)
+            repl._run("#check Nat", timeout=1)
 
     assert error.value.response == {"messages": []}
 
@@ -1756,7 +1753,7 @@ def test_wire_protocol_times_out_while_stderr_remains_readable(monkeypatch):
         monkeypatch.setattr(repl_core.time, "monotonic", fake_monotonic)
 
         with pytest.raises(repl_core.ReplOutcomeUnknown, match="timed out"):
-            repl._run("#check Nat", env_id=None, timeout=1)
+            repl._run("#check Nat", timeout=1)
 
 
 def test_wire_protocol_retires_a_process_generation_that_exceeds_its_stderr_quota(monkeypatch):
@@ -1766,7 +1763,7 @@ def test_wire_protocol_retires_a_process_generation_that_exceeds_its_stderr_quot
         _patch_pipe_reads(monkeypatch, process)
 
         with pytest.raises(repl_core.ReplStderrBacklog, match="process-generation stderr") as error:
-            repl._run("#check Nat", env_id=None, timeout=1)
+            repl._run("#check Nat", timeout=1)
 
     assert error.value.response == {}
     assert repl.process is None
@@ -1812,7 +1809,7 @@ def test_wire_protocol_drains_stderr_while_waiting_to_write(monkeypatch):
             block_stdin_until_stderr_is_drained,
         )
 
-        assert repl._run("#check Nat", env_id=None, timeout=1) == {}
+        assert repl._run("#check Nat", timeout=1) == {}
         assert process.stderr_bytes == b""
         assert repl._stderr_bytes == 8
 
@@ -1824,7 +1821,7 @@ def test_wire_protocol_retires_a_process_with_closed_stderr_before_writing():
         repl = _repl_with_process(process)
 
         with pytest.raises(repl_core.ReplProcessExited, match="before the request frame"):
-            repl._run("#check Nat", env_id=None, timeout=1)
+            repl._run("#check Nat", timeout=1)
 
         assert repl.process is None
 
@@ -1839,7 +1836,7 @@ def test_stdout_eof_before_the_frame_is_sent_reports_the_stderr_tail():
         repl = _repl_with_process(process)
 
         with pytest.raises(repl_core.ReplProcessExited, match="closed stdout before") as error:
-            repl._run("#check Nat", env_id=None, timeout=1)
+            repl._run("#check Nat", timeout=1)
 
         assert repl.process is None
     assert "error: unknown package `repl`" in str(error.value)
@@ -1860,7 +1857,7 @@ def test_stdout_eof_keeps_only_a_fixed_stderr_tail(monkeypatch):
         _patch_pipe_reads(monkeypatch, process)
 
         with pytest.raises(repl_core.ReplProcessExited) as error:
-            repl._run_io("#check Nat", env_id=None, timeout=1, mark_sent=lambda: None)
+            repl._run_io("#check Nat", timeout=1, mark_sent=lambda: None)
 
         assert len(repl._stderr_tail) == repl_core._STDERR_TAIL_BYTES
         assert bytes(repl._stderr_tail) == b"b" * repl_core._STDERR_TAIL_BYTES
@@ -1895,7 +1892,7 @@ def test_stdout_eof_takes_one_final_stderr_read_after_deadline(monkeypatch):
         monkeypatch.setattr(repl_core.select, "select", fake_select)
 
         with pytest.raises(repl_core.ReplProcessExited, match="diagnostdiagnost"):
-            repl._run_io("#check Nat", env_id=None, timeout=1, mark_sent=lambda: None)
+            repl._run_io("#check Nat", timeout=1, mark_sent=lambda: None)
 
         assert stderr_reads == 2
 
@@ -1907,7 +1904,7 @@ def test_wire_protocol_drains_queued_stderr_after_the_response_frame_completes(m
         repl = _repl_with_process(process, chunk_size=18, max_buffer_bytes=1024)
         _patch_pipe_reads(monkeypatch, process)
 
-        assert repl._run("#check Nat", env_id=None, timeout=5) == {"messages": []}
+        assert repl._run("#check Nat", timeout=5) == {"messages": []}
 
         # Unlike a fairness cycle, the post-response drain reads until stderr is empty.
         assert process.stderr_bytes == b""
@@ -1920,7 +1917,7 @@ def test_wire_protocol_reports_a_backlog_when_the_cap_ends_the_post_response_dra
         _patch_pipe_reads(monkeypatch, process)
 
         with pytest.raises(repl_core.ReplStderrBacklog) as error:
-            repl._run("#check Nat", env_id=None, timeout=5)
+            repl._run("#check Nat", timeout=5)
 
     # The response survives as the request's answer...
     assert error.value.response == {"messages": []}
@@ -1934,7 +1931,7 @@ def test_wire_protocol_accepts_stderr_that_ends_exactly_at_the_cap(monkeypatch):
         repl = _repl_with_process(process, chunk_size=18, max_buffer_bytes=20)
         _patch_pipe_reads(monkeypatch, process)
 
-        assert repl._run("#check Nat", env_id=None, timeout=5) == {"messages": []}
+        assert repl._run("#check Nat", timeout=5) == {"messages": []}
 
         assert repl.process is process
         assert process.stderr_bytes == b""
@@ -1966,7 +1963,7 @@ def test_wire_protocol_keeps_the_response_when_the_deadline_ends_the_stderr_drai
         # Endlessly readable stderr must not hang the post-response drain, and the
         # deadline must not discard a response that was already captured.
         with pytest.raises(repl_core.ReplStderrBacklog) as error:
-            repl._run("#check Nat", env_id=None, timeout=1)
+            repl._run("#check Nat", timeout=1)
 
     assert error.value.response == {"messages": []}
 
@@ -1995,7 +1992,7 @@ def test_run_never_leaves_a_reusable_process_when_a_backlog_stops_the_drain(monk
         _patch_pipe_reads(monkeypatch, process)
 
         with pytest.raises(repl_core.ReplStderrBacklog):
-            repl._run("#check Nat", env_id=None, timeout=5)
+            repl._run("#check Nat", timeout=5)
 
         assert repl.process is None
         assert repl.is_clean()
@@ -2022,7 +2019,7 @@ def test_wire_protocol_rejects_invalid_json(monkeypatch):
         _patch_pipe_reads(monkeypatch, process)
 
         with pytest.raises(repl_core.ReplOutcomeUnknown, match="fully sent"):
-            repl._run("#check Nat", env_id=None, timeout=1)
+            repl._run("#check Nat", timeout=1)
 
 
 @pytest.mark.parametrize(
@@ -2051,7 +2048,7 @@ def test_wire_protocol_rejects_oversized_response(monkeypatch):
         _patch_pipe_reads(monkeypatch, process)
 
         with pytest.raises(repl_core.ReplOutcomeUnknown, match="response exceeded 8 bytes"):
-            repl._run("#check Nat", env_id=None, timeout=1)
+            repl._run("#check Nat", timeout=1)
 
 
 _RESPONSIVE_FAKE_REPL = (

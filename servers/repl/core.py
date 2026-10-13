@@ -989,7 +989,6 @@ class LeanRepl:
                     try:
                         response = self._run(
                             code=command,
-                            env_id=None,
                             timeout=command_timeout,
                         )
                     except ReplStderrBacklog as error:
@@ -1051,7 +1050,7 @@ class LeanRepl:
                 raise request_error
             return result
 
-    def _run(self, code: str, env_id: int | None, timeout: float) -> dict[str, Any]:
+    def _run(self, code: str, timeout: float) -> dict[str, Any]:
         """Run one frame and distinguish safe pre-send failures from unknown outcomes."""
         request_sent = False
         cleanup_deadline = time.monotonic() + timeout
@@ -1061,7 +1060,7 @@ class LeanRepl:
             request_sent = True
 
         try:
-            return self._run_io(code, env_id, timeout, mark_sent)
+            return self._run_io(code, timeout, mark_sent)
         except ReplOutcomeUnknown as error:
             message = str(error)
             try:
@@ -1101,15 +1100,11 @@ class LeanRepl:
     def _run_io(
         self,
         code: str,
-        env_id: int | None,
         timeout: float,
         mark_sent: Callable[[], None],
     ) -> dict[str, Any]:
         """Send code to the REPL via stdin JSON-RPC, read response via non-blocking I/O."""
-        cmd_obj: dict[str, Any] = {"cmd": code}
-        if env_id is not None:
-            cmd_obj["env"] = env_id
-        command = json.dumps(cmd_obj) + "\n\n"
+        command = json.dumps({"cmd": code}) + "\n\n"
 
         if (
             self.process is None

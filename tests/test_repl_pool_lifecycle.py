@@ -184,11 +184,11 @@ def test_queued_call_timeout_states_the_callers_budget(monkeypatch):
     )
     (repl,) = pool._workers
 
-    def run(code, env_id, timeout):
+    def run(code, timeout):
         command_timeouts.append(timeout)
         raise repl_core.ReplOutcomeUnknown("transport failed") from TimeoutError()
 
-    monkeypatch.setattr(repl, "start", lambda **kwargs: None)
+    monkeypatch.setattr(repl, "start", lambda: None)
     monkeypatch.setattr(repl, "_run", run)
     # The wait for an idle slot takes 2 of the caller's 10 seconds.
     clock = {"now": 0.0}
@@ -556,7 +556,7 @@ def test_repl_request_write_uses_the_operation_deadline():
     repl.process = process
     try:
         with pytest.raises(TimeoutError, match="while writing"):
-            repl._run("#check Nat", env_id=None, timeout=0.02)
+            repl._run("#check Nat", timeout=0.02)
     finally:
         stdin.close()
         process.stdout.close()
