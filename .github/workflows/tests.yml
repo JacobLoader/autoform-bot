@@ -56,6 +56,11 @@ jobs:
           timeout --signal=TERM --kill-after=30s 10m \
             elan toolchain install "$(tr -d '\r\n' < tests/fixtures/skeleton-project/lean-toolchain)"
           command -v lake
+      - name: Install the library fixture's Lean toolchain
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=30s 10m \
+            elan toolchain install "$(tr -d '\r\n' < tests/fixtures/library-project/lean-toolchain)"
       - name: Build a project from the bundled creation release
         run: |
           set -euo pipefail
@@ -100,6 +105,10 @@ jobs:
         run: timeout --signal=TERM --kill-after=30s 10m uv run pytest -q tests/test_unused_hypotheses.py
         env:
           AUTOFORM_REQUIRE_REAL_LEAN_TESTS: "1"
+      - name: Run the library index generator against real Lean
+        run: timeout --signal=TERM --kill-after=30s 30m uv run pytest -q tests/test_library_generate.py
+        env:
+          AUTOFORM_REQUIRE_REAL_LIBRARY_TESTS: "1"
       - name: Run the open-statement audit and contract against real Lean
         run: timeout --signal=TERM --kill-after=30s 10m uv run pytest -q tests/test_lake_artifact_audit.py tests/test_contract.py
         env:
