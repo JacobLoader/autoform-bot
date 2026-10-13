@@ -102,6 +102,7 @@ jobs:
           tests/test_project_inspect.py
           tests/test_scaffold.py::test_scaffold_merges_autoform_rules_into_lake_gitignore
           tests/test_scaffold.py::test_windows_cross_interface_gitignore_identity_ignores_ctime_only
+          tests/test_scaffold.py::test_scaffold_refuses_case_variants_of_managed_paths
           tests/test_skeleton.py::test_bounded_command_rejects_excess_output
           tests/test_skeleton.py::test_bounded_command_caps_stdout_and_stderr_together
           tests/test_skeleton.py::test_bounded_command_rejects_invalid_utf8

@@ -168,7 +168,12 @@ commit, `--force` to overwrite, and `--json` for machine-readable output.
 An existing root `.gitignore` must be a bounded single-link regular file;
 missing Autoform rules are appended through one retained descriptor. If an
 append cannot be fully reverified, the error says it may be partial and the
-file must be inspected before retrying.
+file must be inspected before retrying. Before writing anything, even with
+`--force`, `init` refuses an existing entry that differs from a path it manages
+only in letter case or Unicode form, such as a `Blueprint/` Lean library or
+`MkDocs.yml`: Git and Linux CI see only the exact spelling, while a
+case-insensitive filesystem resolves the managed path to the variant. A root
+`Readme.md` or `readme.md` is refused, not skipped like an existing `README.md`.
 
 Create or inspect a Lean project and list Autoform's bundled known-good release pairs:
 

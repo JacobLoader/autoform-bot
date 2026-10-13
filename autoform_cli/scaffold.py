@@ -17,6 +17,7 @@ import re
 import stat
 import subprocess
 import tempfile
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -992,6 +993,45 @@ def _within(path: Path, root: Path) -> bool:
     return True
 
 
+def _case_collisions(root: Path, relatives: list[str]) -> list[str]:
+    """Name existing entries that differ from a planned path only in letter case or Unicode form.
+
+    Git, GitHub Actions, and Linux checkouts see only the exact spelling, but a
+    case-insensitive filesystem resolves `blueprint/` to an unrelated
+    `Blueprint/` Lean library and takes `MkDocs.yml` for `mkdocs.yml`. The walk
+    descends only into real directories with the exact spelling, so it never
+    lists through a link; the write loop refuses links.
+    """
+
+    listings: dict[Path, dict[str, bool]] = {}
+    collisions: set[str] = set()
+    for relative in relatives:
+        directory = root
+        for part in Path(relative).parts:
+            if directory not in listings:
+                try:
+                    with os.scandir(directory) as entries:
+                        listings[directory] = {entry.name: entry.is_dir(follow_symlinks=False) for entry in entries}
+                except (FileNotFoundError, NotADirectoryError):
+                    listings[directory] = {}
+                except OSError:
+                    raise ScaffoldError(
+                        [f"cannot list a directory to check for letter-case collisions: {directory}"]
+                    ) from None
+            folded = unicodedata.normalize("NFC", part).casefold()
+            for name in listings[directory]:
+                if name != part and unicodedata.normalize("NFC", name).casefold() == folded:
+                    collisions.add(
+                        f"{(directory / name).relative_to(root).as_posix()} differs only in letter case or "
+                        f"Unicode form from {(directory / part).relative_to(root).as_posix()}, which "
+                        "autoform init manages; rename it"
+                    )
+            if not listings[directory].get(part):
+                break
+            directory = directory / part
+    return sorted(collisions)
+
+
 def scaffold_project(
     target: str | Path,
     *,
@@ -1071,6 +1111,11 @@ def scaffold_project(
         autoform_source=source,
         autoform_ref=ref,
     )
+    # Checked before anything is written, even with --force, so a refusal
+    # leaves the project unchanged.
+    collisions = _case_collisions(root, [planned_file.relative for planned_file in planned])
+    if collisions:
+        raise ScaffoldError(collisions)
 
     written: list[str] = []
     skipped = list(omitted)

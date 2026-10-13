@@ -1236,6 +1236,62 @@ def test_a_dangling_destination_symlink_cannot_redirect_the_scaffold(tmp_path: P
     assert not outside.exists()
 
 
+@pytest.mark.parametrize(
+    ("created", "variant"),
+    [
+        ("Blueprint/Basic.lean", "Blueprint"),
+        ("MkDocs.yml", "MkDocs.yml"),
+        # KELVIN SIGN, which NFC maps to K.
+        ("m\u212adocs.yml", "m\u212adocs.yml"),
+        (".GitHub/dependabot.yml", ".GitHub"),
+        (".github/Workflows/ci.yml", ".github/Workflows"),
+        (".github/workflows/Autoform-Verify.yml", ".github/workflows/Autoform-Verify.yml"),
+        (".github/workflows/Blueprint-Pages.yml", ".github/workflows/Blueprint-Pages.yml"),
+        ("Readme.md", "Readme.md"),
+    ],
+)
+@pytest.mark.parametrize("force", [False, True])
+def test_scaffold_refuses_case_variants_of_managed_paths(
+    created: str, variant: str, force: bool, tmp_path: Path
+) -> None:
+    """Git and Linux CI see only the exact spelling of a managed path.
+
+    A case-insensitive filesystem wrote the vault into a `Blueprint/` Lean
+    library or took `MkDocs.yml` for `mkdocs.yml`, and a case-sensitive one
+    wrote a second copy beside the variant. Either way the run succeeded.
+    """
+    project = tmp_path / "project"
+    (project / created).parent.mkdir(parents=True, exist_ok=True)
+    (project / created).write_bytes(b"authored\n")
+    before = {path: path.read_bytes() if path.is_file() else None for path in project.rglob("*")}
+
+    with pytest.raises(ScaffoldError, match=re.escape(f"{variant} differs only in letter case")):
+        scaffold_project(
+            project,
+            title="Probe",
+            autoform_source="https://example.test/autoform.git",
+            autoform_ref="1" * 40,
+            force=force,
+        )
+
+    assert {path: path.read_bytes() if path.is_file() else None for path in project.rglob("*")} == before
+
+
+def test_case_collision_check_never_lists_through_a_link(tmp_path: Path) -> None:
+    """A linked exact spelling is refused as a link, not listed for case variants."""
+    project = tmp_path / "project"
+    outside = tmp_path / "outside"
+    (outside / "Roadmap").mkdir(parents=True)
+    project.mkdir()
+    (project / "blueprint").symlink_to(outside)
+
+    with pytest.raises(ScaffoldError, match="outside the project") as caught:
+        scaffold_project(project, title="Probe")
+
+    assert "letter case" not in str(caught.value)
+    assert list(outside.iterdir()) == [outside / "Roadmap"]
+
+
 def test_a_title_with_a_colon_stays_one_yaml_key(tmp_path: Path) -> None:
     """`site_name: Algebra: Foundations` is a nested mapping, not a title."""
     scaffold_module.scaffold_project(tmp_path, title="Algebra: Foundations")
