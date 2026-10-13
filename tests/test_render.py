@@ -20,7 +20,6 @@ import pytest
 
 import autoform_cli.lean as lean_module
 import autoform_cli.render as render_module
-from autoform_cli import _directory_binding as directory_binding
 from autoform_cli._tree_snapshot import TreeChangedError
 from autoform_cli.coverage import COVERAGE_DISPOSITIONS
 from autoform_cli.graph import GraphValidationError, load_graph
@@ -1320,7 +1319,6 @@ def test_render_is_deterministic_and_records_a_path_free_manifest(tmp_path: Path
         "nodes": 3,
         "schema": "autoform-publication/v2",
         "source": "blueprint/roadmap Markdown",
-        "source_capture": "retained-descriptor",
         "source_revision": manifest["source_revision"],
         "views": ["book", "progress", "project", "chapter", "focus", "full"],
     }
@@ -1347,9 +1345,7 @@ def test_publication_revision_frames_binary_paths_and_contents() -> None:
     combined = snapshot((("a", b"x\0b\0y"),))
     split = snapshot((("a", b"x"), ("b", b"y")))
 
-    assert render_module._snapshot_source_revision(combined) != (
-        render_module._snapshot_source_revision(split)
-    )
+    assert render_module._source_revision(combined) != render_module._source_revision(split)
 
 
 def test_render_verifies_one_stable_revision_for_both_manifest_states(
@@ -1359,7 +1355,7 @@ def test_render_verifies_one_stable_revision_for_both_manifest_states(
     project = _project(tmp_path)
     revision = "a" * 64
     revision_calls = 0
-    manifests: list[tuple[bool, str]] = []
+    manifests: list[str] = []
     original_write = render_module._write_publication_manifest
 
     def source_revision(_snapshot) -> str:
@@ -1368,16 +1364,16 @@ def test_render_verifies_one_stable_revision_for_both_manifest_states(
         return revision
 
     def write_manifest(*args, **kwargs) -> None:
-        manifests.append((kwargs["complete"], kwargs["source_revision"]))
+        manifests.append(kwargs["source_revision"])
         original_write(*args, **kwargs)
 
-    monkeypatch.setattr(render_module, "_snapshot_source_revision", source_revision)
+    monkeypatch.setattr(render_module, "_source_revision", source_revision)
     monkeypatch.setattr(render_module, "_write_publication_manifest", write_manifest)
 
     render_site(project / "blueprint", tmp_path / "out", lean_root=project)
 
     assert revision_calls == 1
-    assert manifests == [(False, revision), (True, revision)]
+    assert manifests == [revision, revision]
     published = json.loads((tmp_path / "out" / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))
     assert published["source_revision"] == revision
 
@@ -1395,7 +1391,7 @@ def test_render_completes_from_its_capture_when_authored_sources_change_mid_rend
     def write_manifest(*args, **kwargs) -> None:
         nonlocal changed
         original_write(*args, **kwargs)
-        if not kwargs["complete"] and not changed:
+        if not changed:  # the first write, before any page exists
             changed = True
             with (blueprint / "README.md").open("a", encoding="utf-8") as stream:
                 stream.write("\nChanged during publication.\n")
@@ -1428,7 +1424,7 @@ def test_render_uses_one_capture_when_authored_sources_change_and_restore(
     def write_manifest(*args, **kwargs) -> None:
         nonlocal changed
         original_write(*args, **kwargs)
-        if not kwargs["complete"] and not changed:
+        if not changed:  # the first write, before any page exists
             changed = True
             overview.write_bytes(original + b"\nTRANSIENT_ABA\n")
 
@@ -1444,40 +1440,6 @@ def test_render_uses_one_capture_when_authored_sources_change_and_restore(
     assert b"TRANSIENT_ABA" not in (output / "README.md").read_bytes()
     manifest = json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))
     assert manifest["source_revision"] == publication_source_revision(blueprint)
-
-
-def test_render_portable_capture_is_explicit_and_preserves_publication_policy(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project = _project(tmp_path)
-    blueprint = project / "blueprint"
-    (blueprint / ".notes").write_text("local\n", encoding="utf-8")
-    linker = render_module.build_linker(project)
-    monkeypatch.setattr(render_module, "build_linker", lambda *_args, **_kwargs: linker)
-    monkeypatch.setattr(directory_binding, "DIRECTORY_BINDING_SUPPORTED", False)
-
-    output = tmp_path / "portable"
-    render_site(blueprint, output, lean_root=project)
-
-    manifest = json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))
-    assert manifest["source_capture"] == "portable-best-effort"
-    assert not (output / ".notes").exists()
-    assert "The base object." in (output / "roadmap/README.md").read_text(encoding="utf-8")
-
-    (blueprint / "secrets.json").write_text("private\n", encoding="utf-8")
-    with pytest.raises(PublicationError, match="local or sensitive.*secrets.json"):
-        render_site(blueprint, tmp_path / "sensitive", lean_root=project)
-    (blueprint / "secrets.json").unlink()
-
-    outside = tmp_path / "outside.md"
-    outside.write_text("outside\n", encoding="utf-8")
-    try:
-        (blueprint / "linked.md").symlink_to(outside)
-    except OSError:
-        pytest.skip("symlinks are unavailable")
-    with pytest.raises(PublicationError, match="refusing symlink.*linked.md"):
-        render_site(blueprint, tmp_path / "symlink", lean_root=project)
 
 
 def test_anchored_links_resolve_only_entries_that_are_read(
@@ -1784,25 +1746,18 @@ def test_render_rejects_symlinks_before_cleaning_an_existing_site(tmp_path: Path
 
 
 @pytest.mark.parametrize(
-    ("relative", "reported"),
-    (
-        ("task_queue.json", "task_queue.json"),
-        (".autoform/agents_status.json", ".autoform"),
-        ("sources/dispatcher.log", "sources/dispatcher.log"),
-        (".env.local", ".env.local"),
-    ),
+    "relative",
+    ("task_queue.json", ".autoform/agents_status.json", "sources/dispatcher.log", ".env.local"),
 )
 def test_render_rejects_operational_or_sensitive_inputs(
-    tmp_path: Path,
-    relative: str,
-    reported: str,
+    tmp_path: Path, relative: str
 ) -> None:
     project = _project(tmp_path)
     local = project / "blueprint" / relative
     local.parent.mkdir(parents=True, exist_ok=True)
     local.write_text("private\n", encoding="utf-8")
 
-    with pytest.raises(PublicationError, match="local or sensitive.*" + re.escape(reported)):
+    with pytest.raises(PublicationError, match="local or sensitive.*" + re.escape(relative)):
         render_site(project / "blueprint", tmp_path / "out", lean_root=project)
 
 
@@ -1863,6 +1818,33 @@ def test_an_orphaned_implementation_note_stops_the_render(tmp_path: Path) -> Non
         load_publication_source(blueprint)
 
     assert not (tmp_path / "out").exists()
+
+
+def test_the_dashboard_copy_holds_the_ledgers_and_atlas_the_graph_reads(tmp_path: Path) -> None:
+    """The dashboard loads its graph from a partial copy of the capture.
+
+    A copy of the roadmap alone failed every catalog's ledger check, so the
+    live overlay reported an error for any blueprint with a catalog, and it
+    lost the areas that atlas.json assigns.
+    """
+    project = _project(tmp_path)
+    blueprint = project / "blueprint"
+    (blueprint / "sources").mkdir()
+    (blueprint / "sources/catalog.md").write_text("# Project.Base declarations\n", encoding="utf-8")
+    (blueprint / "roadmap/catalog.md").write_text(
+        "---\ncatalog: module\n---\n\n# Existing module\n\n"
+        "## Sources\n\n- [Declaration ledger](../sources/catalog.md)\n",
+        encoding="utf-8",
+    )
+    (blueprint / "atlas.json").write_text(
+        json.dumps({"schema": "autoform-atlas/v1", "areas": {"Algebra": ["catalog"]}}),
+        encoding="utf-8",
+    )
+
+    _revision, graph = load_publication_source(blueprint)
+
+    assert graph.nodes["catalog"].catalog == "module"
+    assert graph.nodes["catalog"].area == "Algebra"
 
 
 @pytest.mark.parametrize(

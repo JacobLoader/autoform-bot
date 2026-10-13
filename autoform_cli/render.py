@@ -572,7 +572,6 @@ def _render_pages(
             targets=targets,
             narrative=narrative,
             blueprint=blueprint,
-            authored_blueprint=authored_blueprint,
             repo_root=repo_root,
             destination=destination,
             node_sources=node_sources,
@@ -712,7 +711,7 @@ def _is_complete_publication(data: bytes) -> bool:
 
 @contextmanager
 def _private_copy(
-    snapshot: TreeSnapshot, relative: Path = Path("blueprint"), prefix: str = ""
+    snapshot: TreeSnapshot, relative: Path = Path("blueprint"), prefix: str | tuple[str, ...] = ""
 ) -> Iterator[tuple[Path, Path]]:
     """Write one captured generation into a private directory for main's path-based readers.
 
@@ -757,7 +756,8 @@ def load_publication_source(blueprint_dir: str | Path) -> tuple[str, Graph]:
     """Read the blueprint once; return its publication revision and the graph of those bytes."""
     blueprint = Path(blueprint_dir).expanduser().resolve()
     snapshot = _capture_blueprint(blueprint)
-    with _private_copy(snapshot, prefix="roadmap/") as (_root, copy):  # the graph reads nothing else
+    # The graph reads the articles, the ledgers that catalogs link, and the atlas.
+    with _private_copy(snapshot, prefix=("roadmap/", f"{SOURCES_DIR}/", "atlas.json")) as (_root, copy):
         return _source_revision(snapshot), _load_graph(copy, blueprint)
 
 
@@ -1101,7 +1101,7 @@ def _sources_base(blueprint: Path, repo_root: Path, linker: SourceLinker) -> "_S
     if not linker.repository_url or not linker.ref:
         return None
     try:
-        relative = (blueprint / SOURCES_DIR).relative_to(repo_root).as_posix()
+        relative = (blueprint / SOURCES_DIR).resolve().relative_to(repo_root).as_posix()
     except ValueError:
         # The vault is outside the repository being linked, so no blob URL
         # describes it. Better no link than one that 404s.
@@ -2202,7 +2202,6 @@ def _render_chapter(
     targets: dict[str, tuple[Path, str]],
     narrative: str | None,
     blueprint: Path,
-    authored_blueprint: Path,
     repo_root: Path,
     destination: Path,
     node_sources: dict[Path, str],
@@ -2226,7 +2225,6 @@ def _render_chapter(
             links=links,
             page=page,
             blueprint=blueprint,
-            authored_blueprint=authored_blueprint,
             repo_root=repo_root,
             destination=destination,
             node_sources=node_sources,
@@ -2329,7 +2327,6 @@ def _render_environment(
     links: Mapping[str, str],
     page: Path,
     blueprint: Path,
-    authored_blueprint: Path,
     repo_root: Path,
     destination: Path,
     node_sources: dict[Path, str],
@@ -2357,13 +2354,7 @@ def _render_environment(
 
     code_links, implementation_rows, linked, unresolved = _lean_presentation(node, linker)
     context_link = _graph_context_link(node, page=page, destination=destination)
-    source_link = _vault_source_link(
-        node,
-        blueprint=blueprint,
-        authored_blueprint=authored_blueprint,
-        repo_root=repo_root,
-        linker=linker,
-    )
+    source_link = _vault_source_link(node, repo_root=repo_root, linker=linker)
     meta_rows = implementation_rows
     if node_status.key == "conditional":
         # A conditional proof must never read as finished, so the open
@@ -2472,14 +2463,7 @@ def _code_icon() -> str:
     )
 
 
-def _vault_source_link(
-    node: Node,
-    *,
-    blueprint: Path,
-    authored_blueprint: Path,
-    repo_root: Path,
-    linker,
-) -> str:
+def _vault_source_link(node: Node, *, repo_root: Path, linker) -> str:
     """Link a statement to the Markdown article it was authored in.
 
     The graph view and the published statement are both derived. This is the
@@ -2488,8 +2472,7 @@ def _vault_source_link(
     if not linker.repository_url or not linker.ref:
         return ""
     try:
-        blueprint_relative = node.path.resolve().relative_to(blueprint)
-        relative = (authored_blueprint / blueprint_relative).relative_to(repo_root).as_posix()
+        relative = node.path.resolve().relative_to(repo_root).as_posix()
     except ValueError:
         return ""
     href = (
