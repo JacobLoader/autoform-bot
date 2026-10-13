@@ -8,7 +8,7 @@ import pytest
 
 from autoform_cli import unused_hypotheses
 from autoform_cli.__main__ import main
-from autoform_cli.skeleton import SkeletonError
+from autoform_cli.skeleton import SkeletonError, _lean_requests, run_probe
 from autoform_cli.unused_hypotheses import (
     PROBE_MARKER,
     find_unused_hypotheses,
@@ -41,6 +41,8 @@ def test_the_probe_lifts_lean_s_command_heartbeat_limit() -> None:
     probe = render_probe(imports=("Skel",), roots=("Skel.heavy",))
 
     assert "set_option maxHeartbeats 0 in\nrun_cmd do" in probe
+    # The roots reach Lean as one JSON string, not a list literal.
+    assert f"AutoformUnusedProbe.requestedRoots {_lean_requests(('Skel.heavy',))}" in probe
 
 
 def _entry(**fields: object) -> list[dict[str, object]]:
@@ -194,7 +196,8 @@ def test_a_declaration_two_articles_name_is_read_once(tmp_path: Path) -> None:
     blueprint = _blueprint(tmp_path, lean={"a": "Skel.heavy_of_weight", "b": "Skel.heavy_of_weight"})
 
     def runner(probe: str, root: Path) -> str:
-        assert probe.count('"Skel.heavy_of_weight"') == 1
+        # The requested root appears once in the probe's JSON roots.
+        assert probe.count('\\"Skel.heavy_of_weight\\"') == 1
         return _theorem("Skel.heavy_of_weight", (3, "h", "0 < y", False))
 
     report = find_unused_hypotheses(blueprint, lean_root=project, runner=runner)
@@ -330,6 +333,20 @@ end Skel
 
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+def test_probe_reads_more_roots_than_lean_compiles_in_a_list(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    _build(project)
+    # Lean's code generator gives up on a list literal past about 1,500 entries.
+    absent = tuple(f"Skel.absent{index}" for index in range(3000))
+    roots = ("Skel.heavy_of_weight", *absent)
+
+    records = parse_probe_output(run_probe(render_probe(imports=("Skel",), roots=roots), project), expected_roots=roots)
+
+    assert records["Skel.heavy_of_weight"]["found"] is True
+    assert not any(records[root]["found"] for root in absent)
+
+
+@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
 def test_unused_hypotheses_in_a_built_project(tmp_path: Path) -> None:
     project = _project(tmp_path)
     (project / "Skel" / "Unused.lean").write_text(_UNUSED, encoding="utf-8")
@@ -410,7 +427,8 @@ def test_deeply_shared_terms_are_read_in_time(tmp_path: Path) -> None:
     _build(project)
     blueprint = _blueprint(tmp_path, lean={"proof": "Skel.dagProof", "statement": "Skel.dagStatement"})
 
-    report = find_unused_hypotheses(blueprint, lean_root=project, timeout=60)
+    # A tree walk takes hours, so 300 s still catches one and tolerates a loaded machine.
+    report = find_unused_hypotheses(blueprint, lean_root=project, timeout=300)
 
     assert [finding.split(": ", 2)[2] for finding in report.findings] == [
         "hypothesis-unused: the proof never uses h : x = x",

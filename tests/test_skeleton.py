@@ -24,7 +24,9 @@ from autoform_cli.lean import (
     Declaration,
     LeanSourceError,
     SourceIndex,
+    _is_managed_output_manifest_bytes,
     index_project,
+    snapshot_project_sources,
 )
 from autoform_cli.skeleton import (
     DeclarationSkeleton,
@@ -3530,6 +3532,119 @@ def test_packet_publication_rolls_back_both_trees_on_commit_failure(
 
     assert (packets / "old-marker").read_text(encoding="utf-8") == "old packets\n"
     assert (passages / "old-marker").read_text(encoding="utf-8") == "old passages\n"
+
+
+class _ManifestFirstListing:
+    """A directory listing that yields ``manifest.json`` first, the order that exposed packets."""
+
+    def __init__(self, listing) -> None:
+        with listing:
+            self._entries = iter(sorted(listing, key=lambda entry: entry.name.casefold() != PACKET_MANIFEST))
+
+    # Iterated with ``next`` by ``os.walk``, which ``shutil.rmtree`` uses without descriptor functions.
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._entries)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        return None
+
+
+def test_packet_publication_never_shows_lean_capture_an_unmarked_packet(tmp_path: Path, monkeypatch) -> None:
+    """After every filesystem step, each folder under the Lean root holds no folder or Lean file
+    unless it also holds its whole, recognized manifest, so a Lean capture never indexes a packet."""
+
+    report = _fake_report(tmp_path / "fixture")
+    # Each node gets a passage, so the passage stage also holds folders that need its manifest.
+    report = replace(report, nodes=tuple(replace(node, passage="source") for node in report.nodes))
+    lean_root = tmp_path / "lean"
+    packets, passages = lean_root / "packets", lean_root / "passages"
+    write_packets(report, packets, passages=passages)
+    (packets / "old-marker").write_text("old packets\n", encoding="utf-8")
+    assert snapshot_project_sources(lean_root).source_files == ()
+    exposed: list[str] = []
+
+    def check(event: str) -> None:
+        for folder in lean_root.iterdir():
+            # An install preflight probe holds only empty folders, never packets.
+            if "autoform-preflight" in folder.name:
+                continue
+            manifest = folder / PACKET_MANIFEST
+            recognized = manifest.is_file() and _is_managed_output_manifest_bytes(manifest.read_bytes())
+            if manifest.exists() and not recognized:
+                exposed.append(f"after {event}: {folder.name} shows an incomplete marker")
+            # A capture descends only into folders and indexes only Lean files.
+            others = [
+                name
+                for name in os.listdir(folder)
+                if name != PACKET_MANIFEST and ((folder / name).is_dir() or name.endswith(".lean"))
+            ]
+            if others and not recognized:
+                exposed.append(f"after {event}: {folder.name} holds {sorted(others)} without its marker")
+
+    def observed(owner, name: str) -> None:
+        original = getattr(owner, name)
+
+        def call(*args, **kwargs):
+            result = original(*args, **kwargs)
+            check(name)
+            return result
+
+        monkeypatch.setattr(owner, name, call)
+
+    for owner, name in ((Path, "mkdir"), (os, "unlink"), (os, "rmdir"), (os, "replace"), (os, "rename")):
+        observed(owner, name)
+    path_open = Path.open
+
+    def open_and_check(self, mode: str = "r", *args, **kwargs):
+        stream = path_open(self, mode, *args, **kwargs)
+        # A file opened for writing is visible, still empty, until the write lands.
+        if not set(mode).isdisjoint("wxa+"):
+            check("open")
+        return stream
+
+    monkeypatch.setattr(Path, "open", open_and_check)
+    scandir = os.scandir
+    monkeypatch.setattr(os, "scandir", lambda *args, **kwargs: _ManifestFirstListing(scandir(*args, **kwargs)))
+
+    write_packets(report, packets, passages=passages)
+    monkeypatch.undo()
+
+    assert exposed == []
+    assert not (packets / "old-marker").exists()
+    assert (packets / "basics" / "determined" / "article.lean").is_file()
+    assert (passages / "basics" / "determined" / "passage.txt").is_file()
+    assert sorted(path.name for path in lean_root.iterdir()) == ["packets", "passages"]
+
+
+# Lean capture matches the marker by folded name, so a differently cased one hides the folder too.
+def test_removing_output_deletes_its_manifest_last(tmp_path: Path, monkeypatch) -> None:
+    output = tmp_path / "output"
+    (output / "nested").mkdir(parents=True)
+    (output / "Manifest.json").write_text("{}\n", encoding="utf-8")
+    (output / "nested" / "packet.lean").write_text("theorem t : True := trivial\n", encoding="utf-8")
+    (output / "article.lean").write_text("theorem u : True := trivial\n", encoding="utf-8")
+    removed: list[str] = []
+    unlink = os.unlink
+
+    def record(path, *args, **kwargs) -> None:
+        removed.append(Path(os.fsdecode(path)).name)
+        unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "unlink", record)
+    scandir = os.scandir
+    monkeypatch.setattr(os, "scandir", lambda *args, **kwargs: _ManifestFirstListing(scandir(*args, **kwargs)))
+
+    _remove_output(output)
+
+    assert not output.exists()
+    assert sorted(removed) == ["Manifest.json", "article.lean", "packet.lean"]
+    assert removed[-1] == "Manifest.json"
 
 
 def test_packet_publication_rolls_back_both_trees_when_interrupted(

@@ -92,6 +92,86 @@ def test_formalize_replaces_custom_orchestration_with_the_markdown_frontier(
     assert '"id": "formalize"' in muse
 
 
+def test_import_edits_use_reported_scope_instead_of_a_blanket_ban(
+    repo_root: Path,
+) -> None:
+    paths = (
+        "AGENTS.md",
+        "skills/formalize/SKILL.md",
+        "skills/develop-plugin/SKILL.md",
+        "autoform_cli/README.md",
+    )
+    documents = {
+        path: (repo_root / path).read_text(encoding="utf-8") for path in paths
+    }
+
+    for path, document in documents.items():
+        assert "autoform work import-impact" in " ".join(document.split()), path
+
+    for path in ("AGENTS.md", "skills/formalize/SKILL.md"):
+        assert "blanket import" in " ".join(documents[path].split()), path
+
+    cli = " ".join(documents["autoform_cli/README.md"].split())
+    assert (
+        "autoform work import-impact SELECTOR MODULE [TARGET] --lean-root PATH "
+        "[--json] [--timeout SECONDS]"
+    ) in cli
+    assert "advisory and does not edit authored roadmap or Lean source" in cli
+    assert "freshness check may refresh build hash sidecars" in cli
+    assert "`autoform-module-import-impact/v1`" in cli
+    assert "`module_scope` is `loaded-root-library-graph`" in cli
+    assert "`module_claim_target`" in cli
+    assert "`lean-module/<lowercase-slug>-<sha256[:16]>`" in cli
+    assert "Required `claim_targets` contain only the selected article" in cli
+    assert "`affected_claim_targets`" in cli
+    assert "downstream warnings, not pre-emptive ownership requirements" in cli
+    assert "`claim_keys`" in cli
+    assert "`affected_claim_keys`" in cli
+    assert "`module_graph_revision`" in cli
+    assert "captured root source and configured root-package artifact" in cli
+    assert "complete over the root libraries' loaded Lake roots/globs" in cli
+    assert "not dormant source files outside that build boundary" in cli
+    assert "`unresolved_articles`" in cli
+    assert "without globally blocking unrelated edits" in cli
+    assert "`affected_unowned_helpers` entry includes its own claim target and key" in cli
+    assert "`module_claim_key` is the claim key of `module_claim_target`" in cli
+    assert "names, or owns through the parent chain, a declaration in an affected module" in cli
+    assert "`selected_affected` says whether the selected article is one of them" in cli
+    assert "`article_local` holds only when it is, `affected_claim_targets` is empty" in cli
+    assert "`autoform claim list --worker-id WORKER`" in cli
+    assert "Imports are allowed regardless of reported breadth" in cli
+    assert "Formalize import workflow" in cli
+
+    formalize = " ".join(documents["skills/formalize/SKILL.md"].split())
+    assert "Lean imports are allowed; do not pre-block" in formalize
+    assert "already-held same-worker article claim is upgraded, not released first" in formalize
+    assert "best-effort coordination, not a lock" in formalize
+    assert "Do not acquire or edit them merely because they are listed" in formalize
+    assert "Capture baseline skeleton evidence" in formalize
+    assert "malformed evidence is unverifiable" in formalize
+    assert "An expired valid claim is not active" in formalize
+    assert "Disclosure alone is not a conflict or failed validation" in formalize
+    assert "atomically acquire the full held set plus its targets" in formalize
+    assert "On a refused import-claim acquisition or a recheck conflict" in formalize
+    assert "release the complete currently held import set before waiting or reporting" in formalize
+    assert "unless handing off an existing verified candidate" in formalize
+    assert "Renew, hand off, and release the full import claim set together" in formalize
+    assert (
+        "then repair each under the review gates of the "
+        "[revision contract](../../autoform_cli/README.md#revision-contract)"
+    ) in formalize
+    assert "repairing another article's Lean that an [import edit](#import-edits) breaks" in formalize
+    assert "a change another article needs beyond an import repair" in formalize
+
+    agents = " ".join(documents["AGENTS.md"].split())
+    assert "consumer formalization work" in agents
+    assert "active conflicts" in agents
+
+    development = " ".join(documents["skills/develop-plugin/SKILL.md"].split())
+    assert "Keep imports permissive" in development
+    assert "plugin changes preserve it" in development
+
+
 def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path) -> None:
     """Notes written into articles crept into published books as Lean commentary.
 
@@ -980,6 +1060,125 @@ def test_skills_search_the_blueprint_before_adding_a_result(repo_root: Path) -> 
     assert "dependencies reach" in sentence(formalize, "Use the declaration")
     assert "never restate" in sentence(formalize, "missing prerequisite")
     assert "duplicate" in rubric and "not proof" in rubric
+
+
+def test_skills_search_shared_libraries_and_say_what_to_do_with_a_hit(repo_root: Path) -> None:
+    """A library hit prevents a second proof only if the agent searches the library and knows what to do.
+
+    The rules live once, in Formalize's reference page; the three search paragraphs link to it and carry
+    only what changes how they read: search the libraries too, and a library refusal is not a blocker.
+    """
+
+    reference_path = repo_root / "skills/formalize/references/library-search.md"
+    reference = reference_path.read_text(encoding="utf-8")
+    paragraphs = [" ".join(block.split()) for block in reference.split("\n\n")]
+
+    def rule(*phrases: str) -> str:
+        """The one paragraph of the reference holding every phrase."""
+
+        found = [p for p in paragraphs if all(phrase in p for phrase in phrases)]
+        assert len(found) == 1, f"{phrases!r} is in {len(found)} paragraphs of the library search rules"
+        return found[0]
+
+    # Which libraries, and a refusal that names one.
+    listing = rule("`autoform library list`")
+    assert "every package it reports as usable" in listing and "tell the user once" in listing
+    assert "error: library NAME:" in rule("not a blocker")
+    assert "rerun" in rule("not a blocker") and "tell the user" in rule("not a blocker")
+    # What to do with each kind of hit.
+    assert "`import`" in rule("as a helper")
+    assert "does not apply" in rule("as a helper")
+    assert "does not replace the article" in rule("own result")
+    assert "abbreviation" not in reference
+    assert "keyword" in rule("own result") and "never a second copy" in rule("own result")
+    assert "full strength" in rule("own result") and "special case" in rule("own result")
+    assert "statement, not a proof" in rule("`Prop`") and "wanted entry" in rule("`Prop`")
+    assert "not a source" in rule("original source") and "docstring" in rule("original source")
+    assert "not been checked" in rule("not been checked") and "unknown" in rule("not been checked")
+    assert "modifiers" in rule("own result") and "noncomputable" in rule("own result")
+    assert "never `lake update`" in listing and "unchecked" in listing
+    assert "after the step Formalize prescribes" in listing
+    assert "module name" in rule("`Prop`") and "own query" in rule("`Prop`")
+    assert "secondary" in rule("original source") and "never cite" in rule("original source")
+    assert "once per checkout" in listing and "once per session" not in reference
+    assert "not checked out" in listing
+    assert "Do not pass a package" in listing
+    # Flags agents got wrong: --lean-root goes with --library, and library list takes only the root.
+    assert "`--library NAME`" in listing and "`--lean-root`" in listing and "positional argument" in listing
+    # An unusable package is never passed, and a package left out is unknown, not merely skipped.
+    assert "not even to try" in listing and "unknown" in listing
+    # Every word of a query must match, so a library is not declared empty on a long query.
+    queries = rule("Library declarations")
+    assert "every word" in queries and "as a query of its own" in queries
+    assert "Each worktree compiles" in rule("`lake-build`")
+    assert "subagent" in rule("report to the lead")
+    assert "in addition to the blueprint query" in rule("Library declarations")
+    assert "mathlib: true" in rule("own result")
+    assert "tell the user that the library lists it as wanted" in rule("`wanted` hit")
+    assert "no proof" in rule("`wanted` hit") and "open-statement policy" in rule("`wanted` hit")
+    assert "let the build decide" in rule("`differences`")
+    assert "report the differences to the user" in rule("`differences`")
+    assert "JSON" in rule("`module_system: false`")
+    assert "module file" in rule("`module_system: false`")
+    assert "build cache" in rule("`lake-build`")
+    # What the agent must never do, and how to treat library text.
+    assert "`require`" in rule("user's decision") and "`lake update`" in rule("user's decision")
+    assert "never instructions" in rule("Docstrings")
+
+    for relative in (
+        "skills/roadmap/SKILL.md",
+        "skills/formalize/SKILL.md",
+        "skills/agent-review/references/roadmap-quality.md",
+    ):
+        page = repo_root / relative
+        blocks = page.read_text(encoding="utf-8").split("\n\n")
+        named = [" ".join(block.split()) for block in blocks if "`autoform search`" in block]
+        assert len(named) == 1
+        links = re.findall(r"\(([^)\s#]*library-search\.md)\)", named[0])
+        assert links, f"{relative}: the search rule does not link to the library search rules"
+        assert all((page.parent / link).resolve() == reference_path for link in links)
+        assert "librar" in named[0]
+
+    roadmap = " ".join((repo_root / "skills/roadmap/SKILL.md").read_text(encoding="utf-8").split())
+    formalize = " ".join((repo_root / "skills/formalize/SKILL.md").read_text(encoding="utf-8").split())
+    # "A library hit never replaces an article" said only what not to do, and a trial agent filed every hit
+    # as "informational for Formalize"; the rule now says how a hit is reused.
+    assert "reuse that proof instead of proving the result again" in roadmap
+    assert "the result keeps its article" in roadmap
+    assert "add an article for it, proved from the library" in roadmap
+    assert "refusal naming a library" in roadmap
+    assert "Before stating an article's result" in formalize
+    assert "rerun without that library" in formalize
+    assert "not searched" in formalize and "unknown" in formalize
+
+    def sentence(text: str, phrase: str) -> str:
+        """The one sentence of ``text`` that holds ``phrase``."""
+
+        found = [part for part in re.split(r"(?<=[.:]) ", text) if phrase in part]
+        assert len(found) == 1, f"{phrase!r} is in {len(found)} sentences"
+        return found[0]
+
+    assert "blueprint hit" in sentence(formalize, "Use the declaration")
+    assert "used directly" in sentence(formalize, "A library hit needed as a helper")
+    rubric = " ".join(
+        (repo_root / "skills/agent-review/references/roadmap-quality.md").read_text(encoding="utf-8").split()
+    )
+    assert "List any library refused" in rubric
+    assert "words of the result" in rubric and "not a duplicate of an article" in rubric
+    assert "not a duplicate" in formalize
+
+
+def test_library_search_rules_add_no_dependency_and_no_frontmatter(repo_root: Path) -> None:
+    """The spec's non-goals: the agent never edits the project's dependencies or invents an article field."""
+
+    text = (repo_root / "skills/formalize/references/library-search.md").read_text(encoding="utf-8")
+    assert "uv run --project" not in text
+    assert not re.search(r"^\s*(lean_library|library):", text, re.MULTILINE)
+    flat = " ".join(text.split())
+    assert "Do not add a `require`" in flat
+    assert "change a locked revision" in flat and "run `lake update`" in flat
+    sentence = next(part for part in re.split(r"(?<=\.) ", flat) if "`lake update` to make" in part)
+    assert sentence.startswith("Do not add a `require`, change a locked revision, or run")
 
 
 def test_roadmap_reconciles_the_pages_setup_wrote(repo_root: Path) -> None:

@@ -316,7 +316,9 @@ uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform dashboard . --site-dir site
 ```
 
 Drop `--require-declarations` when reviewing work in progress, where a
-statement may name a Lean declaration that does not exist yet.
+statement may name a Lean declaration that does not exist yet. On native
+Windows, run `check` and `render` without `--lean-root`: the site then has no
+code links (see the publication contract below).
 
 `dashboard` serves the exact built MkDocs site on `127.0.0.1`, choosing an
 available port unless `--port` is supplied, and adds a read-only live overlay
@@ -771,10 +773,14 @@ use although its statement changes meaning. They join `claim_targets` too. A
 which cannot use the revised one, and it cannot record `statement: retracted`.
 A revision is contained exactly when the selected article's target is its only
 claim target. A Markdown path reaches the revised declarations when it ends at
-the revised article or at an article that names one of them or, when none names
-it, owns it; missing dependency paths are counted the same way. Project
+the revised article, at an article that names one of them, or, when none names
+it, at an owner; missing dependency paths are counted the same way. Project
 locality is an exact inventory of regular repository source modules, never a
-namespace-prefix guess.
+namespace-prefix guess. The inventory skips nested Git checkouts, ignored
+directories such as `build`, and symlinked directories, so the probe refuses a
+loaded root-package module whose source the inventory lacks, and a module an
+`M.*` or `M.+` glob finds that it did not load, which Lake builds even when
+nothing imports it, instead of silently leaving out what such a module uses.
 
 The command snapshots and rereads the roadmap around the probe. It retains one
 bound Lean source generation, derives module inventory and locations from that
@@ -787,6 +793,52 @@ or sandbox. It compares elaborated types and values; changes to notation,
 attributes, instance priority, or unreported generated declarations still
 require human review.
 
+Report the coordination and review scope of an import edit without forbidding
+the edit:
+
+```bash
+autoform work import-impact SELECTOR MODULE [TARGET] --lean-root PATH [--json] [--timeout SECONDS]
+```
+
+`import-impact` is advisory and does not edit authored roadmap or Lean source;
+its Lake freshness check may refresh build hash sidecars. `SELECTOR` identifies
+the working article and `MODULE` the module whose effective header would change.
+Lean supplies the loaded module graph; Autoform binds every node to its captured
+root source and configured root-package artifact so dependencies cannot shadow
+it. The probe imports project modules, so run it only in a trusted checkout or
+sandbox. Like `work impact`, it refuses a root-package module the captured
+inventory lacks, so `affected_modules` is complete over the root libraries'
+loaded Lake roots/globs, not dormant source files outside that build boundary.
+It holds `MODULE` and every loaded module that imports it, directly or
+transitively, which covers what an added import can affect. Removing an import
+can also drop modules from the build: roots and single-module globs bring in
+only what they import, transitively, so a module only the removed import
+reached is no longer built. The report does not list such modules.
+
+JSON uses `autoform-module-import-impact/v1` and binds the graph with
+`module_graph_revision`; `module_scope` is `loaded-root-library-graph`.
+Required `claim_targets` contain only the selected article and a stable
+`module_claim_target` resource, `lean-module/<lowercase-slug>-<sha256[:16]>`.
+`affected_claim_targets` are downstream warnings, not pre-emptive ownership
+requirements; `claim_keys` and `affected_claim_keys` match the JSON from
+`autoform claim list --worker-id WORKER`. `unresolved_articles` reports local
+declarations absent from the loaded environment without globally blocking
+unrelated edits, while every `affected_unowned_helpers` entry includes its own
+claim target and key.
+
+`article` is the selected article (`id`, `article_id`, `claim_target`), and
+`module_claim_key` is the claim key of `module_claim_target`.
+`affected_articles` lists each article that names, or owns through the parent
+chain, a declaration in an affected module, with those `modules`;
+`selected_affected` says whether the selected article is one of them.
+`article_local` holds only when it is, `affected_claim_targets` is empty, and
+no other article has unresolved declarations, like `contained` in
+`work impact`.
+
+Imports are allowed regardless of reported breadth. Follow the
+[Formalize import workflow](../skills/formalize/SKILL.md#import-edits) for
+baseline evidence, conflict checks, claim lifecycle, and post-build review.
+
 Ask whether the blueprint already holds a result before adding an article or
 a Lean helper:
 
@@ -794,6 +846,8 @@ a Lean helper:
 autoform search . "separating hyperplane" --lean-root .
 autoform search . "non-ambiguous" --lean-root . --json --limit 20
 autoform search blueprint "interlacing" --state proved --state fully_proved
+autoform library list .
+autoform library index . --lib MathlibExt
 ```
 
 `search` takes the project or blueprint directory, then one quoted query; both
@@ -944,6 +998,17 @@ that appears at a path after the capture last looked there, or in a folder
 after the final check listed it, is not seen, so coordinated moves across
 folders can yield a set of sources that no single state had.
 
+Within each file the index records the declarations written with `theorem`,
+`lemma`, `def`, `abbrev`, `instance`, `structure`, `class`, `inductive`,
+`opaque`, `axiom`, `irreducible_def`, and Batteries' wanted commands
+(`Batteries.Util.ProofWanted`) `theorem_wanted`, `proof_wanted`, `def_wanted`,
+and `instance_wanted`. The command may follow `@[...]` attribute lists and the
+modifiers `public`, `private`, `protected`, `noncomputable`, `partial`,
+`unsafe`, `scoped`, and `local`; a declaration behind any other modifier, such
+as `meta` or `nonrec`, is not indexed, and neither is an unnamed `instance` or
+`instance_wanted`. A wanted command states a result whose proof or construction
+is deferred.
+
 The Markdown files are the source of truth. Graphs and sites are derived views
 that may be regenerated at any time.
 
@@ -957,7 +1022,21 @@ that asserted Mathlib facts are
 internally consistent, and that cited work resolves to local source
 material without escaping the blueprint. Coverage files are checked for broken
 links and explicitly declared gaps. With `--lean-root`, local declaration names
-and declaration kinds are checked against the Lean source index.
+and declaration kinds are checked against the Lean source index, along with the
+elaboration limits each target runs under.
+
+A wanted target matches the intent its command mirrors: `theorem_wanted` and
+`proof_wanted` a `theorem`, `lemma`, `proposition`, or `corollary`,
+`def_wanted` a `def` or `definition`, and `instance_wanted` an `instance`. A
+theorem's wanted target can back `statement: formalized`, but no wanted target
+backs a proved article: `lean-target-wanted` reports one named by an article
+that records `proof: formalized`, or by a definition that records `statement:
+formalized`, since a stated definition counts as proved. A wanted command
+without a body elaborates to a placeholder that carries no `sorry`, so no
+`sorry` check catches one. The kernel-trust audit of the generated verify
+workflow does not resolve wanted targets yet: Batteries declares every
+placeholder `private`, so that audit reports a `lean:` name naming one as not a
+declaration of the Lean build, as it does for any `private` declaration.
 
 ### Structure
 
@@ -990,6 +1069,28 @@ correlates with realized Lean length at r = -0.03 and prerequisite count at
 r = 0.25; its largest node is 1344 lines of Lean behind 66 words of prose and a
 single declaration name. Pre-formalization size estimates were considered and
 rejected on that evidence.
+
+### Elaboration limits
+
+With `--lean-root`, the audit reads the `maxHeartbeats`,
+`synthInstance.maxHeartbeats`, and `maxRecDepth` settings each resolved `lean:`
+target is elaborated under. `lean-target-unbounded-limit` reports a target with
+no heartbeat limit: a `set_option maxHeartbeats 0` or
+`set_option synthInstance.maxHeartbeats 0` in force at the declaration or inside
+its proof, which lets elaboration run indefinitely instead of failing.
+`lean-target-unscoped-limit` reports a target whose raised limit comes from a
+file- or section-wide `set_option`, which also covers every later declaration
+whether or not it needs one; Mathlib's `linter.style.setOption` rejects
+unscoped heartbeat limits for the same reason. A raised limit put on the
+declaration itself with `set_option ... in` is accepted Mathlib practice and is
+not reported. The pass is lexical: it follows `namespace`, `mutual`, `end`, and
+`section` nesting, including `noncomputable section` and the module system's
+`@[expose] public section`, and treats an indented `set_option` as part of the
+proof above it.
+
+ATLAS v1, built with Autoform, shows what accumulates without this check: 901
+raised `maxHeartbeats` settings, 497 of them file- or section-wide and 9 of them
+`0` ([#260](https://github.com/facebookresearch/autoform-bot/issues/260)).
 
 The audit API also accepts an already compiled graph. Formalize may use its
 findings while working the Markdown frontier, but the audit itself never
@@ -1024,7 +1125,7 @@ held to the same placeholder rule.
 ## Search contract
 
 `autoform search` is a read-only projection of Markdown: it writes nothing,
-keeps no index, and starts no process. The query splits on whitespace into
+builds no index, and starts no process. The query splits on whitespace into
 terms. Words that carry no meaning (`a`, `an`, `and`, `are`, `as`, `at`, `be`,
 `by`, `can`, `do`, `does`, `for`, `from`, `has`, `have`, `if`, `in`, `is`,
 `it`, `its`, `let`, `of`, `on`, `or`, `such`, `that`, `the`, `then`, `there`,
@@ -1106,6 +1207,164 @@ Search rereads each article it matches against and refuses, with exit 2, bytes
 other than those the graph was built from, as it refuses a symlinked roadmap
 entry. Each call reads every such article and renders its statement, so its
 cost grows with the blueprint.
+
+### Searching a library the project depends on
+
+`--library NAME` (repeatable) also searches the index a locked Lake package
+publishes, and needs `--lean-root`, which names the Lake project.
+For example,
+`autoform search . "separating hyperplane" --lean-root . --library atlas`.
+`autoform library list ROOT` reports each package in `lake-manifest.json`
+with its type, locked revision, and whether search would accept it, and for a
+package it would not, why. Text shows one row per package: name, type, the
+first 12 characters of the revision, and `usable` or `not usable: REASON`.
+`--json` emits `autoform-library-list/v1`, `schema` and `packages`, each with
+`name`, `type`, `revision`, `index` (whether the checkout holds an index
+file), `usable`, and `reason` (`null` when usable).
+Neither command starts a process or writes a file.
+
+The index is the file `autoform-library-index.jsonl` at the package root, or
+the file given as `--library NAME=PATH`. Its format,
+`autoform-library-index/v0`, is provisional and may change without notice
+until it is promoted to `v1`.
+
+Before an index is used, search checks by reading files that the checkout is
+at the locked revision, that the index's toolchain and direct dependencies are
+the ones the checkout pins, that the Lean files under the indexed directories
+are exactly the indexed modules with the recorded digests, and that the index
+as a whole is one generation. A package that is not locked, not checked out, a
+path dependency, replaced by `.lake/package-overrides.json`, without an index,
+or failing a check is refused, as is any library of a project whose `.lake` or
+packages directory is a symbolic link, with exit 2 and a message that begins
+`library NAME:`. One refused library refuses the whole call, blueprint hits
+included, since a partial answer would read as "this result is new". A
+package replaced with `lake --packages=` is not detected. Neither is an edit
+to the index file that leaves each module's `name`, `source_file`, and `sha256`
+and the header's toolchain, dependencies, and source directories alone: a
+declaration record, a module's `module_doc` or `module_system`, or the
+header's `generator`, `probe`, or `package`.
+
+A declaration matches when every term occurs in its last name component
+(`lean`), docstring, module header (`module_doc`), full name or module
+(`qualified_names`), the constants in its type (`mentions`), or its keyword
+(`kind`), ranked in that order. Hits sort by best field, then the words as
+typed before a stem, then worst field, then `complete` before `wanted`, then
+name. `--state` and `--declaration` apply to articles only; `--limit` applies
+to each list.
+
+With `--library` the JSON schema is `autoform-search/v2`: every
+`autoform-search/v1` key keeps its meaning, and `libraries` lists, in the
+order given, `name`, `revision`, `index_schema`, `generator`, `probe`,
+`differences`, `total_matches`, and `hits`. A hit carries the declaration's
+`name`, `kind`, `status`, `module`, `source_file`, `line`, `signature`,
+`statement`, `docstring`, `mentions`, `auto_named`, `module_system`,
+`matched_fields`, `module_doc` (the module header when it matched, otherwise
+`null`), and `import`, the line that makes a `complete` declaration available
+(`null` for a `wanted` one, which carries no proof). `module_system: false`
+marks a file a Lean module file cannot import. `differences` lists the
+library's toolchain and each direct dependency whose locked revision is not
+the project's, as objects with `what` (`lean_toolchain` or `dependency`),
+`name` (`null` for the toolchain), `library`, and `project` (`null` when the
+project locks no such dependency or either side is a path dependency); it does
+not say the library fails to build. Without
+`--library` the output stays `autoform-search/v1`, byte for byte.
+
+#### Publishing an index
+
+`autoform library index ROOT` writes `autoform-library-index.jsonl` at the
+package root of a built library. `--lib NAME` (repeatable) limits it to those
+`lean_lib` targets; the default is every `lean_lib` of the package. The format
+is `autoform-library-index/v0`. Only the source directories of those targets
+are read. A target's `globs` select its modules as Lake does: `M` is one
+module, `M.*` the module and its submodules, `M.+` its submodules only.
+
+It is the only library command that runs Lean and Lake. It imports the
+library's modules, so run it on a trusted checkout or in a sandbox. It does
+not build: a missing or stale build exits 2 with the `lake build` command
+for the indexed targets and the first module Lake found unbuilt, and the
+freshness check rewrites Lake's `.hash` files, so `.lake` must be writable.
+`--timeout SECONDS`, a positive number, bounds the probe. The index records
+the Autoform version that wrote it, so the command refuses to run from an
+Autoform that is not installed. The index is written whole or not at all; a
+failed write says why and whether the previous index is unchanged.
+
+A declaration is indexed when all of these hold:
+
+1. It is not a constructor, recursor, projection, auxiliary recursor,
+   `noConfusion` or matcher, and its name is not an internal detail.
+2. It has a declaration range.
+3. Its range starts with a declaration keyword, after any docstring,
+   attributes and modifiers. This leaves out what a command or attribute
+   generates beside a declaration, and `where` and `let rec` helpers.
+4. The source text at its selection range is its name, a dot-separated suffix
+   of it, or the keyword `instance`. A leading `_root_.` is not part of the
+   written name, so `theorem _root_.Nat.foo` is indexed as `Nat.foo`, and the
+   quotes of a component such as `«odd name»` are not compared.
+
+The `line` of a record is the line of the declaration's first modifier or,
+with none, of its keyword: `theorem`, not the docstring or an attribute above
+it. Its `statement` starts there and ends at the first of these, outside
+brackets, comments, strings and character literals:
+
+- `:=`, unless it belongs to a `let` or `have` written in the type;
+- the word `where`;
+- a `|` that starts a line, or is followed by a `=>` before the next `:=`,
+  unless it belongs to an absolute value, which is a `|` and a closing `|`
+  with no space inside (`|x|`) or, at the start of a line, a `|` that follows
+  a `:`, a comma or an infix sign and has a closing `|` before any `=>`;
+  a `|` that is part of an operator such as `<|` is not a bar;
+- for an `inductive` type, the first `|`.
+
+The statement may be cut short, and never holds a part of the body. A wanted
+placeholder has no alternatives and no `where`: its statement runs to the end
+of the command, or to its `:=` when a `def_wanted` or `instance_wanted` is
+written with a body.
+
+If a range the probe reports is not in the source file, the source is not the
+one the library was built from, and the command exits 2 and names the
+declaration and its module.
+
+A declaration that rests on `sorry` or on an axiom other than `propext`,
+`Quot.sound` and `Classical.choice` is left out, and the count is written to
+standard error. A result declared with `theorem_wanted`, `proof_wanted`,
+`def_wanted` or `instance_wanted` is indexed with status `wanted`.
+
+`--check` writes nothing. It exits 0 when the index at the root is current, 1
+when it is stale, with the reason on standard error, and 2 when it cannot
+tell. A package with no index is stale. A package root that does not exist,
+an index that exists but cannot be read, and a missing or stale build are
+cases where it cannot tell. Changed, new and missing source files are found
+without running Lean.
+Run it in the library's CI after the build, with the same `--lib` flags, and
+pin the Autoform revision: the bytes of an index depend on it.
+
+The generator is tested on Lean 4.34.1 only and is not supported on Windows: it
+exits 2, before it runs Lean, when the package's `lean-toolchain` is not
+`leanprover/lean4:v4.34.1` or a spelling elan resolves to it, such as `v4.34.1`.
+The index's `package` is the name in the package's `lake-manifest.json`, else in its
+`lakefile.toml`, and the command exits 2 when neither gives one; the folder it
+is checked out in never matters.
+Module names must be ASCII identifiers. A Lean file under an indexed
+directory that no indexed library builds is refused. So are two modules that
+declare the same public name in two ways: Lean refuses to import both.
+
+Lean does import two modules that state one theorem the same way, and keeps
+one copy. Such a name is indexed once, under the first of its modules in name
+order, with the line, statement, docstring and status of that module's
+declaration. Which copy Lean keeps depends on the order it loads the modules
+in; the index does not. Each such name is a warning on standard error that
+names the module it is indexed under and the others, and the summary line
+counts them. `--check` does not mention them. A name that is not indexed, such
+as an equation lemma two modules both generate, is no warning. A name whose
+first module leaves it on `sorry` or declares it as an axiom is left out and
+counted with the others, with a warning that names the module whose declaration
+was read and the other modules, since one of them may hold a whole proof. If the docstring of such a name comes from `@[inherit_doc]`,
+the record has none.
+
+A wanted name is no clash either: it is private to its module, so two modules
+may use the same one, for example two anonymous `instance_wanted` of one
+class, and each is indexed. A declaration record is identified by its name and
+its module together.
 
 ## Open statements
 
@@ -1195,7 +1454,8 @@ what to change, and ends with `root-package declarations failed the
 open-statement audit`.
 
 Both audits check two more things. A `lean:` name outside the root package, as
-a Mathlib article's is, must be safe and use no axiom beyond `propext`,
+a Mathlib article's is, must be neither unsafe nor partial (a `partial def`
+counts as partial) and use no axiom beyond `propext`,
 `Classical.choice`, and `Quot.sound`; otherwise it fails with `NAME [ID] is
 outside the root package and is unsafe or partial` or `NAME [ID] is outside the
 root package and depends on unexpected axiom AX`. The open-statement audit
@@ -1211,6 +1471,16 @@ audit logs `kernel replay of the root package skipped: it runs once every other
 check passes`. A declaration the kernel rejects fails with `kernel replay of the
 root package failed: ...`, which names the first one; the workflow's scan for
 the kernel-check bypass option is only lexical.
+
+Both audits refuse an unsafe or partial root-package declaration with `unsafe
+or partial declaration: NAME`, and report a `partial def` under its own name.
+For every computable recursive definition, structural, well-founded, or
+`partial`, Lean adds a partial copy `NAME._unsafe_rec` for the compiler to run.
+The audits skip these copies: the kernel refuses a safe declaration that refers
+to one, and the kernel replay skips them too, so it refuses such a declaration
+added with kernel checking off. A `lean:` name that is one still fails, with
+`NAME [ID] is Lean's compiled copy of a recursive definition; name the
+definition itself`.
 
 The probe runs no project code. Its header imports only the toolchain's Lean,
 and the workflow runs it with plain `lean`, not `lake env lean`, passing the
@@ -1518,11 +1788,12 @@ and the generated stylesheet, scripts and logo inside them) is refused, as are
 two blueprint paths that differ only in case or Unicode form, because they would
 collide on a case-insensitive filesystem.
 
-Every render writes `publication.json` with blueprint and Lean-source hashes,
-Git ref, article and dependency counts, the site's file inventory, and available
-views. It contains no timestamp or absolute path, so identical inputs produce
-identical output files. Render reads the blueprint and the Lean sources once
-each and derives every page, link and hash from those bytes; an edit saved
+Every render writes `publication.json` with blueprint and Lean-source hashes
+(the Lean-source hash is empty when render reads no Lean sources, as on native
+Windows), Git ref, article and dependency counts, the site's file inventory, and
+available views. It contains no timestamp or absolute path, so identical inputs
+produce identical output files. Render reads the blueprint and the Lean sources
+once each and derives every page, link and hash from those bytes; an edit saved
 during a render waits for the next one. Repository links appear only when those
 bytes match one locally available Git commit, recorded by its full object ID; a
 clean checkout that Git converts on checkout still matches. Otherwise the render
@@ -1545,4 +1816,9 @@ output (the repository root for `--output site-src`); render never indexes it
 as Lean source and the setup ignore rules cover it, but it may hold the previous
 site, so inspect it before deleting it. (On macOS `fsync` does not flush the
 drive's cache, so a power loss can still lose the newest site.) Native Windows
-cannot run `autoform render`.
+has no directory-descriptor traversal. There render reads the blueprint and the
+output as two pathname captures that must agree, commits through the backup
+swap without a lock, and reads the Lean sources only for an explicit
+`--lean-root`, which then fails closed. Without one it publishes no code
+links; when a published statement names a `lean:` declaration it warns, and
+`--require-declarations` makes it exit 1.

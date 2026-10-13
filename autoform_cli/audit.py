@@ -16,6 +16,7 @@ from pathlib import Path
 
 from . import status
 from .coverage import CoverageSummary, load_coverage
+from .elaboration_limits import limits_in_force
 from .graph import (
     IMPLEMENTATION_NOTES_DIR,
     Graph,
@@ -56,20 +57,25 @@ _MAX_DIRECT_CHILDREN = 24
 _NODE_SIZE_FLOOR = 200
 _NODE_SIZE_MULTIPLE = 4
 
+#: Batteries' commands for a statement whose proof or construction is deferred.
+_WANTED_KEYWORDS = frozenset({"theorem_wanted", "proof_wanted", "def_wanted", "instance_wanted"})
+_THEOREM_KEYWORDS = frozenset({"lemma", "theorem", "theorem_wanted", "proof_wanted"})
+_DEF_KEYWORDS = frozenset({"def", "def_wanted"})
+
 _DECLARATION_KEYWORDS = {
     "abbrev": frozenset({"abbrev"}),
     "axiom": frozenset({"axiom"}),
     "class": frozenset({"class"}),
-    "corollary": frozenset({"lemma", "theorem"}),
-    "def": frozenset({"def"}),
-    "definition": frozenset({"def"}),
+    "corollary": _THEOREM_KEYWORDS,
+    "def": _DEF_KEYWORDS,
+    "definition": _DEF_KEYWORDS,
     "inductive": frozenset({"inductive"}),
-    "instance": frozenset({"instance"}),
-    "lemma": frozenset({"lemma", "theorem"}),
+    "instance": frozenset({"instance", "instance_wanted"}),
+    "lemma": _THEOREM_KEYWORDS,
     "opaque": frozenset({"opaque"}),
-    "proposition": frozenset({"lemma", "theorem"}),
+    "proposition": _THEOREM_KEYWORDS,
     "structure": frozenset({"structure"}),
-    "theorem": frozenset({"lemma", "theorem"}),
+    "theorem": _THEOREM_KEYWORDS,
 }
 
 #: One ``@[...]`` attribute list; a string literal inside it may hold brackets.
@@ -78,7 +84,7 @@ _ATTRIBUTE_LIST = r'@\[(?:[^\]"]|"(?:[^"\\]|\\.)*")*\]'
 #: a line start, so contiguous attribute lines above the keyword's line count.
 _DECLARATION_HEADER = re.compile(
     rf"(?:\A|\n)[ \t]*((?:{_ATTRIBUTE_LIST}\s*)*)"
-    r"(?:(?:private|protected|noncomputable|partial|unsafe|scoped|local)\s+)*\Z"
+    r"(?:(?:public|private|protected|noncomputable|partial|unsafe|scoped|local)\s+)*\Z"
 )
 _STRING_LITERAL = re.compile(r'"(?:[^"\\]|\\.)*"')
 _DEPRECATED_ATTRIBUTE = re.compile(r"(?:\[|,)\s*(?:(?:scoped|local)\s+)?deprecated\b")
@@ -472,6 +478,9 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
                     )
                 )
 
+        for declaration in resolved:
+            findings.extend(_limit_findings(article_path, declaration, sources))
+
         expected = _DECLARATION_KEYWORDS.get((node.declaration or "").casefold())
         if expected and resolved and not any(declaration.keyword in expected for declaration in resolved):
             actual = ", ".join(sorted({declaration.keyword for declaration in resolved}))
@@ -482,6 +491,26 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
                     f"Lean target kind {actual} does not match declaration intent {node.declaration}",
                 )
             )
+
+        # A wanted target states its result and nothing more. Without a body it
+        # elaborates to a placeholder without sorry, so no sorry check catches it.
+        if node.proof_formalized:
+            claim = "proof: formalized"
+        elif node.statement_formalized and status.is_definition(node):
+            claim = "statement: formalized, which proves a definition"
+        else:
+            claim = None
+        if claim is not None:
+            for declaration in resolved:
+                if declaration.keyword in _WANTED_KEYWORDS:
+                    findings.append(
+                        AuditFinding(
+                            article_path,
+                            "lean-target-wanted",
+                            f"lean target {declaration.name} is a {declaration.keyword}, which defers "
+                            f"its proof or construction, so it cannot back {claim}",
+                        )
+                    )
 
         if resolved:
             sizes[node_id] = sum(spans[declaration.name] for declaration in resolved)
@@ -531,6 +560,47 @@ def _declared_deprecated(declaration: Declaration, sources: dict[Path, list[str]
         _DEPRECATED_ATTRIBUTE.search(_STRING_LITERAL.sub('""', attributes))
         for attributes in re.findall(_ATTRIBUTE_LIST, header.group(1))
     )
+
+
+def _limit_findings(
+    article_path: str,
+    declaration: Declaration,
+    sources: dict[Path, list[str] | None],
+) -> list[AuditFinding]:
+    """Flag a target with no elaboration limit, or a raised one it only inherits.
+
+    A raised limit put on the declaration itself is the accepted Mathlib
+    practice and is not reported; one inherited from a file- or section-wide
+    ``set_option`` also covers every neighbour, needed or not.
+    """
+
+    lines = sources.get(declaration.path)
+    if lines is None:
+        return []
+    location = declaration.path.as_posix()
+    findings: list[AuditFinding] = []
+    for setting in limits_in_force(lines, declaration.line):
+        option = f"set_option {setting.option} {setting.value}"
+        if setting.unbounded:
+            findings.append(
+                AuditFinding(
+                    article_path,
+                    "lean-target-unbounded-limit",
+                    f"lean target {declaration.name} has no {setting.option} limit: "
+                    f"`{option}` at {location}:{setting.line}; set a finite limit",
+                )
+            )
+        elif setting.raised and setting.scope in {"file", "section"}:
+            findings.append(
+                AuditFinding(
+                    article_path,
+                    "lean-target-unscoped-limit",
+                    f"lean target {declaration.name} inherits the {setting.scope}-wide "
+                    f"`{option}` at {location}:{setting.line}; put "
+                    f"`set_option {setting.option} N in` on the declarations that need it",
+                )
+            )
+    return findings
 
 
 def _source_spans(index: SourceIndex) -> dict[str, int]:

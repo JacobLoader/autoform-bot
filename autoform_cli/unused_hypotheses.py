@@ -33,7 +33,7 @@ from .skeleton import (
     ProbeRunner,
     SkeletonError,
     UnresolvedTarget,
-    _lean_name,
+    _lean_requests,
     check_configuration_unchanged,
     check_inputs_unchanged,
     lean_libraries,
@@ -236,7 +236,7 @@ def render_probe(*, imports: tuple[str, ...], roots: tuple[str, ...]) -> str:
         imports="\n".join(f"import {module}" for module in sorted(set(imports))),
         marker=PROBE_MARKER,
         output_env=PROBE_OUTPUT_ENV,
-        roots=", ".join(f"({json.dumps(name, ensure_ascii=False)}, {_lean_name(name)})" for name in roots),
+        roots=_lean_requests(roots),
     )
 
 
