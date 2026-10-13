@@ -989,6 +989,27 @@ def _module_line(
     )
 
 
+def test_probe_output_breaks_lines_only_at_newlines() -> None:
+    # Lean's JSON printer leaves U+0085, U+2028 and U+2029 unescaped, and
+    # `str.splitlines` would split a record at each of them.
+    name = "A.«b\x85c\u2028d\u2029e»"
+    module = {
+        "module": "Demo",
+        "source_path": "/project/Demo\u2028.lean",
+        "olean_path": "/project/.lake/build/lib/lean/Demo.olean",
+        "direct_local_imports": [],
+    }
+    text = "\n".join(
+        [
+            IMPACT_MARKER + json.dumps(_payload(name), ensure_ascii=False),
+            IMPACT_MODULE_MARKER + json.dumps(module, ensure_ascii=False),
+        ]
+    )
+
+    assert list(parse_impact_output(text)) == [name]
+    assert parse_module_evidence(text)["Demo"].source_path == "/project/Demo\u2028.lean"
+
+
 def test_probe_output_is_read_from_marker_lines() -> None:
     text = "\n".join(
         [

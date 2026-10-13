@@ -830,6 +830,16 @@ def test_parse_probe_output_keys_records_by_root_and_ignores_noise() -> None:
     assert records["Skel.ghost"] == {"root": "Skel.ghost", "found": False}
 
 
+def test_parse_probe_output_breaks_lines_only_at_newlines() -> None:
+    # Lean's JSON printer leaves U+0085, U+2028 and U+2029 unescaped, and
+    # `str.splitlines` would split a record at each of them.
+    root = "Skel.«a\x85b\u2028c\u2029d»"
+
+    records = parse_probe_output(PROBE_MARKER + json.dumps({"root": root, "found": False}, ensure_ascii=False) + "\n")
+
+    assert records == {root: {"root": root, "found": False}}
+
+
 def test_parse_probe_output_rejects_malformed_records() -> None:
     with pytest.raises(SkeletonError):
         parse_probe_output(PROBE_MARKER + "{not json")
@@ -2978,7 +2988,7 @@ def test_probe_reads_more_roots_than_lean_compiles_in_a_list(tmp_path: Path) -> 
     _build(project, "Skel.Semantics")
     # Found roots with a quoted, a needlessly quoted and a numeric component;
     # absent ones with characters a Lean string literal must escape, and with
-    # control characters.
+    # control characters and line breaks that Lean's JSON printer escapes or not.
     found = (
         "Skel.Semantics.«quoted.helper»",
         "Skel.Semantics.«usesQuoted»",
@@ -2987,7 +2997,7 @@ def test_probe_reads_more_roots_than_lean_compiles_in_a_list(tmp_path: Path) -> 
     absent = (
         "Skel.«a\\b\"c»",
         "Skel.𝔸",
-        "Skel.«a\nb\bc\x7fd»",
+        "Skel.«a\nb\bc\x7fd\x85e\u2028f»",
         *(f"Skel.Semantics.absent{i}" for i in range(3000)),
     )
     # The library roots reach the probe the same way.

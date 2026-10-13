@@ -131,7 +131,8 @@ def parse_impact_output(text: str, *, allow_empty: bool = False) -> dict[str, Co
     """
 
     records: dict[str, ConstantRecord] = {}
-    for line in text.splitlines():
+    # Not `splitlines`: Lean's JSON printer leaves U+0085, U+2028 and U+2029 unescaped.
+    for line in text.split("\n"):
         if not line.startswith(IMPACT_MARKER):
             continue
         try:
@@ -199,7 +200,8 @@ def parse_module_evidence(text: str) -> dict[str, ModuleEvidence]:
     """
 
     records: dict[str, ModuleEvidence] = {}
-    for line in text.splitlines():
+    # Not `splitlines`: Lean's JSON printer leaves U+0085, U+2028 and U+2029 unescaped.
+    for line in text.split("\n"):
         if not line.startswith(IMPACT_MODULE_MARKER):
             continue
         try:
