@@ -1812,7 +1812,7 @@ def test_response_timeout_is_never_retried(runtime_dir, monkeypatch):
         ("LEAN_NUM_REPLS", "-1", "nonnegative integer"),
         ("LEAN_REPL_CMD", "   ", "must not be empty"),
         ("AUTOFORM_LEAN_IDLE_SECONDS", "nan", "finite nonnegative"),
-        ("AUTOFORM_MAX_REPL_REQUEST_SECONDS", "241", "cannot exceed 240"),
+        ("AUTOFORM_MAX_REPL_REQUEST_SECONDS", "900", "too small"),
         ("LEAN_LSP_TIMEOUT", "601", "cannot exceed"),
         ("AUTOFORM_RUNTIME_RESPONSE_TIMEOUT", "100", "too small"),
     ],

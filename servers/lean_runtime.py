@@ -203,11 +203,6 @@ class LeanRuntimeConfig:
             "AUTOFORM_MAX_REPL_REQUEST_SECONDS",
             DEFAULT_MAX_REPL_REQUEST_SECONDS,
         )
-        if max_repl_request_seconds > DEFAULT_MAX_REPL_REQUEST_SECONDS:
-            raise ValueError(
-                "AUTOFORM_MAX_REPL_REQUEST_SECONDS cannot exceed "
-                f"{DEFAULT_MAX_REPL_REQUEST_SECONDS:g} seconds"
-            )
         # The default follows a lowered maximum, so the maximum can be set alone.
         repl_request_timeout = _positive_float(
             "AUTOFORM_REPL_REQUEST_TIMEOUT",
