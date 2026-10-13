@@ -381,7 +381,8 @@ def test_vault_maps_count_every_catalog_as_an_inventory(tmp_path: Path) -> None:
     """A scope box counts a catalog that is not yet checked, as a pending inventory.
 
     It used to count only checked catalogs, so a scope of unchecked ones read
-    as empty on the vault map and on the full Mermaid page.
+    as empty on the vault map and on the full Mermaid page. The legend under
+    each map lists the inventory statuses the boxes count.
     """
     blueprint = tmp_path / "blueprint"
     ledger = blueprint / "sources/catalog.md"
@@ -397,10 +398,20 @@ def test_vault_maps_count_every_catalog_as_an_inventory(tmp_path: Path) -> None:
         with catalog.open("a", encoding="utf-8") as stream:
             stream.write("\n## Sources\n\n- [Ledger](../../sources/catalog.md)\n")
     box = '["Modules<br/><small>2 items · 1 inventory checked · 1 inventory pending</small>"]:::scope'
+    rows = [
+        f'<span class="bp-swatch bp-swatch-{key}"></span>'
+        f'<span class="bp-legend-label">{label}</span>'
+        '<span class="bp-legend-count">1</span>'
+        for key, label in (("inventory_checked", "inventory checked"), ("inventory_pending", "inventory pending"))
+    ]
 
-    assert box in export_graph(blueprint).read_text(encoding="utf-8")
+    vault = export_graph(blueprint).read_text(encoding="utf-8")
     graph = load_graph(blueprint)
-    assert box in mermaid.render_page(graph, derive(graph), tmp_path / "dependencies.md")
+    page = mermaid.render_page(graph, derive(graph), tmp_path / "dependencies.md")
+    for document in (vault, page):
+        assert box in document
+        legend = document.split("## Legend", 1)[1]
+        assert all(row in legend for row in rows)
 
 
 def test_the_vault_structure_page_leaves_implementation_notes_out(tmp_path: Path) -> None:

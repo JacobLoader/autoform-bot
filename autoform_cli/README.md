@@ -498,10 +498,10 @@ and the progress-state breakdowns in the book and in `autoform check` use
 non-container articles carrying `declaration`; a `catalog: module` record
 counts toward none of them. A scope's status ring and item count, and the
 legend beside each dependency map, also count a leaf marked `not_ready` that
-declares nothing yet, so deferred work holds its scope open. The ring and item
-count also include every catalog beneath the scope, under a neutral status:
-`inventory checked` once the catalog is fully proved, `inventory pending` until
-then. Neither status changes the scope's rolled-up status or completion.
+declares nothing yet, so deferred work holds its scope open. All three also
+count every catalog, under a neutral status: `inventory checked` once the
+catalog is fully proved, `inventory pending` until then. Neither status changes
+a scope's rolled-up status or completion.
 The coverage `counts` object always includes an integer
 `INVENTORIED` key, including zero when no row uses it. Status assertions on a
 catalog remain accepted. The presentation calls a fully checked catalog

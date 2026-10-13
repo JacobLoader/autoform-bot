@@ -17,6 +17,7 @@ from urllib.parse import quote
 from . import dag_viewer, mermaid
 from .graph import Graph
 from .graph_views import (
+    INVENTORY_STATUSES,
     GraphView,
     chapter_view,
     full_view,
@@ -331,7 +332,7 @@ def _write_page(
         sections.extend([navigation, ""])
     # The legend rides on the lead sentence rather than sitting under the
     # explorer: it answers a question the reader asks once, not on every page.
-    tip = mermaid.render_legend_tip(statuses)
+    tip = mermaid.render_legend_tip(statuses, _view_inventories(view))
     sections.extend([f"{lead} {tip}".rstrip(), "", explorer, ""])
     if extra:
         sections.extend([extra, ""])
@@ -354,6 +355,16 @@ def _selected_statuses(
         for node_id in view.member_ids
         if node_id not in containers and is_scope_target(graph.nodes[node_id])
     }
+
+
+def _view_inventories(view: GraphView) -> dict[str, int]:
+    """Count the module inventories the explorer's rings and nodes show, for the legend."""
+    counts = dict.fromkeys(INVENTORY_STATUSES, 0)
+    for node in view.nodes:
+        for key, count in node.status_counts:
+            if key in counts:
+                counts[key] += count
+    return counts
 
 
 def _dependency_heading(view: GraphView) -> str:

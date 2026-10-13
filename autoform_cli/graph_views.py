@@ -695,6 +695,21 @@ def _status_counts(
     return (*state_counts, *((key, count) for key, count in inventories.items() if count))
 
 
+def inventory_counts(graph: Graph, statuses: dict[str, NodeStatus]) -> dict[str, int]:
+    """Count every catalog leaf by inventory status.
+
+    These are the inventories the project view's rings count, for a legend
+    beside a map of the whole project.
+    """
+    children = _containment_children(graph)
+    leaves = (node_id for node_id in graph.nodes if node_id not in children)
+    return {
+        key: count
+        for key, count in _status_counts(graph, leaves, statuses)
+        if key in INVENTORY_STATUSES
+    }
+
+
 def _internal_dependency_counts(
     graph: Graph,
     children: dict[str, tuple[str, ...]],
@@ -823,6 +838,7 @@ __all__ = [
     "group_id",
     "group_nodes",
     "group_title",
+    "inventory_counts",
     "is_scope_target",
     "project_view",
     "scope_view",

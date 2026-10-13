@@ -1335,14 +1335,15 @@ def _render_landing_page(
         ),
     ]
     # The legend sits under the map, so it counts what the map's rings count,
-    # deferred work included, rather than the hero's declaration targets.
+    # deferred work and module inventories included, rather than the hero's
+    # declaration targets.
     containers = _containers(graph)
     target_statuses = {
         node_id: statuses[node_id]
         for node_id, node in graph.nodes.items()
         if node_id not in containers and graph_views.is_scope_target(node)
     }
-    breakdown = mermaid.render_legend(target_statuses)
+    breakdown = mermaid.render_legend(target_statuses, graph_views.inventory_counts(graph, statuses))
     # dependencies.json is the project projection written by graph_pages. The
     # landing page deliberately mounts that exact payload and host instead of
     # maintaining a second, Mermaid-only preview of the same graph.
@@ -2312,6 +2313,14 @@ def _stylesheet() -> str:
         f"{{ color: {state.dark_text} !important; fill: {state.dark_text} !important; }}"
         for state in status.STATES
     )
+    # The legends beside the explorer's rings list module inventories, so
+    # their swatches take the colours the explorer draws inventories in.
+    inventory = "\n".join(
+        f".bp-swatch-{state.key} {{ background: {state.fill}; border-color: {state.stroke}; }}\n"
+        f"[data-md-color-scheme=slate] .bp-swatch-{state.key} "
+        f"{{ background: {state.dark_fill}; border-color: {state.dark_stroke}; }}"
+        for state in status.INVENTORY_STATES
+    )
     serif = '"Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
     sans = '"Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
     mono = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
@@ -2977,6 +2986,7 @@ a:hover, a:visited:hover {{ color: var(--bp-link-hover); text-decoration: underl
 }}
 
 {dark}
+{inventory}
 """
 
 

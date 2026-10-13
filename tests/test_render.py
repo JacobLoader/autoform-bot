@@ -23,7 +23,7 @@ from autoform_cli.render import (
     publication_source_revision,
     render_site,
 )
-from autoform_cli.status import STATES, derive
+from autoform_cli.status import INVENTORY_STATES, STATES, derive
 
 
 def _project(tmp_path: Path) -> Path:
@@ -865,15 +865,35 @@ def test_the_landing_page_is_the_hero_and_project_explorer_and_nothing_else(
 
 
 def test_the_legends_beside_the_explorer_count_what_its_rings_count(tmp_path: Path) -> None:
-    """Deferred work holds its scope open, so the legend beside a ring counts it.
+    """The legend beside a ring counts what the ring counts.
 
     A leaf marked not ready that declares nothing yet is not one of the hero's
-    targets, but the rings count it. A legend that left it out disagreed with
-    the map it explains.
+    targets, and a catalog is inventory rather than a target, but the rings
+    count both. A legend that left them out disagreed with the map it explains.
     """
     project = _project(tmp_path)
-    (project / "blueprint/roadmap/later.md").write_text(
+    roadmap = project / "blueprint/roadmap"
+    (roadmap / "later.md").write_text(
         "---\nnot_ready: true\n---\n\n# Later\n\nA result still to be decomposed.\n",
+        encoding="utf-8",
+    )
+    sources = project / "blueprint/sources"
+    sources.mkdir()
+    (sources / "catalog.md").write_text("# Project.Basic declarations\n", encoding="utf-8")
+    ledger = "## Sources\n\n- [Declaration ledger](../sources/catalog.md)\n"
+    (roadmap / "checked.md").write_text(
+        "---\ncatalog: module\nlean: Project.Base\nstatement: formalized\n"
+        "proof: formalized\n---\n\n# Checked module\n\n" + ledger,
+        encoding="utf-8",
+    )
+    (roadmap / "pending.md").write_text(
+        "---\ncatalog: module\n---\n\n# Pending module\n\n" + ledger,
+        encoding="utf-8",
+    )
+    coverage = project / "blueprint/coverage/README.md"
+    coverage.write_text(
+        coverage.read_text(encoding="utf-8")
+        + "| Existing modules | INVENTORIED | [Checked](../roadmap/checked.md), [Pending](../roadmap/pending.md) |\n",
         encoding="utf-8",
     )
     out = tmp_path / "out"
@@ -881,16 +901,35 @@ def test_the_legends_beside_the_explorer_count_what_its_rings_count(tmp_path: Pa
     render_site(project / "blueprint", out, lean_root=project)
 
     ring = json.loads((out / "dependencies.json").read_text(encoding="utf-8"))["nodes"][0]
-    assert ring["status_counts"] == {"fully_proved": 2, "not_ready": 1}
-    not_ready_row = (
-        '<span class="bp-swatch bp-swatch-not_ready"></span>'
-        '<span class="bp-legend-label">not ready</span>'
+    assert ring["status_counts"] == {
+        "fully_proved": 2,
+        "not_ready": 1,
+        "inventory_checked": 1,
+        "inventory_pending": 1,
+    }
+    rows = [
+        f'<span class="bp-swatch bp-swatch-{key}"></span>'
+        f'<span class="bp-legend-label">{label}</span>'
         '<span class="bp-legend-count">1</span>'
-    )
+        for key, label in (
+            ("not_ready", "not ready"),
+            ("inventory_checked", "inventory checked"),
+            ("inventory_pending", "inventory pending"),
+        )
+    ]
     overview = (out / "README.md").read_text(encoding="utf-8")
     assert "2 of 2 targets complete" in overview
-    assert not_ready_row in overview.split('class="bp-map-legend"', 1)[1]
-    assert not_ready_row in (out / "dependencies.md").read_text(encoding="utf-8")
+    for legend in (
+        overview.split('class="bp-map-legend"', 1)[1],
+        (out / "dependencies.md").read_text(encoding="utf-8"),
+        (out / "dependencies/chapters/roadmap.md").read_text(encoding="utf-8"),
+    ):
+        assert all(row in legend for row in rows)
+        assert "it records inspection, not a mathematical proof." in legend
+    # A swatch without a rule renders blank.
+    css = (out / "stylesheets/blueprint.css").read_text(encoding="utf-8")
+    for state in INVENTORY_STATES:
+        assert f".bp-swatch-{state.key} {{ background: {state.fill}; border-color: {state.stroke}; }}" in css
 
 
 def test_book_navigation_is_bottom_only_and_never_crosses_into_project_views(tmp_path: Path) -> None:

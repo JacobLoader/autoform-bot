@@ -109,7 +109,10 @@ def export_graph(
             target = graph.nodes[articles[0]].path
         links[node.id] = mermaid.relative_link(target, destination, link_extension)
     diagram = mermaid.render_view_diagram(view, links=links)
-    legend = mermaid.render_legend(_target_statuses(graph, statuses))
+    legend = mermaid.render_legend(
+        _target_statuses(graph, statuses),
+        graph_views.inventory_counts(graph, statuses),
+    )
     sections = [
         "---",
         "kind: graph",
