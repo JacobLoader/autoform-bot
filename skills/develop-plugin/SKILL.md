@@ -30,7 +30,7 @@ feature, and require links to match the blob at the stable detected commit.
 For claims/views/mirrors/pins/releases, read
 [repository contracts](references/repository-contracts.md).
 
-Normally run:
+Run:
 
 ```bash
 make lint
