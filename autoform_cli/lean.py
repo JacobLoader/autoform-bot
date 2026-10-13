@@ -235,17 +235,20 @@ def snapshot_project_sources(
     *,
     exclude_roots: Iterable[str | Path] = (),
     limits: TreeCaptureLimits = TreeCaptureLimits(),
+    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
 ) -> IndexedSourceSnapshot:
     """Read each Lean source once and derive its index and revision together.
 
     A bind or capture that races a concurrent edit is retried a bounded number
-    of times.
+    of times. Callers may name markers of generated directory formats they own;
+    a directory holding one is never indexed.
     """
 
     bound, snapshot = _open_stable_project_sources(
         root,
         exclude_roots=tuple(exclude_roots),
         limits=limits,
+        opaque_markers=opaque_markers,
     )
     bound.close()
     return snapshot
@@ -256,6 +259,7 @@ def _open_stable_project_sources(
     *,
     exclude_roots: tuple[str | Path, ...],
     limits: TreeCaptureLimits,
+    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
 ) -> tuple[BoundProjectSources, IndexedSourceSnapshot]:
     """Open and capture a Lean root, retrying a bounded number of changed attempts.
 
@@ -270,7 +274,12 @@ def _open_stable_project_sources(
             time.sleep(_SNAPSHOT_RETRY_DELAY_SECONDS * attempt)
         bound: BoundProjectSources | None = None
         try:
-            bound = open_project_sources(root, exclude_roots=exclude_roots, limits=limits)
+            bound = open_project_sources(
+                root,
+                exclude_roots=exclude_roots,
+                limits=limits,
+                opaque_markers=opaque_markers,
+            )
             return bound, bound.capture()
         except TreeChangedError as error:
             changed = error
@@ -331,6 +340,7 @@ def open_project_sources(
     *,
     exclude_roots: Iterable[str | Path] = (),
     limits: TreeCaptureLimits = TreeCaptureLimits(),
+    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
 ) -> BoundProjectSources:
     """Open a retained Lean source root; the caller must close it.
 
@@ -351,7 +361,9 @@ def open_project_sources(
             exclude_roots,
             root_identity=tree.identity,
         )
-        tree.selection = _lean_tree_selection(excluded, limits=limits)
+        tree.selection = _lean_tree_selection(
+            excluded, limits=limits, opaque_markers=opaque_markers
+        )
         tree.verify()
     except BaseException:
         tree.close()
@@ -419,6 +431,7 @@ def _lean_tree_selection(
     excluded: tuple[PurePosixPath, ...],
     *,
     limits: TreeCaptureLimits = TreeCaptureLimits(),
+    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
 ) -> TreeSelection:
     return TreeSelection(
         include=lambda path, mode: _lean_snapshot_includes(
@@ -449,6 +462,7 @@ def _lean_tree_selection(
                 _MANAGED_OUTPUT_MANIFEST_BYTE_LIMIT,
                 _is_managed_output_manifest_bytes,
             ),
+            *opaque_markers,
         ),
     )
 
@@ -959,12 +973,87 @@ def _committed_source_paths(
     return frozenset(linkable)
 
 
+def verify_repository_snapshot(
+    root: str | Path,
+    requested_ref: str,
+    files: Iterable[tuple[Path, bytes]],
+    *,
+    required_directories: Iterable[Path] = (),
+    reasons: list[str] | None = None,
+) -> str | None:
+    """Return the commit whose tree holds every captured file, byte for byte.
+
+    A clean checkout that Git converts on the way out (LFS, eol attributes) is
+    accepted by hashing the captured bytes through Git's clean filter. Otherwise
+    ``None``, with the first reason appended to *reasons*, naming paths relative
+    to the repository only. The shared Git runner strips ambient overrides.
+    """
+
+    def refuse(reason: str) -> None:
+        if reasons is not None:
+            reasons.append(reason)
+
+    root = Path(root).resolve()
+    commit = _git(root, "rev-parse", "--verify", "--end-of-options", f"{requested_ref}^{{commit}}")
+    algorithm = _git(root, "rev-parse", "--show-object-format")
+    if commit is None or algorithm not in {"sha1", "sha256"}:
+        return refuse(f"{requested_ref!r} does not name a commit in a local Git repository")
+    prefix = _git(root, "rev-parse", "--show-prefix")
+    if prefix:  # tree paths start at the top level, so nothing below could match
+        return refuse(
+            f"the Lean root is the subdirectory {prefix.rstrip('/')} of its Git repository; "
+            "links need the repository top level"
+        )
+    captured: dict[str, bytes] = {}
+    try:
+        for path, data in files:
+            relative = path.relative_to(root).as_posix()
+            if captured.setdefault(relative, data) != data:
+                return refuse(f"two captured files claim {relative}")
+        directories = [path.relative_to(root).as_posix() for path in required_directories]
+    except ValueError:
+        return refuse("a captured file or directory is outside the repository")
+    blobs = _git_tree_oids(root, commit, tuple(sorted(captured)))
+    if blobs is None:
+        return refuse("the commit's tree could not be read")
+    for path, data in captured.items():
+        if path not in blobs:
+            return refuse(f"{path} is not a file in commit {commit[:12]}")
+        framed = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
+        if hashlib.new(algorithm, framed).hexdigest() != blobs[path] and (
+            _git_clean_blob_id(root, path, data) != blobs[path]
+        ):
+            return refuse(f"{path} differs from commit {commit[:12]}")
+    if any(_git(root, "cat-file", "-t", f"{commit}:{directory}") != "tree" for directory in directories):
+        return refuse(f"a required directory is not in commit {commit[:12]}")
+    return commit
+
+
+def _git_clean_blob_id(root: Path, path: str, data: bytes) -> str | None:
+    """Hash captured bytes as Git would store them at *path* (clean filter, eol)."""
+
+    try:
+        result = subprocess.run(
+            ["git", "hash-object", "--stdin", f"--path={path}"],
+            cwd=str(root),
+            input=data,
+            capture_output=True,
+            env=_git_environment(),
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    output = result.stdout.decode("ascii", "replace").strip()
+    return output if result.returncode == 0 and output else None
+
+
 def _git_tree_oids(
     root: Path,
     commit: str,
     paths: tuple[str, ...],
 ) -> dict[str, str] | None:
-    """Read raw tree object IDs for exact paths without Git's quoting layer."""
+    """Read raw blob IDs of regular files at exact paths without Git's quoting layer."""
 
     result: dict[str, str] = {}
     for start in range(0, len(paths), 128):
@@ -973,7 +1062,15 @@ def _git_tree_oids(
             continue
         try:
             completed = subprocess.run(
-                ["git", "ls-tree", "-rz", "--full-tree", commit, "--", *batch],
+                [
+                    "git",
+                    "ls-tree",
+                    "-rz",
+                    "--full-tree",
+                    commit,
+                    "--",
+                    *(f":(literal){path}" for path in batch),
+                ],
                 cwd=str(root),
                 capture_output=True,
                 env=_git_environment(),
@@ -989,7 +1086,7 @@ def _git_tree_oids(
                 continue
             header, separator, encoded_path = record.partition(b"\t")
             fields = header.split()
-            if not separator or len(fields) != 3 or fields[1] != b"blob":
+            if not separator or len(fields) != 3 or fields[0] not in {b"100644", b"100755"}:
                 continue
             result[os.fsdecode(encoded_path)] = fields[2].decode("ascii")
     return result
@@ -1126,4 +1223,5 @@ __all__ = [
     "project_source_revision",
     "snapshot_project_sources",
     "strip_lean_comments",
+    "verify_repository_snapshot",
 ]

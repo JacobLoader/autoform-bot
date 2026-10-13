@@ -55,6 +55,10 @@ _LOCK_POLL_SECONDS = 0.05
 # v4.27.0, and outside the descriptor root grammar), LongestPole (v4.27.0), and
 # Wanted (v4.34.1 on).
 _MATHLIB_EXTRA_ROOTS = frozenset({"docs", "LongestPole", "Wanted"})
+# The toolchain library's top-level entries besides _TOOLCHAIN_MODULE_ROOTS, which
+# every bundle lists. The CI audit refuses a root module under any of them, since
+# it loads the toolchain's library first.
+_TOOLCHAIN_EXTRA_ROOTS = frozenset({"LakeMain", "Leanc", "LeanChecker", "LeanIR"})
 _MANIFEST_FIELDS = frozenset({"version", "packagesDir", "packages", "name", "lakeDir", "fixedToolchain"})
 _MANIFEST_PACKAGE_FIELDS = frozenset(
     {"url", "type", "subDir", "scope", "rev", "name", "manifestFile", "inputRev", "inherited", "configFile"}
@@ -399,7 +403,8 @@ def _version_warnings(version: _ProjectVersion) -> tuple[tuple[str, str], ...]:
 
 
 def _validate_package_for_release(package: str, bundle: _ReleaseBundle) -> None:
-    if package.casefold() in {root.casefold() for root in bundle.module_roots | _MATHLIB_EXTRA_ROOTS}:
+    reserved = bundle.module_roots | _MATHLIB_EXTRA_ROOTS | _TOOLCHAIN_EXTRA_ROOTS
+    if package.casefold() in {root.casefold() for root in reserved}:
         raise ProjectCreateError(
             "project-name-invalid",
             "Project name must not shadow a module root used by Lean, Mathlib, or Mathlib's dependencies.",
