@@ -78,11 +78,27 @@ def probe (request : String) (root : Name) : CommandElabM Unit := do
     emit [("root", Json.str request), ("found", Json.bool true), ("proof", Json.str proof),
       ("hypotheses", Json.arr hypotheses)]
 
+/-- The requested roots, as the CLI passes them: JSON `[request, components]`
+pairs, where a component is a string or a number. A list literal of names
+would be compiled, and the code generator gives up on long ones. -/
+def requestedRoots (text : String) : CommandElabM (Array (String × Name)) := do
+  let decode (entry : Json) : Except String (String × Name) := do
+    let request ← entry.getArrVal? 0 >>= (·.getStr?)
+    let components ← entry.getArrVal? 1 >>= (·.getArr?)
+    let root ← components.foldlM (init := Name.anonymous) fun name component =>
+      match component with
+      | .str part => pure (name.str part)
+      | _ => name.num <$> component.getNat?
+    pure (request, root)
+  match _root_.Lean.Json.parse text >>= (·.getArr?) >>= (·.mapM decode) with
+  | .ok roots => pure roots
+  | .error e => throwError ("the requested roots are malformed: " ++ e)
+
 end AutoformUnusedProbe
 
 -- The command's own heartbeat limit would count every declaration together, so
 -- a large project would hit it; the CLI's timeout bounds the run instead.
 set_option maxHeartbeats 0 in
 run_cmd do
-  for (request, root) in [{roots}] do
+  for (request, root) in (← AutoformUnusedProbe.requestedRoots {roots}) do
     AutoformUnusedProbe.probe request root
