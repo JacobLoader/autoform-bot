@@ -11,6 +11,8 @@ import pytest
 from servers.repl import core as repl_core
 from servers.repl import pool as repl_pool
 
+_SHUTDOWN_REFUSAL = "Lean REPL pool is shut down; this call did not start and can be retried"
+
 
 def test_partial_pool_construction_closes_all_constructed_workers(monkeypatch):
     workers = []
@@ -110,7 +112,7 @@ def test_partial_construction_transfers_failed_cleanup_for_retry(monkeypatch):
     assert str(raised.value.cause) == "second slot failed"
     assert raised.value.pool._workers == [workers[0]]
     assert [worker.close_calls for worker in workers] == [1, 0]
-    with pytest.raises(RuntimeError, match="shut down"):
+    with pytest.raises(RuntimeError, match=_SHUTDOWN_REFUSAL):
         raised.value.pool.run("#check Nat", timeout=0.1)
 
     raised.value.pool.shutdown()
@@ -266,7 +268,7 @@ def test_dirty_result_poisoning_transfers_cleanup_to_shutdown(monkeypatch):
     assert workers[0].close_calls == 0
     assert not workers[0].is_clean()
     assert pool.requires_retirement
-    with pytest.raises(RuntimeError, match="shut down"):
+    with pytest.raises(RuntimeError, match=_SHUTDOWN_REFUSAL):
         pool.run("#check Int", timeout=1)
 
     pool.shutdown()
@@ -421,7 +423,46 @@ def test_shutdown_unblocks_a_call_waiting_for_a_cold_slot(monkeypatch):
     assert not waiter.is_alive()
     assert not stopper.is_alive()
     assert len(errors) == 1
-    assert str(errors[0]) == "Lean REPL pool is shut down; this call did not start and can be retried"
+    assert str(errors[0]) == _SHUTDOWN_REFUSAL
+
+
+def test_shutdown_refuses_a_call_that_already_took_a_slot(monkeypatch):
+    calls = []
+
+    class FakeRepl:
+        def __init__(self, config):
+            pass
+
+        def run_disposable(self, code, **kwargs):
+            calls.append(code)
+            return {"messages": []}
+
+        def is_clean(self):
+            return True
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(repl_pool, "LeanRepl", FakeRepl)
+    pool = repl_pool.LeanReplPool(repl_pool.LeanReplPoolConfig(num_repls=1))
+    take_slot = pool._idle.get
+
+    def take_slot_as_shutdown_begins(*args, **kwargs):
+        slot = take_slot(*args, **kwargs)
+        # Shutdown stops admission after the call has left the queue.
+        with pool._condition:
+            pool._stop_admission_locked()
+        return slot
+
+    monkeypatch.setattr(pool._idle, "get", take_slot_as_shutdown_begins)
+
+    with pytest.raises(RuntimeError) as refused:
+        pool.run("#check Nat", timeout=1)
+
+    assert str(refused.value) == _SHUTDOWN_REFUSAL
+    assert calls == []
+    assert pool._active_calls == 0
+    pool.shutdown()
 
 
 def test_shutdown_waits_for_checked_out_worker_before_closing_or_draining(monkeypatch):
@@ -462,7 +503,7 @@ def test_shutdown_waits_for_checked_out_worker_before_closing_or_draining(monkey
     assert close_started.is_set()
     assert pool._workers == []
     assert pool._idle.empty()
-    with pytest.raises(RuntimeError, match="shut down"):
+    with pytest.raises(RuntimeError, match=_SHUTDOWN_REFUSAL):
         pool.run("#check Int", timeout=0.1)
 
 
