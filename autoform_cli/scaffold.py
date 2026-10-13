@@ -1021,10 +1021,12 @@ def _case_collisions(root: Path, relatives: list[str]) -> list[str]:
             folded = unicodedata.normalize("NFC", part).casefold()
             for name in listings[directory]:
                 if name != part and unicodedata.normalize("NFC", name).casefold() == folded:
+                    variant = (directory / name).relative_to(root).as_posix()
+                    managed = (directory / part).relative_to(root).as_posix()
                     collisions.add(
-                        f"{(directory / name).relative_to(root).as_posix()} differs only in letter case or "
-                        f"Unicode form from {(directory / part).relative_to(root).as_posix()}, which "
-                        "autoform init manages; rename it"
+                        f"{variant} differs only in letter case or Unicode form from {managed}, which autoform "
+                        f"init manages; rename it to {managed} if it is meant to be that path, or to a different "
+                        "name if it is not"
                     )
             if not listings[directory].get(part):
                 break

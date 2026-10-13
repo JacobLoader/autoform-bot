@@ -172,8 +172,12 @@ file must be inspected before retrying. Before writing anything, even with
 `--force`, `init` refuses an existing entry that differs from a path it manages
 only in letter case or Unicode form, such as a `Blueprint/` Lean library or
 `MkDocs.yml`: Git and Linux CI see only the exact spelling, while a
-case-insensitive filesystem resolves the managed path to the variant. A root
+case-insensitive filesystem resolves the managed path to the variant. `init`
+also refuses when it cannot list a directory on a path it manages. A root
 `Readme.md` or `readme.md` is refused, not skipped like an existing `README.md`.
+The vault is always `blueprint/`, so a Lean library named `Blueprint` needs a
+different library name (its lakefile `lean_lib`, root module and imports), not
+a lowercase rename.
 
 Create or inspect a Lean project and list Autoform's bundled known-good release pairs:
 
