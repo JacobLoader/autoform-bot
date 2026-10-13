@@ -32,6 +32,7 @@ from autoform_cli.lean import (
     open_project_sources,
     snapshot_project_sources,
     strip_lean_comments,
+    verify_repository_snapshot,
 )
 
 _SOURCE = """import Mathlib
@@ -207,33 +208,20 @@ def test_hidden_lean_source_directories_are_indexed(tmp_path: Path) -> None:
     assert index_project(tmp_path).find("hiddenProof") is not None
 
 
-@pytest.mark.parametrize("directory", [".direnv", ".obsidian", ".trash", ".venv"])
+@pytest.mark.parametrize("parent", ["", "Nested/"])
+@pytest.mark.parametrize(
+    "directory",
+    [".direnv", ".git", ".lake", ".obsidian", ".trash", ".venv", "lake-packages", ".GIT", ".LAKE", ".ObSiDiAn"],
+)
 def test_known_tooling_directories_are_not_scanned(
     tmp_path: Path,
     directory: str,
+    parent: str,
 ) -> None:
     _index(tmp_path, "def canonical : Nat := 0\n")
-    ignored = tmp_path / directory
-    ignored.mkdir()
-    try:
-        (ignored / "external").symlink_to(tmp_path.parent, target_is_directory=True)
-    except OSError:
-        pytest.skip("symlinks are unavailable")
-
-    index = index_project(tmp_path)
-
-    assert index.find("canonical") is not None
-
-
-@pytest.mark.parametrize("directory", [".GIT", ".LAKE", ".ObSiDiAn"])
-def test_case_aliases_of_tooling_directories_are_not_scanned(
-    tmp_path: Path,
-    directory: str,
-) -> None:
-    _index(tmp_path, "def canonical : Nat := 0\n")
-    ignored = tmp_path / directory
-    ignored.mkdir()
-    (ignored / "Leak.lean").write_text("def leaked : Nat := 0\n")
+    ignored = tmp_path / parent / directory
+    ignored.mkdir(parents=True)
+    (ignored / "Leak.lean").write_text("def leaked : Nat := 0\n", encoding="utf-8")
 
     index = index_project(tmp_path)
 
@@ -1413,6 +1401,27 @@ def test_lean_symlink_is_refused_whether_or_not_its_target_exists(tmp_path: Path
     assert str(tmp_path) not in str(caught.value)
 
 
+def test_case_variants_of_the_lean_suffix_are_ignored(tmp_path: Path) -> None:
+    _require_descriptor_capture()
+    _index(tmp_path, "def canonical : Nat := 0\n")
+    project = tmp_path / "Project"
+    clean = snapshot_project_sources(tmp_path)
+    (project / "Y.LEAN").write_text("theorem variantY : True := trivial\n", encoding="utf-8")
+    (project / "L.Lean").symlink_to("Basic.lean")
+    os.mkfifo(project / "P.LEAN")
+    unreadable = project / "U.Lean"
+    unreadable.touch(mode=0)
+    try:
+        captured = snapshot_project_sources(tmp_path)
+    finally:
+        unreadable.chmod(0o644)
+
+    assert set(captured.index.declarations) == {"canonical"}
+    assert captured.index.line_counts == {Path("Project/Basic.lean"): 1}
+    assert captured.revision == clean.revision
+    assert captured.generation_revision == clean.generation_revision
+
+
 def test_source_digest_preserves_surrogate_escaped_filename_bytes(tmp_path: Path) -> None:
     if os.name == "nt":
         pytest.skip("surrogate-escaped POSIX filenames are unavailable")
@@ -2531,3 +2540,51 @@ def test_auto_linker_ignores_inherited_repo_and_ci_redirects(
     assert linker.url("stableRepository") == (
         f"https://github.com/owner/A/blob/{first_commit}/A.lean#L1"
     )
+
+
+def test_snapshot_attestation_accepts_a_clean_checkout_with_eol_conversion(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".gitattributes").write_text("*.lean text eol=crlf\n")
+    source = tmp_path / "A.lean"
+    source.write_text("def converted : Nat := 0\n")
+    commit = _init_git_repository(tmp_path)
+    source.unlink()
+    subprocess.run(["git", "checkout", "--", "A.lean"], cwd=tmp_path, check=True)
+    assert source.read_bytes() == b"def converted : Nat := 0\r\n"
+
+    assert verify_repository_snapshot(
+        tmp_path,
+        commit,
+        ((source, source.read_bytes()),),
+    ) == commit
+    assert verify_repository_snapshot(
+        tmp_path,
+        commit,
+        ((source, b"def changed : Nat := 0\r\n"),),
+    ) is None
+
+
+def test_snapshot_attestation_names_why_it_failed(tmp_path: Path) -> None:
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    source = lean_root / "A.lean"
+    source.write_text("def tracked : Nat := 0\n")
+    commit = _init_git_repository(tmp_path)
+    reasons: list[str] = []
+
+    assert verify_repository_snapshot(
+        lean_root, commit, ((source, source.read_bytes()),), reasons=reasons
+    ) is None
+    assert reasons == [
+        "the Lean root is the subdirectory lean of its Git repository; "
+        "links need the repository top level"
+    ]
+
+    untracked = tmp_path / "Scratch.lean"
+    untracked.write_text("def scratch : Nat := 0\n")
+    reasons.clear()
+    assert verify_repository_snapshot(
+        tmp_path, commit, ((untracked, untracked.read_bytes()),), reasons=reasons
+    ) is None
+    assert reasons == [f"Scratch.lean is not a file in commit {commit[:12]}"]

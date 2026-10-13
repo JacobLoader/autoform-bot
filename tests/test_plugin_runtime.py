@@ -163,6 +163,7 @@ def test_copied_plugin_project_entrypoints_need_no_autoform_on_path(repo_root, t
         ".lake/",
         "site/",
         "site-src/",
+        ".autoform-publication-*/",
         "*.log",
         ".claude/worktrees/",
     ]
