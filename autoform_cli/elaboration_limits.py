@@ -34,7 +34,10 @@ _ANY_OPTION_IN = re.compile(r"set_option\s+\S+\s+\S+\s+in\b\s*")
 #: Other commands that, like ``set_option ... in``, only wrap the next command.
 _WRAPPER_IN = re.compile(r"(?:open|universe|omit|include|variable)\b.*\bin$")
 _ATTRIBUTES_ONLY = re.compile(r"@\[.*\]$")
-_SCOPE_OPEN = re.compile(r"(?:noncomputable\s+)?section\b|namespace\s|mutual$")
+#: ``section`` with the module system's forms, e.g. ``@[expose] public section``.
+_SCOPE_OPEN = re.compile(
+    r"(?:@\[[^\]]*\]\s*)*(?:(?:public|private|meta|noncomputable)\s+)*section\b|namespace\s|mutual$"
+)
 _SCOPE_CLOSE = re.compile(r"end\b")
 #: Unindented lines that still belong to the declaration above them.
 _CONTINUATION = re.compile(r"(?:termination_by|decreasing_by|where|deriving)\b|\|")

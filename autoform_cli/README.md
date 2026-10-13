@@ -958,9 +958,10 @@ file- or section-wide `set_option`, which also covers every later declaration
 whether or not it needs one; Mathlib's `linter.style.setOption` rejects
 unscoped heartbeat limits for the same reason. A raised limit put on the
 declaration itself with `set_option ... in` is accepted Mathlib practice and is
-not reported. The pass is lexical: it follows `namespace`, `section`, `mutual`,
-and `end` nesting and treats an indented `set_option` as part of the proof
-above it.
+not reported. The pass is lexical: it follows `namespace`, `mutual`, `end`, and
+`section` nesting, including `noncomputable section` and the module system's
+`@[expose] public section`, and treats an indented `set_option` as part of the
+proof above it.
 
 ATLAS v1, built with Autoform, shows what accumulates without this check: 901
 raised `maxHeartbeats` settings, 497 of them file- or section-wide and 9 of them

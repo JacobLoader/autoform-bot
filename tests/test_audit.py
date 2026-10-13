@@ -612,7 +612,7 @@ def test_audit_reports_unbounded_and_inherited_elaboration_limits(tmp_path: Path
         "",
         "end Project",
         "",
-        "noncomputable section",
+        "@[expose] public noncomputable section",
         "set_option maxRecDepth 4096",
         "theorem Project.sectionWide : True := trivial",
         "end",
