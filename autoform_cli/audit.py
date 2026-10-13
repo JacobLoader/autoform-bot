@@ -488,8 +488,8 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
                 )
             )
 
-        # A wanted target states its result and nothing more. Batteries
-        # elaborates it to a placeholder without sorry, so no sorry check catches it.
+        # A wanted target states its result and nothing more. Without a body it
+        # elaborates to a placeholder without sorry, so no sorry check catches it.
         if node.proof_formalized:
             claim = "proof: formalized"
         elif node.statement_formalized and status.is_definition(node):
