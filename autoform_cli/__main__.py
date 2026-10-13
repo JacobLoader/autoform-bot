@@ -31,7 +31,7 @@ from .impact import (
 from .lean import build_linker, declaration_names, index_failure_message
 from .project import ProjectCatalogError, ProjectCreateError, create_project, inspect_project, load_release_catalog
 from .render import PublicationError, render_site
-from .runtime import RuntimeProjectionError, load_runtime_graph, resolve_runtime_paths
+from .runtime import RuntimeProjectionError, resolve_runtime_paths
 from .scaffold import ScaffoldError, scaffold_project
 from .search import SearchError, search_blueprint, statement_preview
 from .skeleton import (
@@ -379,7 +379,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     render.add_argument("-o", "--output", default="site-src", help="output directory")
     render.add_argument("--lean-root", type=Path, help="Lean project to link code from")
     render.add_argument("--repository-url", help="project URL, e.g. https://github.com/owner/repo")
-    render.add_argument("--ref", help="commit or branch the code links should pin")
+    render.add_argument(
+        "--ref",
+        help="commit or branch to link; links appear only if its local commit "
+        "holds the exact rendered inputs",
+    )
     render.add_argument(
         "--require-declarations",
         action="store_true",
@@ -554,7 +558,6 @@ def _dashboard(args: argparse.Namespace) -> int:
         def run(scratch: Path) -> None:
             claims = ClaimBoard(repo, "dashboard-readonly", scratch)
             state = publication_bound_live_state(
-                lambda: load_runtime_graph(paths.project_root),
                 claims,
                 blueprint_dir=paths.blueprint_dir,
                 site_dir=site,
@@ -901,7 +904,8 @@ def _print_project_inspection(result) -> None:
         print(f"Lean: {_human_text(result.lean_toolchain)}")
     if result.mathlib is not None:
         mathlib = result.mathlib
-        where = mathlib.dir if mathlib.type == "path" else f"{mathlib.input_rev} @ {mathlib.rev} ({mathlib.url})"
+        revision = mathlib.rev if mathlib.input_rev is None else f"{mathlib.input_rev} @ {mathlib.rev}"
+        where = mathlib.dir if mathlib.type == "path" else f"{revision} ({mathlib.url})"
         print(f"Mathlib: {_human_text(where)} [{mathlib.source}]")
     if result.autoform_paths:
         print(f"Autoform: {', '.join(result.autoform_paths)}")
@@ -1178,6 +1182,8 @@ def _render(args: argparse.Namespace) -> int:
     print(f"{report.output_dir}: {report.pages} pages, {report.nodes} nodes, {report.linked} code links")
     for issue in report.unresolved:
         print(f"warning: declaration not found in the Lean sources: {issue}")
+    for issue in report.warnings:
+        print(f"warning: {issue}")
     if report.unresolved and args.require_declarations:
         return 1
     return 0

@@ -471,7 +471,7 @@ def test_scaffold_merges_autoform_rules_into_lake_gitignore(tmp_path: Path) -> N
 
     merged = (tmp_path / ".gitignore").read_bytes()
     assert merged.startswith(lake_ignore)
-    for rule in (b".lake/", b"site/", b"site-src/", b"*.log"):
+    for rule in (b".lake/", b"site/", b"site-src/", b".autoform-publication-*/", b"*.log"):
         assert merged.splitlines().count(rule) == 1
     assert ".gitignore" in result.written
     assert ".gitignore" not in result.skipped
@@ -1234,6 +1234,141 @@ def test_a_dangling_destination_symlink_cannot_redirect_the_scaffold(tmp_path: P
         scaffold_module.scaffold_project(project, title="Probe")
 
     assert not outside.exists()
+
+
+@pytest.mark.parametrize(
+    ("created", "variant"),
+    [
+        ("Blueprint/Basic.lean", "Blueprint"),
+        ("MkDocs.yml", "MkDocs.yml"),
+        # KELVIN SIGN: casefold() maps it to k.
+        ("m\u212adocs.yml", "m\u212adocs.yml"),
+        # LONG S: casefold() maps it to s, lower() does not, and APFS treats it as s.
+        ("mkdoc\u017f.yml", "mkdoc\u017f.yml"),
+        (".GitHub/dependabot.yml", ".GitHub"),
+        (".github/Workflows/ci.yml", ".github/Workflows"),
+        (".github/workflows/Autoform-Verify.yml", ".github/workflows/Autoform-Verify.yml"),
+        (".github/workflows/Blueprint-Pages.yml", ".github/workflows/Blueprint-Pages.yml"),
+        ("Readme.md", "Readme.md"),
+        (".GitIgnore", ".GitIgnore"),
+        ("Theme/main.html", "Theme"),
+    ],
+)
+@pytest.mark.parametrize("force", [False, True])
+def test_scaffold_refuses_case_variants_of_managed_paths(
+    created: str, variant: str, force: bool, tmp_path: Path
+) -> None:
+    """Git and Linux CI see only the exact spelling of a managed path.
+
+    A case-insensitive filesystem wrote the vault into a `Blueprint/` Lean
+    library or took `MkDocs.yml` for `mkdocs.yml`, and a case-sensitive one
+    wrote a second copy beside the variant. Either way the run succeeded.
+    """
+    project = tmp_path / "project"
+    (project / created).parent.mkdir(parents=True, exist_ok=True)
+    (project / created).write_bytes(b"authored\n")
+    before = {path: path.read_bytes() if path.is_file() else None for path in project.rglob("*")}
+
+    with pytest.raises(ScaffoldError, match=re.escape(f"{variant} differs only in letter case")):
+        scaffold_project(
+            project,
+            title="Probe",
+            autoform_source="https://example.test/autoform.git",
+            autoform_ref="1" * 40,
+            force=force,
+        )
+
+    assert {path: path.read_bytes() if path.is_file() else None for path in project.rglob("*")} == before
+
+
+def test_case_collision_check_never_lists_through_a_link(tmp_path: Path) -> None:
+    """A linked exact spelling is refused as a link, not listed for case variants."""
+    project = tmp_path / "project"
+    outside = tmp_path / "outside"
+    (outside / "Roadmap").mkdir(parents=True)
+    project.mkdir()
+    (project / "blueprint").symlink_to(outside)
+
+    with pytest.raises(ScaffoldError, match="outside the project") as caught:
+        scaffold_project(project, title="Probe")
+
+    assert "letter case" not in str(caught.value)
+    assert list(outside.iterdir()) == [outside / "Roadmap"]
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_scaffold_refuses_a_case_variant_beside_the_exact_spelling(force: bool, tmp_path: Path) -> None:
+    """On a case-sensitive filesystem, init used to write `blueprint/` beside a `Blueprint/` Lean library.
+
+    A rerun there meets both spellings, and the variant is still refused.
+    """
+    project = tmp_path / "project"
+    (project / "blueprint").mkdir(parents=True)
+    (project / "blueprint/README.md").write_bytes(b"authored\n")
+    if (project / "Blueprint").exists():
+        pytest.skip("the filesystem folds letter case")
+    (project / "Blueprint").mkdir()
+    (project / "Blueprint/Basic.lean").write_bytes(b"authored\n")
+    before = {path: path.read_bytes() if path.is_file() else None for path in project.rglob("*")}
+
+    with pytest.raises(ScaffoldError, match=r"^Blueprint differs only in letter case"):
+        scaffold_project(
+            project,
+            title="Probe",
+            autoform_source="https://example.test/autoform.git",
+            autoform_ref="1" * 40,
+            force=force,
+        )
+
+    assert {path: path.read_bytes() if path.is_file() else None for path in project.rglob("*")} == before
+
+
+def test_case_collision_refusal_names_every_variant_once(tmp_path: Path) -> None:
+    """Every variant is named once, though all six vault paths run through `Blueprint/`."""
+    project = tmp_path / "project"
+    for created in ("Blueprint/Basic.lean", "MkDocs.yml"):
+        (project / created).parent.mkdir(parents=True, exist_ok=True)
+        (project / created).write_bytes(b"authored\n")
+    before = {path: path.read_bytes() if path.is_file() else None for path in project.rglob("*")}
+
+    with pytest.raises(ScaffoldError) as caught:
+        scaffold_project(
+            project,
+            title="Probe",
+            autoform_source="https://example.test/autoform.git",
+            autoform_ref="1" * 40,
+            force=True,
+        )
+
+    assert [issue.split(" differs ")[0] for issue in caught.value.issues] == ["Blueprint", "MkDocs.yml"]
+    assert {path: path.read_bytes() if path.is_file() else None for path in project.rglob("*")} == before
+
+
+def test_case_collision_check_refuses_a_directory_it_cannot_list(tmp_path: Path) -> None:
+    """A directory that cannot be listed could hold a variant, so the check fails closed."""
+    project = tmp_path / "project"
+    (project / ".github").mkdir(parents=True)
+    before = {path: path.read_bytes() if path.is_file() else None for path in project.rglob("*")}
+    original_scandir = os.scandir
+
+    def deny_github(path: str | os.PathLike[str]):
+        if os.path.realpath(path) == os.path.realpath(project / ".github"):
+            raise PermissionError(13, "Permission denied", os.fspath(path))
+        return original_scandir(path)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(scaffold_module.os, "scandir", deny_github)
+        with pytest.raises(ScaffoldError, match="cannot list a directory to check for letter-case collisions"):
+            scaffold_project(
+                project,
+                title="Probe",
+                autoform_source="https://example.test/autoform.git",
+                autoform_ref="1" * 40,
+                force=True,
+            )
+
+    # Compared only after the patch is undone, because Path.rglob lists through os.scandir too.
+    assert {path: path.read_bytes() if path.is_file() else None for path in project.rglob("*")} == before
 
 
 def test_a_title_with_a_colon_stays_one_yaml_key(tmp_path: Path) -> None:

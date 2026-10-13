@@ -12,6 +12,7 @@ and deliberately reports nothing it cannot see rather than guessing.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -53,7 +54,6 @@ _IGNORED_DIRECTORIES = frozenset(
         ".obsidian",
         ".trash",
         ".venv",
-        "lake-packages",
     }
 )
 # ``Build`` can be a Lean namespace directory, so only this spelling is ignored.
@@ -148,15 +148,44 @@ def index_failure_message(error: OSError) -> str:
     return "Lean sources could not be indexed"
 
 
+def resolve_lean_root(lean_root: str | Path) -> Path:
+    """Resolve *lean_root* to the directory it names.
+
+    Raises :class:`LeanSourceError` naming why the root cannot be used, for
+    example when it does not exist or lies under a folder that cannot be
+    searched.
+    """
+
+    try:
+        root = directory_binding.lexical_absolute_path(lean_root).resolve()
+        metadata = os.stat(root)
+    except RuntimeError as error:
+        # An unknown ~user, or before Python 3.13 a symbolic link loop.
+        raise LeanSourceError("Lean root cannot be resolved") from error
+    except (FileNotFoundError, NotADirectoryError) as error:
+        raise LeanSourceError("Lean root does not exist or is not a directory") from error
+    except PermissionError as error:
+        raise LeanSourceError("permission denied while resolving the Lean root") from error
+    except (OSError, ValueError) as error:
+        if getattr(error, "errno", None) == errno.ELOOP:
+            # Python 3.13 and later resolve a symbolic link loop without raising.
+            raise LeanSourceError("Lean root cannot be resolved") from error
+        raise LeanSourceError("Lean root cannot be inspected") from error
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise LeanSourceError("Lean root does not exist or is not a directory")
+    return root
+
+
 def index_project(
     root: str | Path, *, exclude_roots: Iterable[str | Path] = ()
 ) -> SourceIndex:
-    """Scan ``*.lean`` beneath *root* and index declarations by full name."""
+    """Scan ``*.lean`` beneath *root* and index declarations by full name.
+
+    Raises :class:`LeanSourceError` when the root cannot be used or its
+    sources cannot be read.
+    """
+    root_path = resolve_lean_root(root)
     requested_root = directory_binding.lexical_absolute_path(root)
-    root_path = requested_root.resolve()
-    if not root_path.is_dir():
-        digest = hashlib.sha256(b"autoform-lean-source-index/v1\0").hexdigest()
-        return SourceIndex(root=root_path, declarations={}, source_digest=digest)
     remapped_exclusions = tuple(
         _remap_resolved_root_exclusion(requested_root, root_path, value)
         for value in exclude_roots
@@ -235,11 +264,13 @@ def snapshot_project_sources(
     *,
     exclude_roots: Iterable[str | Path] = (),
     limits: TreeCaptureLimits = TreeCaptureLimits(),
+    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
 ) -> IndexedSourceSnapshot:
     """Read each Lean source once and derive its index and revision together.
 
     A bind or capture that races a concurrent edit is retried a bounded number
-    of times.
+    of times. Callers may name markers of generated directory formats they own;
+    a directory holding one is never indexed.
     """
 
     exclusions = tuple(exclude_roots)
@@ -252,6 +283,7 @@ def snapshot_project_sources(
                 root,
                 exclude_roots=exclusions,
                 limits=limits,
+                opaque_markers=opaque_markers,
             ) as bound:
                 return bound.capture()
         except TreeChangedError as error:
@@ -301,6 +333,7 @@ def bind_project_sources(
     *,
     exclude_roots: Iterable[str | Path] = (),
     limits: TreeCaptureLimits = TreeCaptureLimits(),
+    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
 ) -> Iterator[BoundProjectSources]:
     """Retain a Lean root while one or more source snapshots are consumed."""
 
@@ -308,6 +341,7 @@ def bind_project_sources(
         root,
         exclude_roots=exclude_roots,
         limits=limits,
+        opaque_markers=opaque_markers,
     )
     try:
         yield bound
@@ -320,6 +354,7 @@ def open_project_sources(
     *,
     exclude_roots: Iterable[str | Path] = (),
     limits: TreeCaptureLimits = TreeCaptureLimits(),
+    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
 ) -> BoundProjectSources:
     """Open a retained Lean source root; the caller must close it.
 
@@ -340,7 +375,9 @@ def open_project_sources(
             exclude_roots,
             root_identity=tree.identity,
         )
-        tree.selection = _lean_tree_selection(excluded, limits=limits)
+        tree.selection = _lean_tree_selection(
+            excluded, limits=limits, opaque_markers=opaque_markers
+        )
         tree.verify()
     except BaseException:
         tree.close()
@@ -430,6 +467,7 @@ def _lean_tree_selection(
     excluded: tuple[PurePosixPath, ...],
     *,
     limits: TreeCaptureLimits = TreeCaptureLimits(),
+    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
 ) -> TreeSelection:
     return TreeSelection(
         include=lambda path, mode: _lean_snapshot_includes(
@@ -460,6 +498,7 @@ def _lean_tree_selection(
                 _MANAGED_OUTPUT_MANIFEST_BYTE_LIMIT,
                 _is_managed_output_manifest_bytes,
             ),
+            *opaque_markers,
         ),
     )
 
@@ -471,14 +510,19 @@ def _lean_snapshot_includes(
 ) -> bool:
     if _lean_path_is_excluded(relative, excluded):
         return False
+    # The suffix is compared exactly, as Lake's module globs, skeleton and the
+    # servers do, so ``A.LEAN`` is not a Lean source even on a case-insensitive
+    # volume where ``import A`` could open it.
     if stat.S_ISLNK(mode):
+        # Editor lock links (``.#Name.lean``) are never read, so they are skipped;
+        # any other ``.lean`` link, live or dangling, is captured and refused.
         return (
-            relative.suffix.casefold() == ".lean"
+            relative.suffix == ".lean"
             and not relative.name.startswith(".#")
         )
     return (
         stat.S_ISDIR(mode)
-        or relative.suffix.casefold() == ".lean"
+        or relative.suffix == ".lean"
         or (
             len(relative.parts) > 1
             and _is_managed_output_manifest_name(relative.name)
@@ -557,21 +601,11 @@ def _indexed_source_snapshot(
     def in_ignored_root(relative_text: str) -> bool:
         return _path_is_within_roots(PurePosixPath(relative_text), ignored_roots)
 
-    # Editor lock links (``.#Name.lean``) are never read, so they are skipped;
-    # any other ``.lean`` link, live or dangling, is refused.
-    tolerated_links = frozenset(
-        relative
-        for relative, _target in snapshot.symlinks
-        if PurePosixPath(relative).suffix.casefold() == ".lean"
-        and not in_ignored_root(relative)
-        and PurePosixPath(relative).name.startswith(".#")
-    )
     unsupported = [
         (relative, reason)
         for relative, reason in snapshot.unsupported_entries()
         if not in_ignored_root(relative)
-        and PurePosixPath(relative).suffix.casefold() == ".lean"
-        and relative not in tolerated_links
+        and PurePosixPath(relative).suffix == ".lean"
     ]
     if unsupported:
         relative, reason = unsupported[0]
@@ -583,7 +617,7 @@ def _indexed_source_snapshot(
     digest = hashlib.sha256(b"autoform-lean-source-index/v1\0")
     for relative_text, data in snapshot.files:
         relative = PurePosixPath(relative_text)
-        if relative.suffix.casefold() != ".lean" or _lean_path_is_excluded(
+        if relative.suffix != ".lean" or _lean_path_is_excluded(
             relative,
             excluded,
         ):
@@ -609,7 +643,7 @@ def _indexed_source_snapshot(
             line_counts=line_counts,
         ),
         source_digest,
-        _lean_generation_revision(snapshot, ignored_roots, tolerated_links),
+        _lean_generation_revision(snapshot, ignored_roots),
         tuple(source_files),
     )
 
@@ -617,23 +651,18 @@ def _indexed_source_snapshot(
 def _lean_generation_revision(
     snapshot: TreeSnapshot,
     ignored_roots: set[PurePosixPath],
-    tolerated_links: frozenset[str],
 ) -> str:
     """Hash only effective Lean inputs and their ancestor directories."""
 
     def retained_entry(relative_text: str) -> bool:
         relative = PurePosixPath(relative_text)
-        return relative.suffix.casefold() == ".lean" and not _path_is_within_roots(
+        return relative.suffix == ".lean" and not _path_is_within_roots(
             relative,
             ignored_roots,
         )
 
     files = tuple(entry for entry in snapshot.files if retained_entry(entry[0]))
-    symlinks = tuple(
-        entry
-        for entry in snapshot.symlinks
-        if retained_entry(entry[0]) and entry[0] not in tolerated_links
-    )
+    symlinks = tuple(entry for entry in snapshot.symlinks if retained_entry(entry[0]))
     special = tuple(entry for entry in snapshot.special if retained_entry(entry[0]))
     placeholders = tuple(path for path in snapshot.placeholders if retained_entry(path))
     omitted = tuple(entry for entry in snapshot.omitted if retained_entry(entry[0]))
@@ -895,12 +924,8 @@ def build_linker(
     A supplied source snapshot never inherits a live Git ref; callers must bind
     that ref explicitly if they want permalinks.
     """
-    try:
-        requested_root = directory_binding.lexical_absolute_path(lean_root)
-        resolved_root = requested_root.resolve()
-    except RuntimeError as error:
-        # An unknown ~user, or before Python 3.13 a symbolic link loop.
-        raise LeanSourceError("Lean root cannot be resolved") from error
+    resolved_root = resolve_lean_root(lean_root)
+    requested_root = directory_binding.lexical_absolute_path(lean_root)
     remapped_exclusions = tuple(
         _remap_resolved_root_exclusion(requested_root, resolved_root, value)
         for value in exclude_roots
@@ -1015,12 +1040,87 @@ def _committed_source_paths(
     return frozenset(linkable)
 
 
+def verify_repository_snapshot(
+    root: str | Path,
+    requested_ref: str,
+    files: Iterable[tuple[Path, bytes]],
+    *,
+    required_directories: Iterable[Path] = (),
+    reasons: list[str] | None = None,
+) -> str | None:
+    """Return the commit whose tree holds every captured file, byte for byte.
+
+    A clean checkout that Git converts on the way out (LFS, eol attributes) is
+    accepted by hashing the captured bytes through Git's clean filter. Otherwise
+    ``None``, with the first reason appended to *reasons*, naming paths relative
+    to the repository only. The shared Git runner strips ambient overrides.
+    """
+
+    def refuse(reason: str) -> None:
+        if reasons is not None:
+            reasons.append(reason)
+
+    root = Path(root).resolve()
+    commit = _git(root, "rev-parse", "--verify", "--end-of-options", f"{requested_ref}^{{commit}}")
+    algorithm = _git(root, "rev-parse", "--show-object-format")
+    if commit is None or algorithm not in {"sha1", "sha256"}:
+        return refuse(f"{requested_ref!r} does not name a commit in a local Git repository")
+    prefix = _git(root, "rev-parse", "--show-prefix")
+    if prefix:  # tree paths start at the top level, so nothing below could match
+        return refuse(
+            f"the Lean root is the subdirectory {prefix.rstrip('/')} of its Git repository; "
+            "links need the repository top level"
+        )
+    captured: dict[str, bytes] = {}
+    try:
+        for path, data in files:
+            relative = path.relative_to(root).as_posix()
+            if captured.setdefault(relative, data) != data:
+                return refuse(f"two captured files claim {relative}")
+        directories = [path.relative_to(root).as_posix() for path in required_directories]
+    except ValueError:
+        return refuse("a captured file or directory is outside the repository")
+    blobs = _git_tree_oids(root, commit, tuple(sorted(captured)))
+    if blobs is None:
+        return refuse("the commit's tree could not be read")
+    for path, data in captured.items():
+        if path not in blobs:
+            return refuse(f"{path} is not a file in commit {commit[:12]}")
+        framed = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
+        if hashlib.new(algorithm, framed).hexdigest() != blobs[path] and (
+            _git_clean_blob_id(root, path, data) != blobs[path]
+        ):
+            return refuse(f"{path} differs from commit {commit[:12]}")
+    if any(_git(root, "cat-file", "-t", f"{commit}:{directory}") != "tree" for directory in directories):
+        return refuse(f"a required directory is not in commit {commit[:12]}")
+    return commit
+
+
+def _git_clean_blob_id(root: Path, path: str, data: bytes) -> str | None:
+    """Hash captured bytes as Git would store them at *path* (clean filter, eol)."""
+
+    try:
+        result = subprocess.run(
+            ["git", "hash-object", "--stdin", f"--path={path}"],
+            cwd=str(root),
+            input=data,
+            capture_output=True,
+            env=_git_environment(),
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    output = result.stdout.decode("ascii", "replace").strip()
+    return output if result.returncode == 0 and output else None
+
+
 def _git_tree_oids(
     root: Path,
     commit: str,
     paths: tuple[str, ...],
 ) -> dict[str, str] | None:
-    """Read raw tree object IDs for exact paths without Git's quoting layer."""
+    """Read raw blob IDs of regular files at exact paths without Git's quoting layer."""
 
     result: dict[str, str] = {}
     for start in range(0, len(paths), 128):
@@ -1029,7 +1129,15 @@ def _git_tree_oids(
             continue
         try:
             completed = subprocess.run(
-                ["git", "ls-tree", "-rz", "--full-tree", commit, "--", *batch],
+                [
+                    "git",
+                    "ls-tree",
+                    "-rz",
+                    "--full-tree",
+                    commit,
+                    "--",
+                    *(f":(literal){path}" for path in batch),
+                ],
                 cwd=str(root),
                 capture_output=True,
                 env=_git_environment(),
@@ -1045,7 +1153,7 @@ def _git_tree_oids(
                 continue
             header, separator, encoded_path = record.partition(b"\t")
             fields = header.split()
-            if not separator or len(fields) != 3 or fields[1] != b"blob":
+            if not separator or len(fields) != 3 or fields[0] not in {b"100644", b"100755"}:
                 continue
             result[os.fsdecode(encoded_path)] = fields[2].decode("ascii")
     return result
@@ -1180,6 +1288,8 @@ __all__ = [
     "index_failure_message",
     "index_project",
     "project_source_revision",
+    "resolve_lean_root",
     "snapshot_project_sources",
     "strip_lean_comments",
+    "verify_repository_snapshot",
 ]

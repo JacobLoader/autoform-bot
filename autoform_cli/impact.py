@@ -22,7 +22,7 @@ from pathlib import Path
 from . import skeleton
 from ._tree_snapshot import TreeSnapshotError
 from .claims import author_claim_key
-from .lean import IndexedSourceSnapshot, bind_project_source_snapshot
+from .lean import IndexedSourceSnapshot, LeanSourceError, bind_project_source_snapshot, resolve_lean_root
 from .runtime import load_runtime_graph
 from .skeleton import LeanLibrary, SkeletonError, _lean_name, _lean_name_parts, lean_libraries
 from .work import work_context
@@ -1358,7 +1358,10 @@ def _load_impact_evidence(
     if require_default_declarations and not selected.declarations:
         raise ImpactError(f"{selected.id} names no lean: declaration; pass --declaration NAME")
 
-    root = Path(lean_root).expanduser().resolve()
+    try:
+        root = resolve_lean_root(lean_root)
+    except LeanSourceError as error:
+        raise ImpactError(str(error)) from error
     controls = _project_controls(root)
     with bind_project_source_snapshot(root) as (bound_sources, source_snapshot):
         libraries = lean_libraries(root)

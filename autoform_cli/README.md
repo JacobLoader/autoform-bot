@@ -195,7 +195,16 @@ commit, `--force` to overwrite, and `--json` for machine-readable output.
 An existing root `.gitignore` must be a bounded single-link regular file;
 missing Autoform rules are appended through one retained descriptor. If an
 append cannot be fully reverified, the error says it may be partial and the
-file must be inspected before retrying.
+file must be inspected before retrying. Before writing anything, even with
+`--force`, `init` refuses an existing entry that differs from a path it manages
+only in letter case or Unicode form, such as a `Blueprint/` Lean library or
+`MkDocs.yml`: Git and Linux CI see only the exact spelling, while a
+case-insensitive filesystem resolves the managed path to the variant. `init`
+also refuses when it cannot list a directory on a path it manages. A root
+`Readme.md` or `readme.md` is refused, not skipped like an existing `README.md`.
+The vault is always `blueprint/`, so a Lean library named `Blueprint` needs a
+different library name (its lakefile `lean_lib`, root module and imports), not
+a lowercase rename.
 
 Create or inspect a Lean project and list Autoform's bundled known-good release pairs:
 
@@ -946,6 +955,26 @@ bytes equal the blob at the stable detected commit. Dirty, untracked, missing,
 or concurrently checked-out files keep local declaration locations but receive
 no URL. An explicitly supplied ref remains a caller attestation.
 
+Lean indexing reads the whole Lean root or nothing. It stops with an error,
+rather than indexing what it could, when an entry it must read cannot be read
+safely: a `.lean` file that cannot be read, a folder that cannot be listed or
+searched, a `.lean` entry that is a symbolic link or a special file (editor
+lock links named `.#*.lean` are skipped), or an unreadable `manifest.json`
+below the root, which is read to recognize skeleton output folders. `render`
+also stops at an unreadable `publication.json` below the root, which it reads
+to recognize rendered sites. These stops apply in every folder the walk
+enters, so an unreadable folder of unrelated files inside the Lean root stops
+indexing too; other files are never read. `render` without `--lean-root` uses
+the blueprint's parent folder as the Lean root. To clear a stop, fix the
+permissions, or move the entry out of the Lean root or into a folder the walk
+skips: `.direnv`, `.git`, `.lake`, `.obsidian`, `.trash`, `.venv`,
+`lake-packages`, `build`, a folder below the root that holds a `.git` entry, a
+recognized skeleton output folder, or, for `render`, a rendered site. There is
+no command-line option to exclude other folders. The skipped folder names and
+the `manifest.json`, `publication.json` and `.git` names match in any letter
+case, except `build`, which must be lowercase. The `.lean` suffix must match
+exactly, so `A.LEAN` is not indexed.
+
 The Markdown files are the source of truth. Graphs and sites are derived views
 that may be regenerated at any time.
 
@@ -1460,8 +1489,11 @@ graph counts, reference invariants, roadmap audit, and optional local Lean
 targets. It exits zero only when every required check passes. Omitting
 `--lean-root` records an explicit advisory pass; supplying it performs only a
 lexical local-source check, not a Lean build, kernel check, or proof-honesty
-review. The bundled example intentionally exits nonzero while its declared
-coverage still holds `MAPPED` rows.
+review. Only the `lean targets` check reads Lean sources, once. It holds every
+finding that needs the Lean root, including `node-too-large`, and an unusable
+Lean root or unreadable source fails only that check. The bundled example
+intentionally exits nonzero while its declared coverage still holds `MAPPED`
+rows.
 
 This command is strictly read-only and local. It does not invoke Git, GitHub,
 subprocesses, network services, claims, queues, reviews, recovery state,
@@ -1496,16 +1528,52 @@ but durable execution records and routes must require `article_id` until the
 path-move migration is complete. Operational state remains private and excluded
 from runtime snapshots and publication.
 
+Projection fails when an article's bytes no longer match the digest recorded
+when the graph was loaded, so a source revision never labels node data parsed
+from older bytes. A hand-built node without a digest makes no snapshot claim:
+its `source_sha256` stays null and the revision covers whatever bytes its
+article holds at projection time.
+
 ## Publication contract
 
 `autoform render` publishes the book, derived progress, and dependency maps at
 project, chapter, nested-scope, local, and full-graph scales. It never reads a
-`graph.json` or an operational queue. Hidden files, including
-`.implementation-notes`, are omitted, while symlinks, credentials, logs,
-provider state, and agent/task state inside the blueprint cause the render to
-fail rather than silently leak them. Source and output directories must be
-disjoint.
+`graph.json` or an operational queue. Hidden files and directories, including
+`.implementation-notes`, are omitted, while a `.autoform` directory and
+symlinks, credentials, logs, provider state, and agent/task state outside hidden
+directories cause the render to fail rather than silently leak them. Source and
+output directories must be disjoint. A blueprint path that differs only in case
+from one render writes (`SUMMARY.md`, `dependencies.md`, `structure.md`,
+`publication.json`, `assets/`, `dependencies/`, `javascripts/`, `stylesheets/`,
+and the generated stylesheet, scripts and logo inside them) is refused, as are
+two blueprint paths that differ only in case or Unicode form, because they would
+collide on a case-insensitive filesystem.
 
-Every render writes `publication.json` with the source-content hash, Git ref,
-article and dependency counts, and available views. It contains no timestamp or
-absolute path, so identical inputs produce identical output files.
+Every render writes `publication.json` with blueprint and Lean-source hashes,
+Git ref, article and dependency counts, the site's file inventory, and available
+views. It contains no timestamp or absolute path, so identical inputs produce
+identical output files. Render reads the blueprint and the Lean sources once
+each and derives every page, link and hash from those bytes; an edit saved
+during a render waits for the next one. Repository links appear only when those
+bytes match one locally available Git commit, recorded by its full object ID; a
+clean checkout that Git converts on checkout still matches. Otherwise the render
+stays local, keeps source notes in the site, records no Git ref, and warns with
+the first mismatch.
+
+The site is built and synced in a hidden `.autoform-publication-*` directory
+beside the output, then swapped in with one atomic exchange (`renamex_np` on
+macOS, `renameat2` on Linux); renders committing into the same parent directory
+take turns when it can be locked. On filesystems without the exchange (NFS, SMB,
+9p or WSL2 `/mnt/c`, exFAT, sshfs) the previous site is first renamed to
+`.autoform-publication-backup-<name>`; if render dies between the two renames,
+the next render moves it back before anything else. Render replaces only an
+empty directory or a complete `autoform-publication/v2` site whose files match
+its inventory (macOS metadata files, `.DS_Store` and `._*`, are ignored in
+both), and refuses anything else, including a legacy v1 output, which you
+remove once by hand. A failed or refused render leaves the output as it was. A
+render killed mid-way can leave a `.autoform-publication-*` directory beside the
+output (the repository root for `--output site-src`); render never indexes it
+as Lean source and the setup ignore rules cover it, but it may hold the previous
+site, so inspect it before deleting it. (On macOS `fsync` does not flush the
+drive's cache, so a power loss can still lose the newest site.) Native Windows
+cannot run `autoform render`.
