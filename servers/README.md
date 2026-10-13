@@ -71,7 +71,11 @@ must also set `LEAN_REPL_HEADER_CMD` to a command that runs
 `servers/repl/parse_header.lean` with the matching toolchain's `lean --run`,
 passing the source on standard input. Like the limits above, `LEAN_REPL_CMD` and
 `LEAN_REPL_HEADER_CMD` are node-wide and read only when the runtime starts;
-after changing either, run `uv run autoform-lean-runtime stop`.
+after changing either, run `uv run autoform-lean-runtime stop`. The next
+process to start the runtime, an MCP adapter serving a tool call or
+`uv run autoform-lean-runtime start`, must have the new values in its
+environment, and `uv run autoform-lean-runtime status` shows the resolved
+commands under `config`.
 
 `AUTOFORM_MAX_REPL_REQUEST_SECONDS` caps the REPL `timeout`; when
 `AUTOFORM_REPL_REQUEST_TIMEOUT` is unset, the default `timeout` is the lower of

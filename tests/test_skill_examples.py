@@ -277,6 +277,11 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
         "when the runtime starts"
     ) in servers
     assert "after changing either, run `uv run autoform-lean-runtime stop`" in servers
+    assert (
+        "The next process to start the runtime, an MCP adapter serving a tool call or "
+        "`uv run autoform-lean-runtime start`, must have the new values in its environment"
+    ) in servers
+    assert "`uv run autoform-lean-runtime status` shows the resolved commands under `config`" in servers
     assert "one total post-admission budget" in servers
     assert "it and its cap default to 240 seconds" in servers
     assert "its REPL slot pool is cached" in servers
