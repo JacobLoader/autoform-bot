@@ -521,6 +521,9 @@ class ClaimBoard:
         """Return all claim refs, including malformed and expired entries.
 
         Refs that keep changing while they are read raise ``ClaimTransportError``.
+        Any change to a claim ref between an attempt's two ``ls-remote`` calls
+        restarts it, so the chance of this error grows with the number of claims
+        and with board-wide renew, acquire and release activity.
         """
         self._ensure_scratch()
         for _ in range(_LIST_ATTEMPTS):
