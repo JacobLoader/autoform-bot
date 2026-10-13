@@ -482,6 +482,8 @@ def _lean_snapshot_includes(
     if _lean_path_is_excluded(relative, excluded):
         return False
     if stat.S_ISLNK(mode):
+        # Editor lock links (``.#Name.lean``) are never read, so they are skipped;
+        # any other ``.lean`` link, live or dangling, is captured and refused.
         return (
             relative.suffix.casefold() == ".lean"
             and not relative.name.startswith(".#")
@@ -567,21 +569,11 @@ def _indexed_source_snapshot(
     def in_ignored_root(relative_text: str) -> bool:
         return _path_is_within_roots(PurePosixPath(relative_text), ignored_roots)
 
-    # Editor lock links (``.#Name.lean``) are never read, so they are skipped;
-    # any other ``.lean`` link, live or dangling, is refused.
-    tolerated_links = frozenset(
-        relative
-        for relative, _target in snapshot.symlinks
-        if PurePosixPath(relative).suffix.casefold() == ".lean"
-        and not in_ignored_root(relative)
-        and PurePosixPath(relative).name.startswith(".#")
-    )
     unsupported = [
         (relative, reason)
         for relative, reason in snapshot.unsupported_entries()
         if not in_ignored_root(relative)
         and PurePosixPath(relative).suffix.casefold() == ".lean"
-        and relative not in tolerated_links
     ]
     if unsupported:
         relative, reason = unsupported[0]
@@ -619,7 +611,7 @@ def _indexed_source_snapshot(
             line_counts=line_counts,
         ),
         source_digest,
-        _lean_generation_revision(snapshot, ignored_roots, tolerated_links),
+        _lean_generation_revision(snapshot, ignored_roots),
         tuple(source_files),
     )
 
@@ -627,7 +619,6 @@ def _indexed_source_snapshot(
 def _lean_generation_revision(
     snapshot: TreeSnapshot,
     ignored_roots: set[PurePosixPath],
-    tolerated_links: frozenset[str],
 ) -> str:
     """Hash only effective Lean inputs and their ancestor directories."""
 
@@ -639,11 +630,7 @@ def _lean_generation_revision(
         )
 
     files = tuple(entry for entry in snapshot.files if retained_entry(entry[0]))
-    symlinks = tuple(
-        entry
-        for entry in snapshot.symlinks
-        if retained_entry(entry[0]) and entry[0] not in tolerated_links
-    )
+    symlinks = tuple(entry for entry in snapshot.symlinks if retained_entry(entry[0]))
     special = tuple(entry for entry in snapshot.special if retained_entry(entry[0]))
     placeholders = tuple(path for path in snapshot.placeholders if retained_entry(path))
     omitted = tuple(entry for entry in snapshot.omitted if retained_entry(entry[0]))
