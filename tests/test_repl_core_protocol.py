@@ -2120,10 +2120,12 @@ def test_disposable_timeout_reaps_a_slow_to_exit_process_without_cleanup_failure
     monkeypatch,
 ):
     real_kill = repl_core._kill_subprocesses
+    refused = []
 
     def slow_reap(process, process_group_id, deadline=None):
         # A large Lean process needs real time to exit after SIGKILL.
         if deadline is not None and deadline - time.monotonic() < 0.5:
+            refused.append(deadline)
             raise RuntimeError("timed out reaping the Lean REPL process")
         real_kill(process, process_group_id, deadline)
 
@@ -2138,8 +2140,11 @@ def test_disposable_timeout_reaps_a_slow_to_exit_process_without_cleanup_failure
     try:
         response = repl.run_disposable("HANG", timeout=0.5)
 
-        assert response.get("outcome_unknown") is True
-        assert "cleanup also failed" not in response["repl_error"]
+        assert response == {
+            "repl_error": "Lean REPL combined command execution timed out after 0.5 seconds",
+            "outcome_unknown": True,
+        }
+        assert refused == []
         assert repl.is_clean()
     finally:
         repl.close()
