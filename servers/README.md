@@ -11,21 +11,21 @@ Plugin hosts start the two stdio MCP processes automatically. They are
 lightweight adapters: the first Lean tool call race-safely starts a detached
 runtime for the current AutoformBot installation, Unix user, and compute node.
 That runtime owns one REPL admission pool and LSP session per active Lean
-project. LSP sessions stay warm; each public REPL call gets a fresh child and
-no process-owned environment or proof-state handle survives the response.
-Before that child starts, the selected Lake toolchain runs Lean's own header
-parser, which the REPL also uses, on the submitted source. Every import it
-reports is validated, and a rejected or
-unrecognized parser response fails closed. Allowlisted imports require
-plain, nonempty canonical module components; names that remain quoted or
-path-like after Lean parsing are refused instead of being reduced to a
-misleading allowlisted root. The header check runs as one extra short Lean
-process per call and counts toward the same request budget as the rest of
-the call. Execution names the
-package-qualified `@repl/repl` target so a project target cannot shadow it.
-Closing the session that started it does not stop it; after a crash, the next
-tool call starts it again. Runtime sockets include a code fingerprint, so an
-in-place upgrade gracefully replaces the older build.
+project. Closing the session that started the runtime does not stop it; after a
+crash, the next tool call starts it again. Runtime sockets include a code
+fingerprint, so an in-place upgrade gracefully replaces the older build.
+
+LSP sessions stay warm; each public REPL call gets a fresh child and no
+process-owned environment or proof-state handle survives the response. Before
+that child starts, the selected Lake toolchain runs Lean's own header parser,
+which the REPL also uses, on the submitted source. Every import it reports is
+validated, and a rejected or unrecognized parser response fails closed.
+Allowlisted imports require plain, nonempty canonical module components; names
+that remain quoted or path-like after Lean parsing are refused instead of being
+reduced to a misleading allowlisted root. The header check runs as one extra
+short Lean process per call and counts toward the same request budget as the
+rest of the call. Execution names the package-qualified `@repl/repl` target so a
+project target cannot shadow it.
 
 REPL children and LSP processes remain lazy. A cold tool call stays pending
 while Lean warms up, so no `/repl-start`, `/lsp-start`, or model-side sleep is

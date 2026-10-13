@@ -244,8 +244,8 @@ def test_quick_start_keeps_the_cli_agent_facing(repo_root: Path) -> None:
 
 
 def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path) -> None:
-    servers = (repo_root / "servers/README.md").read_text(encoding="utf-8")
-    setup = (repo_root / "skills/setup/SKILL.md").read_text(encoding="utf-8")
+    servers = " ".join((repo_root / "servers/README.md").read_text(encoding="utf-8").split())
+    setup = " ".join((repo_root / "skills/setup/SKILL.md").read_text(encoding="utf-8").split())
     lakefile = (
         repo_root / "skills/setup/assets/cabannes-thesis-project/lakefile.toml"
     ).read_text(encoding="utf-8")
@@ -254,7 +254,7 @@ def test_public_repl_calls_are_documented_as_process_disposable(repo_root: Path)
     assert "no process-owned environment or proof-state handle survives" in servers
     assert "toolchain runs Lean's own header" in servers
     assert "unrecognized parser response fails closed" in servers
-    assert "names that remain quoted or\npath-like after Lean parsing are refused" in servers
+    assert "names that remain quoted or path-like after Lean parsing are refused" in servers
     assert "package-qualified `@repl/repl` target" in servers
     assert "finds the REPL only through a require named `repl`" in servers
     assert 'needs `LEAN_REPL_CMD="lake exe @<name>/repl"`' in servers
