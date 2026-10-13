@@ -153,6 +153,12 @@ def test_import_edits_use_reported_scope_instead_of_a_blanket_ban(
     assert "release the complete currently held import set before waiting or reporting" in formalize
     assert "unless handing off an existing verified candidate" in formalize
     assert "Renew, hand off, and release the full import claim set together" in formalize
+    assert (
+        "then repair each under the review gates of the "
+        "[revision contract](../../autoform_cli/README.md#revision-contract)"
+    ) in formalize
+    assert "repairing another article's Lean that an [import edit](#import-edits) breaks" in formalize
+    assert "a change another article needs beyond an import repair" in formalize
 
     agents = " ".join(documents["AGENTS.md"].split())
     assert "consumer formalization work" in agents

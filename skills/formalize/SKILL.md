@@ -76,11 +76,13 @@ scope, not proof they are unaffected. Disclosure alone is not a conflict or
 failed validation. After rebuilding, repeat the skeleton evidence and use Agent
 Review to judge semantic changes. An expired valid claim is not active. If any
 article actually needs changes, atomically acquire the full held set plus its
-targets. On a refused import-claim acquisition or a recheck conflict, release
-the complete currently held import set before waiting or reporting, unless
-handing off an existing verified candidate under the later handoff contract.
-Renew, hand off, and release the full import claim set together. Stop for an
-active conflict or failed validation, not for a blanket import rule.
+targets, then repair each under the review gates of the [revision
+contract](../../autoform_cli/README.md#revision-contract). On a refused
+import-claim acquisition or a recheck conflict, release the complete currently
+held import set before waiting or reporting, unless handing off an existing
+verified candidate under the later handoff contract. Renew, hand off, and
+release the full import claim set together. Stop for an active conflict or
+failed validation, not for a blanket import rule.
 
 After acquiring the claim, bring the worktree up to date with the shared branch
 and reload `work context`. Before editing, require the same `phase`, `blockers`,
@@ -94,7 +96,8 @@ when present, cited sources, dependency articles, and existing Lean target.
 Preserve the exact mathematical statement. Work only on the selected phase: do
 not modify another article or its Lean declarations, or weaken a public
 statement. The exceptions are deleting stale implementation notes and repairing
-orphaned ones, as this skill describes, and revising a declaration other
+orphaned ones, as this skill describes, repairing another article's Lean that an
+[import edit](#import-edits) breaks, and revising a declaration other
 articles' Lean uses: start from
 `autoform work impact` and make only the edits the
 [revision contract](../../autoform_cli/README.md#revision-contract) requires,
@@ -184,9 +187,9 @@ and one file per claimed article avoids cross-worker merge hotspots. Move
 still-useful notes already in the article there and drop the rest. Delete the
 file once the article is proved; an empty file fails `autoform check`. Never
 link the hidden note from an article, because publication omits it. A missing
-prerequisite, an incorrect decomposition, a change another article needs, or a
-proof recorded without its statement returns to Roadmap instead of silently
-changing the DAG.
+prerequisite, an incorrect decomposition, a change another article needs beyond
+an import repair, or a proof recorded without its statement returns to Roadmap
+instead of silently changing the DAG.
 
 Run `autoform check <PROJECT>/blueprint --lean-root <PROJECT>` and `autoform
 audit <PROJECT>/blueprint --lean-root <PROJECT>`. Resolve every finding this
