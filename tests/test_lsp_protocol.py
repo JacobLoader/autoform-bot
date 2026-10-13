@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -765,7 +766,7 @@ def test_diagnostics_wait_through_initial_quiet_period(monkeypatch):
             None,
         ]
     )
-    monkeypatch.setattr(session, "_read_message", lambda timeout: next(messages))
+    monkeypatch.setattr(session, "_read_message", lambda timeout, start_timeout: next(messages))
 
     # The first two quiet reads are not evidence that the file is clean. The
     # explicit empty publication is, and should be returned as a valid result.
@@ -778,7 +779,7 @@ def test_diagnostics_timeout_without_publication(monkeypatch):
 
     monkeypatch.setattr(lsp.time, "monotonic", lambda: clock["now"])
 
-    def quiet_read(timeout):
+    def quiet_read(timeout, start_timeout):
         clock["now"] += timeout
         return None
 
@@ -802,7 +803,7 @@ def test_malformed_diagnostics_payload_is_protocol_error(monkeypatch):
             }
         ]
     )
-    monkeypatch.setattr(session, "_read_message", lambda timeout: next(messages))
+    monkeypatch.setattr(session, "_read_message", lambda timeout, start_timeout: next(messages))
 
     with pytest.raises(lsp.LspProtocolError, match="diagnostics must be a list"):
         session._collect_diagnostics(uri, timeout=60)
@@ -973,6 +974,114 @@ def test_partial_lsp_frame_cannot_block_past_deadline(partial):
     finally:
         os.close(write_fd)
         reader.close()
+
+
+def _pace_reads(monkeypatch, write_fd, arrivals):
+    """Write each ``(time, data)`` of ``arrivals`` into a pipe on a fake clock.
+
+    A select returns at once while the pipe holds data, else at the next
+    arrival within its timeout, else after the whole timeout.
+    """
+    import select
+
+    real_select = select.select
+    clock = {"now": 0.0}
+    pending = list(arrivals)
+
+    def fake_select(rlist, wlist, xlist, timeout):
+        ready, _, _ = real_select(rlist, wlist, xlist, 0)
+        if not ready and pending and pending[0][0] <= clock["now"] + timeout:
+            at, data = pending.pop(0)
+            clock["now"] = max(clock["now"], at)
+            os.write(write_fd, data)
+            ready, _, _ = real_select(rlist, wlist, xlist, 0)
+        if not ready:
+            clock["now"] += timeout
+        return ready, [], []
+
+    monkeypatch.setattr(lsp.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(select, "select", fake_select)
+    return clock
+
+
+def _publication(uri, diagnostics):
+    """Return the header and body of one publishDiagnostics frame."""
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {"uri": uri, "diagnostics": diagnostics},
+        }
+    ).encode("utf-8")
+    return f"Content-Length: {len(body)}\r\n\r\n".encode("ascii"), body
+
+
+def test_quiet_period_after_a_late_publication_stops_at_the_deadline(monkeypatch):
+    uri = "file:///tmp/Test.lean"
+    published = [{"message": "unknown identifier"}]
+    header, body = _publication(uri, published)
+    read_fd, write_fd = os.pipe()
+    reader = os.fdopen(read_fd, "rb", buffering=0)
+    session = lsp.LeanLspSession(lsp.LspConfig())
+    session.process = SimpleNamespace(stdout=reader)
+    # The frame starts at 1.9 s and finishes at 2.1 s, past the two-second
+    # read main gave it. The one-second quiet period after it would end at
+    # 3.1 s, so the 2.5 s deadline ends the call instead.
+    clock = _pace_reads(monkeypatch, write_fd, [(1.9, header[:1]), (2.1, header[1:] + body)])
+    try:
+        assert session._collect_diagnostics(uri, timeout=2.5) == published
+    finally:
+        os.close(write_fd)
+        reader.close()
+
+    assert clock["now"] == pytest.approx(2.5)
+
+
+def test_frame_straddling_the_quiet_period_after_a_publication_is_read_whole(monkeypatch):
+    uri = "file:///tmp/Test.lean"
+    published = [{"message": "unknown identifier"}]
+    first_header, first_body = _publication(uri, [])
+    second_header, second_body = _publication(uri, published)
+    read_fd, write_fd = os.pipe()
+    reader = os.fdopen(read_fd, "rb", buffering=0)
+    session = lsp.LeanLspSession(lsp.LspConfig())
+    session.process = SimpleNamespace(stdout=reader)
+    # The first publication arrives at once. The second starts just inside the
+    # one-second quiet period that follows it, and its header and body arrive
+    # after that period would have ended.
+    clock = _pace_reads(
+        monkeypatch,
+        write_fd,
+        [
+            (0.0, first_header + first_body),
+            (0.9, second_header[:1]),
+            (1.1, second_header[1:]),
+            (1.3, second_body),
+        ],
+    )
+    try:
+        assert session._collect_diagnostics(uri, timeout=10) == published
+    finally:
+        os.close(write_fd)
+        reader.close()
+
+    assert clock["now"] == pytest.approx(2.3)
+
+
+def test_started_frame_that_never_completes_times_out_at_the_deadline(monkeypatch):
+    read_fd, write_fd = os.pipe()
+    reader = os.fdopen(read_fd, "rb", buffering=0)
+    session = lsp.LeanLspSession(lsp.LspConfig())
+    session.process = SimpleNamespace(stdout=reader)
+    clock = _pace_reads(monkeypatch, write_fd, [(1.9, b"C")])
+    try:
+        with pytest.raises(TimeoutError, match="reading an LSP header"):
+            session._collect_diagnostics("file:///tmp/Test.lean", timeout=10)
+    finally:
+        os.close(write_fd)
+        reader.close()
+
+    assert clock["now"] == pytest.approx(10)
 
 
 def test_lsp_write_cannot_block_on_a_full_pipe():
