@@ -369,6 +369,60 @@ def test_did_close_failure_keeps_result_but_retires_session(
             session.hover(str(source), 0, 0)
 
 
+@pytest.mark.parametrize("operation", ["diagnostics", "hover"])
+def test_post_admission_budget_exhaustion_keeps_session_healthy(
+    tmp_path, monkeypatch, operation
+):
+    source = tmp_path / "Test.lean"
+    source.write_text("#check Nat\n")
+    session = _owned_session(_FakeProcess())
+    session.config.timeout = 0
+    monkeypatch.setattr(lsp.time, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(
+        session,
+        "_get_diagnostics",
+        lambda *args, **kwargs: pytest.fail("expired admission ran diagnostics"),
+    )
+    monkeypatch.setattr(
+        session,
+        "_hover",
+        lambda *args, **kwargs: pytest.fail("expired admission ran hover"),
+    )
+
+    with pytest.raises(lsp.LspBusyError, match="waiting for the Lean LSP session"):
+        if operation == "diagnostics":
+            session.get_diagnostics(str(source))
+        else:
+            session.hover(str(source), 0, 0)
+
+    assert session.is_alive() is True
+    assert session._retire_pending is False
+
+
+def test_document_close_budget_exhaustion_retires_session(tmp_path, monkeypatch):
+    source = tmp_path / "Test.lean"
+    source.write_text("#check Nat\n")
+    session = lsp.LeanLspSession(lsp.LspConfig(timeout=60))
+    clock = {"now": 0.0}
+    notifications = []
+    monkeypatch.setattr(lsp.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(
+        session,
+        "_send_notification",
+        lambda method, params, **kwargs: notifications.append(method),
+    )
+
+    def finish_at_deadline(uri, timeout):
+        clock["now"] = 60.0
+        return []
+
+    monkeypatch.setattr(session, "_collect_diagnostics", finish_at_deadline)
+
+    assert session.get_diagnostics(str(source)) == []
+    assert notifications == ["textDocument/didOpen"]
+    assert session._retire_pending is True
+
+
 def test_hover_input_decode_failure_keeps_healthy_session(tmp_path):
     source = tmp_path / "Invalid.lean"
     source.write_bytes(b"\xff")
@@ -868,6 +922,36 @@ def test_lsp_queue_wait_is_bounded_by_session_timeout(tmp_path: Path):
             session.hover(str(source), 0, 0)
     finally:
         session._operation_lock.release()
+
+
+def test_lsp_json_integer_limit_is_reported_as_a_protocol_error():
+    body = b'{"jsonrpc":"2.0","id":' + (b"9" * 5000) + b"}"
+    frame = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
+    read_fd, write_fd = os.pipe()
+    reader = os.fdopen(read_fd, "rb", buffering=0)
+    session = lsp.LeanLspSession(lsp.LspConfig())
+    session.process = SimpleNamespace(stdout=reader)
+    try:
+        os.write(write_fd, frame)
+        with pytest.raises(lsp.LspProtocolError, match="invalid JSON body"):
+            session._read_message(timeout=1)
+    finally:
+        os.close(write_fd)
+        reader.close()
+
+
+def test_lsp_json_nesting_limit_is_reported_as_a_protocol_error(tmp_path: Path):
+    # 200,000 levels overrun the JSON decoder's recursion limit (about 10,000
+    # on Python 3.13, 1,000 on 3.10) in a body far under MAX_LSP_MESSAGE_BYTES.
+    # A pipe cannot buffer the whole frame, so the session reads it from a file.
+    body = b"[" * 200_000 + b"]" * 200_000
+    frame = tmp_path / "frame"
+    frame.write_bytes(f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body)
+    session = lsp.LeanLspSession(lsp.LspConfig())
+    with frame.open("rb", buffering=0) as reader:
+        session.process = SimpleNamespace(stdout=reader)
+        with pytest.raises(lsp.LspProtocolError, match="invalid JSON body"):
+            session._read_message(timeout=1)
 
 
 @pytest.mark.parametrize(
