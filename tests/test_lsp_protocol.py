@@ -74,9 +74,10 @@ def _wait_until_gone(process: psutil.Process, timeout: float) -> bool:
 
 
 def _kill_quietly(process: psutil.Process) -> None:
-    # psutil refuses to signal a PID that now belongs to another process.
+    # is_running() compares creation times, so a recycled PID is never signalled.
     try:
-        process.kill()
+        if process.is_running():
+            process.kill()
     except psutil.Error:
         pass
 
@@ -524,7 +525,7 @@ _FAKE_WATCHDOG = (
     "print('worker', worker.pid, flush=True)\n"
     "sys.stdin.read()\n"
     "try:\n"
-    "    os.write(1, b'x' * 262144)\n"
+    "    os.write(1, b'x' * (4 << 20))\n"
     "except BrokenPipeError:\n"
     "    pass\n"
     "os.killpg(worker.pid, signal.SIGKILL)\n"
