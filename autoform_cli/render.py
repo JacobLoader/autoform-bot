@@ -42,6 +42,7 @@ from ._tree_snapshot import (
 from .coverage import COVERAGE_DISPOSITIONS, CoverageSummary, load_coverage
 from .graph import Graph, GraphValidationError, Node, _implementation_note_issues, load_graph
 from .lean import (
+    LeanSourceError,
     SourceLinker,
     declaration_names,
     detect_ref,
@@ -338,7 +339,7 @@ def render_site(
     # and every generated permalink would 404.
     try:
         repo_root = resolve_lean_root(lean_root) if lean_root is not None else blueprint.parent
-    except OSError as error:
+    except LeanSourceError as error:
         raise PublicationError([index_failure_message(error)]) from error
     # Everything below reads a private copy of the captured bytes. The copy keeps
     # the blueprint's place in the repository, so a path below the copy's root is

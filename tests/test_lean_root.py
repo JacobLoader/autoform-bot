@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from autoform_cli.__main__ import main
-from autoform_cli.lean import LeanSourceError, resolve_lean_root
+from autoform_cli.lean import LeanSourceError, index_project, resolve_lean_root
 
 _MISSING = "Lean root does not exist or is not a directory"
 _UNSEARCHABLE = "permission denied while resolving the Lean root"
@@ -89,6 +89,16 @@ def test_resolve_lean_root_names_why_the_root_is_unusable(unusable_root: tuple[P
 
     with pytest.raises(LeanSourceError) as caught:
         resolve_lean_root(root)
+
+    assert str(caught.value) == reason
+
+
+@pytest.mark.parametrize("unusable_root", ["missing", "unknown-home"], indirect=True)
+def test_index_project_refuses_an_unusable_root(unusable_root: tuple[Path, str]) -> None:
+    root, reason = unusable_root
+
+    with pytest.raises(LeanSourceError) as caught:
+        index_project(root)
 
     assert str(caught.value) == reason
 

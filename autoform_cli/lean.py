@@ -185,8 +185,8 @@ def index_project(
     Raises :class:`LeanSourceError` when the root cannot be used or its
     sources cannot be read.
     """
-    requested_root = directory_binding.lexical_absolute_path(root)
     root_path = resolve_lean_root(root)
+    requested_root = directory_binding.lexical_absolute_path(root)
     remapped_exclusions = tuple(
         _remap_resolved_root_exclusion(requested_root, root_path, value)
         for value in exclude_roots
