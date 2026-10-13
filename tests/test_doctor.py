@@ -202,8 +202,8 @@ _LEAN_METADATA = (
 
 def _lean_root(tmp_path: Path) -> Path:
     lean_root = tmp_path / "lean"
-    (lean_root / "Project").mkdir(parents=True)
-    (lean_root / "Project" / "Basic.lean").write_text("theorem Project.result : True := trivial\n", encoding="utf-8")
+    lean_root.mkdir()
+    (lean_root / "Project.lean").write_text("theorem Project.result : True := trivial\n", encoding="utf-8")
     return lean_root
 
 
@@ -212,7 +212,7 @@ def test_an_unindexable_lean_source_fails_only_the_lean_targets_check(tmp_path: 
         pytest.skip("named pipes are unavailable")
     project = _clean_project(tmp_path, metadata=_LEAN_METADATA)
     lean_root = _lean_root(tmp_path)
-    os.mkfifo(lean_root / "Project" / "F.lean")
+    os.mkfifo(lean_root / "F.lean")
 
     result = diagnose_project(project, lean_root=lean_root)
 
