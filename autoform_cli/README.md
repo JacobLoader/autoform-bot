@@ -892,6 +892,11 @@ skeleton packet/passages directories are identified by their bounded managed
 manifest before descendants are read; publication-output policy remains with
 the publication feature rather than this source layer.
 
+Automatically detected Git permalinks are emitted only for captured files whose
+bytes equal the blob at the stable detected commit. Dirty, untracked, missing,
+or concurrently checked-out files keep local declaration locations but receive
+no URL. An explicitly supplied ref remains a caller attestation.
+
 Lean indexing reads the whole Lean root or nothing. It stops with an error,
 rather than indexing what it could, when an entry it must read cannot be read
 safely: a `.lean` file that cannot be read, a folder that cannot be listed or
@@ -909,11 +914,6 @@ skips: `.direnv`, `.git`, `.lake`, `.obsidian`, `.trash`, `.venv`,
 recognized skeleton output folder, or, for `render`, a rendered site. There is
 no command-line option to exclude other folders. File and folder names here,
 and the `.lean` suffix, match in any letter case except `build`.
-
-Automatically detected Git permalinks are emitted only for captured files whose
-bytes equal the blob at the stable detected commit. Dirty, untracked, missing,
-or concurrently checked-out files keep local declaration locations but receive
-no URL. An explicitly supplied ref remains a caller attestation.
 
 The Markdown files are the source of truth. Graphs and sites are derived views
 that may be regenerated at any time.
