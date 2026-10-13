@@ -832,6 +832,45 @@ def test_selected_capture_ignores_unselected_churn(
     assert snapshot.omitted == ()
 
 
+def test_selected_capture_relist_uses_the_selection_limits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_descriptor_capture()
+    (tmp_path / "kept.src").write_bytes(b"kept\n")
+    (tmp_path / "notes.md").write_bytes(b"0\n")
+    selection = TreeSelection(
+        include=lambda path, _mode: path.suffix == ".src",
+        descend=lambda _path: True,
+        record_omitted=False,
+        unselected_may_change=True,
+        limits=TreeCaptureLimits(max_entries=2),
+    )
+
+    snapshot = _capture(tmp_path, selection, portable=False, monkeypatch=monkeypatch)
+    assert snapshot.files == (("kept.src", b"kept\n"),)
+
+    # The scan lists two entries.  A temporary file that exists only while
+    # the folder is relisted pushes that relist over max_entries; the final
+    # verification sees two entries again.
+    original = tree_snapshot_module._tree_snapshot_checkpoint
+    temporary = tmp_path / "notes.md.tmp"
+
+    def checkpoint(name: str, path: str) -> None:
+        original(name, path)
+        if name == "after-directory-list" and path == "":
+            temporary.write_bytes(b"1\n")
+        elif name == "before-final-verification":
+            temporary.unlink(missing_ok=True)
+
+    monkeypatch.setattr(tree_snapshot_module, "_tree_snapshot_checkpoint", checkpoint)
+
+    with pytest.raises(TreeChangedError) as error:
+        _capture(tmp_path, selection, portable=False, monkeypatch=monkeypatch)
+
+    assert error.value.relative == "."
+
+
 @pytest.mark.parametrize("holds_selected_entry", [False, True])
 def test_verification_recognizes_markers_like_the_scan(
     tmp_path: Path,
