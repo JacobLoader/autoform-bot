@@ -409,7 +409,7 @@ def _repl_with_process(process: _PipeProcess, *, chunk_size: int = 4096, max_buf
 def _disposable_repl_with_process(monkeypatch, process: _PipeProcess, **config):
     """Return a repl whose disposable call starts on ``process``."""
     repl = _repl_with_process(process, **config)
-    monkeypatch.setattr(repl, "start", lambda **kwargs: setattr(repl, "process", process))
+    monkeypatch.setattr(repl, "start", lambda: setattr(repl, "process", process))
     return repl
 
 
@@ -628,7 +628,7 @@ def test_disposable_backlog_adjusts_prefixed_positions(monkeypatch):
         )
     )
 
-    monkeypatch.setattr(repl, "start", lambda **kwargs: None)
+    monkeypatch.setattr(repl, "start", lambda: None)
     monkeypatch.setattr(
         repl,
         "_check_header",
@@ -708,7 +708,7 @@ def test_unvalidated_disposable_composes_only_proven_ordinary_headers(
         )
     )
 
-    monkeypatch.setattr(repl, "start", lambda **kwargs: None)
+    monkeypatch.setattr(repl, "start", lambda: None)
     monkeypatch.setattr(repl, "_check_header", lambda code, deadline: analysis)
     frames = []
 
@@ -737,7 +737,7 @@ def test_disposable_call_does_not_return_a_result_before_verified_cleanup(monkey
         repl._process_group_id = None
 
     monkeypatch.setattr(repl, "close", close)
-    monkeypatch.setattr(repl, "start", lambda **kwargs: None)
+    monkeypatch.setattr(repl, "start", lambda: None)
     monkeypatch.setattr(
         repl,
         "_run",
@@ -787,7 +787,7 @@ def test_disposable_call_maps_each_response_outcome_without_a_retry(
             raise outcome
         return outcome
 
-    monkeypatch.setattr(repl, "start", lambda **kwargs: None)
+    monkeypatch.setattr(repl, "start", lambda: None)
     monkeypatch.setattr(repl, "_run", run)
 
     assert repl.run_disposable("#eval 1", timeout=1) == expected
@@ -831,7 +831,7 @@ def test_disposable_call_reports_every_malformed_response_as_unknown(
         repl_core.LeanReplConfig(validate_imports=False, warmup_imports=frozenset())
     )
     frames = []
-    monkeypatch.setattr(repl, "start", lambda **kwargs: None)
+    monkeypatch.setattr(repl, "start", lambda: None)
     monkeypatch.setattr(
         repl,
         "_run",
@@ -1071,7 +1071,7 @@ def test_disposable_call_rejects_what_lean_reports_before_starting(
     monkeypatch.setattr(
         repl,
         "start",
-        lambda *args, **kwargs: pytest.fail("invalid input must not start Lean"),
+        lambda: pytest.fail("invalid input must not start Lean"),
     )
 
     response = repl.run_disposable("/- hidden -/ import Unsafe\n#check Nat")
@@ -1138,7 +1138,7 @@ def test_failed_header_command_reports_its_error_line(monkeypatch, stdout, stder
     monkeypatch.setattr(
         repl,
         "start",
-        lambda *args, **kwargs: pytest.fail("a failed header check must not start Lean"),
+        lambda: pytest.fail("a failed header check must not start Lean"),
     )
 
     assert repl.run_disposable("#check Nat") == {"repl_error": f"Lean header check failed: {detail}"}
@@ -1294,7 +1294,7 @@ def test_disposable_call_prefixes_warmup_only_onto_proven_ordinary_headers(monke
         )
     )
     frames = []
-    monkeypatch.setattr(repl, "start", lambda *args, **kwargs: None)
+    monkeypatch.setattr(repl, "start", lambda: None)
 
     def run_frame(code, env_id, timeout):
         frames.append(code)
@@ -1317,7 +1317,7 @@ def test_disposable_call_rejects_disallowed_warmup_import(monkeypatch):
     monkeypatch.setattr(
         repl,
         "start",
-        lambda *args, **kwargs: pytest.fail("disallowed warmup must not start Lean"),
+        lambda: pytest.fail("disallowed warmup must not start Lean"),
     )
 
     response = repl.run_disposable("#check Nat")
@@ -1391,7 +1391,7 @@ def _repl_failing_first_header_cleanup(monkeypatch, error: BaseException):
 
 def test_disposable_call_retries_header_cleanup_before_reuse(monkeypatch):
     repl, cleanup_calls = _repl_failing_first_header_cleanup(monkeypatch, RuntimeError("injected cleanup failure"))
-    monkeypatch.setattr(repl, "start", lambda *args, **kwargs: pytest.fail("unclean header must not start Lean"))
+    monkeypatch.setattr(repl, "start", lambda: pytest.fail("unclean header must not start Lean"))
 
     response = repl.run_disposable("import Mathlib\n#check Nat")
 
@@ -1450,7 +1450,7 @@ def test_disposable_timeout_after_full_write_is_not_retried(monkeypatch):
         repl_core.LeanReplConfig(warmup_imports=frozenset(), validate_imports=False)
     )
     calls = []
-    monkeypatch.setattr(repl, "start", lambda **kwargs: setattr(repl, "process", object()))
+    monkeypatch.setattr(repl, "start", lambda: setattr(repl, "process", object()))
 
     def fail_after_send(code, env_id, timeout, mark_sent):
         calls.append((code, env_id))
@@ -1486,7 +1486,7 @@ def test_disposable_cleanup_failure_after_full_write_keeps_the_unknown_outcome(m
         raise TimeoutError("response timed out")
 
     monkeypatch.setattr(repl, "close", close)
-    monkeypatch.setattr(repl, "start", lambda **kwargs: setattr(repl, "process", object()))
+    monkeypatch.setattr(repl, "start", lambda: setattr(repl, "process", object()))
     monkeypatch.setattr(repl, "_run_io", fail_after_send)
 
     with pytest.raises(repl_core.ReplCleanupError, match="retirement is required: cleanup failed") as error:
