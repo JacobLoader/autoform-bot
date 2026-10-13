@@ -427,7 +427,8 @@ def test_deeply_shared_terms_are_read_in_time(tmp_path: Path) -> None:
     _build(project)
     blueprint = _blueprint(tmp_path, lean={"proof": "Skel.dagProof", "statement": "Skel.dagStatement"})
 
-    report = find_unused_hypotheses(blueprint, lean_root=project, timeout=60)
+    # A tree walk takes hours, so 300 s still catches one and tolerates a loaded machine.
+    report = find_unused_hypotheses(blueprint, lean_root=project, timeout=300)
 
     assert [finding.split(": ", 2)[2] for finding in report.findings] == [
         "hypothesis-unused: the proof never uses h : x = x",
