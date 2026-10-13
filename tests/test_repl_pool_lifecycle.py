@@ -322,6 +322,18 @@ def test_capacity_one_waiters_keep_arrival_order(monkeypatch):
     monkeypatch.setattr(repl_pool, "LeanRepl", FakeRepl)
     pool = repl_pool.LeanReplPool(repl_pool.LeanReplPoolConfig(num_repls=1))
     held = pool._idle.get_nowait()
+    # A call counts as active before it parks on the idle queue, so the loop
+    # below waits for each waiter to park. Queue.get calls wait with the queue's
+    # mutex held, and Condition.wait queues the waiter before releasing that
+    # mutex, so no waiter started after the count can park ahead.
+    parked = []
+    wait_on_queue = pool._idle.not_empty.wait
+
+    def park(timeout=None):
+        parked.append(threading.current_thread())
+        return wait_on_queue(timeout)
+
+    monkeypatch.setattr(pool._idle.not_empty, "wait", park)
     waiters = []
     try:
         for index in range(6):
@@ -329,7 +341,7 @@ def test_capacity_one_waiters_keep_arrival_order(monkeypatch):
             waiter.start()
             waiters.append(waiter)
             deadline = time.monotonic() + 1
-            while pool._active_calls < index + 1 and time.monotonic() < deadline:
+            while len(parked) < index + 1 and time.monotonic() < deadline:
                 time.sleep(0.001)
         pool._idle.put(held)
         for waiter in waiters:
