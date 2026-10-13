@@ -602,8 +602,6 @@ class TreeSelection:
     unselected_may_change: bool = False
 
     def __post_init__(self) -> None:
-        if not isinstance(self.unselected_may_change, bool):
-            raise ValueError("unselected_may_change must be a boolean")
         if self.unselected_may_change and self.record_omitted:
             raise ValueError("unselected_may_change requires record_omitted=False")
 

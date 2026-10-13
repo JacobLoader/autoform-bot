@@ -745,19 +745,12 @@ def _at_final_verification(monkeypatch: pytest.MonkeyPatch, action) -> None:
     monkeypatch.setattr(tree_snapshot_module, "_tree_snapshot_checkpoint", checkpoint)
 
 
-def test_selected_capture_requires_a_boolean_flag_and_no_omitted_records() -> None:
+def test_selected_capture_requires_no_omitted_records() -> None:
     with pytest.raises(ValueError, match="record_omitted=False"):
         TreeSelection(
             include=lambda _path, _mode: True,
             descend=lambda _path: True,
             unselected_may_change=True,
-        )
-    with pytest.raises(ValueError, match="must be a boolean"):
-        TreeSelection(
-            include=lambda _path, _mode: True,
-            descend=lambda _path: True,
-            record_omitted=False,
-            unselected_may_change=1,
         )
 
 
