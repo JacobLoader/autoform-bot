@@ -1148,7 +1148,8 @@ what to change, and ends with `root-package declarations failed the
 open-statement audit`.
 
 Both audits check two more things. A `lean:` name outside the root package, as
-a Mathlib article's is, must be safe and use no axiom beyond `propext`,
+a Mathlib article's is, must be neither unsafe nor partial (a `partial def`
+counts as partial) and use no axiom beyond `propext`,
 `Classical.choice`, and `Quot.sound`; otherwise it fails with `NAME [ID] is
 outside the root package and is unsafe or partial` or `NAME [ID] is outside the
 root package and depends on unexpected axiom AX`. The open-statement audit

@@ -143,7 +143,7 @@ def test_archive_modules_are_sorted_and_probe_fails_on_zero_declarations(
     assert 'Name.str (Name.anonymous) "Fixture", Name.str (Name.str (Name.anonymous) "Fixture") "Basic"' in probe
     assert 'throwError "kernel-trust audit found no root-package declarations"' in probe
     assert "isRoot declName && !autoformAuditCompiledCopy declName info" in probe
-    assert "isRoot declName && autoformAuditCompiledCopy declName info" in probe
+    assert "if autoformAuditCompiledCopy declName info then" in probe
     assert "autoformAuditUnsafeOrPartial env declName info" in probe
     assert "info.isUnsafe || info.isPartial" in probe
     assert "Lean.collectAxioms" not in probe
@@ -1470,6 +1470,7 @@ def test_strict_probe_requires_every_target_and_checks_non_root_ones(
             _article("native", ["Dep.dep_native"]),
             _article("unsafe", ["Dep.dep_unsafe"]),
             _article("partial", ["Dep.dep_partial"]),
+            _article("copy", ["Dep.dep_partial._unsafe_rec"]),
             _article("sorry", ["Dep.dep_sorry"]),
         ],
     )
@@ -1489,6 +1490,7 @@ def test_strict_probe_requires_every_target_and_checks_non_root_ones(
         "Dep.dep_native [native] is outside the root package and depends on unexpected axiom ",
         "Dep.dep_unsafe [unsafe] is outside the root package and is unsafe or partial",
         "Dep.dep_partial [partial] is outside the root package and is unsafe or partial",
+        "Dep.dep_partial._unsafe_rec [copy] is Lean's compiled copy of a recursive definition; name the definition itself",
         "Dep.dep_sorry [sorry] is outside the root package and depends on unexpected axiom sorryAx",
         "root-package declarations failed the kernel-trust audit",
     ):
@@ -1566,6 +1568,7 @@ def test_open_probe_checks_the_axioms_of_a_target_outside_the_root_package(
             _article("native", ["Dep.dep_native"]),
             _article("unsafe", ["Dep.dep_unsafe"]),
             _article("partial", ["Dep.dep_partial"]),
+            _article("copy", ["Dep.dep_partial._unsafe_rec"]),
             _article("sorry", ["Dep.dep_sorry"]),
         ),
     )
@@ -1577,6 +1580,7 @@ def test_open_probe_checks_the_axioms_of_a_target_outside_the_root_package(
         "Dep.dep_native [native] is outside the root package and depends on unexpected axiom ",
         "Dep.dep_unsafe [unsafe] is outside the root package and is unsafe or partial",
         "Dep.dep_partial [partial] is outside the root package and is unsafe or partial",
+        "Dep.dep_partial._unsafe_rec [copy] is Lean's compiled copy of a recursive definition; name the definition itself",
         "Dep.dep_sorry [sorry] is outside the root package and depends on sorry",
         "root-package declarations failed the open-statement audit",
     ):
@@ -1655,6 +1659,22 @@ def test_both_probes_refuse_a_target_that_names_a_compiled_copy(
             ) in output
         assert summary in output
         assert "sorry-free:" not in output
+
+
+def test_both_probes_fail_a_build_whose_only_problem_is_a_copy_target(
+    helper: ModuleType, open_projects: dict[str, tuple[Path, Path]]
+) -> None:
+    # The recursive project passes both probes, so the copy-target refusal alone has to fail the run.
+    targets = [_article("countdown", ["Fixture.countdown._unsafe_rec"])]
+    for audited, summary in _both_probes(helper, open_projects["recursive"], targets):
+        output = audited.stdout + audited.stderr
+        assert audited.returncode != 0, output
+        assert (
+            "Fixture.countdown._unsafe_rec [countdown] is Lean's compiled copy of a recursive definition; "
+            "name the definition itself"
+        ) in output
+        assert summary in output
+        assert "kernel trust clean" not in output
 
 
 def test_both_probes_refuse_an_unchecked_theorem_that_uses_a_compiled_copy(

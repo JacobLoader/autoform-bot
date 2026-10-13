@@ -270,7 +270,8 @@ def render_probe(
 
     Each of *targets*, the ``lean:`` names of the strict policy's assumption
     contract, must be a declaration of the build. The root scan covers those in
-    the root package; any other gets the same safety and axiom checks.
+    the root package; any other gets the same safety and axiom checks. A target
+    that names one of Lean's compiled ``_unsafe_rec`` copies is refused.
     """
 
     if not modules:
@@ -339,9 +340,11 @@ run_cmd do
     | none =>
       errors := errors.push m!"{{declName}} [{{article}}] is not a declaration of the Lean build; fix the article's lean: name or build the module that declares it"
     | some info =>
-      -- The root scan skips compiled copies, so a target that names one is refused here.
-      if isRoot declName && autoformAuditCompiledCopy declName info then
+      -- No article states a compiled copy, and the root scan skips them, so a target that names one,
+      -- in or outside the root package, is refused here and checked no further.
+      if autoformAuditCompiledCopy declName info then
         errors := errors.push m!"{{declName}} [{{article}}] is Lean's compiled copy of a recursive definition; name the definition itself"
+        continue
       unless isRoot declName do
         if autoformAuditUnsafeOrPartial env declName info then
           errors := errors.push m!"{{declName}} [{{article}}] is outside the root package and is unsafe or partial"
@@ -755,7 +758,8 @@ partial def autoformOpenAuditOpenHits (env : Environment) (isRoot : Name → Boo
     (node : Name) : StateM (Std.HashMap Name (Array Name)) (Array Name) := do
   if let some known := (← get).get? node then
     return known
-  -- In progress. Only unsafe recursion comes back here, and the audit rejects it.
+  -- In progress. Only recursion through unsafe or partial constants comes back here, and every root that
+  -- reaches it fails the safety check or the kernel replay.
   modify (·.insert node #[])
   let mut hits : Array Name := if openSet.contains node then #[node] else #[]
   for used in autoformAuditEdges env openSet node do
@@ -871,6 +875,10 @@ run_cmd do
     | none =>
       errors := errors.push m!"{{declName}} [{{article}}] is not a declaration of the Lean build; fix the article's lean: name or build the module that declares it"
     | some info =>
+      -- As in the strict probe, a target that names a compiled copy is refused and checked no further.
+      if autoformAuditCompiledCopy declName info then
+        errors := errors.push m!"{{declName}} [{{article}}] is Lean's compiled copy of a recursive definition; name the definition itself"
+        continue
       if !isRoot declName then
         if autoformAuditUnsafeOrPartial env declName info then
           errors := errors.push m!"{{declName}} [{{article}}] is outside the root package and is unsafe or partial"
@@ -884,9 +892,6 @@ run_cmd do
         if errors.size == reported then
           statusLines := statusLines.push m!"sorry-free: {{declName}} [{{article}}]"
       else
-        -- The root list leaves out compiled copies, so a target that names one is refused here.
-        if autoformAuditCompiledCopy declName info then
-          errors := errors.push m!"{{declName}} [{{article}}] is Lean's compiled copy of a recursive definition; name the definition itself"
         let block := autoformAuditBlockOf env declName
         let (hits, cache) := Id.run ((autoformOpenAuditOpenHits env isRoot openSet block).run hitCache)
         hitCache := cache
