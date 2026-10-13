@@ -178,7 +178,7 @@ def test_module_import_impact_reports_reverse_import_scope_without_blocking() ->
     assert report.affected_claim_keys == tuple(
         claims.author_claim_key(target) for target in report.affected_claim_targets
     )
-    assert re.fullmatch(r"lean-module/demo-base-[0-9a-f]{16}", report.module_claim_target)
+    assert report.module_claim_target == "lean-module/demo-base-" + hashlib.sha256(b"Demo.Base").hexdigest()[:16]
     assert report.article_local is False
     assert report.as_dict()["schema"] == MODULE_IMPORT_IMPACT_SCHEMA
     assert re.fullmatch(r"[0-9a-f]{64}", report.module_graph_revision)
@@ -249,6 +249,18 @@ def test_module_import_impact_reports_unresolved_local_articles_as_unknown_scope
     assert "Affected built articles: none in the loaded reverse-import scope." in (
         format_module_import_impact(empty)
     )
+
+
+def test_module_import_impact_cuts_a_long_module_slug_but_keeps_its_digest() -> None:
+    module = "Demo.ThisModuleNameRunsPastTheFortyEightCharacterSlugLimit"
+    modules = {module: ModuleEvidence(module, "/project/Demo/Long.lean")}
+    selected = ImpactArticle("chapter/sel", None, ())
+
+    report = compute_module_import_impact({}, modules, (selected,), selected, module, source_revision="rev")
+
+    # The slug keeps 48 characters; the digest of the full name tells long names apart.
+    digest = hashlib.sha256(module.encode()).hexdigest()[:16]
+    assert report.module_claim_target == f"lean-module/demo-thismodulenamerunspastthefortyeightcharacte-{digest}"
 
 
 def test_module_import_impact_lists_articles_through_the_helpers_they_own() -> None:
@@ -1353,6 +1365,21 @@ def test_project_modules_match_library_roots_by_whole_components(tmp_path: Path)
     )
 
 
+def test_project_modules_accept_two_libraries_selecting_one_file_on_a_shared_srcdir(tmp_path: Path) -> None:
+    # A main library and a test library often share srcDir "."; when both select
+    # Demo.Util, that is still one module from one file, which Lake builds once.
+    root = _sources(tmp_path, "Demo", "Demo.Util", "DemoTest")
+    configured = (
+        _library(root, roots=("Demo",)),
+        _library(root, "Demo.Util", roots=("DemoTest",)),
+    )
+
+    snapshot = snapshot_project_sources(tmp_path)
+    imports, local = project_modules(configured, snapshot, strict_module_ownership=True)
+    assert "Demo.Util" in imports
+    assert set(local) == {"Demo", "Demo.Util", "DemoTest"}
+
+
 def test_project_modules_accept_the_same_stray_file_in_sibling_srcdirs(tmp_path: Path) -> None:
     # No library selects `Scratch`, so Lake builds neither copy and the two
     # files do not compete for one module.
@@ -1710,6 +1737,26 @@ def test_cli_reports_import_impact_without_refusing_the_edit(tmp_path: Path, mon
     assert re.fullmatch(r"[0-9a-f]{64}", report["module_graph_revision"])
 
 
+def test_cli_import_impact_accepts_an_article_that_names_no_lean_declaration(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    # Unlike work impact, an import edit needs no revised declaration, so the
+    # command never asks for --declaration, which it does not have.
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _stub_lean_root(tmp_path)
+    _stub_probe(monkeypatch, modules=(ModuleEvidence("Demo", str((lean_root / "Demo.lean").resolve())),))
+
+    code = cli.main(
+        ["work", "import-impact", "chapter/empty", "Demo", str(project), "--lean-root", str(lean_root), "--json"]
+    )
+
+    output = capsys.readouterr()
+    assert code == 0, output.err
+    report = json.loads(output.out)
+    assert report["selected_affected"] is False
+    assert report["claim_targets"][0] == "chapter/empty"
+
+
 @pytest.mark.parametrize("quote_every_component", [False, True])
 def test_cli_import_impact_matches_module_names_by_component(
     tmp_path: Path, monkeypatch, capsys, quote_every_component: bool
@@ -1944,6 +1991,49 @@ def test_cli_text_report_lists_each_section(tmp_path: Path, monkeypatch, capsys)
         f"Claim targets: {_BASE_ID}, {_USES_ID}, chapter/inlines, chapter/loose, lean/demo-base-eq-7f17aa41d1461243",
     ]
     assert calls[0]["timeout"] == skeleton.DEFAULT_PROBE_TIMEOUT
+
+
+def test_cli_import_impact_text_report_lists_each_section(tmp_path: Path, monkeypatch, capsys) -> None:
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _stub_lean_root(tmp_path)
+    calls = _stub_probe(monkeypatch, modules=(ModuleEvidence("Demo", str((lean_root / "Demo.lean").resolve())),))
+    source_revision, _ = work_context(project, "chapter/base")
+
+    code = cli.main(
+        ["work", "import-impact", "chapter/base", "Demo", str(project)]
+        + ["--lean-root", str(lean_root), "--timeout", "30"]
+    )
+
+    output = capsys.readouterr()
+    assert code == 0, output.err
+    lines = output.out.splitlines()
+    for label in ("Lean source revision", "Lean build revision", "Module graph revision"):
+        assert re.fullmatch(rf"{label}: [0-9a-f]{{64}}", lines.pop(2))
+
+    def keyed(*targets: str) -> str:
+        return ", ".join(f"{target} (key {claims.author_claim_key(target)})" for target in targets)
+
+    module = "lean-module/demo-" + hashlib.sha256(b"Demo").hexdigest()[:16]
+    helpers = ("Demo.base_eq", "Demo.gone", "Demo.old")
+    assert lines == [
+        f"Import edit allowed in Demo for chapter/base [{_BASE_ID}].",
+        f"Graph source revision: {source_revision}",
+        "Module scope: loaded-root-library-graph",
+        f"Module claim target: {keyed(module)}",
+        "Affected project modules: Demo",
+        "Removing an import can also drop modules that only imports bring into the build; "
+        "this reverse-import scope does not list them.",
+        "Affected articles:",
+        "  chapter/inlines: Demo",
+        "  chapter/loose: Demo",
+        f"  chapter/uses [{_USES_ID}]: Demo",
+        "Potentially affected unowned helpers:",
+        *(f"  {name} (Demo): {keyed(_lean_key(name))}" for name in helpers),
+        "Check active claims or semantic changes for: "
+        + keyed(_USES_ID, "chapter/inlines", "chapter/loose", *map(_lean_key, helpers)),
+        f"Required claims for the import edit: {keyed(_BASE_ID, module)}",
+    ]
+    assert calls[0]["timeout"] == 30
 
 
 def test_cli_declaration_flag_replaces_the_article_s_names(tmp_path: Path, monkeypatch, capsys) -> None:
