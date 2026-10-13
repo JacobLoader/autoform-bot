@@ -1865,7 +1865,10 @@ def test_wrapped_repl_command_requires_an_explicit_header_command(monkeypatch):
     monkeypatch.setenv("LEAN_REPL_CMD", "container run lake exe @repl/repl")
     monkeypatch.delenv("LEAN_REPL_HEADER_CMD", raising=False)
 
-    with pytest.raises(ValueError, match="LEAN_REPL_HEADER_CMD must be set"):
+    with pytest.raises(
+        ValueError,
+        match="LEAN_REPL_HEADER_CMD must be set when LEAN_REPL_CMD does not start with a `lake` executable",
+    ):
         LeanRuntimeConfig.from_environment()
 
     monkeypatch.setenv("LEAN_REPL_HEADER_CMD", "container run lake env lean-header")

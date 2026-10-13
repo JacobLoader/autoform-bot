@@ -195,7 +195,7 @@ class LeanRuntimeConfig:
         else:
             raise ValueError(
                 "LEAN_REPL_HEADER_CMD must be set when LEAN_REPL_CMD does not "
-                "invoke a lake executable"
+                "start with a `lake` executable"
             )
         if not lsp_command:
             raise ValueError("LEAN_LSP_CMD must not be empty")
