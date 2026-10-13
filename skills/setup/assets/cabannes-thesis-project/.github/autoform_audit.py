@@ -470,8 +470,8 @@ _IMPORT_BUILD = """  -- `lake env` puts the project's libraries ahead of the too
   -- Without extensions no `initialize` block of the build runs. `Init` comes
   -- along even when the build never imports it, so a build that declares a
   -- core name of its own, such as `propext`, clashes with the toolchain's on
-  -- import, repeats it exactly, or is refused below, instead of passing the
-  -- allowlist by name.
+  -- import, is merged with it when it is an identical theorem or Prop-valued
+  -- axiom, or is refused below, instead of passing the allowlist by name.
   let env ← importModules (#[({ module := `Init } : Import)] ++ targetModules.toArray.map ({ module := · }))
     {} (loadExts := false)
   -- Lean keeps one of two same-named theorems, for the equation lemmas several
