@@ -816,6 +816,16 @@ def test_render_is_deterministic_and_records_a_path_free_manifest(tmp_path: Path
     assert str(tmp_path).encode() not in b"".join(first.values())
 
 
+def test_the_source_revision_of_a_fixed_blueprint_is_pinned(tmp_path: Path) -> None:
+    """Sites and the dashboard compare this hash, so a framing change would mark every site stale."""
+    (tmp_path / "blueprint/roadmap").mkdir(parents=True)
+    (tmp_path / "blueprint/roadmap/README.md").write_bytes(b"# Roadmap\n")
+
+    assert publication_source_revision(tmp_path / "blueprint") == (
+        "3f0d54b44bb4077afbfa730e1544a34ce6bdca035c63a7c3db4488514c938fde"
+    )
+
+
 def test_manifest_records_machine_checkable_coverage_aggregates(tmp_path: Path) -> None:
     project = _project(tmp_path)
     coverage = project / "blueprint/coverage/README.md"
@@ -1009,7 +1019,7 @@ def _edit(path: Path, old: str, new: str) -> None:
         (lambda out: (out / "README.md").write_text("edited\n"), "modified Autoform publication"),
         (lambda out: (out / "assets/empty").mkdir(), "untracked or missing directories"),
         (lambda out: _manifest(out, _V2), "file inventory"),
-        (lambda out: _manifest(out, _V2.replace("v2", "v1")), "legacy publication"),
+        (lambda out: _manifest(out, _V2.replace("v2", "v1")), "legacy autoform-publication/v1 site at .* once"),
     ],
 )
 def test_render_replaces_only_an_exact_owned_publication(tmp_path: Path, tamper, message: str) -> None:
@@ -1672,6 +1682,21 @@ def test_metadata_files_macos_deletes_with_their_file_do_not_stop_the_deletion(
 
     assert report.warnings == []
     assert not any(path.exists() for path in finder_files)
+    assert not _debris(tmp_path)
+
+
+def test_a_manifest_that_lists_macos_metadata_still_replaces(tmp_path: Path) -> None:
+    # An extended attribute set on a staged file, on a volume without native
+    # ones, becomes a ._ file that the manifest then lists.
+    project, output, _site = _published(tmp_path)
+    manifest = json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))
+    manifest["files"]["._README.md"] = hashlib.sha256(b"\x00\x05\x16\x07").hexdigest()
+    _manifest(output, json.dumps(manifest))
+    (output / "._README.md").write_bytes(b"\x00\x05\x16\x07")
+
+    render_site(project / "blueprint", output, lean_root=project)
+
+    assert not (output / "._README.md").exists()
     assert not _debris(tmp_path)
 
 

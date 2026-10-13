@@ -747,6 +747,13 @@ def _destination_state(path: Path) -> _State | None:
             manifest = json.loads(data) if len(data) <= PUBLICATION_MANIFEST_MAX_BYTES else None
     except (OSError, ValueError, RecursionError):
         pass
+    if isinstance(manifest, dict) and manifest.get("schema") == "autoform-publication/v1":
+        raise PublicationError(
+            [
+                f"refusing to replace the legacy autoform-publication/v1 site at {path}: it has no file "
+                "inventory to check before deleting it; delete it once by hand and render again"
+            ]
+        )
     if not isinstance(manifest, dict) or manifest.get("schema") != PUBLICATION_SCHEMA:
         raise PublicationError(
             [
@@ -759,6 +766,7 @@ def _destination_state(path: Path) -> _State | None:
     expected = manifest.get("files")
     if not isinstance(expected, dict):
         raise PublicationError(["publication manifest has no valid file inventory"])
+    expected = {name: digest for name, digest in expected.items() if not _is_os_metadata(name)}
     try:
         with bind_directory_tree(path, expected_identity=identity, require_descriptor=True) as tree:
             snapshot = tree.capture()
@@ -851,11 +859,13 @@ def _locked_parent(parent: Path) -> Iterator[None]:
     try:
         descriptor = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
     except PermissionError:  # a parent the user may write but not read cannot hold the lock
-        yield
-        return
+        descriptor = None
     except OSError as error:
         message = f"could not open the output parent {parent}: {error.strerror or error}"
         raise PublicationError([message]) from error
+    if descriptor is None:
+        yield
+        return
     try:
         deadline = time.monotonic() + _PUBLICATION_LOCK_WAIT_SECONDS
         while True:

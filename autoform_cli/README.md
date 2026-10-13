@@ -1475,8 +1475,8 @@ the first mismatch.
 The site is built and synced in a hidden `.autoform-publication-*` directory
 beside the output, then swapped in with one atomic exchange (`renamex_np` on
 macOS, `renameat2` on Linux); renders committing into the same parent directory
-take turns. On filesystems without the exchange (NFS, SMB, 9p or WSL2 `/mnt/c`,
-exFAT, sshfs) the previous site is first renamed to
+take turns when it can be locked. On filesystems without the exchange (NFS, SMB,
+9p or WSL2 `/mnt/c`, exFAT, sshfs) the previous site is first renamed to
 `.autoform-publication-backup-<name>`; if render dies between the two renames,
 the next render moves it back before anything else. Render replaces only an
 empty directory or a complete `autoform-publication/v2` site whose files match
