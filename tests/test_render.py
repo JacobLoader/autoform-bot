@@ -2432,6 +2432,19 @@ def test_markdown_source_permalink_quotes_the_original_repository_path(tmp_path:
     assert ".autoform-publication" not in page and "autoform-blueprint-" not in page
 
 
+def _print_composed_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make `git ls-tree` print e + U+0301 composed, as macOS Git does; elsewhere Git keeps names as written."""
+    run = subprocess.run
+
+    def ls_tree(command, *args, **kwargs):
+        completed = run(command, *args, **kwargs)
+        if command[:2] == ["git", "ls-tree"]:
+            completed.stdout = completed.stdout.replace("e\u0301".encode(), "\u00e9".encode())
+        return completed
+
+    monkeypatch.setattr(lean_module.subprocess, "run", ls_tree)
+
+
 def test_decomposed_file_names_link_to_the_spelling_git_committed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2449,16 +2462,7 @@ def test_decomposed_file_names_link_to_the_spelling_git_committed(
     subprocess.run(["git", "config", "core.precomposeunicode", "true"], cwd=project, check=True)
     commit = _git_commit(project, "fixture")
     output = tmp_path / "out"
-    run = subprocess.run
-
-    def precomposed_ls_tree(command, *args, **kwargs):
-        # macOS Git prints the composed spelling it committed; elsewhere Git keeps names as written.
-        completed = run(command, *args, **kwargs)
-        if command[:2] == ["git", "ls-tree"]:
-            completed.stdout = completed.stdout.replace("e\u0301".encode(), "\u00e9".encode())
-        return completed
-
-    monkeypatch.setattr(lean_module.subprocess, "run", precomposed_ls_tree)
+    _print_composed_names(monkeypatch)
 
     report = render_site(project / "blueprint", output, lean_root=project, repository_url=_REPOSITORY, ref=commit)
 
@@ -2467,6 +2471,36 @@ def test_decomposed_file_names_link_to_the_spelling_git_committed(
     assert f"/blob/{commit}/Project/{committed}.lean#L5" in chapter
     assert f"/blob/{commit}/blueprint/roadmap/{committed}.md" in chapter
     assert f"/blob/{commit}/blueprint/sources/{committed}.md" in chapter
+    assert report.warnings == []
+
+
+def test_a_link_to_a_folder_names_the_spelling_git_committed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project = _project(tmp_path)
+    blueprint = project / "Poincare\u0301" / "blueprint"  # a folder name decomposed on disk, as Finder writes it
+    blueprint.parent.mkdir()
+    (project / "blueprint").rename(blueprint)
+    (blueprint / "sources").mkdir()
+    (blueprint / "sources/paper.md").write_text("# Paper\n", encoding="utf-8")
+    (blueprint / "sources/drafts").mkdir()
+    (blueprint / "sources/drafts/.gitkeep").write_text("", encoding="utf-8")  # committed, but never captured
+    _edit(
+        blueprint / "roadmap/README.md",
+        "# Roadmap",
+        "# Roadmap\n\nSee [the notes](../sources/), [the paper](../sources/paper.md) and [drafts](../sources/drafts/).",
+    )
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    subprocess.run(["git", "config", "core.precomposeunicode", "true"], cwd=project, check=True)
+    commit = _git_commit(project, "fixture")
+    _print_composed_names(monkeypatch)
+
+    report = render_site(blueprint, tmp_path / "out", lean_root=project, repository_url=_REPOSITORY, ref=commit)
+
+    chapter = (tmp_path / "out/roadmap/README.md").read_text(encoding="utf-8")
+    assert f"/tree/{commit}/Poincar%C3%A9/blueprint/sources" in chapter
+    assert f"/blob/{commit}/Poincar%C3%A9/blueprint/sources/paper.md" in chapter
+    assert f"/blob/{commit}/Poincar%C3%A9/blueprint/roadmap/top.md" in chapter
+    assert f"/{commit}/Poincar%C3%A9/blueprint/sources/drafts" in chapter
+    assert "Poincare%CC%81" not in chapter
     assert report.warnings == []
 
 
