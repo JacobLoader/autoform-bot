@@ -542,8 +542,6 @@ class LeanReplConfig:
     request_timeout: float = 240.0
     chunk_size: int = 4096
 
-    instance_mem_limit_gb: int = 16
-
     allowed_imports: frozenset[str] = ALLOWED_IMPORTS
     warmup_imports: frozenset[str] = WARMUP_IMPORTS
 

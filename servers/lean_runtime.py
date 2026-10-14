@@ -48,12 +48,7 @@ from servers.lsp.server import (
     format_lsp_diagnostics,
 )
 from servers.repl.core import default_header_command, format_repl_response
-from servers.repl.pool import (
-    DEFAULT_RAM_FRACTION,
-    LeanReplPool,
-    LeanReplPoolConfig,
-    LeanReplPoolStartupError,
-)
+from servers.repl.pool import LeanReplPool, LeanReplPoolConfig
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +66,6 @@ RUNTIME_SAFETY_SECONDS = 30.0
 # Conservative bounds for cleanup/startup work that surrounds one tool call.
 # They keep the daemon's work inside the client's response deadline even when
 # an inactive project must be replaced first.
-REPL_WORKER_CLOSE_BUDGET = 10.0
 LSP_STARTUP_BUDGET = 60.0
 LSP_CLOSE_BUDGET = 65.0
 
@@ -86,11 +80,6 @@ class _FailedResourceCreation:
 
     resource: Any
     cause: BaseException
-
-
-def _repl_creation_budget(worker_count: int) -> float:
-    """Bound cleanup of an evicted pool; cold slots spawn no subprocesses."""
-    return worker_count * REPL_WORKER_CLOSE_BUDGET
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -125,13 +114,10 @@ def _positive_float(name: str, default: float) -> float:
 
 
 def _default_total_repl_workers() -> int:
-    try:
-        import psutil
+    import psutil
 
-        total_gb = psutil.virtual_memory().total / (1024**3)
-        return max(1, int(total_gb * DEFAULT_RAM_FRACTION / 16))
-    except ImportError:  # pragma: no cover - psutil is a runtime dependency
-        return 1
+    # Half the node's memory at 16 GB per concurrent Lean REPL call.
+    return max(1, psutil.virtual_memory().total // (32 * 1024**3))
 
 
 @dataclass(frozen=True)
@@ -163,21 +149,7 @@ class LeanRuntimeConfig:
             "AUTOFORM_REPL_TOTAL_WORKERS",
             _default_total_repl_workers(),
         )
-        legacy_raw = os.environ.get("LEAN_NUM_REPLS", "0") or "0"
-        try:
-            legacy_workers = int(legacy_raw)
-        except ValueError as error:
-            raise ValueError(
-                f"LEAN_NUM_REPLS must be a nonnegative integer, got {legacy_raw!r}"
-            ) from error
-        if legacy_workers < 0:
-            raise ValueError(
-                f"LEAN_NUM_REPLS must be a nonnegative integer, got {legacy_workers}"
-            )
-        workers_per_project = _positive_int(
-            "AUTOFORM_REPL_WORKERS_PER_PROJECT",
-            legacy_workers or 1,
-        )
+        workers_per_project = _positive_int("AUTOFORM_REPL_WORKERS_PER_PROJECT", 1)
         if workers_per_project > total_workers:
             raise ValueError(
                 "AUTOFORM_REPL_WORKERS_PER_PROJECT cannot exceed "
@@ -232,16 +204,10 @@ class LeanRuntimeConfig:
             "AUTOFORM_RUNTIME_RESPONSE_TIMEOUT",
             DEFAULT_RESPONSE_TIMEOUT,
         )
-        repl_creation_budget = _repl_creation_budget(workers_per_project)
-        if (
-            repl_creation_budget
-            + max_repl_request_seconds
-            + RUNTIME_SAFETY_SECONDS
-            > response_timeout
-        ):
+        if max_repl_request_seconds + RUNTIME_SAFETY_SECONDS >= response_timeout:
             raise ValueError(
-                "AUTOFORM_RUNTIME_RESPONSE_TIMEOUT is too small for the configured "
-                "REPL pool replacement and request limits"
+                "AUTOFORM_RUNTIME_RESPONSE_TIMEOUT is too small for "
+                "AUTOFORM_MAX_REPL_REQUEST_SECONDS"
             )
         if (
             LSP_CLOSE_BUDGET
@@ -824,25 +790,17 @@ class LeanRuntimeServices:
     ) -> None:
         self.config = config or LeanRuntimeConfig.from_environment()
         self.started_at = time.monotonic()
-        self.repl_creation_budget = _repl_creation_budget(
-            self.config.repl_workers_per_project
-        )
         self.lsp_creation_budget = LSP_STARTUP_BUDGET + LSP_CLOSE_BUDGET
 
-        def default_repl_factory(
-            project_dir: Path,
-        ) -> LeanReplPool | _FailedResourceCreation:
-            try:
-                return LeanReplPool(
-                    LeanReplPoolConfig(
-                        cwd=str(project_dir),
-                        repl_command=list(self.config.repl_command),
-                        header_command=list(self.config.repl_header_command),
-                        num_repls=self.config.repl_workers_per_project,
-                    )
+        def default_repl_factory(project_dir: Path) -> LeanReplPool:
+            return LeanReplPool(
+                LeanReplPoolConfig(
+                    cwd=str(project_dir),
+                    repl_command=list(self.config.repl_command),
+                    header_command=list(self.config.repl_header_command),
+                    num_repls=self.config.repl_workers_per_project,
                 )
-            except LeanReplPoolStartupError as error:
-                return _FailedResourceCreation(error.pool, error.cause)
+            )
 
         def default_lsp_factory(
             project_dir: Path,
@@ -914,7 +872,6 @@ class LeanRuntimeServices:
             with self.repl_projects.lease_resolved(
                 root,
                 acquisition_timeout=self._acquisition_timeout(effective_timeout),
-                creation_budget=self.repl_creation_budget,
             ) as pool:
                 assert pool is not None
                 try:
