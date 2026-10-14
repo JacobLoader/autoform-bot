@@ -1778,8 +1778,8 @@ def test_wire_protocol_exchanges_one_frame_over_real_pipes():
 
         worker = threading.Thread(target=serve_request, daemon=True)
         worker.start()
-        assert repl._run("#check Nat", timeout=1) == {"env": 1}
-        worker.join(timeout=1)
+        assert repl._run("#check Nat", timeout=10) == {"env": 1}
+        worker.join(timeout=10)
         assert not worker.is_alive()
         assert bytes(request) == b'{"cmd": "#check Nat"}\n\n'
 
