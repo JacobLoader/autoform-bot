@@ -240,6 +240,9 @@ integration fails, report the branch and commit for handoff. When the run uses
 claims, the [claim rules](references/claims.md#integration-and-handoff) say how
 to renew, keep, hand off, and release the claim set.
 
+When `AUTOFORM_DEBRIEF=1`, the agent that worked an attempt then follows the
+[debrief steps](references/debrief.md) before reporting.
+
 Re-read the work frontier from the updated shared branch and repeat while
 independent ready leaves and authorized capacity remain. Stop when the frontier
 is empty or every remaining attempt has a concrete mathematical or ownership
