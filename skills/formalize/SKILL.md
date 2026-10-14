@@ -48,6 +48,8 @@ worktrees, rerunning it there if it fails, then in each worktree before its
 first build or Lean tool call, so the worktrees unpack from a full cache instead
 of downloading into it together. If it still fails, tell the user before
 creating worktrees, since each would then fetch or build Mathlib on its own.
+Builds take no claim, so workers on one machine may build at the same time:
+dispatch no more at once than its memory can build for.
 
 Claims are optional. Within one run the lead keeps its workers apart, so the run
 needs none: no two workers, the lead included, hold the same target at once. A
@@ -65,10 +67,12 @@ the edit lands; one that another worker holds is an active conflict. If workers
 would wait on each other, the lead has one of them give up what it holds.
 
 Use claims only when other people or sessions may work on the same project at
-the same time, or when the user asks for them. A claim excludes only workers
-that also claim, and `work list` does not read the board, so on such a project
-every worker uses them. When the run uses claims, tell each subagent so, and
-follow the [claim rules](references/claims.md) at each step.
+the same time, or when the user asks for them. Before choosing none, run
+`autoform claim list` once, with any `--worker-id`: an unexpired claim on the
+board means another session uses them. A claim excludes only workers that also
+claim, and `work list` does not read the board, so on such a project every
+worker uses them. When the run uses claims, tell each subagent so, and follow
+the [claim rules](references/claims.md) at each step.
 
 ### Import edits
 

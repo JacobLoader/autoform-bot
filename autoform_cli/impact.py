@@ -1618,10 +1618,10 @@ def format_module_import_impact(report: ModuleImportImpactReport) -> list[str]:
         )
     if report.affected_claim_targets:
         lines.append(
-            "Check active claims or semantic changes for: "
+            "Check other workers, live claims, or semantic changes for: "
             + _keyed(report.affected_claim_targets, report.affected_claim_keys)
         )
-    lines.append("Required claims for the import edit: " + _keyed(report.claim_targets, report.claim_keys))
+    lines.append("Targets of the import edit: " + _keyed(report.claim_targets, report.claim_keys))
     return lines
 
 

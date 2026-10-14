@@ -129,7 +129,7 @@ def test_import_edits_use_reported_scope_instead_of_a_blanket_ban(
     assert "`module_scope` is `loaded-root-library-graph`" in cli
     assert "`module_claim_target`" in cli
     assert "`lean-module/<lowercase-slug>-<sha256[:16]>`" in cli
-    assert "Required `claim_targets` contain only the selected article" in cli
+    assert "The import edit's `claim_targets` contain only the selected article" in cli
     assert "`affected_claim_targets`" in cli
     assert "downstream warnings, not pre-emptive ownership requirements" in cli
     assert "`claim_keys`" in cli
@@ -213,6 +213,8 @@ def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
     assert "land the edit only once the lead confirms that no other worker holds them" in formalize
     assert "so capture a fresh baseline of that article on the shared branch" in formalize
     assert "If it still fails, tell the user before creating worktrees" in formalize
+    assert "dispatch no more at once than its memory can build for" in formalize
+    assert "Before choosing none, run `autoform claim list` once" in formalize
     assert "the lead checks them when it confirms the edit's new targets and again before the edit lands" in formalize
     assert "If workers would wait on each other, the lead has one of them give up what it holds" in formalize
     assert "re-run `autoform work import-impact` on the result; if integration brought in a change" in formalize

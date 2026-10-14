@@ -197,7 +197,7 @@ def test_module_import_impact_reports_reverse_import_scope_without_blocking() ->
     assert formatted[0] == "Import edit allowed in Demo.Base for base [af_base]."
     assert f"Module graph revision: {report.module_graph_revision}" in formatted
     assert "Module scope: loaded-root-library-graph" in formatted
-    assert formatted[-1] == "Required claims for the import edit: " + ", ".join(
+    assert formatted[-1] == "Targets of the import edit: " + ", ".join(
         f"{target} (key {key})"
         for target, key in zip(report.claim_targets, report.claim_keys)
     )
@@ -2072,9 +2072,9 @@ def test_cli_import_impact_text_report_lists_each_section(tmp_path: Path, monkey
         f"  chapter/uses [{_USES_ID}]: Demo",
         "Potentially affected unowned helpers:",
         *(f"  {name} (Demo): {keyed(_lean_key(name))}" for name in helpers),
-        "Check active claims or semantic changes for: "
+        "Check other workers, live claims, or semantic changes for: "
         + keyed(_USES_ID, "chapter/inlines", "chapter/loose", *map(_lean_key, helpers)),
-        f"Required claims for the import edit: {keyed(_BASE_ID, module)}",
+        f"Targets of the import edit: {keyed(_BASE_ID, module)}",
     ]
     assert calls[0]["timeout"] == 30
 
