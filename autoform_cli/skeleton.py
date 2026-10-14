@@ -1363,7 +1363,7 @@ def render_probe(
         marker=PROBE_MARKER,
         output_env=PROBE_OUTPUT_ENV,
         output_limit=DEFAULT_PROBE_OUTPUT_LIMIT,
-        project_roots=", ".join(_lean_name(name) for name in sorted(set(project_roots))),
+        project_roots=_lean_requests(tuple(sorted(set(project_roots)))),
         roots=_lean_requests(roots),
     )
 
@@ -1612,7 +1612,8 @@ def parse_probe_output(
     records: dict[str, dict[str, object]] = {}
     tables: dict[str, dict[str, object]] = {table: {} for table in _PROBE_TABLES}
     expected = None if expected_roots is None else set(expected_roots)
-    for line in text.splitlines():
+    # Not `splitlines`: Lean's JSON printer leaves U+0085, U+2028 and U+2029 unescaped.
+    for line in text.split("\n"):
         if not line.startswith(PROBE_MARKER):
             continue
         try:

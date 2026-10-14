@@ -1,0 +1,39 @@
+{
+  "schema": "autoform-project-library-catalog/v1",
+  "libraries": [
+    {
+      "name": "atlas",
+      "git": "https://github.com/zibo-yang/atlas-lean",
+      "commit": "0ca59c787215c3638311b0a14af59aaae3208f6b",
+      "release": "lean-v4.34.1-mathlib-v4.34.1",
+      "offered": false,
+      "module_roots": ["CSLibExt", "CSLibExtTest", "Cslib", "CslibTests", "MathlibExt", "MathlibExtTest", "WantedExt"],
+      "manifest_packages": [
+        {
+          "url": "https://github.com/zibo-yang/atlas-lean",
+          "type": "git",
+          "subDir": null,
+          "scope": "",
+          "rev": "0ca59c787215c3638311b0a14af59aaae3208f6b",
+          "name": "atlas",
+          "manifestFile": "lake-manifest.json",
+          "inputRev": "0ca59c787215c3638311b0a14af59aaae3208f6b",
+          "inherited": false,
+          "configFile": "lakefile.toml"
+        },
+        {
+          "url": "https://github.com/leanprover/cslib",
+          "type": "git",
+          "subDir": null,
+          "scope": "leanprover",
+          "rev": "7c8f6c0f67015df29b152fdcffaf7850db2e9185",
+          "name": "cslib",
+          "manifestFile": "lake-manifest.json",
+          "inputRev": "v4.34.1",
+          "inherited": true,
+          "configFile": "lakefile.toml"
+        }
+      ]
+    }
+  ]
+}

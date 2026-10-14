@@ -24,7 +24,7 @@ from ._tree_snapshot import TreeSnapshotError
 from .claims import author_claim_key
 from .lean import IndexedSourceSnapshot, LeanSourceError, bind_project_source_snapshot, resolve_lean_root
 from .runtime import load_runtime_graph
-from .skeleton import LeanLibrary, SkeletonError, _lean_name, _lean_name_parts, _lean_requests, lean_libraries
+from .skeleton import LeanLibrary, SkeletonError, _lean_name_parts, _lean_requests, lean_libraries
 from .work import work_context
 
 IMPACT_SCHEMA = "autoform-impact/v1"
@@ -131,7 +131,8 @@ def parse_impact_output(text: str, *, allow_empty: bool = False) -> dict[str, Co
     """
 
     records: dict[str, ConstantRecord] = {}
-    for line in text.splitlines():
+    # Not `splitlines`: Lean's JSON printer leaves U+0085, U+2028 and U+2029 unescaped.
+    for line in text.split("\n"):
         if not line.startswith(IMPACT_MARKER):
             continue
         try:
@@ -199,7 +200,8 @@ def parse_module_evidence(text: str) -> dict[str, ModuleEvidence]:
     """
 
     records: dict[str, ModuleEvidence] = {}
-    for line in text.splitlines():
+    # Not `splitlines`: Lean's JSON printer leaves U+0085, U+2028 and U+2029 unescaped.
+    for line in text.split("\n"):
         if not line.startswith(IMPACT_MODULE_MARKER):
             continue
         try:
@@ -566,6 +568,9 @@ def render_impact_probe(
     modules = sorted(set(imports))
     if not modules:
         raise SkeletonError(["refusing to render an impact probe with no imports"])
+    walks = [
+        [str(directory), list(skeleton._lean_name_components(base)), glob] for directory, base, glob in glob_directories
+    ]
     return _impact_template().format(
         imports="\n".join(f"import {module}" for module in modules),
         marker=IMPACT_MARKER,
@@ -573,11 +578,7 @@ def render_impact_probe(
         check_inventory="false" if artifact_dir is None else "true",
         emit_module_evidence="true" if emit_module_evidence else "false",
         artifact_dir=json.dumps(str(artifact_dir or ""), ensure_ascii=False),
-        glob_directories=", ".join(
-            f"(System.FilePath.mk {json.dumps(str(directory), ensure_ascii=False)}, {_lean_name(base)}, "
-            f"{json.dumps(glob, ensure_ascii=False)})"
-            for directory, base, glob in glob_directories
-        ),
+        glob_directories=json.dumps(json.dumps(walks, ensure_ascii=False), ensure_ascii=False),
         output_env=skeleton.PROBE_OUTPUT_ENV,
         output_limit=skeleton.DEFAULT_PROBE_OUTPUT_LIMIT,
         project_modules=_lean_requests(tuple(sorted(set(project_modules)))),

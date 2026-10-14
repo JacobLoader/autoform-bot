@@ -2124,7 +2124,12 @@ def _capture_portable(
                     if selection.record_omitted:
                         omitted.append((child_relative, "special"))
 
-    visit(root, "", 0)
+    try:
+        visit(root, "", 0)
+    finally:
+        # visit holds itself through its closure. Breaking that cycle lets
+        # reference counting free the capture state along with the snapshot.
+        visit = None  # type: ignore[assignment]
     root_after = os.lstat(root)
     if (
         _stat_signature(root_before) != _stat_signature(root_after)

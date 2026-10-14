@@ -140,7 +140,7 @@ def test_archive_modules_are_sorted_and_probe_fails_on_zero_declarations(
     assert modules == ("Fixture", "Fixture.Basic")
     assert probe.startswith("import Lean.Elab.Command\nimport Lean.Data.Json\nimport Lean.Replay\n\n")
     assert "import Fixture" not in probe
-    assert 'Name.str (Name.anonymous) "Fixture", Name.str (Name.str (Name.anonymous) "Fixture") "Basic"' in probe
+    assert _modules(probe) == [["Fixture"], ["Fixture", "Basic"]]
     assert 'throwError "kernel-trust audit found no root-package declarations"' in probe
     assert "isRoot declName && !autoformAuditCompiledCopy declName info" in probe
     assert "if autoformAuditCompiledCopy declName info then" in probe
@@ -162,8 +162,33 @@ def test_module_names_with_control_characters_or_lone_surrogates_are_refused(
 def test_both_probes_spell_module_names_outside_the_basic_multilingual_plane(helper: ModuleType) -> None:
     # Lean reads a JSON surrogate pair such as \ud835\udd3d as two NUL characters.
     for probe in (helper.render_probe(("Fixture.𝔽",)), helper.render_open_probe(("Fixture.𝔽",), ())):
-        assert 'Name.str (Name.str (Name.anonymous) "Fixture") "𝔽"' in probe
+        assert _modules(probe) == [["Fixture", "𝔽"]]
         assert "\\ud835" not in probe
+
+
+def _modules(probe: str) -> object:
+    """The JSON module list a rendered probe decodes."""
+
+    literal = re.search(r'ReadModules ("(?:[^"\\]|\\.)*")', probe)
+    assert literal is not None
+    return json.loads(json.loads(literal.group(1)))
+
+
+@pytest.mark.skipif(not _REAL_LEAN, reason="needs lake and the fixture's Lean toolchain")
+def test_both_probes_read_more_modules_than_lean_compiles_in_a_list(helper: ModuleType, tmp_path: Path) -> None:
+    # Lean's code generator gives up on a list literal of more than about 1,500
+    # names. Outside the audit step, each probe reads its module list and then
+    # stops at its first check.
+    _write(tmp_path / "lean-toolchain", _TOOLCHAIN)
+    modules = tuple(f"Fixture.M{index}" for index in range(3000))
+    without = {key: value for key, value in os.environ.items() if key not in {"LEAN_PATH", "AUTOFORM_AUDIT_LEAN_PATH"}}
+    probe = tmp_path / "probe.lean"
+    for text in (helper.render_probe(modules), helper.render_open_probe(modules, ())):
+        probe.write_text(text, encoding="utf-8")
+        run = subprocess.run(
+            ["lean", str(probe)], cwd=tmp_path, env=without, capture_output=True, text=True, timeout=180
+        )
+        assert "AUTOFORM_AUDIT_LEAN_PATH is not set" in run.stdout, run.stdout + run.stderr
 
 
 @pytest.mark.parametrize(

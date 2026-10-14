@@ -316,7 +316,7 @@ def test_probe_transports_quoted_and_numeric_name_components_structurally() -> N
         project_roots=("Skel.«quoted».2",),
     )
 
-    assert 'Name.num (Name.str (Name.str (Name.anonymous) "Skel") "quoted") 2' in probe
+    assert _requested(probe, "let projectRoots :=") == [["Skel.«quoted».2", ["Skel", "quoted", 2]]]
     assert _requested(probe) == [
         ["Skel.«quoted.name with space».2", ["Skel", "quoted.name with space", 2]],
         ["Skel.«2»", ["Skel", "2"]],
@@ -324,10 +324,10 @@ def test_probe_transports_quoted_and_numeric_name_components_structurally() -> N
     ]
 
 
-def _requested(probe: str) -> object:
-    """The JSON roots a rendered probe requests."""
+def _requested(probe: str, binding: str = "for (request, root) in") -> object:
+    """The JSON names a rendered probe decodes for ``binding``, by default the roots it requests."""
 
-    literal = re.search(r'requestedRoots ("(?:[^"\\]|\\.)*")', probe)
+    literal = re.search(re.escape(binding) + r' \(← AutoformSkeleton\.requestedRoots ("(?:[^"\\]|\\.)*")', probe)
     assert literal is not None
     return json.loads(json.loads(literal.group(1)))
 
@@ -828,6 +828,16 @@ def test_parse_probe_output_keys_records_by_root_and_ignores_noise() -> None:
 
     assert set(records) == {"Skel.observation_determined", "Skel.ghost"}
     assert records["Skel.ghost"] == {"root": "Skel.ghost", "found": False}
+
+
+def test_parse_probe_output_breaks_lines_only_at_newlines() -> None:
+    # Lean's JSON printer leaves U+0085, U+2028 and U+2029 unescaped, and
+    # `str.splitlines` would split a record at each of them.
+    root = "Skel.«a\x85b\u2028c\u2029d»"
+
+    records = parse_probe_output(PROBE_MARKER + json.dumps({"root": root, "found": False}, ensure_ascii=False) + "\n")
+
+    assert records == {root: {"root": root, "found": False}}
 
 
 def test_parse_probe_output_rejects_malformed_records() -> None:
@@ -2977,17 +2987,26 @@ def test_probe_reads_more_roots_than_lean_compiles_in_a_list(tmp_path: Path) -> 
     project = _project(tmp_path)
     _build(project, "Skel.Semantics")
     # Found roots with a quoted, a needlessly quoted and a numeric component;
-    # absent ones with characters a Lean string literal must escape.
+    # absent ones with characters a Lean string literal must escape, and with
+    # control characters and line breaks that Lean's JSON printer escapes or not.
     found = (
         "Skel.Semantics.«quoted.helper»",
         "Skel.Semantics.«usesQuoted»",
         "_private.Skel.Semantics.0.Skel.Semantics.privateUnsafeValue",
     )
-    absent = ("Skel.«a\\b\"c»", "Skel.𝔸", *(f"Skel.Semantics.absent{i}" for i in range(3000)))
+    absent = (
+        "Skel.«a\\b\"c»",
+        "Skel.𝔸",
+        "Skel.«a\nb\bc\x7fd\x85e\u2028f»",
+        *(f"Skel.Semantics.absent{i}" for i in range(3000)),
+    )
+    # The library roots reach the probe the same way.
+    project_roots = ("Skel.Semantics", *(f"Absent{i}" for i in range(3000)))
 
-    records = _probe_records(project, (*found, *absent))
+    probe = render_probe(imports=("Skel.Semantics",), roots=(*found, *absent), project_roots=project_roots)
+    records = parse_probe_output(run_probe(probe, project))
 
-    assert [records[root]["found"] for root in (*found, *absent)] == [True] * 3 + [False] * 3002
+    assert [records[root]["found"] for root in (*found, *absent)] == [True] * 3 + [False] * 3003
 
 
 def _declaration_of(project: Path, record: dict[str, object]):

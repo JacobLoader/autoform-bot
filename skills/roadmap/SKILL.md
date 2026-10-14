@@ -81,11 +81,12 @@ Before external research, extract module and declaration docstrings and nearby
 source comments alongside the Lean signatures and implementations. Work from
 those exact source passages. Record stable source locations, assumptions, and
 uncovered prerequisites under `blueprint/sources/`; label project-authored
-specifications honestly. Search the pinned Mathlib checkout before planning a
-replacement. External research is read-only, and contacting people requires
-permission. Do not invent a statement, motivation, proof narrative, dependency,
-citation, or historical attribution that the available sources do not support.
-Read [Setup's Zulip workflow](../setup/references/zulip.md) only for requested
+specifications honestly. Search the pinned Mathlib checkout and every usable
+shared library before planning a replacement. External research is read-only,
+and contacting people requires permission. Do not invent a statement,
+motivation, proof narrative, dependency, citation, or historical attribution
+that the available sources do not support. Read
+[Setup's Zulip workflow](../setup/references/zulip.md) only for requested
 Zulip work.
 
 Before adding a formalizable article, run `autoform search` over the blueprint
@@ -95,8 +96,12 @@ when one is known; the
 matched. Read each hit's statement, and narrow a query whose listing the limit
 cut short. Matching is literal, so the result is new only when retries with
 fewer words, and under other usual names for its objects, also show no article
-stating it. Search the project's usable shared libraries in the same call, as
-the [library search rules](../formalize/references/library-search.md) describe.
+stating it. Search the project's usable shared libraries in the same call: run
+`autoform library list .` once, and pass each package it reports as usable to
+every search as `--library NAME --lean-root .`, even while the blueprint is
+empty, since a library may already prove the result. The
+[library search rules](../formalize/references/library-search.md) give the
+details.
 If a library already proves a result, reuse that proof instead of proving the
 result again: the result keeps its article, and its proof cites the library
 declaration. If a proof needs a library result that has no article yet, add an

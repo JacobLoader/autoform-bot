@@ -31,7 +31,7 @@ from .impact import (
 from .lean import build_linker, declaration_names, index_failure_message
 from .library.generate import GenerateError, check_index, generate_index, write_index
 from .library.index import INDEX_FILE
-from .library.listing import list_libraries
+from .library.listing import indexed_packages, list_libraries
 from .library.locate import LibraryError, WorkspaceError
 from .library.search import LibraryResult, library_argument, search_with_libraries
 from .markdown import local_target_issue
@@ -134,6 +134,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=(
             "Mathlib tag, branch, or commit to require with --lean-toolchain "
             "(default: the same tag as the toolchain)"
+        ),
+    )
+    project_new.add_argument(
+        "--library",
+        metavar="NAME",
+        help=(
+            "shared Lean library from the bundled library catalog to require at its pinned commit; "
+            "it selects the release, so it combines with no version option"
         ),
     )
     project_new.add_argument(
@@ -702,6 +710,7 @@ def _project(args: argparse.Namespace) -> int:
                     mathlib_rev=args.mathlib_rev,
                     autoform_source=args.autoform_source,
                     autoform_ref=args.autoform_ref,
+                    library=args.library,
                 )
             except KeyboardInterrupt:
                 # An interrupt during create_project's final cleanup can follow a
@@ -723,6 +732,9 @@ def _project(args: argparse.Namespace) -> int:
             else:
                 label = result.release or f"unlisted: {result.lean_toolchain}, Mathlib {result.mathlib_rev}"
                 print(_ascii_text(f"Created {result.package} at {result.target} ({label})"))
+                if result.library is not None:
+                    library = result.library
+                    print(_ascii_text(f"Library: {library.name} @ {library.commit} ({library.git})"))
                 # Flush first so the warnings never appear ahead of the line they qualify.
                 sys.stdout.flush()
                 for code, message in result.warnings:
@@ -892,8 +904,11 @@ def _search(args: argparse.Namespace) -> int:
         print("error: project, blueprint, or Lean root path cannot be read", file=sys.stderr)
         return 2
 
+    note = None if args.libraries else _unsearched_library_note(args.target, args.lean_root)
     if args.json:
         print(result.to_json() if combined is None else combined.to_json())
+        if note:
+            print(note, file=sys.stderr)
         return 0
     if not result.hits:
         print("No matching articles.")
@@ -921,7 +936,37 @@ def _search(args: argparse.Namespace) -> int:
         print(f"{len(result.hits)} of {result.total_matches} matching article(s) shown.")
     for library in libraries:
         _print_library(library)
+    if note:
+        sys.stdout.flush()
+        print(note, file=sys.stderr)
     return 0
+
+
+def _unsearched_library_note(target: str, lean_root: str | None) -> str | None:
+    """Name the locked packages that publish an index a blueprint-only search skipped.
+
+    An empty blueprint answers every query with no match, which reads as "this
+    result is new" although a library the project depends on may prove it.
+    The note is best effort: any failure to read the project leaves it out.
+    """
+
+    candidates = [Path(lean_root)] if lean_root else [Path(target), Path(target).parent]
+    for root in candidates:
+        try:
+            if not (root / "lake-manifest.json").is_file():
+                continue
+            names = indexed_packages(root)
+        except (LibraryError, WorkspaceError, OSError, ValueError):
+            return None
+        if not names:
+            return None
+        listed = " and ".join(names)
+        flags = " ".join(f"--library {name}" for name in names)
+        verb, pronoun = ("publishes a search index", "it") if len(names) == 1 else ("publish search indexes", "them")
+        return _human_text(
+            f"note: {listed} {verb} this search did not read; search {pronoun} too with --lean-root {root} {flags}"
+        )
+    return None
 
 
 def _print_library(library: LibraryResult) -> None:
@@ -1195,9 +1240,15 @@ def _claim(args: argparse.Namespace) -> int:
         operation = args.claim_command
         if operation == "list":
             print(json.dumps(board.list(), sort_keys=True, separators=(",", ":")))
-            return 0
-        if operation == "cleanup":
+        elif operation == "cleanup":
             print(f"removed {board.cleanup()} expired claim(s)")
+        if operation in {"list", "cleanup"}:
+            # Lock files are not refs, so neither command's own output can show one.
+            for lock in board.ref_locks():
+                print(
+                    f"warning: {lock.describe()}; if no Git process is using the claim board, delete it",
+                    file=sys.stderr,
+                )
             return 0
 
         past_tense = {"acquire": "acquired", "renew": "renewed", "release": "released"}
