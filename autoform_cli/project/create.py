@@ -24,7 +24,6 @@ from ..scaffold import (
     _checkout_pin,
     _normalize_autoform_source,
     _read_templates,
-    _require_complete_templates,
     _ScaffoldFile,
     _scaffold_plan,
 )
@@ -180,10 +179,9 @@ def create_project(
         release_bundle = _with_library(roots_bundle, shared)
     warnings = _version_warnings(version)
     try:
-        # Pin discovery validates this exact stable snapshot, and the plan keeps
+        # Pin discovery validates this exact snapshot, and the plan keeps
         # these retained bytes rather than reopening the template tree.
         templates = _read_templates(_TEMPLATES)
-        _require_complete_templates(templates)
         workflow_source, workflow_ref = _resolve_workflow_pin(autoform_source, autoform_ref, templates=templates)
         plan = _build_project_plan(
             package_name, version, release_bundle, templates, workflow_source, workflow_ref, shared
@@ -212,10 +210,6 @@ def create_project(
             raise ProjectCreateError("project-create-failed", _FAILED_MESSAGE)
         _materialize_project(stage_descriptor, tree)
         _require_stage_identity(parent_descriptor, stage_name, stage_descriptor)
-        # Templates may carry a root manifest; only a catalog release may publish one.
-        # Refuse it before the chmod, while the populated stage is still private.
-        if release_bundle is None and "lake-manifest.json" in tree:
-            raise ProjectCreateError("project-create-validation-failed", _STAGED_MESSAGE)
         os.fchmod(stage_descriptor, 0o755)
         os.fsync(stage_descriptor)
         _verify_project_tree(stage_descriptor, tree)

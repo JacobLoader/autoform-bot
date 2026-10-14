@@ -240,9 +240,10 @@ running the command, or of the marketplace checkout an installed plugin was
 copied from, read with local Git. Source selection prefers Autoform's canonical
 repository, then `origin`, then `upstream`, then a unique remaining safe remote,
 but only when one of its cached tracking refs contains HEAD. An inferred pin is
-used only when tracked files are clean and the bounded, link-free template
-snapshot and scaffold renderer match that commit in paths, bytes, and
-executable-bit classification; an installed copy must match the checkout too.
+used only when tracked files are clean and the scaffold renderer and the
+bounded, link-free template files it lists match that commit in paths, bytes,
+and executable-bit classification; other files in the templates folder are
+ignored, and an installed copy must match the checkout too.
 Local Git replacement objects are ignored. Apart from those reads, the command
 runs no subprocesses, Lake, Lean, or network operations. Without a ref the local
 project is complete but the workflows are omitted.
