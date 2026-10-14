@@ -80,7 +80,6 @@ class LeanLspSession:
         self._group_retired = False
         self._retire_pending = False
         self._request_id = 0
-        self._document_version = 0
         self._lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
         # A session has one stdout stream. Serialize the complete document
@@ -319,15 +318,14 @@ class LeanLspSession:
         return None
 
     def _open_document(self, uri: str, content: str, *, timeout: float) -> None:
-        """Send didOpen with a fresh document version."""
-        self._document_version += 1
+        """Send didOpen. Nothing reads a document version back, so every open is version 1."""
         self._send_notification(
             "textDocument/didOpen",
             {
                 "textDocument": {
                     "uri": uri,
                     "languageId": "lean4",
-                    "version": self._document_version,
+                    "version": 1,
                     "text": content,
                 }
             },

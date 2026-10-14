@@ -95,7 +95,7 @@ def test_json_rpc_error_response_raises_protocol_error(monkeypatch):
         },
     )
 
-    with pytest.raises(lsp.LspProtocolError, match="initialization failed"):
+    with pytest.raises(lsp.LspProtocolError, match=r"\[-32603\]: initialization failed"):
         session._read_response(1)
 
 
@@ -678,7 +678,7 @@ def test_real_lean_abort_stops_file_workers(tmp_path):
     leader = psutil.Process(session.process.pid)
     descendants: set[psutil.Process] = set()
     try:
-        # A timed-out diagnostics call leaves the document open like this.
+        # A hover that runs out of time leaves the document open like this.
         _open_until(session, project, leader, "Slow.lean", descendants)
 
         session.retire()
@@ -718,6 +718,22 @@ def test_real_lean_graceful_close_is_prompt_and_complete(tmp_path):
             session.abort()
 
 
+@_requires_real_lean
+def test_real_lean_hover_reopens_a_file_in_one_session(tmp_path):
+    project = _real_lean_project(tmp_path / "hover", "def probe : Nat := 3\n")
+    main = project / "Probe" / "Main.lean"
+    session = lsp.LeanLspSession(lsp.LspConfig(cwd=str(project)))
+    session.start()
+    try:
+        assert "Nat" in session.hover(str(main), 0, 4)
+        # The second hover reopens the file the first one closed, with new text.
+        main.write_text("def probe : Int := 3\n", encoding="utf-8")
+        assert "Int" in session.hover(str(main), 0, 4)
+        assert session.is_alive() is True
+    finally:
+        session.close()
+
+
 def test_hover_opens_and_closes_document(tmp_path: Path, monkeypatch):
     source = tmp_path / "Test.lean"
     source_text = "#check Nat\n"
@@ -743,7 +759,15 @@ def test_hover_opens_and_closes_document(tmp_path: Path, monkeypatch):
         "textDocument/didOpen",
         "textDocument/didClose",
     ]
-    assert notifications[0][1]["textDocument"]["text"] == source_text
+    # Lean's watchdog exits on a didOpen it cannot parse, so pin every field.
+    assert notifications[0][1] == {
+        "textDocument": {
+            "uri": source.resolve().as_uri(),
+            "languageId": "lean4",
+            "version": 1,
+            "text": source_text,
+        }
+    }
 
 
 def test_hover_skips_a_server_request_that_reuses_its_id(tmp_path: Path, monkeypatch):
@@ -971,11 +995,16 @@ def test_hover_fails_closed_when_lean_exits_mid_wait(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("partial", "stage"),
-    [(b"C", "header"), (b"Content-Length: 10\r\n\r\n{}", "body")],
+    ("stall", "message"),
+    [
+        ([(4.9, b"C")], "reading an LSP header"),
+        ([(4.9, b"Content-Length: 10\r\n\r\n{}")], "reading an LSP body"),
+        ([], "waiting for LSP response"),
+    ],
+    ids=["header", "body", "silence"],
 )
-def test_hover_times_out_at_the_deadline_on_a_frame_that_never_completes(
-    tmp_path, monkeypatch, partial, stage
+def test_hover_fails_at_its_deadline_when_the_reply_never_completes(
+    tmp_path, monkeypatch, stall, message
 ):
     import select
 
@@ -1002,21 +1031,29 @@ def test_hover_times_out_at_the_deadline_on_a_frame_that_never_completes(
             clock["now"] += timeout
         return ready, [], []
 
+    methods: list[str] = []
+
     def write(msg, timeout=30):
+        methods.append(msg.get("method"))
         if msg.get("method") == "textDocument/hover":
-            # A progress notification, then a frame that starts mid-read and
-            # stalls while Lean stays alive.
-            arrivals.extend([(0.0, _frame(_PROGRESS)), (1.9, partial)])
+            # A progress notification three seconds in, then a frame that starts
+            # mid-read and stalls, or nothing more, while Lean stays alive.
+            arrivals.extend([(3.0, _frame(_PROGRESS)), *stall])
 
     monkeypatch.setattr(lsp.time, "monotonic", lambda: clock["now"])
     monkeypatch.setattr(select, "select", paced_select)
     monkeypatch.setattr(session, "_write_message", write)
     try:
-        # Only the operation's own deadline may cut off a started frame.
-        with pytest.raises(TimeoutError, match=f"reading an LSP {stage}"):
+        # Only the operation's own deadline ends the wait, a read after the
+        # progress notification gets only what is left of it, and running out
+        # fails rather than returning no hover.
+        with pytest.raises(TimeoutError, match=message) as raised:
             session.hover(str(source), 0, 7)
+        assert not isinstance(raised.value, lsp.LspBusyError)
         assert clock["now"] == pytest.approx(10)
         assert session.is_alive() is False
+        # The budget is gone, so no didClose is sent.
+        assert methods == ["textDocument/didOpen", "textDocument/hover"]
     finally:
         os.close(write_fd)
         reader.close()
