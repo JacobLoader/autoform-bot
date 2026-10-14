@@ -976,6 +976,28 @@ def _process_group_has_live_members(pid: int) -> bool:
     return False
 
 
+def _process_group_is_ours(process: subprocess.Popen[bytes]) -> bool:
+    """Whether the command's process group id can still belong only to it, so it may be signalled.
+
+    The unreaped leader keeps the id. Once something else reaps it, as the
+    kernel does when SIGCHLD is ignored, the group's live members keep it,
+    unless a new process with the leader's pid already leads a group of that id.
+    """
+
+    if os.name != "posix":
+        return False
+    if process.returncode is None:
+        return True
+    try:
+        if os.getpgid(process.pid) == process.pid:
+            return False
+    except ProcessLookupError:
+        pass
+    except OSError:
+        return False
+    return _process_group_has_live_members(process.pid)
+
+
 def _leader_has_exited(process: subprocess.Popen[bytes]) -> bool:
     """Whether the command has exited, leaving it unreaped on POSIX.
 
@@ -1032,7 +1054,7 @@ def _terminate_process_tree(
             strict=False,
         )
         live = [child for child in descendants.values() if child.pid != process.pid and _process_is_alive(child)]
-        if os.name == "posix" and process.returncode is None:
+        if _process_group_is_ours(process):
             with contextlib.suppress(OSError):
                 os.killpg(process.pid, getattr(signal, group_signal))
         # On POSIX killpg already reached the leader; Popen.terminate would poll, and so reap, it.
@@ -1221,8 +1243,9 @@ def _run_registered_command(
                 raise _CommandTimedOut([f"{context} timed out after {timeout:g} seconds"])
             overflow.wait(min(0.05, remaining))
         _remember_descendants(process, descendants)
-        # A reap recorded elsewhere frees the group id, so it is not checked again.
-        group_alive = process.returncode is None and _process_group_has_live_members(process.pid)
+        group_alive = (
+            _process_group_has_live_members(process.pid) if process.returncode is None else _process_group_is_ours(process)
+        )
         _remember_tagged_processes(token, descendants, root_pid=process.pid)
         if group_alive or any(map(_process_is_alive, descendants.values())):
             raise SkeletonError([f"{context} left descendant processes running"])
