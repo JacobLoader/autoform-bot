@@ -193,6 +193,37 @@ def test_slot_that_arrives_at_the_deadline_times_out_before_the_call_starts(monk
     pool.shutdown()
 
 
+def test_spent_budget_times_out_before_waiting_for_a_slot(monkeypatch):
+    calls = []
+
+    class FakeRepl:
+        def __init__(self, config):
+            pass
+
+        def run_disposable(self, code, **kwargs):
+            calls.append(code)
+            return {"messages": []}
+
+        def is_clean(self):
+            return True
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(repl_pool, "LeanRepl", FakeRepl)
+    pool = repl_pool.LeanReplPool(repl_pool.LeanReplPoolConfig(num_repls=1))
+    # The whole budget is spent between taking the deadline and checking it,
+    # so the call must not wait: Queue.get would refuse a negative timeout.
+    readings = iter([0.0])
+    monkeypatch.setattr(repl_pool.time, "monotonic", lambda: next(readings, 10.0))
+
+    with pytest.raises(TimeoutError, match=r"timed out after 5 seconds waiting for an idle Lean REPL slot"):
+        pool.run("#check Nat", timeout=5)
+    assert calls == []
+    assert pool._active_calls == 0
+    pool.shutdown()
+
+
 def test_queued_call_timeout_states_the_callers_budget(monkeypatch):
     command_timeouts = []
     pool = repl_pool.LeanReplPool(
