@@ -203,6 +203,24 @@ def test_nothing_placed_reports_without_running_lean(tmp_path: Path) -> None:
     assert [item.declaration for item in report.unresolved] == ["Skel.absent"]
 
 
+def test_a_name_several_files_declare_is_unresolved_without_running_lean(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    for module, prefix in (("Adup", "private "), ("Bdup", "")):
+        (project / "Skel" / f"{module}.lean").write_text(
+            f"namespace Skel\n{prefix}theorem dup : True := sorry\nend Skel\n", encoding="utf-8"
+        )
+    blueprint = _blueprint(tmp_path, lean={"dup": "Skel.dup"})
+
+    def runner(probe: str, root: Path) -> str:
+        raise AssertionError("a name several files declare must not reach Lean")
+
+    report = find_unused_hypotheses(blueprint, lean_root=project, runner=runner)
+
+    assert [(item.declaration, item.reason) for item in report.unresolved] == [
+        ("Skel.dup", "several source files declare it: Skel/Adup.lean, Skel/Bdup.lean")
+    ]
+
+
 def test_the_probe_imports_only_the_modules_it_reads_and_narrows_to_the_selection(tmp_path: Path) -> None:
     project = _project(tmp_path)
     blueprint = _blueprint(tmp_path, lean={"heavy": "Skel.heavy_of_weight", "unambiguous": "Skel.NonAmbiguous"})

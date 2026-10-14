@@ -29,6 +29,8 @@ from autoform_cli.render import (
     PublicationError,
     _COVERAGE_SUMMARY_ORDER,
     _completion_percentage,
+    _document_body,
+    _first_h1,
     load_publication_source,
     publication_source_revision,
     render_site,
@@ -1963,6 +1965,34 @@ def test_source_notes_stay_published_when_there_is_nowhere_to_send_readers(
     assert "github.com" not in (out / "roadmap/README.md").read_text(encoding="utf-8")
 
 
+def test_a_published_link_out_of_the_blueprint_keeps_only_its_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The site holds only the blueprint, so the link could only dangle.
+
+    Source notes stay published when readers cannot be sent to the repository,
+    and they often cite Lean files beside the blueprint. MkDocs reported each
+    such link as missing, which failed a strict build.
+    """
+    for variable in ("GITHUB_REPOSITORY", "GITHUB_SERVER_URL", "GITHUB_SHA"):
+        monkeypatch.delenv(variable, raising=False)
+    project = _with_source_notes(tmp_path)
+    paper = project / "blueprint" / "sources" / "paper.md"
+    paper.write_text(
+        paper.read_text(encoding="utf-8")
+        + "\nEvidence: [Top.lean](../../Project/Top.lean#L5) and [`Lean`](../../lean/) for [Top](../roadmap/top.md).\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+
+    render_site(project / "blueprint", out, lean_root=project, repository_url="", ref="")
+
+    published = (out / "sources/paper.md").read_text(encoding="utf-8")
+    assert "Evidence: Top.lean and `Lean` for [Top](" in published
+    assert "../../Project/Top.lean" not in published
+    assert "../../lean/" not in published
+
+
 def test_permalinks_are_relative_to_the_repository_not_the_vaults_parent(
     tmp_path: Path,
 ) -> None:
@@ -2997,6 +3027,30 @@ def test_a_blueprint_that_changes_while_it_is_read_asks_for_a_retry(
     assert not (tmp_path / "out").exists()
 
 
+def test_entries_added_removed_or_renamed_during_a_render_publish_the_captured_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, output, previous = _published(tmp_path)
+    blueprint = project / "blueprint"
+    _edit(blueprint / "roadmap/top.md", "The main result.", "Revised.")
+    undisturbed = tmp_path / "undisturbed"
+    render_site(blueprint, undisturbed, lean_root=project)
+    render_pages = render_module._render_pages
+
+    def churn_then_render(*args, **kwargs):
+        (blueprint / "roadmap/added.md").write_text("# Added\n\nSaved mid-render.\n", encoding="utf-8")
+        (blueprint / "roadmap/base.md").unlink()
+        (blueprint / "roadmap").rename(blueprint / "moved")
+        return render_pages(*args, **kwargs)
+
+    monkeypatch.setattr(render_module, "_render_pages", churn_then_render)
+    render_site(blueprint, output, lean_root=project)
+
+    # Render replaced the previous site with the generation it captured, byte for byte: the revised article,
+    # no added page, Base still published, and nothing under the new directory name.
+    assert _tree(output) == _tree(undisturbed) != previous
+
+
 def test_repository_links_use_the_verified_commit_not_a_mutable_ref(tmp_path: Path) -> None:
     project = _project(tmp_path)
     commit = _commit_project(project)
@@ -3032,8 +3086,48 @@ def test_dirty_lean_snapshot_does_not_borrow_the_clean_commit_ref(tmp_path: Path
     assert "/blob/" not in (output / "roadmap/README.md").read_text(encoding="utf-8")
     assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["git_ref"] is None
     assert report.warnings == [
-        "repository links were omitted because the captured blueprint and Lean inputs do not match one "
+        "repository links were omitted because the captured Lean inputs do not match one "
         f"verified local Git commit: Project/Basic.lean differs from commit {commit[:12]}"
+    ]
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["sibling", "nested-checkout"])
+def test_a_blueprint_outside_the_repository_keeps_its_lean_code_links(tmp_path: Path, nested: bool) -> None:
+    project = _project(tmp_path)
+    if nested:  # a submodule or a separate clone inside the Lean repository
+        subprocess.run(["git", "init", "-q"], cwd=project / "blueprint", check=True)
+        _git_commit(project / "blueprint", "notes")
+        blueprint = project / "blueprint"
+    else:
+        blueprint = (project / "blueprint").rename(tmp_path / "notes")
+    commit = _commit_project(project)
+    output = tmp_path / "out"
+
+    report = render_site(blueprint, output, lean_root=project, repository_url=_REPOSITORY, ref="HEAD")
+
+    chapter = (output / "roadmap/README.md").read_text(encoding="utf-8")
+    assert f"/blob/{commit}/Project/Basic.lean#L5" in chapter
+    # Render's copy places the vault at blueprint/, which names nothing in the Lean repository's commit.
+    assert f"/blob/{commit}/blueprint/" not in chapter
+    assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["git_ref"] == commit
+    assert report.warnings == []
+
+
+def test_an_uncommitted_blueprint_edit_drops_only_the_markdown_source_links(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    commit = _commit_project(project)
+    _edit(project / "blueprint/roadmap/top.md", "The main result.", "The main result, revised.")
+    output = tmp_path / "out"
+
+    report = render_site(project / "blueprint", output, lean_root=project, repository_url=_REPOSITORY, ref="HEAD")
+
+    chapter = (output / "roadmap/README.md").read_text(encoding="utf-8")
+    assert f"/blob/{commit}/Project/Basic.lean#L5" in chapter
+    assert f"/blob/{commit}/blueprint/" not in chapter
+    assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["git_ref"] == commit
+    assert report.warnings == [
+        "Markdown source links were omitted because the captured blueprint does not match the verified "
+        f"local Git commit: blueprint/roadmap/top.md differs from commit {commit[:12]}"
     ]
 
 
@@ -3051,7 +3145,7 @@ def test_an_untracked_source_note_or_directory_gets_no_commit_link(tmp_path: Pat
 
     assert f"/{commit}/blueprint/sources" not in (output / "roadmap/README.md").read_text(encoding="utf-8")
     assert not note or (output / "sources" / note).is_file()
-    assert "repository links were omitted" in report.warnings[0]
+    assert report.warnings[0].startswith("Markdown source links were omitted")
 
 
 def test_markdown_source_permalink_quotes_the_original_repository_path(tmp_path: Path) -> None:
@@ -3067,6 +3161,81 @@ def test_markdown_source_permalink_quotes_the_original_repository_path(tmp_path:
     page = (output / "roadmap/README.md").read_text(encoding="utf-8")
     assert f"/blob/{commit}/blueprint/roadmap/top%20lemma%20%C3%A9.md" in page
     assert ".autoform-publication" not in page and "autoform-blueprint-" not in page
+
+
+def test_decomposed_file_names_link_to_the_spelling_git_committed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _project(tmp_path)
+    roadmap = project / "blueprint/roadmap"
+    # NFD é, as some Cocoa apps write it, and U+212B ANGSTROM SIGN, which NFC would replace but Git keeps.
+    name = "Poincare\u0301\u212b"
+    (roadmap / "top.md").rename(roadmap / f"{name}.md")
+    (project / "Project/Basic.lean").rename(project / f"Project/{name}.lean")
+    (project / "blueprint/sources").mkdir()
+    (project / "blueprint/sources" / f"{name}.md").write_text("# Notes\n", encoding="utf-8")
+    _edit(roadmap / "README.md", "(top.md)", f"({name}.md)")
+    _edit(roadmap / "README.md", "# Roadmap", f"# Roadmap\n\nSee [notes](../sources/{name}.md).")
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    subprocess.run(["git", "config", "core.precomposeunicode", "true"], cwd=project, check=True)
+    commit = _git_commit(project, "fixture")
+    output = tmp_path / "out"
+    run = subprocess.run
+
+    def precomposed_ls_tree(command, *args, **kwargs):
+        # macOS Git prints the composed spelling it committed; elsewhere Git keeps names as written.
+        completed = run(command, *args, **kwargs)
+        if command[:2] == ["git", "ls-tree"]:
+            completed.stdout = completed.stdout.replace("e\u0301".encode(), "\u00e9".encode())
+        return completed
+
+    monkeypatch.setattr(lean_module.subprocess, "run", precomposed_ls_tree)
+
+    report = render_site(project / "blueprint", output, lean_root=project, repository_url=_REPOSITORY, ref=commit)
+
+    chapter = (output / "roadmap/README.md").read_text(encoding="utf-8")
+    committed = "Poincar%C3%A9%E2%84%AB"
+    assert f"/blob/{commit}/Project/{committed}.lean#L5" in chapter
+    assert f"/blob/{commit}/blueprint/roadmap/{committed}.md" in chapter
+    assert f"/blob/{commit}/blueprint/sources/{committed}.md" in chapter
+    assert report.warnings == []
+
+
+def test_a_source_note_link_names_the_committed_spelling_however_it_was_typed() -> None:
+    from autoform_cli.render import _SourceBase
+
+    committed = "blueprint/sources/Poincar\u00e9\u212b.md"
+    base = _SourceBase(_REPOSITORY, "abc", "blueprint/sources", {"blueprint/sources/Poincar\u00e9\u00c5.md": committed})
+
+    # Keyed by NFC form, so a decomposed é in the link still finds it.
+    assert base.href(("Poincare\u0301\u212b.md",)) == (
+        f"{_REPOSITORY}/blob/abc/blueprint/sources/Poincar%C3%A9%E2%84%AB.md"
+    )
+
+
+def test_links_into_the_blueprint_quote_the_ref_and_name_the_committed_spelling(tmp_path: Path) -> None:
+    # A ref with a slash stays one path segment, and the path is the spelling Git committed.
+    committed = "blueprint/sources/Poincar\u00e9\u212b.md"
+    base = render_module._SourceBase(
+        _REPOSITORY, "feature/topic", "blueprint/sources", {"blueprint/sources/Poincar\u00e9\u00c5.md": committed}
+    )
+    assert base.href(("Poincare\u0301\u212b.md",)) == (
+        f"{_REPOSITORY}/blob/feature%2Ftopic/blueprint/sources/Poincar%C3%A9%E2%84%AB.md"
+    )
+
+    root = tmp_path.resolve()
+    article = "blueprint/roadmap/Poincare\u0301\u212b.md"
+    linker = SimpleNamespace(
+        repository_url=_REPOSITORY,
+        ref="feature/topic",
+        links_blueprint=True,
+        spellings={article: "blueprint/roadmap/Poincar\u00e9\u212b.md"},
+    )
+    node = SimpleNamespace(path=root / article, title="Poincar\u00e9")
+
+    link = render_module._vault_source_link(node, repo_root=root, linker=linker)
+
+    assert f'href="{_REPOSITORY}/blob/feature%2Ftopic/blueprint/roadmap/Poincar%C3%A9%E2%84%AB.md"' in link
 
 
 def test_in_repo_outputs_never_supply_lean_source_links(tmp_path: Path) -> None:
@@ -3114,3 +3283,18 @@ def test_an_edit_during_a_render_publishes_the_captured_generation(
 
     chapter = (tmp_path / "out/roadmap/README.md").read_text(encoding="utf-8")
     assert "The main result." in chapter and "Edited mid-render." not in chapter
+
+
+def test_a_heading_shown_as_code_is_not_a_page_title() -> None:
+    text = "```markdown\n# Not the title\n```\n\n# Title\n\nBody.\n"
+
+    assert _first_h1(text) == "Title"
+    assert _document_body(text).startswith("```markdown\n# Not the title\n```")
+
+
+def test_a_fence_that_never_closes_does_not_hide_the_page_title() -> None:
+    # The site and article_parts read a fence without a closing line as text.
+    text = "Intro.\n\n```lean\n\n# Title\n\nBody.\n"
+
+    assert _first_h1(text) == "Title"
+    assert _document_body(text) == "Intro.\n\n```lean\n\n\nBody."

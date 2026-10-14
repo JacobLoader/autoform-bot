@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from autoform_cli.graph import Graph, Node, load_graph
+from autoform_cli.graph import Graph, GraphValidationError, Node, load_graph
 from autoform_cli.lean import LeanSourceError
 from autoform_cli.runtime import (
     RUNTIME_AUTHORITY,
@@ -322,7 +322,8 @@ def test_rejects_nonportable_authored_file_paths(tmp_path: Path) -> None:
     )
     result.write_text(text, encoding="utf-8")
 
-    with pytest.raises(RuntimeProjectionError, match="mathlib file must be a portable relative path") as error:
+    # The graph loader refuses it, so check fails on it before any runtime command.
+    with pytest.raises(GraphValidationError, match="'mathlib_file' must be a portable relative path") as error:
         load_runtime_graph(project)
 
     assert str(tmp_path) not in str(error.value)

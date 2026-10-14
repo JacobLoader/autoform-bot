@@ -18,6 +18,13 @@ syntax or CLI usage is needed, and the
 [worked example](references/cabannes-thesis-roadmap.md) only when a concrete
 source-to-DAG pattern would help.
 
+There is no `autoform` on `PATH` in a Lean project. Run every `autoform`
+command, from the Lean project root, as
+`uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform` followed by its arguments,
+where `<AUTOFORM_PLUGIN_ROOT>` is the absolute plugin root: the directory that
+holds this skill's `skills/` folder, along with `pyproject.toml` and
+`autoform_cli/`. Give a subagent that root and this prefix with its task.
+
 ## Own the whole pass
 
 Honor a request explicitly limited to inspection, audit, status, or
@@ -142,8 +149,11 @@ such as Mathlib gaps, prior art, and candidate declaration names in
 or a machine-local path. The hidden per-article file
 stays out of the mathematical wiki and remains valid when the article moves.
 Never link it from an article. Delete it when the article is proved or marked
-`mathlib: true`; delete a container's note when every formalizable descendant
-is proved and there is at least one. When a commit deletes or merges an article,
+`mathlib: true`; delete a container's note when every formalizable descendant,
+and every leaf marked `not_ready` beneath it, is proved and there is at least
+one. To move an article, move its file, which keeps its `article_id` line and
+so its note; a page written afresh must take that line in the same edit that
+deletes the old page. When a commit deletes or merges an article,
 move anything still useful from its note into a surviving article's note and
 delete the note in that commit; an orphaned note blocks every command that loads
 the graph, and any worker may repair one the same way, or by restoring the

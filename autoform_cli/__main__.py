@@ -529,17 +529,19 @@ def _init(args: argparse.Namespace) -> int:
 
 
 def _source_link_issues(graph: Graph) -> list[str]:
-    """Name each ``## Sources`` link to a local path that is not a file in the blueprint.
+    """Name each ``## Sources`` link that is neither an http(s) link nor a file in the blueprint.
 
     The generated workflows run ``check`` but not ``audit``, and render publishes
     a missing or escaping target broken: a page a strict MkDocs build cannot find,
-    a repository URL that 404s, or a path off the site. Fragments and other
-    schemes stay with ``audit``, whose anchor check renders each cited note.
+    a repository URL that 404s, or a path off the site. Every runtime command
+    refuses other schemes and network locations, so ``check`` does too. Fragments
+    stay with ``audit``, whose anchor check renders each cited note.
     """
     rejected = {
         "source-not-found": "does not resolve to a file",
         "source-escapes-blueprint": "escapes the blueprint directory",
         "malformed-source-link": "contains an invalid path",
+        "unsupported-source-link": "is not a local file or an http(s) link",
     }
     issues = []
     for node in graph.nodes.values():
@@ -1173,7 +1175,7 @@ def _print_project_inspection(result) -> None:
         print(f"Lean: {_human_text(result.lean_toolchain)}")
     if result.mathlib is not None:
         mathlib = result.mathlib
-        revision = mathlib.rev if mathlib.input_rev is None else f"{mathlib.input_rev} @ {mathlib.rev}"
+        revision = f"{mathlib.input_rev} @ {mathlib.rev}" if mathlib.input_rev else mathlib.rev
         where = mathlib.dir if mathlib.type == "path" else f"{revision} ({mathlib.url})"
         print(f"Mathlib: {_human_text(where)} [{mathlib.source}]")
     if result.autoform_paths:

@@ -47,7 +47,7 @@ the words of the result, since a library names it differently.
 
 A `complete` hit that a proof needs as a helper is used directly: add the hit's
 `import` line and use the declaration. The rule that a blueprint hit is used
-only when the claimed article's dependencies reach it does not apply, because a
+only when the selected article's dependencies reach it does not apply, because a
 library hit has no article.
 
 A `complete` hit whose kind is `def` or `abbrev` and whose signature is `Prop`
@@ -98,9 +98,8 @@ read the hit's `module_system` in the JSON output, which the
 documents.
 
 Each worktree compiles the library modules it imports, and everything they
-import, unless the library ships a build cache; builds take the `lake-build`
-claim, as Formalize says. Say so to the user when the first import from a
-library is added.
+import, unless the library ships a build cache. Say so to the user when the
+first import from a library is added.
 
 ## What stays with the user
 

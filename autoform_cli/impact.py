@@ -276,7 +276,6 @@ def _name_key(name: str) -> tuple[object, ...]:
 
 #: Module name components the probe can import without quoting.
 _MODULE_COMPONENT = re.compile(r"[A-Za-z_][A-Za-z0-9_'!?]*")
-_MAX_PROJECT_MODULES = 10_000
 _MAX_SOURCE_DEPTH = 64
 
 
@@ -367,10 +366,6 @@ def _source_modules(
         if not module:
             continue
         found.setdefault(module, path)
-        if len(found) > _MAX_PROJECT_MODULES:
-            raise SkeletonError(
-                [f"lean_lib {library.name}: source tree exceeds {_MAX_PROJECT_MODULES} Lean modules"]
-            )
     return found, unimportable
 
 

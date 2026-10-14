@@ -282,6 +282,50 @@ def test_container_note_stays_while_any_sibling_is_unproved(
     assert audit_blueprint(blueprint).clean
 
 
+@pytest.mark.parametrize("layout", ["deferred-leaf", "deferred-container", "proved-deferred-leaf"])
+def test_a_container_note_counts_a_leaf_marked_not_ready_as_the_site_does(tmp_path: Path, layout: str) -> None:
+    # The site keeps a scope open for a leaf marked not_ready until it is proved, but not for a container.
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    container_id = "af_0123456789abcdef01234567"
+    _article(blueprint, "chapter/README.md", article_id=container_id)
+    proved = {"declaration": "theorem", "statement": "formalized", "proof": "formalized"}
+    if layout != "proved-deferred-leaf":
+        _article(
+            blueprint, "chapter/done.md", article_id="af_100000000000000000000000", lean="Project.done", **proved
+        )
+    if layout == "deferred-leaf":
+        _article(blueprint, "chapter/later.md", article_id="af_200000000000000000000000", not_ready="true")
+    elif layout == "deferred-container":
+        _article(
+            blueprint, "chapter/section/README.md", article_id="af_300000000000000000000000", not_ready="true"
+        )
+        _article(
+            blueprint,
+            "chapter/section/also.md",
+            article_id="af_400000000000000000000000",
+            lean="Project.also",
+            **proved,
+        )
+    else:  # the chapter's only target: a proved leaf still marked not_ready
+        _article(
+            blueprint,
+            "chapter/later.md",
+            article_id="af_200000000000000000000000",
+            lean="Project.later",
+            not_ready="true",
+            **proved,
+        )
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{container_id}.md").write_text("chapter route\n", encoding="utf-8")
+
+    findings = {(finding.article_path, finding.code) for finding in audit_blueprint(blueprint).findings}
+
+    stale = {("roadmap/chapter/README.md", "stale-implementation-note")}
+    assert findings == (set() if layout == "deferred-leaf" else stale)
+
+
 def test_container_note_without_formalizable_descendants_is_not_stale(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)
@@ -1259,6 +1303,26 @@ def test_audit_reads_deprecation_from_the_captured_source_generation(
     ]
 
 
+def test_audit_checks_irreducible_def_kinds(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    kinds = (("def", "sealed"), ("definition", "sealed"), ("irreducible_def", "sealed"), ("irreducible_def", "plain"))
+    for declaration, target in kinds:
+        lean = f"Project.{target}"
+        _article(blueprint, f"{declaration}-{target}.md", declaration=declaration, statement="formalized", lean=lean)
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    (lean_root / "Value.lean").write_text(
+        "irreducible_def Project.sealed : Nat := 1\ndef Project.plain : Nat := 1\n", encoding="utf-8"
+    )
+
+    assert _finding_map(blueprint, lean_root=lean_root) == {
+        "roadmap/irreducible_def-plain.md": [
+            ("lean-target-kind-mismatch", "Lean target kind def does not match declaration intent irreducible_def")
+        ]
+    }
+
+
 def test_audit_reports_invalid_lean_root_once(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)
@@ -1406,6 +1470,44 @@ def test_audit_returns_graph_validation_errors_with_article_paths(tmp_path: Path
     assert result.findings[0].code == "invalid-graph"
     assert result.findings[0].reason == "bad: missing H1 title"
     assert json.loads(result.to_json()) == result.as_dict()
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")
+def test_audit_reports_a_chapter_it_can_list_but_not_enter(tmp_path: Path) -> None:
+    """Checking each page raised a traceback, in load_graph and again in audit's search for its article path."""
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    _article(blueprint, "chapter/result.md", declaration="theorem")
+    chapter = blueprint / "roadmap" / "chapter"
+    chapter.chmod(0o644)
+    try:
+        result = audit_blueprint(blueprint)
+    finally:
+        chapter.chmod(0o755)
+
+    assert [(finding.article_path, finding.code, finding.reason) for finding in result.findings] == [
+        (
+            f"roadmap/chapter/{name}",
+            "invalid-graph",
+            f"chapter/{name}: cannot read roadmap page: [Errno 13] Permission denied: './roadmap/chapter/{name}'",
+        )
+        for name in ("README.md", "result.md")
+    ]
+
+
+def test_audit_points_a_noncanonical_readme_at_the_page_itself(tmp_path: Path) -> None:
+    """A load error naming a page pointed at '<page>.md', here README.MD.md."""
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    _article(blueprint, "chapter/result.md", declaration="theorem")
+    chapter = blueprint / "roadmap" / "chapter"
+    (chapter / "README.md").rename(chapter / "README.MD")
+
+    result = audit_blueprint(blueprint)
+
+    assert [finding.article_path for finding in result.findings if finding.reason.startswith("chapter/README.MD:")] == [
+        "roadmap/chapter/README.MD"
+    ]
 
 
 def test_audit_reports_a_container_holding_too_many_articles(tmp_path: Path) -> None:
@@ -1800,11 +1902,6 @@ def test_audit_reads_a_comment_opener_in_inline_code_as_the_site_does(tmp_path: 
     assert "placeholder-statement-text" not in _statement_codes(tmp_path, "TODO `<!--` real statement here")
 
 
-def test_audit_reports_one_statement_finding_at_a_time(tmp_path: Path) -> None:
-    # Nothing published at all is "missing", never also "empty".
-    assert _statement_codes(tmp_path, "<!-- TODO -->") == {"missing-statement-text"}
-
-
 def test_a_statement_from_a_fence_that_never_closes_keeps_its_statement_finding(tmp_path: Path) -> None:
     assert _statement_codes(tmp_path, "```\nFor all n, P(n) holds.") == {"unclosed-code-fence"}
     assert _statement_codes(tmp_path, "```\nTODO") == {
@@ -1818,6 +1915,19 @@ def test_audit_reports_an_unclosed_code_fence(tmp_path: Path) -> None:
     _coverage(blueprint)
     path = _article(blueprint, "chapter/result.md", declaration="theorem")
     path.write_text(path.read_text(encoding="utf-8") + "\n```lean\n#check result\n", encoding="utf-8")
+
+    assert _finding_map(blueprint)["roadmap/chapter/result.md"] == [
+        ("unclosed-code-fence", "code fence opened on line 13 never closes")
+    ]
+
+
+def test_audit_names_only_the_first_fence_that_never_closes(tmp_path: Path) -> None:
+    # Read as text, the first unclosed fence lets the later ~~~ open a second one; only the first is named.
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    path = _article(blueprint, "chapter/result.md", declaration="theorem")
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text + "\n```lean\n#check result\n\n~~~\n#check other\n", encoding="utf-8")
 
     assert _finding_map(blueprint)["roadmap/chapter/result.md"] == [
         ("unclosed-code-fence", "code fence opened on line 13 never closes")

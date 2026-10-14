@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -118,6 +119,20 @@ and explains why the characterization matters.
         "and explains why the characterization matters."
     )
     assert node.area == "Geometry & Topology"
+
+
+def test_summary_skips_a_block_the_page_shows_as_indented_code(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(
+        blueprint,
+        "topic.md",
+        "# Compactness theorem\n\n    compact_iff_finite_subcover\n\n"
+        "A space is compact when every open cover has a finite subcover.\n",
+    )
+
+    assert load_graph(blueprint).nodes["topic"].summary == (
+        "A space is compact when every open cover has a finite subcover."
+    )
 
 
 def test_authored_atlas_manifest_groups_nodes_independently_of_paths(tmp_path: Path) -> None:
@@ -475,6 +490,24 @@ def test_rejects_noncanonical_readme_case_with_actionable_error(tmp_path: Path, 
     assert "must be named exactly README.md" in message
 
 
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")
+@pytest.mark.parametrize("relative", ["", "chapter"], ids=["roadmap", "chapter"])
+def test_a_roadmap_directory_that_cannot_be_listed_is_refused(tmp_path: Path, relative: str) -> None:
+    """A glob skipped it, and its articles were missing from the graph without a word."""
+    blueprint = tmp_path / "blueprint"
+    _roadmap_page(blueprint, "README.md", "# Roadmap\n")
+    _node(blueprint, "chapter/result.md", "# Result\n")
+    directory = (blueprint / "roadmap" / relative).resolve()
+    directory.chmod(0)
+    try:
+        with pytest.raises(GraphValidationError) as caught:
+            load_graph(blueprint)
+    finally:
+        directory.chmod(0o755)
+
+    assert f"cannot list roadmap directory {directory}: Permission denied" in caught.value.issues
+
+
 def test_splits_statement_and_proof_dependencies(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _node(blueprint, "objects.md", "# Objects\n")
@@ -511,6 +544,8 @@ def test_splits_statement_and_proof_dependencies(tmp_path: Path) -> None:
         ({"mathlib": "maybe"}, "accepts only true or false"),
         ({"not_ready": "1"}, "accepts only true or false"),
         ({"origin": "unknown"}, "accepts cited, bridged, or background"),
+        ({"mathlib_file": "../Outside.lean"}, "'mathlib_file' must be a portable relative path"),
+        ({"mathlib_file": "C:/Mathlib/Basic.lean"}, "'mathlib_file' must be a portable relative path"),
     ],
 )
 def test_rejects_invalid_assertions(tmp_path: Path, metadata: dict[str, str], message: str) -> None:
@@ -598,6 +633,28 @@ def test_rejects_formalized_work_the_lean_does_not_show(
         load_graph(blueprint)
 
     assert raised.value.issues == issues
+
+
+def test_a_link_shown_as_indented_code_is_neither_edge_nor_source(tmp_path: Path) -> None:
+    # The page shows an indented block as code, so its links are not on the
+    # page. A list item's indented continuation is still part of the list.
+    blueprint = tmp_path / "blueprint"
+    source = blueprint / "sources" / "paper.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("# Paper\n", encoding="utf-8")
+    for name in ("base", "other", "third"):
+        _node(blueprint, f"chapter/{name}.md", f"# {name.title()}\n")
+    _node(
+        blueprint,
+        "chapter/result.md",
+        "# Result\n\n## Depends on\n\nThe syntax:\n\n    [Base](base.md)\n\n- [Other](other.md)\n\n"
+        "    [Third](third.md)\n\n## Sources\n\nFor example:\n\n    [Paper](../../sources/paper.md#result)\n",
+        origin="cited",
+    )
+
+    node = load_graph(blueprint).nodes["chapter/result"]
+    assert set(node.dependencies) == {"chapter/other", "chapter/third"}
+    assert node.sources == ()
 
 
 def test_records_origin_and_source_links_without_treating_them_as_edges(tmp_path: Path) -> None:
@@ -689,7 +746,7 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
     strict MkDocs failure naming the chapter page that absorbed the article; with
     the directory, a missing note became a repository link that 404s. Check now
     applies audit's rule that a Sources path names a file in the blueprint, and
-    leaves fragments and other schemes to audit.
+    refuses other schemes as every runtime command does; fragments stay with audit.
     """
     blueprint = tmp_path / "blueprint"
     sources = "# Result\n\n## Sources\n\n- [Paper](../sources/paper.md#lemma-3)\n"
@@ -702,14 +759,17 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
 
     (blueprint / "sources").mkdir()
     (blueprint / "sources" / "paper.md").write_text("# Paper\n", encoding="utf-8")
-    sources += "- [Book](https://example.org/book)\n- [Author](mailto:author@example.org)\n"
+    sources += "- [Book](https://example.org/book)\n"
     _node(blueprint, "result.md", sources)
 
     assert main(["check", str(blueprint)]) == 0
     capsys.readouterr()
 
     (tmp_path / "slides.pdf").write_bytes(b"%PDF-1.4\n")
-    rejected = "- [Notes](../sources/)\n- [Slides](../../slides.pdf)\n- [Bad](../sources/%00.md)\n"
+    rejected = (
+        "- [Notes](../sources/)\n- [Slides](../../slides.pdf)\n- [Bad](../sources/%00.md)\n"
+        "- [Author](mailto:author@example.org)\n"
+    )
     _node(blueprint, "result.md", sources + rejected)
 
     assert main(["check", str(blueprint)]) == 1
@@ -717,6 +777,7 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
         "error: result: source target does not resolve to a file: '../sources/'\n"
         "error: result: source target escapes the blueprint directory: '../../slides.pdf'\n"
         "error: result: source target contains an invalid path: '../sources/%00.md'\n"
+        "error: result: source target is not a local file or an http(s) link: 'mailto:author@example.org'\n"
     )
 
 

@@ -43,30 +43,6 @@ def _park_in_order(monkeypatch, pool, targets) -> list[threading.Thread]:
     return waiters
 
 
-def test_partial_pool_construction_closes_all_constructed_workers(monkeypatch):
-    workers = []
-
-    class FakeRepl:
-        def __init__(self, config):
-            self.number = len(workers) + 1
-            self.closed = False
-            workers.append(self)
-            if self.number == 2:
-                raise RuntimeError("second slot failed")
-
-        def close(self):
-            self.closed = True
-
-    monkeypatch.setattr(repl_pool, "LeanRepl", FakeRepl)
-    config = repl_pool.LeanReplPoolConfig(num_repls=3)
-
-    with pytest.raises(RuntimeError, match="second slot failed"):
-        repl_pool.LeanReplPool(config)
-
-    assert len(workers) == 2
-    assert workers[0].closed is True
-
-
 def test_shutdown_closes_every_worker_and_drains_idle_queue(monkeypatch):
     workers = []
 
@@ -115,38 +91,6 @@ def test_shutdown_retains_failed_workers_for_a_retry(monkeypatch):
 
     assert pool._workers == []
     assert [worker.close_calls for worker in workers] == [2, 1]
-
-
-def test_partial_construction_transfers_failed_cleanup_for_retry(monkeypatch):
-    workers = []
-
-    class FakeRepl:
-        def __init__(self, config):
-            self.number = len(workers) + 1
-            self.close_calls = 0
-            workers.append(self)
-            if self.number == 2:
-                raise RuntimeError("second slot failed")
-
-        def close(self):
-            self.close_calls += 1
-            if self.number == 1 and self.close_calls == 1:
-                raise RuntimeError("injected cleanup failure")
-
-    monkeypatch.setattr(repl_pool, "LeanRepl", FakeRepl)
-
-    with pytest.raises(repl_pool.LeanReplPoolStartupError) as raised:
-        repl_pool.LeanReplPool(repl_pool.LeanReplPoolConfig(num_repls=2))
-
-    assert str(raised.value.cause) == "second slot failed"
-    assert raised.value.pool._workers == [workers[0]]
-    assert [worker.close_calls for worker in workers] == [1, 0]
-    with pytest.raises(RuntimeError, match=_SHUTDOWN_REFUSAL):
-        raised.value.pool.run("#check Nat", timeout=0.1)
-
-    raised.value.pool.shutdown()
-
-    assert [worker.close_calls for worker in workers] == [2, 0]
 
 
 def test_request_timeout_includes_waiting_for_an_idle_worker(monkeypatch):

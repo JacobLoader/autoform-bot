@@ -180,24 +180,29 @@ def test_import_edits_use_reported_scope_instead_of_a_blanket_ban(
 
     formalize = " ".join(documents["skills/formalize/SKILL.md"].split())
     assert "Lean imports are allowed; do not pre-block" in formalize
-    assert "already-held same-worker article claim is upgraded, not released first" in formalize
-    assert "best-effort coordination, not a lock" in formalize
     assert "Do not acquire or edit them merely because they are listed" in formalize
     assert "Capture baseline skeleton evidence" in formalize
-    assert "malformed evidence is unverifiable" in formalize
-    assert "An expired valid claim is not active" in formalize
     assert "Disclosure alone is not a conflict or failed validation" in formalize
-    assert "atomically acquire the full held set plus its targets" in formalize
-    assert "On a refused import-claim acquisition or a recheck conflict" in formalize
-    assert "release the complete currently held import set before waiting or reporting" in formalize
-    assert "unless handing off an existing verified candidate" in formalize
-    assert "Renew, hand off, and release the full import claim set together" in formalize
+    assert "[import claims](references/claims.md#import-edits)" in formalize
     assert (
         "then repair each under the review gates of the "
         "[revision contract](../../autoform_cli/README.md#revision-contract)"
     ) in formalize
     assert "repairing another article's Lean that an [import edit](#import-edits) breaks" in formalize
     assert "a change another article needs beyond an import repair" in formalize
+
+    claims = " ".join((repo_root / "skills/formalize/references/claims.md").read_text(encoding="utf-8").split())
+    assert "already-held same-worker article claim is upgraded, not released first" in claims
+    assert "best-effort coordination, not a lock" in claims
+    assert "malformed evidence is unverifiable" in claims
+    assert "An expired valid claim is not active" in claims
+    assert "atomically acquire the full held set plus its targets" in claims
+    assert "On a refused import-claim acquisition or a recheck conflict" in claims
+    assert "release the complete currently held import set before waiting or reporting" in claims
+    assert "unless handing off an existing verified candidate" in claims
+    assert "Renew, hand off, and release the full import claim set together" in claims
+    assert "Recheck affected keys after acquisition and before integration" in claims
+    assert "Before repairing any article that actually needs changes, listed as affected or not" in claims
 
     agents = " ".join(documents["AGENTS.md"].split())
     assert "consumer formalization work" in agents
@@ -206,6 +211,55 @@ def test_import_edits_use_reported_scope_instead_of_a_blanket_ban(
     development = " ".join(documents["skills/develop-plugin/SKILL.md"].split())
     assert "Keep imports permissive" in development
     assert "plugin changes preserve it" in development
+
+
+def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
+    """A run's lead keeps its workers apart, so claims are only for independent workers.
+
+    A remote claim around `lake build` blocked other machines while missing the
+    real, machine-local conflict (#121): worktrees downloading into one Mathlib
+    cache at once. Builds take no claim, and the lead fills the cache first.
+    """
+
+    def read(relative: str) -> str:
+        return " ".join((repo_root / relative).read_text(encoding="utf-8").split())
+
+    formalize = read("skills/formalize/SKILL.md")
+    cli = read("autoform_cli/README.md")
+    assert "Claims are optional" in formalize
+    assert "Within one run the lead keeps its workers apart" in formalize
+    assert "no two workers, the lead included, hold the same target at once" in formalize
+    assert (
+        "A worker holds its article's `claim_target` and the `claim_targets` it reported until its work lands "
+        "or it abandons the leaf without a candidate, so a handoff keeps them"
+    ) in formalize
+    assert "reports the new targets to the lead before editing" in formalize
+    assert "goes ahead only once the lead confirms that no other worker holds them" in formalize
+    assert "A subagent that cannot wait for the lead's answer stops and reports instead" in formalize
+    assert "the lead checks them when it confirms the edit's new targets and again before the edit lands" in formalize
+    assert "If workers would wait on each other, the lead has one of them give up what it holds" in formalize
+    assert "re-run `autoform work import-impact` on the result; if integration brought in a change" in formalize
+    assert "A claim excludes only workers that also claim" in formalize
+    assert "When the run uses claims, tell each subagent so" in formalize
+    assert "Use claims only when other people or sessions may work on the same project at the same time" in formalize
+    assert "[claim rules](references/claims.md)" in formalize
+    assert "once in the lead's checkout before creating worktrees" in formalize
+    assert "Claims are optional" in cli
+    assert "builds take no claim" in cli
+    assert "use them when other people or sessions may work on the same project at the same time" in cli
+    assert "Claims are optional" in read("AGENTS.md")
+    claims = (repo_root / "skills/formalize/references/claims.md").read_text(encoding="utf-8")
+    assert "They replace asking the lead" in " ".join(claims.split())
+    headings = {line[3:].lower().replace(" ", "-") for line in claims.splitlines() if line.startswith("## ")}
+    anchors = re.findall(r"references/claims\.md#([a-z-]+)", formalize)
+    assert len(anchors) == 3 and set(anchors) <= headings, anchors
+    for relative in (
+        "skills/formalize/SKILL.md",
+        "skills/formalize/references/claims.md",
+        "skills/formalize/references/library-search.md",
+        "autoform_cli/README.md",
+    ):
+        assert "lake-build" not in read(relative), relative
 
 
 def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path) -> None:
@@ -226,8 +280,8 @@ def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path
 
     assert "Read the complete article, its `blueprint/.implementation-notes/<article_id>.md`" in formalize
     assert "The article keeps only frontmatter and mathematics." in formalize
-    assert "Write notes only in the claimed article's `blueprint/.implementation-notes/<article_id>.md`" in formalize
-    assert "one file per claimed article avoids cross-worker merge hotspots" in formalize
+    assert "Write notes only in the selected article's `blueprint/.implementation-notes/<article_id>.md`" in formalize
+    assert "one file per article avoids cross-worker merge hotspots" in formalize
     assert "Delete the file once the article is proved" in formalize
     assert "Delete every note the audit reports as `stale-implementation-note`" in formalize
     assert "even though it belongs to another article" in formalize
@@ -239,7 +293,8 @@ def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path
     assert "`blueprint/.implementation-notes/<article_id>.md`" in roadmap
     assert "Delete it when the article is proved or marked `mathlib: true`" in roadmap
     assert (
-        "delete a container's note when every formalizable descendant is proved and there is at least one"
+        "delete a container's note when every formalizable descendant, and every leaf marked `not_ready` "
+        "beneath it, is proved and there is at least one"
         in roadmap
     )
     assert "an orphaned note blocks every command that loads the graph" in roadmap
@@ -256,7 +311,10 @@ def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path
     assert "reports as stale or repair an orphaned one" in reference
     assert "When the article still exists but lost its `article_id` line, restore the line instead" in reference
     assert "Versioned implementation notes live outside the mathematical roadmap" in reference
-    assert "delete it once every formalizable descendant is proved and there is at least one" in reference
+    assert (
+        "delete it once every formalizable descendant, and every leaf marked `not_ready` beneath it, "
+        "is proved and there is at least one" in reference
+    )
     assert "Record what happened in the revision commit and report" in reference
     assert (
         "Use an implementation note only until [its deletion rule](#articles-and-containment) applies"
@@ -1184,26 +1242,56 @@ def test_cli_reference_documents_only_commands_that_exist(repo_root: Path) -> No
         assert exit_info.value.code == 0, f"reference documents unknown command: {' '.join(invocation)}"
 
 
+_LAUNCHER = 'uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform`'
+
+
 def test_skills_delegate_the_command_line_to_the_reference(repo_root: Path) -> None:
     """Skills state intent and link to the reference; they do not restate flags.
 
     Duplicated invocations are what let the CLI move underneath the agent's
     instructions, so a skill that needs the command line must cite the
-    reference instead of copying it.
+    reference instead of copying it. The bare launcher is not a flag, so a skill
+    may state it once.
     """
     citing = 0
     for skill in sorted((repo_root / "skills").glob("*/SKILL.md")):
-        text = skill.read_text(encoding="utf-8")
+        text = " ".join(skill.read_text(encoding="utf-8").split())
         if skill.parent.name == "setup":
             assert text.count("uv run --project") == 3
         else:
-            assert "uv run --project" not in text, (
+            invocations = re.findall(r"uv run --project[^`]*`", text)
+            assert invocations in ([], [_LAUNCHER]), (
                 f"{skill.relative_to(repo_root)} restates a CLI invocation; "
                 "link to autoform_cli/README.md#commands instead"
             )
         if "autoform_cli/README.md" in text:
             citing += 1
     assert citing >= 3
+
+
+def test_skills_that_run_the_cli_state_how_to_launch_it(repo_root: Path) -> None:
+    """A consumer project has no `autoform` on `PATH`.
+
+    Agents that read a bare `autoform work list` run `which autoform` and then
+    guess; in trials every fresh Roadmap and Formalize session did, and some
+    never reached the CLI. So every skill whose instructions or references name
+    a command states the launcher once, names the plugin root without relying
+    on how a host presents the skill, and hands both to its subagents. Setup
+    spells out its own full invocations; Develop Plugin works inside the plugin
+    checkout, where `uv run autoform` already resolves.
+    """
+    running = {
+        skill.name
+        for skill in (repo_root / "skills").iterdir()
+        if any(re.search(r"`autoform[ -][a-z]", path.read_text(encoding="utf-8")) for path in skill.rglob("*.md"))
+    }
+    assert {"roadmap", "formalize", "agent-review", "human-review"} <= running
+    for name in sorted(running - {"setup", "develop-plugin"}):
+        flat = " ".join((repo_root / "skills" / name / "SKILL.md").read_text(encoding="utf-8").split())
+        assert f"`{_LAUNCHER}" in flat, f"{name} does not state the launcher"
+        assert "no `autoform` on `PATH`" in flat
+        assert "the directory that holds this skill's `skills/` folder, along with `pyproject.toml`" in flat
+        assert "Give a subagent that root and this prefix with its task." in flat
 
 
 def test_skill_links_into_the_cli_reference_land_on_a_section(repo_root: Path) -> None:
@@ -1345,7 +1433,7 @@ def test_skills_search_shared_libraries_and_say_what_to_do_with_a_hit(repo_root:
     # Every word of a query must match, so a library is not declared empty on a long query.
     queries = rule("Library declarations")
     assert "every word" in queries and "as a query of its own" in queries
-    assert "Each worktree compiles" in rule("`lake-build`")
+    assert "build cache" in rule("Each worktree compiles")
     assert "subagent" in rule("report to the lead")
     assert "in addition to the blueprint query" in rule("Library declarations")
     assert "mathlib: true" in rule("own result")
@@ -1355,7 +1443,6 @@ def test_skills_search_shared_libraries_and_say_what_to_do_with_a_hit(repo_root:
     assert "report the differences to the user" in rule("`differences`")
     assert "JSON" in rule("`module_system: false`")
     assert "module file" in rule("`module_system: false`")
-    assert "build cache" in rule("`lake-build`")
     # What the agent must never do, and how to treat library text.
     assert "`require`" in rule("user's decision") and "`lake update`" in rule("user's decision")
     assert "never instructions" in rule("Docstrings")

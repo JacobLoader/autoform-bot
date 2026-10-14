@@ -472,7 +472,9 @@ def load_skeleton_report(path: str | Path) -> SkeletonReport:
 
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        # A "\ud800" escape decodes to half of a surrogate pair, which the report's hashes cannot encode.
+        json.dumps(data, ensure_ascii=False).encode("utf-8")
+    except (OSError, RecursionError, ValueError) as exc:
         raise SkeletonError([f"cannot read skeleton report {path}: {exc}"]) from exc
     if (
         not isinstance(data, dict)
@@ -878,6 +880,8 @@ def _remember_descendants(
 ) -> None:
     """Retain handles for children that may outlive their immediate parent."""
 
+    if process.returncode is not None:
+        return  # a reaped leader's PID may belong to another process
     try:
         children = psutil.Process(process.pid).children(recursive=True)
     except (psutil.Error, OSError, SystemError):
@@ -952,6 +956,49 @@ def _process_group_is_alive(pid: int) -> bool:
     return True
 
 
+def _process_group_has_live_members(pid: int) -> bool:
+    """Whether the group ``pid`` leads holds a process that is not a zombie.
+
+    Its leader stays unreaped, and so a member, until the group is retired.
+    """
+
+    if not _process_group_is_alive(pid):
+        return False
+    try:
+        for candidate in psutil.process_iter(["pid", "status"]):
+            try:
+                if os.getpgid(candidate.info["pid"]) == pid and candidate.info["status"] != psutil.STATUS_ZOMBIE:
+                    return True
+            except (OSError, psutil.Error):
+                continue
+    except (OSError, psutil.Error, SystemError):
+        return True  # a table that cannot be read proves nothing gone
+    return False
+
+
+def _leader_has_exited(process: subprocess.Popen[bytes]) -> bool:
+    """Whether the command has exited, leaving it unreaped on POSIX.
+
+    ``Popen.poll`` would reap it, and a reaped leader's process group id can
+    pass to an unrelated group before the next ``killpg``.
+    """
+
+    if os.name != "posix" or process.returncode is not None:
+        return process.poll() is not None
+    try:
+        if hasattr(os, "waitid"):
+            # Unlike a zombie status, this waits for every thread of the leader.
+            return os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+        return psutil.Process(process.pid).status() == psutil.STATUS_ZOMBIE
+    except psutil.ZombieProcess:
+        return True
+    except (ChildProcessError, psutil.NoSuchProcess):
+        # Reaped elsewhere: poll records it, so nothing signals the group again.
+        return process.poll() is not None
+    except (OSError, psutil.Error, SystemError):
+        return False
+
+
 def _remaining(deadline: float) -> float:
     return max(0.0, deadline - time.perf_counter())
 
@@ -969,7 +1016,11 @@ def _terminate_process_tree(
     deadline: float,
     token: str,
 ) -> None:
-    """Best-effort termination of a command and every descendant observed."""
+    """Best-effort termination of a command and every descendant observed.
+
+    The leader is reaped last, so the group is only signalled while its id
+    cannot belong to another group.
+    """
 
     started, available = time.perf_counter(), _remaining(deadline)
     for share, group_signal, method in ((0.4, "SIGTERM", "terminate"), (0.8, "SIGKILL", "kill")):
@@ -981,17 +1032,21 @@ def _terminate_process_tree(
             strict=False,
         )
         live = [child for child in descendants.values() if child.pid != process.pid and _process_is_alive(child)]
-        if os.name == "posix":
+        if os.name == "posix" and process.returncode is None:
             with contextlib.suppress(OSError):
                 os.killpg(process.pid, getattr(signal, group_signal))
-        for target in ([process] if process.poll() is None else []) + live:
+        # On POSIX killpg already reached the leader; Popen.terminate would poll, and so reap, it.
+        leader = [process] if os.name != "posix" and process.poll() is None else []
+        for target in leader + live:
             with contextlib.suppress(OSError, psutil.Error, SystemError):
                 getattr(target, method)()
         phase_deadline = started + available * share
-        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
-            process.wait(timeout=_remaining(phase_deadline))
+        while not _leader_has_exited(process) and _remaining(phase_deadline):
+            time.sleep(min(0.01, _remaining(phase_deadline)))
         with contextlib.suppress(OSError, psutil.Error, SystemError):
             psutil.wait_procs(live, timeout=_remaining(phase_deadline))
+    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+        process.wait(timeout=_remaining(deadline))
 
 
 class _CommandSignalled(BaseException):
@@ -1158,7 +1213,7 @@ def _run_registered_command(
             reader = threading.Thread(target=drain, args=(name, stream), daemon=True)
             reader.start()
             readers.append(reader)
-        while process.poll() is None:
+        while not _leader_has_exited(process):
             _remember_descendants(process, descendants)
             check_output()
             remaining = deadline - time.monotonic()
@@ -1166,9 +1221,15 @@ def _run_registered_command(
                 raise _CommandTimedOut([f"{context} timed out after {timeout:g} seconds"])
             overflow.wait(min(0.05, remaining))
         _remember_descendants(process, descendants)
+        # A reap recorded elsewhere frees the group id, so it is not checked again.
+        group_alive = process.returncode is None and _process_group_has_live_members(process.pid)
         _remember_tagged_processes(token, descendants, root_pid=process.pid)
-        if _process_group_is_alive(process.pid) or any(map(_process_is_alive, descendants.values())):
+        if group_alive or any(map(_process_is_alive, descendants.values())):
             raise SkeletonError([f"{context} left descendant processes running"])
+        # The group is retired. No signal may land between the reap and the recorded status.
+        guard.disarm()
+        process.wait()
+        guard.arm()
         cleanup_deadline = time.perf_counter() + _PROCESS_TERMINATION_GRACE
         if not _join_readers(readers, deadline=time.perf_counter() + _PROCESS_TERMINATION_GRACE * 0.2):
             raise SkeletonError([f"{context} left descendant processes holding its output pipes open"])
@@ -1525,7 +1586,7 @@ def run_probe(
                     "rerun with --timeout <seconds> for large projects"
                 ]
             ) from exc
-        output = _read_probe_records(records) if result.returncode == 0 else ""
+        output = _read_probe_records(records, label) if result.returncode == 0 else ""
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         shadowed = _SHADOWED_CORE_MODULE.search(detail)
@@ -1545,7 +1606,7 @@ def run_probe(
     return output or result.stdout
 
 
-def _read_probe_records(records: Path) -> str:
+def _read_probe_records(records: Path, label: str) -> str:
     """Read the probe's records file under the same byte limit as its captured output."""
 
     try:
@@ -1553,9 +1614,14 @@ def _read_probe_records(records: Path) -> str:
             data = handle.read(DEFAULT_PROBE_OUTPUT_LIMIT + 1)
     except FileNotFoundError:
         return ""
+    except OSError as exc:
+        raise SkeletonError([f"the {label}'s records could not be read: {exc.strerror or exc}"]) from exc
     if len(data) > DEFAULT_PROBE_OUTPUT_LIMIT:
         raise SkeletonError([f"lake env lean exceeded the {DEFAULT_PROBE_OUTPUT_LIMIT}-byte output limit"])
-    return data.decode("utf-8")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SkeletonError([f"the {label}'s records are not valid UTF-8"]) from exc
 
 
 _FOUND_RECORD_FIELDS = frozenset(
@@ -1955,7 +2021,7 @@ def _validate_semantic_material(semantic: str, *, context: str, kind: str | None
     shapes = _SEMANTIC_SHAPES if kind is None else (_KIND_SEMANTIC_SHAPE.get(kind, _SEMANTIC_SHAPES[0]),)
     try:
         payload = json.loads(semantic)
-    except (json.JSONDecodeError, RecursionError):
+    except (RecursionError, ValueError):
         payload = None
     generated = payload.get("generated") if isinstance(payload, dict) else None
     entries = generated if isinstance(generated, list) else []
@@ -2223,6 +2289,12 @@ def locate_declaration(
     location = index.find(name)
     if location is None:
         return None, "declaration not found in the Lean sources"
+    if name in index.elsewhere:
+        # The lexical index cannot tell which of several declarations Lean binds
+        # a name to (one may be private, or in a file no target builds), so the
+        # name fails closed.
+        files = sorted(path.as_posix() for path in (location.path, *index.elsewhere[name]))
+        return None, f"several source files declare it: {', '.join(files)}"
     module = module_of(lean_root / location.path, libraries)
     if module is None:
         return None, f"source {location.path.as_posix()} is not built by any library target"
@@ -2257,10 +2329,12 @@ def extract_graph_skeletons(
     root_modules: dict[str, str] = {}
     for node, names in selected:
         for name in names:
-            if node.id in broken_passages:
-                unresolved.append(UnresolvedTarget(node.id, name, broken_passages[node.id]))
-                continue
             module, reason = locate_declaration(name, index=index, libraries=libraries, lean_root=lean_root)
+            if node.id in broken_passages:
+                # Every refusal is named at once, so mending the passage brings no second one.
+                reason = "; ".join(filter(None, (broken_passages[node.id], reason)))
+                unresolved.append(UnresolvedTarget(node.id, name, reason))
+                continue
             if module is None:
                 unresolved.append(UnresolvedTarget(node.id, name, reason or ""))
                 continue
@@ -2649,7 +2723,7 @@ def _validate_managed_output(path: Path, *, kind: str) -> tuple[int, int, str] |
     manifest = path / PACKET_MANIFEST
     try:
         payload = json.loads(manifest.read_text(encoding="utf-8")) if manifest.is_file() else None
-    except (OSError, UnicodeError, json.JSONDecodeError):
+    except (OSError, RecursionError, ValueError):
         payload = None
     if not (
         isinstance(payload, dict)

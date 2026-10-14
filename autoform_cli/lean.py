@@ -6,8 +6,9 @@ nothing is a validation error rather than a broken link -- the job
 ``leanblueprint checkdecls`` does for LaTeX blueprints.
 
 The scanner is a lexical pass, not an elaborator. It tracks ``namespace`` and
-comment nesting, which is enough for declarations written in the ordinary way,
-and deliberately reports nothing it cannot see rather than guessing.
+comment nesting and stops at ``#exit``, which is enough for declarations
+written in the ordinary way, and deliberately reports nothing it cannot see
+rather than guessing.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ import stat
 import subprocess
 import time
 import unicodedata
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -45,6 +46,7 @@ _SECTION = re.compile(
 )
 _MUTUAL = re.compile(r"^\s*mutual\s*$")
 _END = re.compile(r"^\s*end\b\s*(\S*)")
+_EXIT = re.compile(r"^\s*#exit\b")
 # The ``*_wanted`` commands are Batteries' ``Batteries.Util.ProofWanted``: each
 # states a result whose proof or construction is deferred. ``alias`` is
 # Batteries' ``Batteries.Tactic.Alias``.
@@ -120,6 +122,9 @@ class SourceIndex:
     declarations: dict[str, Declaration]
     source_digest: str
     line_counts: dict[Path, int] = field(default_factory=dict)
+    #: For a name more than one file declares, the files after the one
+    #: ``find`` returns.
+    elsewhere: dict[str, tuple[Path, ...]] = field(default_factory=dict)
 
     def find(self, name: str) -> Declaration | None:
         return self.declarations.get(name)
@@ -179,7 +184,6 @@ class BoundProjectSources:
 
     root: Path
     tree: BoundDirectoryTree
-    excluded: tuple[PurePosixPath, ...]
 
     def capture(
         self,
@@ -187,12 +191,7 @@ class BoundProjectSources:
         names: Iterable[str] | None = None,
     ) -> IndexedSourceSnapshot:
         snapshot = self.tree.capture()
-        return _indexed_source_snapshot(
-            self.root,
-            snapshot,
-            self.excluded,
-            names=names,
-        )
+        return _indexed_source_snapshot(self.root, snapshot, names=names)
 
     def verify(self) -> None:
         self.tree.verify()
@@ -391,19 +390,16 @@ def _open_stable_project_sources(
                 opaque_markers=opaque_markers,
             )
             return bound, bound.capture(names=names)
-        except TreeChangedError as error:
-            changed = error
-            if error.relative is not None and error.relative not in changed_paths:
-                changed_paths.append(error.relative)
+        except BaseException as error:
             if bound is not None:
                 bound.close()
-        except TreeSnapshotError as error:
-            if bound is not None:
-                bound.close()
-            raise LeanSourceError(str(error)) from error
-        except BaseException:
-            if bound is not None:
-                bound.close()
+            if isinstance(error, TreeChangedError):
+                changed = error
+                if error.relative is not None and error.relative not in changed_paths:
+                    changed_paths.append(error.relative)
+                continue
+            if isinstance(error, TreeSnapshotError):
+                raise LeanSourceError(str(error)) from error
             raise
     lasting = _lasting_root_failure(root)
     if lasting is not None:
@@ -478,7 +474,7 @@ def open_project_sources(
     except BaseException:
         tree.close()
         raise
-    return BoundProjectSources(root_path, tree, excluded)
+    return BoundProjectSources(root_path, tree)
 
 
 @contextmanager
@@ -552,10 +548,7 @@ def _lean_tree_selection(
         descend=lambda path: not _lean_path_is_excluded(path, excluded),
         record_omitted=False,
         limits=limits,
-        # Only Lean inputs and the folders holding them must stay stable;
-        # generated sites, skeleton output, nested checkouts, editor
-        # temporaries and other folders under the root may change while
-        # sources are captured.
+        # Only Lean inputs and the folders holding them must stay stable.
         unselected_may_change=True,
         opaque_markers=(
             # A nested Git checkout is another source tree.  Treat the
@@ -621,20 +614,19 @@ def _folded_path(path: PurePosixPath) -> tuple[str, ...]:
 def _indexed_source_snapshot(
     root: Path,
     snapshot: TreeSnapshot,
-    excluded: tuple[PurePosixPath, ...],
     *,
     names: Iterable[str] | None = None,
 ) -> IndexedSourceSnapshot:
-    unsupported = [
-        (relative, reason)
-        for relative, reason in snapshot.unsupported_entries()
-        if PurePosixPath(relative).suffix == ".lean"
-    ]
+    # The Lean selection captures only .lean entries outside excluded folders,
+    # so every captured entry is a source and the snapshot's own revisions
+    # cover exactly the Lean inputs and the folders holding them.
+    unsupported = snapshot.unsupported_entries()
     if unsupported:
         relative, reason = unsupported[0]
         raise LeanSourceError(f"unsafe Lean source {relative}: {reason}")
 
     declarations: dict[str, Declaration] = {}
+    elsewhere: dict[str, tuple[Path, ...]] = {}
     line_counts: dict[Path, int] = {}
     source_files: list[tuple[Path, bytes]] = []
     digest = hashlib.sha256(b"autoform-lean-source-index/v1\0")
@@ -644,24 +636,23 @@ def _indexed_source_snapshot(
         else frozenset(_short_name(name) for name in names)
     )
     for relative_text, data in snapshot.files:
-        relative = PurePosixPath(relative_text)
-        if relative.suffix != ".lean" or _lean_path_is_excluded(
-            relative,
-            excluded,
-        ):
-            continue
-        relative_path = Path(relative.as_posix())
+        relative_path = Path(relative_text)
         _update_source_digest(digest, relative_path, data)
         source_files.append((relative_path, data))
         try:
             text = data.decode("utf-8")
         except UnicodeError:
             continue
-        line_counts[relative_path] = len(text.splitlines())
         if wanted_short is not None and not _may_declare(text, wanted_short):
+            # Nothing in this file is indexed, so no declaration is sized
+            # against this count.
+            line_counts[relative_path] = len(text.splitlines())
             continue
-        for declaration in _scan(text, relative_path):
-            declarations.setdefault(declaration.name, declaration)
+        found, line_counts[relative_path] = _scan(text, relative_path)
+        for declaration in found:
+            first = declarations.setdefault(declaration.name, declaration)
+            if first.path != relative_path and relative_path not in elsewhere.get(declaration.name, ()):
+                elsewhere[declaration.name] = (*elsewhere.get(declaration.name, ()), relative_path)
     source_digest = digest.hexdigest()
     return IndexedSourceSnapshot(
         SourceIndex(
@@ -669,9 +660,10 @@ def _indexed_source_snapshot(
             declarations=declarations,
             source_digest=source_digest,
             line_counts=line_counts,
+            elsewhere=elsewhere,
         ),
         source_digest,
-        _lean_generation_revision(snapshot),
+        snapshot.generation_revision,
         tuple(source_files),
     )
 
@@ -704,51 +696,6 @@ def _short_name(name: str) -> str:
     return name.rsplit(".", 1)[-1]
 
 
-def _lean_generation_revision(
-    snapshot: TreeSnapshot,
-) -> str:
-    """Hash only effective Lean inputs and their ancestor directories."""
-
-    def retained_entry(relative_text: str) -> bool:
-        return PurePosixPath(relative_text).suffix == ".lean"
-
-    files = tuple(entry for entry in snapshot.files if retained_entry(entry[0]))
-    symlinks = tuple(entry for entry in snapshot.symlinks if retained_entry(entry[0]))
-    special = tuple(entry for entry in snapshot.special if retained_entry(entry[0]))
-    placeholders = tuple(path for path in snapshot.placeholders if retained_entry(path))
-    omitted = tuple(entry for entry in snapshot.omitted if retained_entry(entry[0]))
-    retained_paths = {
-        PurePosixPath(relative)
-        for relative, _value in (*files, *symlinks, *special, *omitted)
-    }
-    retained_paths.update(PurePosixPath(relative) for relative in placeholders)
-    retained_directories = {PurePosixPath()}
-    for path in retained_paths:
-        retained_directories.update(path.parents)
-
-    directories = tuple(
-        path
-        for path in snapshot.directories
-        if PurePosixPath(path) in retained_directories
-    )
-    retained_identity_paths = set(directories)
-    retained_identity_paths.update(path.as_posix() for path in retained_paths)
-    filtered = TreeSnapshot(
-        root_identity=snapshot.root_identity,
-        directories=directories,
-        files=files,
-        symlinks=symlinks,
-        special=special,
-        placeholders=placeholders,
-        omitted=omitted,
-        identities=tuple(
-            entry for entry in snapshot.identities if entry[0] in retained_identity_paths
-        ),
-        opaque_directories=(),
-    )
-    return filtered.generation_revision
-
-
 def _is_managed_output_manifest_bytes(data: bytes) -> bool:
     if len(data) > _MANAGED_OUTPUT_MANIFEST_BYTE_LIMIT:
         return False
@@ -776,7 +723,8 @@ def _update_source_digest(digest, relative: Path, data: bytes) -> None:
     digest.update(data)
 
 
-def _scan(text: str, relative: Path) -> list[Declaration]:
+def _scan(text: str, relative: Path) -> tuple[list[Declaration], int]:
+    """The declarations in ``text`` and the number of its lines Lean reads."""
     found: list[Declaration] = []
     namespaces: list[str] = []
     scopes: list[str | None] = []
@@ -785,6 +733,8 @@ def _scan(text: str, relative: Path) -> list[Declaration]:
     for number, line in enumerate(lines, start=1):
         if not line.strip():
             continue
+        if _EXIT.match(line):
+            return found, number - 1
 
         namespace_match = _NAMESPACE.match(line)
         if namespace_match:
@@ -830,7 +780,7 @@ def _scan(text: str, relative: Path) -> list[Declaration]:
             # binder, leaving the syntactic separator behind.
             name = re.sub(r"\.\{[^}\n]+\}$", "", name).removesuffix(".")
             found.append(Declaration(_qualified(namespaces, name), relative, number, keyword, protected))
-    return found
+    return found, len(lines)
 
 
 _ATTRIBUTE_LIST = re.compile(r"@\[[^\]]*\]")
@@ -1036,6 +986,10 @@ class SourceLinker:
     linkable_paths: frozenset[Path] | None = None
     indexed: bool = True
     """False when the sources were not read, so no name was looked up."""
+    links_blueprint: bool = False
+    """True when the blueprint's files are in ``ref``'s commit too, so links into it show the published bytes."""
+    spellings: Mapping[str, str] = field(default_factory=dict)
+    """Committed path of each repository path whose name Git stores under another spelling."""
 
     def location(self, name: str) -> Declaration | None:
         return self.index.find(name)
@@ -1054,9 +1008,10 @@ class SourceLinker:
         ):
             return None
         encoded_ref = quote_from_bytes(os.fsencode(self.ref), safe="")
+        relative = declaration.path.as_posix()
         path = "/".join(
             quote_from_bytes(os.fsencode(part), safe="")
-            for part in declaration.path.parts
+            for part in self.spellings.get(relative, relative).split("/")
         )
         return f"{self.repository_url}/blob/{encoded_ref}/{path}#L{declaration.line}"
 
@@ -1169,6 +1124,7 @@ def verify_repository_snapshot(
     *,
     required_directories: Iterable[Path] = (),
     reasons: list[str] | None = None,
+    spellings: dict[str, str] | None = None,
 ) -> str | None:
     """Return the commit whose tree holds every captured file, byte for byte.
 
@@ -1176,6 +1132,8 @@ def verify_repository_snapshot(
     accepted by hashing the captured bytes through Git's clean filter. Otherwise
     ``None``, with the first reason appended to *reasons*, naming paths relative
     to the repository only. The shared Git runner strips ambient overrides.
+    Given *spellings*, a file Git committed under another spelling of its name
+    is accepted too, and its committed path recorded there (``_git_tree_oids``).
     """
 
     def refuse(reason: str) -> None:
@@ -1202,7 +1160,7 @@ def verify_repository_snapshot(
         directories = [path.relative_to(root).as_posix() for path in required_directories]
     except ValueError:
         return refuse("a captured file or directory is outside the repository")
-    blobs = _git_tree_oids(root, commit, tuple(sorted(captured)))
+    blobs = _git_tree_oids(root, commit, tuple(sorted(captured)), spellings)
     if blobs is None:
         return refuse("the commit's tree could not be read")
     for path, data in captured.items():
@@ -1241,8 +1199,15 @@ def _git_tree_oids(
     root: Path,
     commit: str,
     paths: tuple[str, ...],
+    spellings: dict[str, str] | None = None,
 ) -> dict[str, str] | None:
-    """Read raw blob IDs of regular files at exact paths without Git's quoting layer."""
+    """Read raw blob IDs of regular files at exact paths without Git's quoting layer.
+
+    macOS Git with ``core.precomposeUnicode`` finds a name decomposed on disk
+    under the composed spelling it committed, which is not always NFC, and
+    prints that spelling. Given *spellings*, such a record is matched to the
+    path asked for by NFC form, and the committed path recorded under it.
+    """
 
     result: dict[str, str] = {}
     for start in range(0, len(paths), 128):
@@ -1270,6 +1235,8 @@ def _git_tree_oids(
             return None
         if completed.returncode != 0:
             return None
+        asked = set(batch)
+        composed = {} if spellings is None else {unicodedata.normalize("NFC", path): path for path in batch}
         for record in completed.stdout.split(b"\0"):
             if not record:
                 continue
@@ -1277,7 +1244,11 @@ def _git_tree_oids(
             fields = header.split()
             if not separator or len(fields) != 3 or fields[0] not in {b"100644", b"100755"}:
                 continue
-            result[os.fsdecode(encoded_path)] = fields[2].decode("ascii")
+            printed = os.fsdecode(encoded_path)
+            path = printed if printed in asked else composed.get(unicodedata.normalize("NFC", printed), printed)
+            result[path] = fields[2].decode("ascii")
+            if spellings is not None and path != printed:
+                spellings[path] = printed
     return result
 
 

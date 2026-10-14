@@ -42,27 +42,45 @@ _EXPECTED = {
 }
 
 
-def test_scaffold_ignores_python_cache_artifacts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_template_list_names_every_tracked_template() -> None:
+    # Scaffolding reads only the listed paths, so an unlisted template would never ship.
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=Path(__file__).parents[1] / "autoform_cli" / "templates",
+        capture_output=True,
+        check=True,
+    ).stdout.decode("utf-8")
+    assert set(tracked.split("\0")) - {""} == scaffold_module._TEMPLATE_PATHS
+
+
+@pytest.mark.parametrize(
+    ("relative", "content"),
+    [
+        ("github/__pycache__/autoform_audit.cpython-test.pyc", b"\x00binary cache"),
+        # Finder metadata is binary, so decoding it as a template stopped init.
+        (".DS_Store", b"\x00\x00\x00\x01Bud1\x00\x00\x10\x00\xff\xfe"),
+        # An editor backup is valid UTF-8, so it was copied into the project.
+        ("README.md~", b"# Stale backup\n"),
+    ],
+)
+def test_scaffold_ignores_stray_files_in_the_templates_folder(
+    relative: str, content: bytes, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     templates = tmp_path / "templates"
     shutil.copytree(scaffold_module._TEMPLATES, templates)
-    cache = templates / "github/__pycache__"
-    cache.mkdir(exist_ok=True)
-    (cache / "autoform_audit.cpython-test.pyc").write_bytes(b"\x00binary cache")
+    (templates / relative).parent.mkdir(exist_ok=True)
+    (templates / relative).write_bytes(content)
     monkeypatch.setattr(scaffold_module, "_TEMPLATES", templates)
 
     project = tmp_path / "project"
     result = scaffold_project(
         project,
-        title="Cache-safe",
+        title="Stray-safe",
         autoform_source="https://example.test/autoform.git",
         autoform_ref="1" * 40,
     )
 
-    assert ".github/autoform_audit.py" in result.written
-    assert not (project / ".github/__pycache__").exists()
-    assert all("__pycache__" not in path and not path.endswith(".pyc") for path in result.written)
+    assert set(result.written) == _EXPECTED
 
 
 def test_template_snapshot_rejects_links(
@@ -72,13 +90,14 @@ def test_template_snapshot_rejects_links(
     shutil.copytree(scaffold_module._TEMPLATES, templates)
     outside = tmp_path / "outside"
     outside.write_text("not a template\n", encoding="utf-8")
+    (templates / "README.md").unlink()
     try:
-        (templates / "linked-template").symlink_to(outside)
+        (templates / "README.md").symlink_to(outside)
     except OSError:
         pytest.skip("the test filesystem cannot create symbolic links")
     monkeypatch.setattr(scaffold_module, "_TEMPLATES", templates)
 
-    with pytest.raises(ScaffoldError, match="template tree contains a link"):
+    with pytest.raises(ScaffoldError, match="template file is not a regular non-link file"):
         scaffold_project(tmp_path / "project", title="Link-free")
 
     assert not (tmp_path / "project").exists()
@@ -109,10 +128,11 @@ def test_template_snapshot_rejects_non_regular_files_without_blocking(
 ) -> None:
     templates = tmp_path / "templates"
     shutil.copytree(scaffold_module._TEMPLATES, templates)
-    os.mkfifo(templates / "blocking-template")
+    (templates / "README.md").unlink()
+    os.mkfifo(templates / "README.md")
     monkeypatch.setattr(scaffold_module, "_TEMPLATES", templates)
 
-    with pytest.raises(ScaffoldError, match="non-regular file"):
+    with pytest.raises(ScaffoldError, match="template file is not a regular non-link file"):
         scaffold_project(tmp_path / "project", title="Regular files only")
 
 
@@ -120,47 +140,11 @@ def test_template_snapshot_bounds_file_size(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     templates = tmp_path / "templates"
-    templates.mkdir()
-    (templates / "oversized").write_bytes(b"12345")
+    shutil.copytree(scaffold_module._TEMPLATES, templates)
+    (templates / "README.md").write_bytes(b"12345")
     monkeypatch.setattr(scaffold_module, "_MAX_TEMPLATE_FILE_BYTES", 4)
 
     with pytest.raises(ScaffoldError, match="4-byte limit"):
-        scaffold_module._read_templates(templates)
-
-
-def test_template_snapshot_bounds_entry_count(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    templates = tmp_path / "templates"
-    templates.mkdir()
-    (templates / "one").write_bytes(b"1")
-    (templates / "two").write_bytes(b"2")
-    monkeypatch.setattr(scaffold_module, "_MAX_TEMPLATE_ENTRIES", 1)
-
-    with pytest.raises(ScaffoldError, match="exceeds 1 entries"):
-        scaffold_module._read_templates(templates)
-
-
-def test_template_snapshot_detects_a_change_between_captures(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    templates = tmp_path / "templates"
-    shutil.copytree(scaffold_module._TEMPLATES, templates)
-    readme = templates / "README.md"
-    original_capture = scaffold_module._capture_template_snapshot
-    calls = 0
-
-    def capture(root: Path):
-        nonlocal calls
-        snapshot = original_capture(root)
-        calls += 1
-        if calls == 1:
-            readme.write_bytes(readme.read_bytes() + b"\nchanged\n")
-        return snapshot
-
-    monkeypatch.setattr(scaffold_module, "_capture_template_snapshot", capture)
-
-    with pytest.raises(ScaffoldError, match="changed while it was being read"):
         scaffold_module._read_templates(templates)
 
 
@@ -1146,7 +1130,6 @@ def test_plugin_pin_skips_a_remote_whose_url_is_not_utf8(
         "checkout-template",
         "copy-scaffold",
         "copy-template",
-        "copy-extra-template",
         "copy-executable-mode",
     ],
 )
@@ -1165,16 +1148,12 @@ def test_plugin_pin_fails_closed_when_checkout_or_copy_bytes_do_not_match_head(
     elif changed in {"checkout-template", "copy-template"}:
         path = selected / "autoform_cli" / "templates" / "README.md"
         path.write_bytes(path.read_bytes() + b"\nchanged\n")
-    elif changed == "copy-extra-template":
-        (selected / "autoform_cli" / "templates" / "extra").write_text(
-            "different template surface\n", encoding="utf-8"
-        )
 
     assert scaffold_module.plugin_pin() == ("", "")
 
 
 @pytest.mark.parametrize(
-    "change", ["tracked", "ignored-template", "template-executable-mode"]
+    "change", ["tracked", "listed-template-not-committed", "template-executable-mode"]
 )
 def test_direct_checkout_pin_requires_a_matching_tracked_surface(
     change: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1187,13 +1166,12 @@ def test_direct_checkout_pin_requires_a_matching_tracked_surface(
     if change == "tracked":
         path = checkout / "autoform_cli" / "scaffold.py"
         path.write_bytes(path.read_bytes() + b"\n# dirty\n")
-    elif change == "ignored-template":
-        exclude = checkout / ".git" / "info" / "exclude"
-        with exclude.open("a", encoding="utf-8") as output:
-            output.write("\nautoform_cli/templates/ignored-extra\n")
-        (checkout / "autoform_cli" / "templates" / "ignored-extra").write_text(
-            "ignored by status, but used by the scaffold\n", encoding="utf-8"
-        )
+    elif change == "listed-template-not-committed":
+        # Still on disk, so the scaffold reads it, but the pinned commit lacks it.
+        _git_output(checkout, "rm", "-q", "--cached", "autoform_cli/templates/theme/main.html")
+        _git_output(checkout, "commit", "-q", "-m", "untrack a listed template")
+        # Keep the remote containing HEAD so only the tree comparison can refuse.
+        _git_output(checkout, "update-ref", "refs/remotes/origin/main", "HEAD")
         assert scaffold_module._git_checkout_clean(checkout)
     else:
         if os.name != "posix":
@@ -1209,9 +1187,20 @@ def test_direct_checkout_pin_ignores_unrelated_untracked_files(
     checkout = tmp_path / "checkout"
     head = _autoform_checkout(checkout, "https://example.test/autoform.git")
     (checkout / "large-unrelated-output").write_bytes(b"x" * (1024 * 1024))
+    # The scaffold never reads a template the list does not name.
+    (checkout / "autoform_cli" / "templates" / "untracked-extra").write_bytes(b"\x00\x00\x00\x01Bud1")
     _run_from(monkeypatch, checkout)
 
     assert scaffold_module.plugin_pin() == ("https://example.test/autoform.git", head)
+
+
+def test_plugin_pin_ignores_files_the_template_list_does_not_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, copied, head = _fake_plugin_install(tmp_path, monkeypatch)
+    (copied / "autoform_cli" / "templates" / "extra").write_text("not a listed template\n", encoding="utf-8")
+
+    assert scaffold_module.plugin_pin() == ("https://github.com/owner/autoform-bot.git", head)
 
 
 @pytest.mark.skipif(os.name != "posix", reason="exact POSIX template modes are unavailable")

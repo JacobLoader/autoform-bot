@@ -13,7 +13,6 @@ from .core import LeanRepl, LeanReplConfig, ReplCleanupError
 
 logger = getLogger(__name__)
 
-DEFAULT_RAM_FRACTION = 0.5
 _SHUTDOWN = object()
 _SHUTDOWN_REFUSAL = "Lean REPL pool is shut down; this call did not start and can be retried"
 
@@ -27,26 +26,7 @@ def _slot_timeout(timeout: float) -> TimeoutError:
 class LeanReplPoolConfig(LeanReplConfig):
     """Configuration for a pool of cold Lean REPL slots."""
 
-    num_repls: int | None = None
-
-    def __post_init__(self) -> None:
-        if self.num_repls is None:
-            try:
-                import psutil
-
-                total_gb = psutil.virtual_memory().total / (1024**3)
-                self.num_repls = max(1, int(total_gb * DEFAULT_RAM_FRACTION / self.instance_mem_limit_gb))
-            except ImportError:
-                self.num_repls = 1
-
-
-class LeanReplPoolStartupError(RuntimeError):
-    """Pool construction failed while this object still owns workers."""
-
-    def __init__(self, pool: LeanReplPool, cause: BaseException) -> None:
-        super().__init__(str(cause))
-        self.pool = pool
-        self.cause = cause
+    num_repls: int = 1
 
 
 class LeanReplPool:
@@ -59,7 +39,7 @@ class LeanReplPool:
 
     def __init__(self, config: LeanReplPoolConfig) -> None:
         self.config = config
-        self.capacity = config.num_repls or 1
+        self.capacity = config.num_repls
         self._shutdown = False
         self._requires_retirement = False
         self._shutdown_wakeup = False
@@ -70,21 +50,12 @@ class LeanReplPool:
         self._condition = threading.Condition(self._lock)
         self._active_calls = 0
 
-        try:
-            for _ in range(self.capacity):
-                # Slots retain only Python wrappers. Each public call starts
-                # and retires its own subprocess generation.
-                repl = LeanRepl(config)
-                self._workers.append(repl)
-                self._idle.put(repl)
-        except BaseException as error:
-            with self._condition:
-                self._stop_admission_locked(require_retirement=True)
-            try:
-                self._close_workers()
-            except BaseException as cleanup_error:
-                raise LeanReplPoolStartupError(self, error) from cleanup_error
-            raise
+        for _ in range(self.capacity):
+            # Slots retain only Python wrappers. Each public call starts
+            # and retires its own subprocess generation.
+            repl = LeanRepl(config)
+            self._workers.append(repl)
+            self._idle.put(repl)
 
     @property
     def requires_retirement(self) -> bool:

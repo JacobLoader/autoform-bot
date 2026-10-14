@@ -61,6 +61,7 @@ from .lean import (
     verify_repository_snapshot,
 )
 from .markdown import article_parts
+from .markdown import mask_fences_and_comments
 from .status import is_definition
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
@@ -413,20 +414,44 @@ def render_site(
         repository_url = repository_url if repository_url is not None else detect_repository_url(repo_root)
         ref = ref if ref is not None else detect_ref(repo_root)
         sources = SOURCES_DIR in snapshot.directories
-        files = [(blueprint / name, data) for name, data in snapshot.files]
-        files += [(repo_root / path, data) for path, data in lean.source_files]
         reasons: list[str] = []
+        blueprint_reasons: list[str] = []
+        spellings: dict[str, str] = {}
         commit = None
+        links_blueprint = False
         if repository_url and ref:
             commit = verify_repository_snapshot(
                 repo_root,
                 ref,
-                files,
-                required_directories=[blueprint / SOURCES_DIR] if sources else [],
+                [(repo_root / path, data) for path, data in lean.source_files],
                 reasons=reasons,
+                spellings=spellings,
             )
-        # Links name the verified commit, never the requested ref.
-        linker = SourceLinker(lean.index, repository_url, commit, indexed=indexed)
+        # A code link depends only on the Lean bytes. A link into the blueprint also needs the blueprint's
+        # bytes in that commit, which a blueprint outside the repository's working tree never has.
+        if commit is not None and _in_working_tree(blueprint, repo_root):
+            links_blueprint = (
+                verify_repository_snapshot(
+                    repo_root,
+                    commit,
+                    [(blueprint / name, data) for name, data in snapshot.files],
+                    required_directories=[blueprint / SOURCES_DIR] if sources else [],
+                    reasons=blueprint_reasons,
+                    spellings=spellings,
+                )
+                is not None
+            )
+        # Links name the verified commit, never the requested ref. With no Lean file captured, only the
+        # blueprint check compared bytes with the commit.
+        linked = commit if lean.source_files or links_blueprint else None
+        linker = SourceLinker(
+            lean.index,
+            repository_url,
+            linked,
+            indexed=indexed,
+            links_blueprint=links_blueprint,
+            spellings=spellings,
+        )
         source_revision = _source_revision(snapshot)
         report = _publish(
             destination,
@@ -446,8 +471,13 @@ def render_site(
     report.warnings[:0] = recovered
     if repository_url and ref and commit is None:
         report.warnings.append(
-            "repository links were omitted because the captured blueprint and Lean inputs "
+            "repository links were omitted because the captured Lean inputs "
             "do not match one verified local Git commit" + (f": {reasons[0]}" if reasons else "")
+        )
+    elif blueprint_reasons:
+        report.warnings.append(
+            "Markdown source links were omitted because the captured blueprint does not match "
+            f"the verified local Git commit: {blueprint_reasons[0]}"
         )
     return report
 
@@ -1144,10 +1174,11 @@ def _sources_base(blueprint: Path, repo_root: Path, linker: SourceLinker) -> "_S
     They stay in the vault and the site links out to them instead.
 
     Returns ``None`` when there are no repository coordinates to build a link
-    from. The pages are then published as before, because a site with no
-    sources and no way to reach them is worse than a redundant page.
+    from, or the blueprint's files are not in the linked commit. The pages are
+    then published as before, because a site with no sources and no way to
+    reach them is worse than a redundant page.
     """
-    if not linker.repository_url or not linker.ref:
+    if not linker.repository_url or not linker.ref or not linker.links_blueprint:
         return None
     try:
         relative = (blueprint / SOURCES_DIR).resolve().relative_to(repo_root).as_posix()
@@ -1155,7 +1186,8 @@ def _sources_base(blueprint: Path, repo_root: Path, linker: SourceLinker) -> "_S
         # The vault is outside the repository being linked, so no blob URL
         # describes it. Better no link than one that 404s.
         return None
-    return _SourceBase(linker.repository_url, linker.ref, relative)
+    spellings = {unicodedata.normalize("NFC", path): committed for path, committed in linker.spellings.items()}
+    return _SourceBase(linker.repository_url, linker.ref, relative, spellings)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1172,10 +1204,13 @@ class _SourceBase:
     repository_url: str
     ref: str
     relative: str
+    spellings: Mapping[str, str] = field(default_factory=dict)
+    """Committed paths keyed by NFC form, since a link spells a note however its author typed it."""
 
     def href(self, tail: tuple[str, ...]) -> str:
         verb = "blob" if tail else "tree"
         path = "/".join((self.relative, *tail))
+        path = self.spellings.get(unicodedata.normalize("NFC", path), path)
         return (
             f"{self.repository_url}/{verb}/{quote(self.ref, safe='')}/"
             f"{quote(path, safe='/')}"
@@ -1977,7 +2012,7 @@ def _render_overview_summary(
 
 
 def _first_h1(text: str) -> str | None:
-    for line in text.splitlines():
+    for line in mask_fences_and_comments(text.splitlines()):
         heading = _HEADING.match(line)
         if heading is not None and len(heading.group(1)) == 1:
             return heading.group(2).strip()
@@ -1996,8 +2031,9 @@ def _document_body(text: str) -> str:
 
     kept: list[str] = []
     dropped_title = False
-    for line in lines[start:]:
-        heading = _HEADING.match(line)
+    source_lines = lines[start:]
+    for line, visible in zip(source_lines, mask_fences_and_comments(source_lines)):
+        heading = _HEADING.match(visible)
         if heading is not None and len(heading.group(1)) == 1 and not dropped_title:
             dropped_title = True
             continue
@@ -2120,6 +2156,10 @@ def _rewrite_links(
     of its own directory onto the chapter page, so its remaining relative links
     have to be recomputed from there. And source notes are not published at
     all when *sources_base* says where to reach them in the repository.
+
+    The site holds only the blueprint, so an inline link to a file outside it,
+    such as a source note's evidence link to a Lean file, keeps its text and
+    loses its target instead of dangling.
     """
     # Most pages name a few nodes, so each node link is built where it is used.
     # A coverage page can name most of the graph, so one lazy map serves the
@@ -2140,7 +2180,8 @@ def _rewrite_links(
                 href = f"{'' if href == '#' else href}#{fragment}"
             return href
         if not _is_within(candidate, blueprint):
-            return None
+            # Nothing outside the blueprint is published: "" keeps only the text.
+            return ""
         relative = candidate.relative_to(blueprint)
         if sources_base is not None and relative.parts[:1] == (SOURCES_DIR,):
             return f"{_source_href(sources_base, relative.parts[1:])}{separator}{fragment}"
@@ -2149,7 +2190,9 @@ def _rewrite_links(
 
     def replace(match: re.Match[str]) -> str:
         href = moved_target(match.group("target"))
-        return match.group(0) if href is None else f"[{match.group('label')}]({href})"
+        if href is None:
+            return match.group(0)
+        return f"[{match.group('label')}]({href})" if href else match.group("label")
 
     def rewrite(line: str) -> str:
         # A reference definition carries the destination for every `[x][label]`
@@ -2158,7 +2201,7 @@ def _rewrite_links(
         definition = _LINK_DEFINITION.match(line)
         if definition is not None:
             href = moved_target(definition.group("target"))
-            if href is not None:
+            if href:
                 indent, label = definition.group("indent"), definition.group("label")
                 return f"{indent}[{label}]: {href}{definition.group('rest') or ''}"
             return line
@@ -2172,6 +2215,17 @@ def _is_within(path: Path, directory: Path) -> bool:
         path.relative_to(directory)
     except ValueError:
         return False
+    return True
+
+
+def _in_working_tree(path: Path, root: Path) -> bool:
+    """Whether the repository at *root* can track *path*: below it, and not in a checkout nested there."""
+    if not _is_within(path, root):
+        return False
+    while path != root:
+        if (path / ".git").exists():  # a submodule or a separate clone
+            return False
+        path = path.parent
     return True
 
 
@@ -2521,12 +2575,13 @@ def _vault_source_link(node: Node, *, repo_root: Path, linker) -> str:
     The graph view and the published statement are both derived. This is the
     file a reader edits, so it is worth one click from the statement itself.
     """
-    if not linker.repository_url or not linker.ref:
+    if not linker.repository_url or not linker.ref or not linker.links_blueprint:
         return ""
     try:
         relative = node.path.resolve().relative_to(repo_root).as_posix()
     except ValueError:
         return ""
+    relative = linker.spellings.get(relative, relative)
     href = (
         f"{linker.repository_url}/blob/{quote(linker.ref, safe='')}/"
         f"{quote(relative, safe='/')}"

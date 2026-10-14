@@ -34,7 +34,6 @@ _RUNTIME_CONFIG_VARIABLES = (
     "AUTOFORM_MAX_LEAN_PROJECTS",
     "AUTOFORM_LEAN_IDLE_SECONDS",
     "AUTOFORM_REPL_TOTAL_WORKERS",
-    "LEAN_NUM_REPLS",
     "AUTOFORM_REPL_WORKERS_PER_PROJECT",
     "LEAN_REPL_CMD",
     "LEAN_REPL_HEADER_CMD",
@@ -1844,7 +1843,6 @@ def test_response_timeout_is_never_retried(runtime_dir, monkeypatch):
 @pytest.mark.parametrize(
     ("name", "value", "match"),
     [
-        ("LEAN_NUM_REPLS", "-1", "nonnegative integer"),
         ("LEAN_REPL_CMD", "   ", "must not be empty"),
         ("LEAN_REPL_HEADER_CMD", "   ", "LEAN_REPL_HEADER_CMD must not be empty"),
         ("AUTOFORM_LEAN_IDLE_SECONDS", "nan", "finite nonnegative"),
@@ -1951,12 +1949,37 @@ def test_lowered_repl_maximum_lowers_only_the_default_timeout(monkeypatch):
         LeanRuntimeConfig.from_environment()
 
 
-def test_response_budget_includes_pool_replacement_cleanup(monkeypatch):
-    monkeypatch.setenv("AUTOFORM_REPL_TOTAL_WORKERS", "3")
-    monkeypatch.setenv("AUTOFORM_REPL_WORKERS_PER_PROJECT", "3")
-    monkeypatch.setenv("AUTOFORM_RUNTIME_RESPONSE_TIMEOUT", "299")
-    with pytest.raises(ValueError, match="REPL pool replacement"):
+def test_response_budget_reserves_nothing_for_cold_repl_slots(monkeypatch):
+    # Cold slots own no Lean process, so 64 of them reserve no time. A call at
+    # the cap still needs some admission time, so the cap plus the 30-second
+    # safety margin must stay under the 900-second budget.
+    monkeypatch.setenv("AUTOFORM_REPL_TOTAL_WORKERS", "64")
+    monkeypatch.setenv("AUTOFORM_REPL_WORKERS_PER_PROJECT", "64")
+    monkeypatch.setenv("AUTOFORM_MAX_REPL_REQUEST_SECONDS", "869")
+    assert LeanRuntimeConfig.from_environment().repl_workers_per_project == 64
+
+    monkeypatch.setenv("AUTOFORM_MAX_REPL_REQUEST_SECONDS", "870")
+    with pytest.raises(ValueError, match="too small for AUTOFORM_MAX_REPL_REQUEST_SECONDS"):
         LeanRuntimeConfig.from_environment()
+
+
+def test_repl_admission_reserves_no_time_to_create_cold_slots(tmp_path):
+    project = make_lake_project(tmp_path, "cold-slot-admission")
+    # 900 - 861 - 30 leaves 9 seconds to admit the call below, enough because
+    # creating a cold pool starts no Lean process.
+    services = LeanRuntimeServices(
+        runtime_config(max_repl_request_seconds=869.0),
+        repl_factory=FakePool,
+        lsp_factory=FakeLsp,
+        start_sweepers=False,
+    )
+    try:
+        assert services.dispatch(
+            "repl.run",
+            {"project_dir": str(project), "code": "#check Nat", "timeout": 861},
+        ) == "Compiles successfully"
+    finally:
+        services.close()
 
 
 @pytest.mark.parametrize("timeout", [-1, 0, True, float("nan"), float("inf"), 241])

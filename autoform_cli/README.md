@@ -83,8 +83,9 @@ dependency list included, in the theorem box. Nothing reports the comment
 itself.
 
 `## Depends on` lists what the article needs in order to be *stated*;
-`## Proof depends on` lists what only its *proof* needs. Both are graph edges.
-Links anywhere else are ordinary navigation or citations. Dependencies resolve
+`## Proof depends on` lists what only its *proof* needs. Both are graph edges,
+except a link in a code block, fenced or indented, or in an HTML comment. Links
+anywhere else are ordinary navigation or citations. Dependencies resolve
 relative to the current article and must point at another roadmap article.
 
 The optional `declaration` field marks a formalizable leaf and describes its
@@ -153,7 +154,8 @@ that by moving anything still useful into the surviving article's note and
 deleting the orphan. When the article still exists but lost its `article_id`
 line, restore the line instead.
 Delete the file once its article is proved; for a container, delete it once
-every formalizable descendant is proved and there is at least one. The
+every formalizable descendant, and every leaf marked `not_ready` beneath it,
+is proved and there is at least one. The
 directory is hidden, so current and older renderers omit it from the site and
 publication hash without requiring an `AUTOFORM_REF` migration; `autoform
 audit` reports a note left behind after that point.
@@ -281,9 +283,10 @@ running the command, or of the marketplace checkout an installed plugin was
 copied from, read with local Git. Source selection prefers Autoform's canonical
 repository, then `origin`, then `upstream`, then a unique remaining safe remote,
 but only when one of its cached tracking refs contains HEAD. An inferred pin is
-used only when tracked files are clean and the bounded, link-free template
-snapshot and scaffold renderer match that commit in paths, bytes, and
-executable-bit classification; an installed copy must match the checkout too.
+used only when tracked files are clean and the scaffold renderer and the
+bounded, link-free template files it lists match that commit in paths, bytes,
+and executable-bit classification; other files in the templates folder are
+ignored, and an installed copy must match the checkout too.
 Local Git replacement objects are ignored. Apart from those reads, the command
 runs no subprocesses, Lake, Lean, or network operations. Without a ref the local
 project is complete but the workflows are omitted.
@@ -614,7 +617,11 @@ anywhere in a declaration's trusted closure is refused, as recorded by the Lean
 environment rather than by the source text: its kernel face is an opaque
 constant, so the body a reader would see is not what Lean checks. The command
 exits nonzero when a `lean:` name is absent from the sources or from the built
-environment, or reaches a refused declaration; that name is unresolved for its article only, other articles still extract, and it writes nothing into the vault;
+environment, or reaches a refused declaration; that name is unresolved for its article only, other articles still extract, and it writes nothing into the vault.
+A name that several indexed files declare, even when all but one of them
+declare it `private`, is unresolved without a probe, because the index cannot
+tell which one Lean binds; the reason names each of those files in sorted
+order. `unused-hypotheses` looks names up the same way.
 `--output` records the `autoform-skeleton/v4` report, which contains no
 timestamp or absolute path, for a later render or review to consume. The
 report identifies the exact blueprint, its complete target set, and whether
@@ -764,8 +771,9 @@ binder mentions cannot be deleted and is not listed. A proof that itself
 contains `sorry` is not read; a complete proof that uses an open statement is.
 Findings are for a reviewer and never fail the run, since the source may state
 a hypothesis its theorem does not need; the command exits 1 only when a `lean:`
-name cannot be read: it is not found, or it is an alias, whose proof only names
-its target. `--json` writes the `autoform-unused-hypotheses/v1` report.
+name cannot be read: it is not found, several source files declare it, or it
+is an alias, whose proof only names its target. `--json` writes the
+`autoform-unused-hypotheses/v1` report.
 
 `lake build` already warns about some of these: Lean's `unusedVariables`
 linter names a hypothesis the proof never references, and `unusedSectionVars`
@@ -990,7 +998,11 @@ autoform claim release af_5b0e4d3c2a1f09e8d7c6b5a4
 autoform claim acquire af_5b0e4d3c2a1f09e8d7c6b5a4 af_0123456789abcdef01234567
 ```
 
-Claim an article by the `claim_target` that `work context` reports. The board
+Claims are optional: use them when other people or sessions may work on the
+same project at the same time, or when the user asks. A single Formalize run
+needs none, because its lead keeps its workers apart. A claim excludes only
+workers that also claim, so on a shared project every worker uses them. Claim
+an article by the `claim_target` that `work context` reports. The board
 hashes whatever string it is given, so a claim on an article's path ID and one
 on its `article_id` do not exclude each other. Each concurrent agent needs its
 own worker ID, because a second acquire by the same owner succeeds. Where shell
@@ -1065,8 +1077,9 @@ it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
 `mathlib: true`. An inline `## Sources` link to a local path must name a file
 inside the blueprint, as `audit` also requires: a missing file, a directory, an
-invalid path, or a target outside the blueprint fails, and `audit` alone checks
-fragments and links with other schemes. With `--lean-root`
+invalid path, or a target outside the blueprint fails. A link with a scheme
+other than http(s), or a network location, fails too, as every runtime command
+refuses it; `audit` alone checks fragments. With `--lean-root`
 it also fails on a `lean:` name
 absent from the sources, as `leanblueprint checkdecls` does for LaTeX
 blueprints. It validates structure and leaves mathematical correctness to the
@@ -1123,7 +1136,8 @@ that appears at a path after the capture last looked there, or in a folder
 after the final check listed it, is not seen, so coordinated moves across
 folders can yield a set of sources that no single state had.
 
-Within each file the index records the declarations written with `theorem`,
+Within each file, up to an `#exit` line, the index records the declarations
+written with `theorem`,
 `lemma`, `def`, `abbrev`, `instance`, `structure`, `class`, `inductive`,
 `opaque`, `axiom`, `irreducible_def`, Batteries' wanted commands
 (`Batteries.Util.ProofWanted`) `theorem_wanted`, `proof_wanted`, `def_wanted`,
@@ -1145,9 +1159,8 @@ that may be regenerated at any time.
 
 `autoform audit` reports structured findings at blueprint-relative paths. It
 checks that no article leaves a code fence open, that formalizable articles are
-declaration-sized leaves with statement text (prose in the statement, outside
-code blocks, HTML comments, and headings) and an explicit dependency section,
-that asserted Mathlib facts are
+declaration-sized leaves with statement text and an explicit dependency
+section, that asserted Mathlib facts are
 internally consistent, and that cited work resolves to local source
 material without escaping the blueprint. Coverage files are checked for broken
 links and explicitly declared gaps. With `--lean-root`, local declaration names
@@ -1596,7 +1609,7 @@ contract. Under `forbidden` it runs the strict audit with `--targets`: any
 `root-package declarations failed the kernel-trust audit`. So does a `lean:`
 name the build did not compile, with `NAME [ID] is not a declaration of the
 Lean build; fix the article's lean: name or build the module that declares
-it`: a theorem in a file no target imports, after `#exit`, or inside a string
+it`: a theorem in a file no target imports or inside a string
 passes the lexical `autoform check --lean-root` but not this. The strict audit
 refuses a contract that allows open statements, records an article as open, or
 lets one assume an open statement. Under `allowed` the workflow audits every
@@ -1772,10 +1785,9 @@ later refusal or transport uncertainty as lost ownership.
 A claim key is a slug and digest of any string, not a validated node id, so a
 shared resource is locked the same way a node is, as is a Lean helper no
 article owns under the `lean/<slug>-<digest>` key `work impact` reports.
-Parallel agents get one Git worktree each and serialize `lake build` behind a
-`lake-build` claim, because
-builds share the elan toolchain and the Mathlib cache even when the checkouts
-are separate.
+Parallel agents get one Git worktree each, and builds take no claim. Worktrees
+on one machine share its elan toolchain and Mathlib cache, so Formalize fills
+the cache once before creating them.
 
 `acquire`, `renew`, and `release` accept several targets. The board reads
 every ref once, applies the single-key ownership checks to each, and sends one
@@ -1820,9 +1832,9 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
 1. On a fresh build, run `autoform work impact R . --lean-root .`, with
    `--declaration` when only some of R's declarations, or a helper, change.
 2. Choose the route:
-   - **Contained** (`contained: true`): revise X in place under R's claim.
-     `contained` ignores R's own declarations, so re-check R's other
-     declarations that use X as well.
+   - **Contained** (`contained: true`): revise X in place, under R's claim when
+     using claims. `contained` ignores R's own declarations, so re-check R's
+     other declarations that use X as well.
    - **Expand, migrate, contract**, the default whenever anything uses X: add
      X' with the revised statement, leave X unchanged and mark it
      `@[deprecated X' (since := "YYYY-MM-DD")]`, and point R's `lean:` at X'.
@@ -1862,7 +1874,7 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
      proof that cannot be repaired becomes exactly `sorry` under the open
      policy; otherwise delete the declaration and remove its article's
      `lean:`, `statement`, and `proof`, which works only when nothing else
-     uses it. When neither applies, the revision is blocked: release the claims
+     uses it. When neither applies, the revision is blocked: release any claims
      and report it. Record what happened in the revision commit and report. Use
      an implementation note only until [its deletion
      rule](#articles-and-containment) applies.
@@ -1872,16 +1884,17 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
    meaning in place: it keeps `statement` only after an Agent Review of its
    source faithfulness; otherwise it records `statement: retracted`, loses
    `proof`, and keeps `lean:`.
-3. Claim the route's claim set with one `autoform claim acquire`. When it is
-   refused, release everything and report the held claim as the blocker. After
-   acquiring, re-run `work impact`; if the set grew, release and start over
-   with the larger set. After rebasing onto the current shared branch and
-   rebuilding, re-run it once more; if the set grew, acquire the whole larger
-   set in one command under the no-hold-and-wait rule of the [claim
-   contract](#claim-contract) and repair the new targets before landing. Under
-   the open policy, reproduce the CI audit as [open statements](#open-statements)
-   shows before landing. Land one commit, then
-   release every claim.
+3. When using claims, claim the route's claim set with one
+   `autoform claim acquire`. When it is refused, release everything and report
+   the held claim as the blocker. After acquiring, re-run `work impact`; if the
+   set grew, release and start over with the larger set. With or without claims,
+   after rebasing onto the current shared branch and rebuilding, re-run
+   `work impact` once more; if the set grew, repair the new targets before
+   landing. When using claims, first acquire the whole larger set in one command
+   under the no-hold-and-wait rule of the [claim contract](#claim-contract).
+   Under the open policy, reproduce the CI audit as [open
+   statements](#open-statements) shows before landing. Land one commit, then
+   release any claims.
 4. Contract: delete a deprecated X once it appears in `deprecated_unused` of
    `work impact R . --lean-root .`, meaning no declaration uses it and no
    other article's `lean:` names it, and drop it from R's `lean:` in the same
@@ -1901,7 +1914,7 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
    keeps `lean:`, which `work impact` needs, so the article returns to the
    frontier as a revision. It retracts only that article and the dependents
    whose Markdown text the revision rewrites; the Lean-side impact decides
-   every other dependent. Roadmap edits only Markdown: it releases its claims
+   every other dependent. Roadmap edits only Markdown: it releases any claims
    and leaves the Lean revision to Formalize.
 
 ## Local runtime doctor
@@ -1992,11 +2005,17 @@ produce identical output files. Render reads the blueprint and the Lean sources
 once each and derives every page, link and hash from those bytes; an edit saved
 during a render waits for the next one, and until then the dashboard reports the
 built site as stale. The vault's hidden implementation notes are read in place
-only to validate them. Repository links appear only when those bytes match one
-locally available Git commit, recorded by its full object ID; a clean checkout
-that Git converts on checkout still matches. Otherwise the render stays local,
-keeps source notes in the site, records no Git ref, and warns with the first
-mismatch.
+only to validate them. Repository links appear only when the Lean bytes match
+one locally available Git commit, recorded by its full object ID; a clean
+checkout that Git converts on checkout still matches. Otherwise the render stays
+local, keeps source notes in the site, records no Git ref, and warns with the
+first mismatch. Links into the blueprint (an article's Markdown source, a source
+note) also need the blueprint's bytes in that commit. When they differ, render
+keeps the code links, keeps source notes in the site instead of linking to them,
+and warns with the first mismatch; a blueprint outside the repository, or in a
+submodule or other checkout nested in it, gets the same result without a
+warning. When render reads no Lean file (native Windows, or a project with no
+`.lean` file yet), it records the Git ref only if the blueprint matches it.
 
 The manifest's schema is `autoform-publication/v3`. It records what v2
 records, but the site holds the shared explorer's JSON projections and script

@@ -8,6 +8,7 @@ contacts a network service or writes generated state back into the blueprint.
 from __future__ import annotations
 
 import json
+import os
 import re
 import statistics
 from bisect import bisect_right
@@ -63,7 +64,7 @@ _NODE_SIZE_MULTIPLE = 4
 #: Batteries' commands for a statement whose proof or construction is deferred.
 _WANTED_KEYWORDS = frozenset({"theorem_wanted", "proof_wanted", "def_wanted", "instance_wanted"})
 _THEOREM_KEYWORDS = frozenset({"lemma", "theorem", "theorem_wanted", "proof_wanted"})
-_DEF_KEYWORDS = frozenset({"def", "def_wanted"})
+_DEF_KEYWORDS = frozenset({"def", "def_wanted", "irreducible_def"})
 
 _DECLARATION_KEYWORDS = {
     "abbrev": frozenset({"abbrev"}),
@@ -74,6 +75,7 @@ _DECLARATION_KEYWORDS = {
     "definition": _DEF_KEYWORDS,
     "inductive": frozenset({"inductive"}),
     "instance": frozenset({"instance", "instance_wanted"}),
+    "irreducible_def": frozenset({"irreducible_def"}),
     "lemma": _THEOREM_KEYWORDS,
     "opaque": frozenset({"opaque"}),
     "proposition": _THEOREM_KEYWORDS,
@@ -225,7 +227,8 @@ def audit_graph(
         fully_implemented = True
         for child_id in contained.get(node_id, ()):
             child = graph.nodes[child_id]
-            if child.formalizable:
+            # As on the site, a leaf marked not ready is a target too, so its scope stays open until it is proved.
+            if child.formalizable or (child.not_ready and child_id not in contained):
                 has_formalizable = True
                 fully_implemented = fully_implemented and derived[child_id].proved
             if scope_has_formalizable[child_id]:
@@ -846,8 +849,11 @@ def _validation_article_path(blueprint: Path, issue: str) -> str:
         candidate = roadmap / "README.md"
     else:
         readme = roadmap / node_id / "README.md"
-        candidate = readme if readme.exists() else roadmap / f"{node_id}.md"
-    if candidate.exists() or roadmap.exists():
+        # os.path.exists is False for a path it cannot stat; Path.exists raises before 3.14.
+        candidate = readme if os.path.exists(readme) else roadmap / f"{node_id}.md"
+        if node_id.casefold().endswith(".md") and not os.path.exists(candidate):
+            candidate = roadmap / node_id  # discovery names a page it could not load by its file
+    if roadmap.exists():
         return _relative_path(candidate, blueprint)
     return "."
 

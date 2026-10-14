@@ -196,8 +196,9 @@ def test_creation_with_an_explicit_pin_stays_offline(
 
 def test_unsafe_local_templates_use_the_project_error_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     templates = tmp_path / "templates"
-    templates.mkdir()
-    (templates / "escape").symlink_to(tmp_path / "missing")
+    shutil.copytree(create_module._TEMPLATES, templates)
+    (templates / "README.md").unlink()
+    (templates / "README.md").symlink_to(tmp_path / "missing")
     monkeypatch.setattr(create_module, "_TEMPLATES", templates)
 
     _refused(tmp_path / "Project", "project-create-validation-failed")
@@ -212,26 +213,18 @@ def test_incomplete_local_templates_are_not_published(tmp_path: Path, monkeypatc
     _refused(tmp_path / "Project", "project-create-validation-failed")
 
 
-@pytest.mark.parametrize("relative", ["lake-manifest.json", "lake-manifest.json/note.md"], ids=["file", "directory"])
-def test_an_unlisted_pair_never_publishes_a_template_manifest(
-    relative: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_stray_files_in_local_templates_are_not_published(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Finder's binary .DS_Store failed creation, and an editor's UTF-8 backup was published.
     templates = tmp_path / "templates"
     shutil.copytree(create_module._TEMPLATES, templates)
-    (templates / relative).parent.mkdir(exist_ok=True)
-    (templates / relative).write_text('{"version": "1.1.0", "packages": []}\n', encoding="utf-8")
-    target = tmp_path / "Project"
+    (templates / ".DS_Store").write_bytes(b"\x00\x00\x00\x01Bud1\x00\x00\x10\x00\xff\xfe")
+    (templates / "README.md~").write_text("# Stale backup\n", encoding="utf-8")
     monkeypatch.setattr(create_module, "_TEMPLATES", templates)
 
-    error = _fails(target, "project-create-validation-failed", release_id=None, lean_toolchain="v4.30.0")
-    assert error.message == (
-        create_module._STAGED_MESSAGE + " An .autoform-new-* stage may remain; inspect it before removal."
-    )
-    assert not target.exists()
-    stages = list(tmp_path.glob(".autoform-new-*"))
-    assert len(stages) == 1
-    assert (stages[0] / relative).is_file()
-    assert stat.S_IMODE(stages[0].stat().st_mode) == 0o700
+    result = create_project(tmp_path / "Project", package="Project", release_id=_RELEASE)
+
+    assert ".DS_Store" not in result.written
+    assert "README.md~" not in result.written
 
 
 @pytest.mark.parametrize("relative", _CORE_FILES)
@@ -243,6 +236,7 @@ def test_a_template_cannot_replace_a_core_project_file(
     (templates / relative).parent.mkdir(exist_ok=True)
     (templates / relative).write_text("template\n", encoding="utf-8")
     monkeypatch.setattr(create_module, "_TEMPLATES", templates)
+    monkeypatch.setattr(scaffold_module, "_TEMPLATE_PATHS", scaffold_module._TEMPLATE_PATHS | {relative})
 
     error = _refused(tmp_path / "Project", "project-create-validation-failed")
 
@@ -1173,19 +1167,8 @@ def test_postpublish_parent_recheck_failure_does_not_claim_a_rebind(
     assert inspect_project(target).ok
 
 
-@pytest.mark.parametrize("template_manifest", [False, True], ids=["catalog-release", "unlisted-template-manifest"])
-def test_workspace_substitution_fails_before_publication(
-    template_manifest: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_workspace_substitution_fails_before_publication(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     target = tmp_path / "project"
-    versions: dict[str, str | None] = {"release_id": _RELEASE}
-    if template_manifest:
-        # The identity check runs before the manifest refusal, so the code stays main's.
-        templates = tmp_path / "templates"
-        shutil.copytree(create_module._TEMPLATES, templates)
-        (templates / "lake-manifest.json").write_text('{"version": "1.1.0", "packages": []}\n', encoding="utf-8")
-        monkeypatch.setattr(create_module, "_TEMPLATES", templates)
-        versions = {"release_id": None, "lean_toolchain": "v4.30.0"}
     original = create_module._materialize_project
 
     def substitute(*args, **kwargs) -> None:
@@ -1197,7 +1180,7 @@ def test_workspace_substitution_fails_before_publication(
         (stage / "FOREIGN").write_text("foreign\n", encoding="utf-8")
 
     monkeypatch.setattr(create_module, "_materialize_project", substitute)
-    _fails(target, "project-create-failed", **versions)
+    _fails(target, "project-create-failed", release_id=_RELEASE)
     assert not target.exists()
     assert any(path.name == "FOREIGN" for path in tmp_path.rglob("FOREIGN"))
     # The renamed stage is refused before its chmod, so the written tree stays private.

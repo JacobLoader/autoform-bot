@@ -27,7 +27,7 @@ import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Callable, Iterator
+from typing import Callable, Iterator, Sequence
 
 from . import _directory_binding as directory_binding
 from ._directory_binding import (
@@ -1095,12 +1095,9 @@ def capture_directory_descriptor(
     def scan(descriptor: int, relative: str, depth: int, identity: tuple[int, ...]) -> bool:
         """Record one folder and its descendants; return whether it was recorded.
 
-        By default every descended folder is recorded.  With
-        ``selection.unselected_may_change`` only relevant folders are: the root
-        and a folder that directly holds a selected entry or a relevant folder.
-        Unselected entries and folders hidden by a recognized marker leave no
-        record, and an entry that vanishes before it is examined is treated as
-        absent.
+        By default every descended folder is recorded.  In selected-entry mode
+        only the root and folders that hold a recorded entry or a recorded
+        folder are, and an entry that vanishes before it is examined is absent.
         """
 
         selected_only = selection.unselected_may_change
@@ -1555,23 +1552,22 @@ def _recheck_scanned_directory(
     *,
     relative: str,
     depth: int,
-    kept: list[str],
+    kept: Sequence[str],
     unkept: dict[str, tuple[int, int, int]],
     selection: TreeSelection,
     budget: _CaptureBudget,
+    verify_kept: Callable[[int, str, str], None] | None = None,
 ) -> None:
-    """Relist a folder once its scan ends, in selected-entry mode.
+    """Relist a folder in selected-entry mode, at the end of its scan or at verification.
 
-    Its recorded names must still be present and, if it recorded any, it
-    must not have become hidden by a recognized marker; a folder that kept
-    nothing may.  Every other name must still be the entry the scan saw and did
-    not keep, by ``(dev, ino, file type)``, or must now be gone, be hidden by a
-    recognized marker, or hold no selected entry; names that appeared since the
-    scan's listing and names the scan dropped as vanished have no recorded
-    identity.
-    This is the selected-mode form of the strict end-of-folder relist, and
-    like it bounds the undetected window of this folder to the time between
-    this relist and its verification.
+    Its kept names must still be present and, if it kept any, no recognized
+    marker may now hide it.  Every other name must still be the entry the scan
+    saw and did not keep, by its ``(dev, ino, file type)`` in *unkept*, or must
+    now hold no selected entry.  At the end of a scan, like the strict
+    end-of-folder relist, this bounds the folder's undetected window to the
+    time between this relist and verification.  Verification passes an empty
+    *unkept* and checks each kept name the listing has with
+    ``verify_kept(descriptor, relative, name)``.
     """
 
     names = _relist_directory(
@@ -1592,6 +1588,8 @@ def _recheck_scanned_directory(
     recorded = set(kept)
     for name in names:
         if name in recorded:
+            if verify_kept is not None:
+                verify_kept(descriptor, relative, name)
             continue
         examined = unkept.get(name)
         if examined is not None:
@@ -1621,12 +1619,10 @@ def _relist_directory(
     selection: TreeSelection,
     budget: _CaptureBudget,
 ) -> tuple[str, ...] | None:
-    """List a folder again for a selected-mode recheck, as the scan lists it.
+    """List a folder again as the scan lists it, or return ``None`` if a marker now hides it.
 
-    Return ``None`` when a recognized marker now hides the folder; the caller
-    decides whether that hides recorded entries.  Limit, name and permission failures
-    become changes too: the scan already passed this folder, so the retry's
-    scan decides whether such a condition lasts.
+    Limit, name and permission failures are changes: the scan already passed
+    this folder, so the retry's scan decides whether such a condition lasts.
     """
 
     try:
@@ -1657,14 +1653,11 @@ def _require_no_inputs(
     selection: TreeSelection,
     budget: _CaptureBudget,
 ) -> None:
-    """Prove that whatever is now at *name* contributes no selected entry.
+    """Prove that whatever is now at *name* in the folder *relative* holds no selected entry.
 
-    *relative* and *depth* describe the parent folder.  Nothing here is
-    compared with the scan: a missing entry holds nothing, an unselected entry
-    contributes nothing, a folder hidden by a recognized marker contributes
-    nothing, and any other folder may be new or rebuilt as long as it
-    recursively holds nothing selected.  Folders the scan never descends into
-    are not opened.
+    Nothing is compared with the scan: a missing or unselected entry, a folder
+    the scan does not descend into and a folder hidden by a recognized marker
+    hold nothing; any other folder is walked.
     """
 
     child_relative = f"{relative}/{name}" if relative else name
@@ -1837,7 +1830,19 @@ def _verify_snapshot(
             verify_marker(descriptor, relative, expected.marker)
             return
         if selection.unselected_may_change:
-            verify_selected_directory(descriptor, relative, expected)
+            _recheck_scanned_directory(
+                descriptor,
+                relative=relative,
+                depth=relative.count("/") + 1 if relative else 0,
+                kept=expected.names,
+                unkept={},
+                selection=selection,
+                budget=budget,
+                # Passed as it is, not wrapped in a lambda or a partial, so each
+                # folder level costs three Python frames and no C-level call,
+                # which bounds how deep a tree without max_depth can be.
+                verify_kept=verify_recorded,
+            )
             return
         names_match = _directory_names_match(
             descriptor,
@@ -1852,13 +1857,7 @@ def _verify_snapshot(
         ):
             raise _TreeChanged(relative)
         for name in names:
-            child_relative = f"{relative}/{name}" if relative else name
-            metadata = _lookup(descriptor, name, relative)
-            directory = expected_directories.get(child_relative)
-            if directory is None:
-                verify_entry(child_relative, metadata)
-                continue
-            verify_child_directory(descriptor, relative, name, child_relative, metadata, directory)
+            verify_recorded(descriptor, relative, name)
         if (
             _stable_entry_identity(
                 _stat_signature(os.fstat(descriptor))
@@ -1871,71 +1870,25 @@ def _verify_snapshot(
         ):
             raise _TreeChanged(relative)
 
-    def verify_selected_directory(
-        descriptor: int,
-        relative: str,
-        expected: _DirectoryRecord,
-    ) -> None:
-        depth = relative.count("/") + 1 if relative else 0
-        names = _relist_directory(
-            descriptor,
-            relative,
-            depth=depth,
-            selection=selection,
-            budget=budget,
-        )
-        if names is None:
-            # A marker now hides the selected entries recorded here.
-            raise _TreeChanged(relative)
-        current = set(names)
-        for name in expected.names:
-            if name not in current:
-                raise _TreeChanged(f"{relative}/{name}" if relative else name)
-        recorded = set(expected.names)
-        for name in names:
-            if name not in recorded:
-                _require_no_inputs(
-                    descriptor,
-                    name,
-                    relative=relative,
-                    depth=depth,
-                    selection=selection,
-                    budget=budget,
-                )
-                continue
-            child_relative = f"{relative}/{name}" if relative else name
-            metadata = _lookup(descriptor, name, relative)
-            directory = expected_directories.get(child_relative)
-            if directory is None:
-                verify_entry(child_relative, metadata)
-                continue
-            verify_child_directory(descriptor, relative, name, child_relative, metadata, directory)
-
-    def verify_entry(child_relative: str, metadata: os.stat_result) -> None:
-        entry = expected_entries.get(child_relative)
-        if entry is None or (
-            not entry.ignored and _stat_signature(metadata) != entry.identity
-        ):
-            raise _TreeChanged(child_relative)
-        if entry.ignored and _entry_kind(metadata.st_mode) != _entry_kind(
-            entry.identity[2]
-        ):
-            raise _TreeChanged(child_relative)
-        visited_entries.add(child_relative)
-
-    def verify_child_directory(
-        descriptor: int,
-        relative: str,
-        name: str,
-        child_relative: str,
-        metadata: os.stat_result,
-        directory: _DirectoryRecord,
-    ) -> None:
-        observed_identity = _stat_signature(metadata)
-        expected_identity = directory.identity
+    def verify_recorded(descriptor: int, relative: str, name: str) -> None:
+        child_relative = f"{relative}/{name}" if relative else name
+        metadata = _lookup(descriptor, name, relative)
+        directory = expected_directories.get(child_relative)
+        if directory is None:
+            entry = expected_entries.get(child_relative)
+            if entry is None or (
+                not entry.ignored and _stat_signature(metadata) != entry.identity
+            ):
+                raise _TreeChanged(child_relative)
+            if entry.ignored and _entry_kind(metadata.st_mode) != _entry_kind(
+                entry.identity[2]
+            ):
+                raise _TreeChanged(child_relative)
+            visited_entries.add(child_relative)
+            return
         if not stat.S_ISDIR(metadata.st_mode) or _stable_entry_identity(
-            observed_identity
-        ) != _stable_entry_identity(expected_identity):
+            _stat_signature(metadata)
+        ) != _stable_entry_identity(directory.identity):
             raise _TreeChanged(child_relative)
         child_descriptor: int | None = None
         try:
@@ -1961,8 +1914,8 @@ def _verify_snapshot(
     try:
         verify_directory(root_descriptor, "")
     finally:
-        # verify_directory and verify_child_directory hold each other through
-        # their closures. Breaking that cycle lets reference counting free the
+        # verify_directory and verify_recorded hold each other through their
+        # closures. Breaking that cycle lets reference counting free the
         # selection they hold once verification ends.
         verify_directory = None  # type: ignore[assignment]
     if visited_directories != set(expected_directories) or visited_entries != set(

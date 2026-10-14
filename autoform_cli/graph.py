@@ -11,14 +11,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import stat
 from dataclasses import MISSING, dataclass, fields, replace
 from html import unescape
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote, urlsplit
 
 from .lean import declaration_names
-from .markdown import mask_fences_and_comments
+from .markdown import mask_code_and_comments
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 _LINK = re.compile(r"(?<!!)\[[^\]]+\]\(\s*(<[^>]+>|[^)\s]+)(?:\s+[^)]*)?\)")
@@ -413,23 +415,34 @@ def _discover_nodes(blueprint: Path) -> tuple[list[_NodeSource], list[str]]:
     issues: list[str] = []
     sources: list[_NodeSource] = []
     roadmap_root = roadmap_root.resolve()
-    entries = sorted(roadmap_root.rglob("*"))
-    for path in entries:
-        if path.is_file() and path.name.casefold() == "readme.md" and path.name != "README.md":
-            relative = path.relative_to(roadmap_root).as_posix()
-            issues.append(
-                f"{relative}: noncanonical README filename; container pages must be named exactly README.md "
-                "for portable behavior on case-sensitive filesystems"
-            )
 
+    def unlistable(exc: OSError) -> None:
+        issues.append(f"cannot list roadmap directory {exc.filename}: {exc.strerror}")
+
+    # Unlike a glob, a walk reports each directory it cannot list.
+    entries = sorted(
+        Path(directory, name) for directory, _, files in os.walk(roadmap_root, onerror=unlistable) for name in files
+    )
+    issues.sort()  # a walk visits directories in arbitrary order
     for path in entries:
-        if not path.is_file() or path.suffix != ".md":
+        if path.suffix != ".md" and path.name.casefold() != "readme.md":
             continue
+        relative = path.relative_to(roadmap_root).as_posix()
         try:
+            if not stat.S_ISREG(path.stat().st_mode):
+                continue
+            if path.name.casefold() == "readme.md" and path.name != "README.md":
+                issues.append(
+                    f"{relative}: noncanonical README filename; container pages must be named exactly README.md "
+                    "for portable behavior on case-sensitive filesystems"
+                )
+            if path.suffix != ".md":
+                continue
             content = path.read_bytes()
             text = content.decode("utf-8")
+        except FileNotFoundError:
+            continue  # removed since the walk
         except (OSError, UnicodeError) as exc:
-            relative = path.relative_to(roadmap_root).as_posix()
             issues.append(f"{relative}: cannot read roadmap page: {exc}")
             continue
         node_id = _article_id(path, roadmap_root)
@@ -453,7 +466,9 @@ def roadmap_symlink_issues(blueprint: Path) -> list[str]:
     """
 
     roadmap = blueprint / "roadmap"
-    paths = [roadmap] if roadmap.is_symlink() else [path for path in sorted(roadmap.rglob("*")) if path.is_symlink()]
+    # os.path.islink is False for a path it cannot stat, which discovery then reports; Path.is_symlink raises
+    # before 3.14.
+    paths = [roadmap] if roadmap.is_symlink() else [path for path in sorted(roadmap.rglob("*")) if os.path.islink(path)]
     return [f"roadmap contains a symbolic link: {path.relative_to(blueprint).as_posix()}" for path in paths]
 
 
@@ -490,10 +505,10 @@ def _chapter_issues(roadmap_root: Path) -> list[str]:
         return []
     issues = []
     for chapter in chapters:
-        articles = [path for path in chapter.rglob("*.md") if path.is_file()]
+        articles = [path for path in chapter.rglob("*.md") if os.path.isfile(path)]
         if not articles:
             continue
-        if (chapter / "README.md").is_file():
+        if os.path.isfile(chapter / "README.md"):
             continue
         names = articles
         issues.append(
@@ -648,9 +663,10 @@ def _parse_node(node_id: str, path: Path, text: str) -> tuple[_ParsedNode | None
     }
     section: str | None = None
 
-    # Fences and comments are read as the page and the audit read them, so a
-    # section a reader sees never loses its links here.
-    body = mask_fences_and_comments(lines[body_start:])
+    # Fences, comments and indented code are read as the page and the audit
+    # read them, so a section a reader sees never loses its links here, and a
+    # link the page shows as code is not read as one.
+    body = mask_code_and_comments(lines[body_start:])
     for line in body:
         heading = _HEADING.match(line)
         if heading:
@@ -693,8 +709,8 @@ def _parse_node(node_id: str, path: Path, text: str) -> tuple[_ParsedNode | None
 def _extract_summary(body: list[str], *, limit: int = 420) -> str | None:
     """Return the first reader-facing prose paragraph from a roadmap article.
 
-    ``body`` is the article below its frontmatter with fences and comments
-    already masked, so the summary reads what the page shows.
+    ``body`` is the article below its frontmatter with fences, comments and
+    indented code already masked, so the summary reads what the page shows.
     """
     paragraph: list[str] = []
     excluded = False
@@ -831,7 +847,20 @@ def _normalize_value(node_id: str, line_number: int, key: str, value: str) -> tu
         if folded not in {"allowed", "forbidden"}:
             return value, f"{location}: 'open_statements' accepts allowed or forbidden"
         return folded, None
+    if key == "mathlib_file" and not _is_portable_relative_path(value):
+        return value, f"{location}: 'mathlib_file' must be a portable relative path"
     return value, None
+
+
+def _is_portable_relative_path(value: str) -> bool:
+    path = Path(value)
+    windows = PureWindowsPath(value)
+    return (
+        not path.is_absolute()
+        and not windows.is_absolute()
+        and ".." not in path.parts
+        and ".." not in windows.parts
+    )
 
 
 def _unquote_scalar(value: str) -> str:
