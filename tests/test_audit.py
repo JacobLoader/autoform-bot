@@ -10,7 +10,7 @@ import autoform_cli.audit as audit_module
 from autoform_cli.audit import audit_blueprint, audit_graph
 from autoform_cli.elaboration_limits import limits_in_force
 from autoform_cli.graph import Graph, Node, load_graph
-from autoform_cli.lean import LeanSourceError
+from autoform_cli.lean import LeanSourceError, index_project
 
 
 def _ensure_chapter(blueprint: Path, relative: str) -> None:
@@ -562,6 +562,7 @@ def test_audit_reports_lean_targets_declared_deprecated(tmp_path: Path) -> None:
         "fresh.md": "Project.fresh",
         "decoy.md": "Project.decoy",
         "after-previous.md": "Project.afterPrevious",
+        "old-alias.md": "Project.oldAlias",
         "after-alias.md": "Project.afterAlias",
     }
     for relative, name in targets.items():
@@ -615,7 +616,191 @@ def test_audit_reports_lean_targets_declared_deprecated(tmp_path: Path) -> None:
         "roadmap/line-above.md": deprecated("Project.lineAbove"),
         "roadmap/multi-line.md": deprecated("Project.multiLine"),
         "roadmap/public.md": deprecated("Project.publicOld"),
+        "roadmap/old-alias.md": deprecated("Project.oldAlias"),
     }
+
+
+def test_audit_resolves_an_alias_s_target_as_lean_does(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    # Each intent is wrong for the declaration the alias reaches, so every
+    # alias the audit resolves shows as a finding. The last five cannot be
+    # placed, so any intent matches them.
+    targets = {
+        "same-namespace.md": ("definition", "Project.sameNamespace"),
+        "chained.md": ("theorem", "Project.chained"),
+        "private.md": ("definition", "Project.revealed"),
+        "later.md": ("definition", "Project.early"),
+        "iff.md": ("definition", "Project.forward"),
+        "local-iff.md": ("definition", "Project.axForward"),
+        "alias-of-iff.md": ("definition", "Project.axForward'"),
+        "inner-first.md": ("definition", "Project.Inner.innerFirst"),
+        "protected.md": ("definition", "Project.skipsProtected"),
+        "outer-only.md": ("definition", "Project.Inner.outerOnly"),
+        "other-file.md": ("definition", "Project.remote"),
+        "shadowed.md": ("theorem", "Nat.myLemma"),
+        "external.md": ("definition", "Project.external"),
+    }
+    for relative, (declaration, name) in targets.items():
+        _article(blueprint, relative, declaration=declaration, statement="formalized", lean=name)
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    source = [
+        "theorem t : True := trivial",
+        "theorem later : True := trivial",
+        "def succ_le_succ : Nat := 0",
+        "namespace Project",
+        "theorem base : True := trivial",
+        "def value : Nat := 0",
+        "protected def t : Nat := 0",
+        "private theorem secret : True := trivial",
+        "axiom ax_iff : True ↔ True",
+        "alias sameNamespace := base",
+        "alias middle := value",
+        "alias chained := middle",
+        "alias revealed := secret",
+        # `Project.later` does not exist yet where the alias is elaborated.
+        "alias early := later",
+        "def later : Nat := 0",
+        # Batteries makes each name of an iff alias a theorem, and an alias of one.
+        "alias ⟨forward, _⟩ := Nat.lt_iff_add_one_le",
+        "alias ⟨axForward, _⟩ := ax_iff",
+        "alias axForward' := axForward",
+        # Lean skips `Project.t` here unless the module system made it private.
+        "alias skipsProtected := t",
+        "alias external := Nat.succ_le_succ",
+        "namespace Inner",
+        "theorem value : True := trivial",
+        "alias innerFirst := value",
+        "alias outerOnly := base",
+        "end Inner",
+        "end Project",
+        # Lean means Mathlib's `Nat.succ_le_succ` here, not the root `def`.
+        "namespace Nat",
+        "alias myLemma := succ_le_succ",
+        "end Nat",
+    ]
+    (lean_root / "Aliases.lean").write_text("\n".join(source) + "\n", encoding="utf-8")
+    # Below `Project.base`'s line, so only the file tells them apart.
+    (lean_root / "Other.lean").write_text(
+        "\n" * 9 + "namespace Project\nalias remote := base\nend Project\n", encoding="utf-8"
+    )
+
+    def mismatch(kind: str, intent: str) -> list[tuple[str, str]]:
+        reason = f"Lean target kind alias of {kind} does not match declaration intent {intent}"
+        return [("lean-target-kind-mismatch", reason)]
+
+    assert _finding_map(blueprint, lean_root=lean_root) == {
+        "roadmap/same-namespace.md": mismatch("theorem", "definition"),
+        "roadmap/chained.md": mismatch("def", "theorem"),
+        "roadmap/private.md": mismatch("theorem", "definition"),
+        "roadmap/later.md": mismatch("theorem", "definition"),
+        "roadmap/iff.md": mismatch("theorem", "definition"),
+        "roadmap/local-iff.md": mismatch("theorem", "definition"),
+        "roadmap/alias-of-iff.md": mismatch("theorem", "definition"),
+        "roadmap/inner-first.md": mismatch("theorem", "definition"),
+    }
+
+
+def test_audit_reads_an_alias_s_limits_and_wanted_command_from_its_target(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    _article(blueprint, "small.md", declaration="theorem", statement="formalized", lean="Project.small")
+    _article(
+        blueprint, "pending.md", declaration="theorem", statement="formalized", proof="formalized", lean="Project.ofWanted"
+    )
+    _article(blueprint, "forward.md", declaration="theorem", statement="formalized", lean="Project.bigForward")
+    _article(blueprint, "wide.md", declaration="theorem", statement="formalized", lean="wide")
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    source = [
+        "namespace Project",
+        "set_option maxHeartbeats 0 in",
+        "theorem big : True := by",
+        "  trivial",
+        "alias small := big",
+        "theorem_wanted pending : True",
+        "alias ofWanted := pending",
+        "set_option maxHeartbeats 0 in",
+        "theorem big_iff : True ↔ True := Iff.rfl",
+        "alias ⟨bigForward, _⟩ := big_iff",
+        "end Project",
+    ]
+    (lean_root / "Aliases.lean").write_text("\n".join(source) + "\n", encoding="utf-8")
+    # An alias the index cannot place still has its own limits.
+    (lean_root / "Wide.lean").write_text("set_option maxHeartbeats 400000\nalias wide := Nat.succ_le_succ\n", encoding="utf-8")
+
+    assert _finding_map(blueprint, lean_root=lean_root) == {
+        "roadmap/small.md": [
+            (
+                "lean-target-unbounded-limit",
+                "lean target Project.big has no maxHeartbeats limit: `set_option maxHeartbeats 0` at "
+                "Aliases.lean:2; set a finite limit",
+            )
+        ],
+        "roadmap/pending.md": [
+            (
+                "lean-target-wanted",
+                "lean target Project.ofWanted is an alias of a theorem_wanted, which defers its proof or "
+                "construction, so it cannot back proof: formalized",
+            )
+        ],
+        "roadmap/forward.md": [
+            (
+                "lean-target-unbounded-limit",
+                "lean target Project.big_iff has no maxHeartbeats limit: `set_option maxHeartbeats 0` at "
+                "Aliases.lean:8; set a finite limit",
+            )
+        ],
+        "roadmap/wide.md": [
+            (
+                "lean-target-unscoped-limit",
+                "lean target wide inherits the file-wide `set_option maxHeartbeats 400000` at Wide.lean:1; "
+                "put `set_option maxHeartbeats N in` on the declarations that need it",
+            )
+        ],
+    }
+
+
+def test_audit_measures_an_alias_by_its_target_s_span(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    _article(blueprint, "README.md", depends=False)
+    spans = {f"Project.small{index}": 6 for index in range(5)}
+    spans["Project.big"] = 420
+    for name in spans:
+        _article(
+            blueprint,
+            f"{name.rsplit('.', 1)[-1]}.md",
+            declaration="theorem",
+            statement="formalized",
+            proof="formalized",
+            # The target named beside its alias still counts once.
+            lean="Project.bigAlias Project.big" if name == "Project.big" else name,
+        )
+    lean_root = _lean_project(tmp_path, spans)
+    with (lean_root / "big.lean").open("a", encoding="utf-8") as source:
+        source.write("alias Project.bigAlias := Project.big\n")
+
+    assert _finding_map(blueprint, lean_root=lean_root) == {
+        "roadmap/big.md": [
+            (
+                "node-too-large",
+                "node's Lean declarations span 420 lines against this project's "
+                "6-line median; split it into pull-request-sized nodes",
+            )
+        ]
+    }
+
+
+def test_an_alias_ends_the_source_span_of_the_declaration_above_it(tmp_path: Path) -> None:
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    (lean_root / "Big.lean").write_text(
+        "theorem big : True := by\n  trivial\nalias small := big\n\n", encoding="utf-8"
+    )
+
+    assert audit_module._source_spans(index_project(lean_root)) == {"big": 2, "small": 2}
 
 
 def test_audit_reports_unbounded_and_inherited_elaboration_limits(tmp_path: Path) -> None:

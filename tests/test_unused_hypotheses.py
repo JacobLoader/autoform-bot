@@ -171,6 +171,26 @@ def test_unresolved_declarations_are_reported_and_fail(tmp_path: Path) -> None:
     assert all(f"error: {message}\n" in text for message in messages)
 
 
+def test_an_alias_is_refused_without_running_lean(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    (project / "Skel" / "Aliased.lean").write_text("namespace Skel\nalias aliased := heavy\nend Skel\n", encoding="utf-8")
+    # An alias the index can follow is refused too: its own proof is the same.
+    with (project / "Skel" / "Defs.lean").open("a", encoding="utf-8") as source:
+        source.write("namespace Skel\nalias aliasedHere := heavy\nend Skel\n")
+    blueprint = _blueprint(tmp_path, lean={"aliased": "Skel.aliased", "here": "Skel.aliasedHere"})
+
+    def runner(probe: str, root: Path) -> str:
+        raise AssertionError("an alias's own proof only names its target, so Lean must not run")
+
+    report = find_unused_hypotheses(blueprint, lean_root=project, runner=runner)
+
+    assert [item.message for item in report.unresolved] == [
+        "basics/aliased: Skel.aliased: an alias, whose own proof only names its target",
+        "basics/here: Skel.aliasedHere: an alias, whose own proof only names its target",
+    ]
+    assert not report.clean
+
+
 def test_nothing_placed_reports_without_running_lean(tmp_path: Path) -> None:
     project = _project(tmp_path)
     blueprint = _blueprint(tmp_path, lean={"absent": "Skel.absent"})

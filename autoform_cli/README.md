@@ -671,8 +671,8 @@ binder mentions cannot be deleted and is not listed. A proof that itself
 contains `sorry` is not read; a complete proof that uses an open statement is.
 Findings are for a reviewer and never fail the run, since the source may state
 a hypothesis its theorem does not need; the command exits 1 only when a `lean:`
-name cannot be found. `--json` writes the `autoform-unused-hypotheses/v1`
-report.
+name cannot be read: it is not found, or it is an alias, whose proof only names
+its target. `--json` writes the `autoform-unused-hypotheses/v1` report.
 
 `lake build` already warns about some of these: Lean's `unusedVariables`
 linter names a hypothesis the proof never references, and `unusedSectionVars`
@@ -1017,14 +1017,18 @@ folders can yield a set of sources that no single state had.
 
 Within each file the index records the declarations written with `theorem`,
 `lemma`, `def`, `abbrev`, `instance`, `structure`, `class`, `inductive`,
-`opaque`, `axiom`, `irreducible_def`, and Batteries' wanted commands
+`opaque`, `axiom`, `irreducible_def`, Batteries' wanted commands
 (`Batteries.Util.ProofWanted`) `theorem_wanted`, `proof_wanted`, `def_wanted`,
-and `instance_wanted`. The command may follow `@[...]` attribute lists and the
-modifiers `public`, `private`, `protected`, `noncomputable`, `partial`,
-`unsafe`, `scoped`, and `local`; a declaration behind any other modifier, such
-as `meta` or `nonrec`, is not indexed, and neither is an unnamed `instance` or
-`instance_wanted`. A wanted command states a result whose proof or construction
-is deferred.
+and `instance_wanted`, and Batteries' `alias`. The command may follow `@[...]`
+attribute lists and the modifiers `public`, `private`, `protected`,
+`noncomputable`, `partial`, `unsafe`, `scoped`, and `local`; a declaration
+behind any other modifier, such as `meta` or `nonrec`, is not indexed, and
+neither is an unnamed `instance` or `instance_wanted`. A name written
+`_root_.X` is recorded as `X`, whatever namespace it is declared in. A wanted
+command states a result whose proof or construction is deferred. `alias b :=
+a` records `b`, and `alias ⟨mp, mpr⟩ := a_iff` records each of its two names
+that is not `_`; the `:=` must be on the alias's line, and the target on that
+line or the next nonblank one.
 
 The Markdown files are the source of truth. Graphs and sites are derived views
 that may be regenerated at any time.
@@ -1042,13 +1046,28 @@ links and explicitly declared gaps. With `--lean-root`, local declaration names
 and declaration kinds are checked against the Lean source index, along with the
 elaboration limits each target runs under.
 
+An alias has its target's kind, size, and elaboration limits when the index
+can be sure what the target is. The audit tries the names Lean tries, in the
+alias's namespace, then in each enclosing one, then at the root, passing over
+a declaration below the alias in its file, which Lean has not seen yet. The
+first other name must be a declaration above the alias in the same file. A
+name the index does not hold may be declared by another library such as
+Mathlib, one in another file may not be imported, and a `protected` one for a
+one-component target is skipped by Lean unless it is also private, written or
+under the module system; such an alias matches any intent and is measured, like
+any other declaration, by its own span and limits. Each name of
+`alias ⟨mp, mpr⟩`, and any alias of one, is a theorem whatever its target is.
+Batteries makes an alias of anything but a theorem a `def`, but the audit checks
+what an article's object is, and an alias names the same object as its target.
+
 A wanted target matches the intent its command mirrors: `theorem_wanted` and
 `proof_wanted` a `theorem`, `lemma`, `proposition`, or `corollary`,
 `def_wanted` a `def` or `definition`, and `instance_wanted` an `instance`. A
 theorem's wanted target can back `statement: formalized`, but no wanted target
-backs a proved article: `lean-target-wanted` reports one named by an article
-that records `proof: formalized`, or by a definition that records `statement:
-formalized`, since a stated definition counts as proved. A wanted command
+backs a proved article: `lean-target-wanted` reports one named, directly or
+through an alias, by an article that records `proof: formalized`, or by a
+definition that records `statement: formalized`, since a stated definition
+counts as proved. A wanted command
 without a body elaborates to a placeholder that carries no `sorry`, so no
 `sorry` check catches one. The kernel-trust audit of the generated verify
 workflow does not resolve wanted targets yet: Batteries declares every

@@ -478,12 +478,21 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
                     )
                 )
 
-        for declaration in resolved:
-            findings.extend(_limit_findings(article_path, declaration, sources))
+        # An alias's proof is its target's, so the limits and size are the
+        # target's too. An alias whose target the index cannot place is
+        # measured like any other declaration.
+        bodies = list(dict.fromkeys(index.reached(declaration) or declaration for declaration in resolved))
+        for body in bodies:
+            findings.extend(_limit_findings(article_path, body, sources))
 
         expected = _DECLARATION_KEYWORDS.get((node.declaration or "").casefold())
-        if expected and resolved and not any(declaration.keyword in expected for declaration in resolved):
-            actual = ", ".join(sorted({declaration.keyword for declaration in resolved}))
+        kinds = [_kind(declaration, index) for declaration in resolved]
+        # An alias whose target the index cannot place may have any kind.
+        if expected and resolved and not any(kind is None or kind in expected for kind in kinds):
+            described = {
+                f"alias of {kind}" if declaration.alias else str(kind) for declaration, kind in zip(resolved, kinds)
+            }
+            actual = ", ".join(sorted(described))
             findings.append(
                 AuditFinding(
                     article_path,
@@ -501,22 +510,41 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
         else:
             claim = None
         if claim is not None:
-            for declaration in resolved:
-                if declaration.keyword in _WANTED_KEYWORDS:
+            for declaration, kind in zip(resolved, kinds):
+                if kind in _WANTED_KEYWORDS:
+                    what = f"an alias of a {kind}" if declaration.alias else f"a {kind}"
                     findings.append(
                         AuditFinding(
                             article_path,
                             "lean-target-wanted",
-                            f"lean target {declaration.name} is a {declaration.keyword}, which defers "
+                            f"lean target {declaration.name} is {what}, which defers "
                             f"its proof or construction, so it cannot back {claim}",
                         )
                     )
 
         if resolved:
-            sizes[node_id] = sum(spans[declaration.name] for declaration in resolved)
+            sizes[node_id] = sum(spans[body.name] for body in bodies)
 
     findings.extend(_size_findings(graph, sizes))
     return findings
+
+
+def _kind(declaration: Declaration, index: SourceIndex) -> str | None:
+    """The keyword whose kind ``declaration`` has; an alias has its target's.
+
+    Each name of ``alias ⟨mp, mpr⟩`` is a theorem whatever its target is, and
+    so is an alias of one. Any other alias whose target the index cannot place
+    has no known kind: ``None``.
+    """
+
+    while declaration.alias is not None:
+        if declaration.alias.iff:
+            return "theorem"
+        target = index.alias_target(declaration)
+        if target is None:
+            return None
+        declaration = target
+    return declaration.keyword
 
 
 def _captured_source_lines(
