@@ -113,16 +113,24 @@ with `#print axioms`; do not accept `sorry`, new axioms, unsafe shortcuts, a
 weaker theorem, unused hypotheses (see below), or an unrelated declaration,
 except as the open-statement policy below allows.
 
-Before adding a helper, also run `autoform search` over the blueprint of
-`<PROJECT>` for it, as the
-[search contract](../../autoform_cli/README.md#search-contract) describes. Read
-each hit's statement. Matching is literal, so no article states the helper only
-when retries with fewer words, and under other usual names, also show none. A
-refusal (exit 2) is not an empty result: retry one that asks for it, otherwise
-add no helper and report the refusal as the leaf's blocker. Use the declaration
-of a hit that states the helper only when the claimed article's dependencies
-reach that hit's article, and as the open-statement policy below allows. A hit
-they do not reach is a missing prerequisite; never restate a hit as a helper.
+Before stating an article's result and before adding a helper, also run
+`autoform search` over the blueprint of `<PROJECT>` and its usable shared
+libraries for it, as the
+[search contract](../../autoform_cli/README.md#search-contract) describes; the
+[library search rules](references/library-search.md) say how to use a library
+hit. Read each hit's statement; the search before stating an article's result
+finds that article itself, which is not a duplicate. Matching is literal, so no
+article states the helper only when retries with fewer words, and under other
+usual names, also show none. A refusal (exit 2) is not an empty result. A
+refusal that names a library: rerun without that library and continue, and
+report that library as not searched, so its answer is unknown. Any other
+refusal: retry one that asks for it, otherwise add no helper and report it as
+the leaf's blocker. Use the declaration of a blueprint hit that states the
+helper only when the claimed article's dependencies reach that hit's article,
+and as the open-statement policy below allows. A hit they do not reach is a
+missing prerequisite; never restate a hit as a helper. A library hit needed as
+a helper is used directly; one that states the article's own result is handled
+as the library search rules say.
 
 `roadmap/README.md` sets the project's policy. Under the default strict policy,
 project CI rejects `sorry`: the statement phase writes the declaration and, for

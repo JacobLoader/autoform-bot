@@ -13,6 +13,20 @@ namespace AutoformImpact
 
 def probeOutputLimit : Nat := {output_limit}
 
+/-- Names as the CLI passes them: JSON `[request, components]` pairs, where a
+component is a string or a number. A list literal of names would be compiled,
+and the code generator gives up on one longer than about 1,500 entries. -/
+def requestedNames (text : String) : CommandElabM (Array Name) := do
+  let decode (entry : Json) : Except String Name := do
+    let components ← entry.getArrVal? 1 >>= (·.getArr?)
+    components.foldlM (init := Name.anonymous) fun name component =>
+      match component with
+      | .str part => pure (name.str part)
+      | _ => name.num <$> component.getNat?
+  match _root_.Lean.Json.parse text >>= (·.getArr?) >>= (·.mapM decode) with
+  | .ok names => pure names
+  | .error e => throwError ("the project module list is malformed: " ++ e)
+
 /-- Write one complete record without letting the scratch file grow past the
 CLI's output limit. The Python reader checks the limit again after exit. -/
 def emitRecord (out : IO.FS.Handle) (written : IO.Ref Nat) (marker : String)
@@ -110,7 +124,8 @@ end AutoformImpact
 
 set_option maxHeartbeats 0 in
 run_cmd do
-  let projectModules : Std.HashSet Name := Std.HashSet.ofList [{project_modules}]
+  let projectModules : Std.HashSet Name :=
+    Std.HashSet.ofList (← AutoformImpact.requestedNames {project_modules}).toList
   let env ← getEnv
   -- `env.header` is slow to reach from the interpreted probe, so module names
   -- are read once.

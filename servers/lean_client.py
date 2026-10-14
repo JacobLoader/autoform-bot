@@ -1,8 +1,8 @@
 """Client and bootstrap logic for Autoform's node-local Lean runtime.
 
 The two public MCP processes are intentionally short-lived stdio adapters.  A
-small detached process owns the expensive Lean REPL pools and LSP sessions and
-is reached through a private Unix-domain socket.
+small detached process owns the warm LSP sessions and the per-project REPL slot
+pools, and is reached through a private Unix-domain socket.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ INSTALL_PATH_ID = hashlib.sha256(os.fsencode(PACKAGE_ROOT)).hexdigest()[:10]
 _RUNTIME_SOURCES = (
     Path(__file__).resolve(),
     PACKAGE_ROOT / "servers" / "lean_runtime.py",
+    PACKAGE_ROOT / "servers" / "batch_diagnostics.py",
     PACKAGE_ROOT / "servers" / "lsp" / "server.py",
     PACKAGE_ROOT / "servers" / "repl" / "core.py",
     PACKAGE_ROOT / "servers" / "repl" / "pool.py",

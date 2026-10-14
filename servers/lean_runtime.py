@@ -16,6 +16,7 @@ import shlex
 import signal
 import socketserver
 import stat
+import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -26,6 +27,7 @@ from pathlib import Path
 from typing import Any, Generic, TypeVar
 
 from servers import resolve_lean_file, resolve_lean_project_dir
+from servers.batch_diagnostics import BatchCleanupError, batch_diagnostics, retire_until_gone
 from servers.lean_client import (
     BUILD_GENERATION,
     INSTALL_ID,
@@ -45,10 +47,9 @@ from servers.lsp.server import (
     LeanLspSession,
     format_lsp_diagnostics,
 )
-from servers.repl.core import DEFAULT_REPL_STARTUP_TIMEOUT, format_repl_response
+from servers.repl.core import default_header_command, format_repl_response
 from servers.repl.pool import (
     DEFAULT_RAM_FRACTION,
-    DEFAULT_STARTUP_STAGGER_SECONDS,
     LeanReplPool,
     LeanReplPoolConfig,
     LeanReplPoolStartupError,
@@ -62,7 +63,7 @@ DEFAULT_MAX_PROJECTS = 4
 DEFAULT_IDLE_SECONDS = 30 * 60
 DEFAULT_LSP_TIMEOUT = 60.0
 DEFAULT_MAX_LSP_REQUEST_SECONDS = 600.0
-DEFAULT_REPL_REQUEST_TIMEOUT = 30.0
+DEFAULT_REPL_REQUEST_TIMEOUT = 240.0
 DEFAULT_MAX_REPL_REQUEST_SECONDS = 240.0
 DEFAULT_RPC_READ_TIMEOUT = 10.0
 DEFAULT_MAX_CONNECTIONS = 64
@@ -88,12 +89,8 @@ class _FailedResourceCreation:
 
 
 def _repl_creation_budget(worker_count: int) -> float:
-    """Bound victim cleanup, cold startup, and failed-start cleanup."""
-    return (
-        worker_count * DEFAULT_REPL_STARTUP_TIMEOUT
-        + max(0, worker_count - 1) * DEFAULT_STARTUP_STAGGER_SECONDS
-        + 2 * worker_count * REPL_WORKER_CLOSE_BUDGET
-    )
+    """Bound cleanup of an evicted pool; cold slots spawn no subprocesses."""
+    return worker_count * REPL_WORKER_CLOSE_BUDGET
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -147,6 +144,7 @@ class LeanRuntimeConfig:
     repl_workers_per_project: int
     repl_project_limit: int
     repl_command: tuple[str, ...]
+    repl_header_command: tuple[str, ...]
     lsp_command: tuple[str, ...]
     lsp_timeout: float
     max_lsp_request_seconds: float
@@ -155,6 +153,7 @@ class LeanRuntimeConfig:
     rpc_read_timeout: float
     max_connections: int
     response_timeout: float
+    diagnostics_command: tuple[str, ...]
 
     @classmethod
     def from_environment(cls) -> "LeanRuntimeConfig":
@@ -185,19 +184,32 @@ class LeanRuntimeConfig:
                 "AUTOFORM_REPL_TOTAL_WORKERS"
             )
         repl_project_limit = min(max_projects, total_workers // workers_per_project)
-        repl_command = tuple(shlex.split(os.environ.get("LEAN_REPL_CMD", "lake exe repl")))
+        repl_command = tuple(shlex.split(os.environ.get("LEAN_REPL_CMD", "lake exe @repl/repl")))
+        raw_header_command = os.environ.get("LEAN_REPL_HEADER_CMD")
         lsp_command = tuple(shlex.split(os.environ.get("LEAN_LSP_CMD", "lake serve")))
         if not repl_command:
             raise ValueError("LEAN_REPL_CMD must not be empty")
+        if raw_header_command is not None:
+            repl_header_command = tuple(shlex.split(raw_header_command))
+            if not repl_header_command:
+                raise ValueError("LEAN_REPL_HEADER_CMD must not be empty")
+        elif Path(repl_command[0]).name == "lake":
+            repl_header_command = tuple(default_header_command(repl_command[0]))
+        else:
+            raise ValueError(
+                "LEAN_REPL_HEADER_CMD must be set when LEAN_REPL_CMD does not "
+                "start with a `lake` executable"
+            )
         if not lsp_command:
             raise ValueError("LEAN_LSP_CMD must not be empty")
-        repl_request_timeout = _positive_float(
-            "AUTOFORM_REPL_REQUEST_TIMEOUT",
-            DEFAULT_REPL_REQUEST_TIMEOUT,
-        )
         max_repl_request_seconds = _positive_float(
             "AUTOFORM_MAX_REPL_REQUEST_SECONDS",
             DEFAULT_MAX_REPL_REQUEST_SECONDS,
+        )
+        # The default follows a lowered maximum, so the maximum can be set alone.
+        repl_request_timeout = _positive_float(
+            "AUTOFORM_REPL_REQUEST_TIMEOUT",
+            min(DEFAULT_REPL_REQUEST_TIMEOUT, max_repl_request_seconds),
         )
         if repl_request_timeout > max_repl_request_seconds:
             raise ValueError(
@@ -213,6 +225,9 @@ class LeanRuntimeConfig:
             raise ValueError(
                 "LEAN_LSP_TIMEOUT cannot exceed AUTOFORM_MAX_LSP_REQUEST_SECONDS"
             )
+        # Diagnostics use the Lake that LEAN_LSP_CMD names ("<lake> serve"), else the one on PATH.
+        lake = lsp_command[:-1] if lsp_command[-1] == "serve" else ("lake",)
+        diagnostics_command = (*lake, "--no-build", "lean")
         response_timeout = _positive_float(
             "AUTOFORM_RUNTIME_RESPONSE_TIMEOUT",
             DEFAULT_RESPONSE_TIMEOUT,
@@ -226,7 +241,7 @@ class LeanRuntimeConfig:
         ):
             raise ValueError(
                 "AUTOFORM_RUNTIME_RESPONSE_TIMEOUT is too small for the configured "
-                "REPL worker startup and request limits"
+                "REPL pool replacement and request limits"
             )
         if (
             LSP_CLOSE_BUDGET
@@ -246,6 +261,7 @@ class LeanRuntimeConfig:
             repl_workers_per_project=workers_per_project,
             repl_project_limit=max(1, repl_project_limit),
             repl_command=repl_command,
+            repl_header_command=repl_header_command,
             lsp_command=lsp_command,
             lsp_timeout=lsp_timeout,
             max_lsp_request_seconds=max_lsp_request_seconds,
@@ -260,6 +276,7 @@ class LeanRuntimeConfig:
                 DEFAULT_MAX_CONNECTIONS,
             ),
             response_timeout=response_timeout,
+            diagnostics_command=diagnostics_command,
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -270,6 +287,7 @@ class LeanRuntimeConfig:
             "repl_workers_per_project": self.repl_workers_per_project,
             "repl_project_limit": self.repl_project_limit,
             "repl_command": list(self.repl_command),
+            "repl_header_command": list(self.repl_header_command),
             "lsp_command": list(self.lsp_command),
             "lsp_timeout": self.lsp_timeout,
             "max_lsp_request_seconds": self.max_lsp_request_seconds,
@@ -278,6 +296,7 @@ class LeanRuntimeConfig:
             "rpc_read_timeout": self.rpc_read_timeout,
             "max_connections": self.max_connections,
             "response_timeout": self.response_timeout,
+            "diagnostics_command": list(self.diagnostics_command),
         }
 
 
@@ -818,8 +837,8 @@ class LeanRuntimeServices:
                     LeanReplPoolConfig(
                         cwd=str(project_dir),
                         repl_command=list(self.config.repl_command),
+                        header_command=list(self.config.repl_header_command),
                         num_repls=self.config.repl_workers_per_project,
-                        max_retries=0,
                     )
                 )
             except LeanReplPoolStartupError as error:
@@ -846,6 +865,7 @@ class LeanRuntimeServices:
             lambda pool: pool.shutdown(),
             max_entries=self.config.repl_project_limit,
             idle_seconds=self.config.idle_seconds,
+            is_valid=lambda pool: not pool.requires_retirement,
             start_sweeper=start_sweepers,
         )
         try:
@@ -860,6 +880,10 @@ class LeanRuntimeServices:
         except BaseException:
             self.repl_projects.close()
             raise
+        # At most max_projects ``lake lean`` checks run at once, besides the
+        # language servers hover keeps.
+        self._batch_slots = threading.BoundedSemaphore(self.config.max_projects)
+        self._batch_reapers: list[threading.Thread] = []
 
     def dispatch(self, method: str, params: dict[str, Any]) -> Any:
         if method == "daemon.ping":
@@ -886,13 +910,19 @@ class LeanRuntimeServices:
                     "timeout exceeds the node-wide limit of "
                     f"{self.config.max_repl_request_seconds:g} seconds"
                 )
-            with self.repl_projects.lease(
-                project_dir,
+            root = resolve_lean_project_dir(project_dir)
+            with self.repl_projects.lease_resolved(
+                root,
                 acquisition_timeout=self._acquisition_timeout(effective_timeout),
                 creation_budget=self.repl_creation_budget,
             ) as pool:
                 assert pool is not None
-                return format_repl_response(pool.run(code, timeout=effective_timeout))
+                try:
+                    result = pool.run(code, timeout=effective_timeout)
+                finally:
+                    if pool.requires_retirement:
+                        self.repl_projects.invalidate_resolved(root, pool)
+                return format_repl_response(result)
         if method == "repl.status":
             project_dir = self._string_param(params, "project_dir")
             with self.repl_projects.observe(project_dir) as (pool, state):
@@ -914,11 +944,7 @@ class LeanRuntimeServices:
             project_dir = self._string_param(params, "project_dir")
             file_path = self._string_param(params, "file_path")
             root, path = resolve_lean_file(project_dir, file_path)
-            diagnostics = self._lsp_operation(
-                root,
-                lambda session: session.get_diagnostics(str(path)),
-            )
-            return format_lsp_diagnostics(diagnostics)
+            return format_lsp_diagnostics(self._batch_diagnostics(root, path))
         if method == "lsp.hover":
             project_dir = self._string_param(params, "project_dir")
             file_path = self._string_param(params, "file_path")
@@ -977,6 +1003,43 @@ class LeanRuntimeServices:
         self.lsp_projects.begin_close()
         self.repl_projects.close()
         self.lsp_projects.close()
+        for reaper in self._batch_reapers:
+            reaper.join()
+
+    def _batch_diagnostics(self, root: Path, path: Path) -> list[dict[str, Any]]:
+        """Check one file with ``lake lean``; LEAN_LSP_TIMEOUT bounds the wait and the run."""
+        limit = self.config.lsp_timeout
+        deadline = time.monotonic() + limit
+        busy = f"timed out after {limit:g}s (LEAN_LSP_TIMEOUT) waiting for a free Lean slot"
+        if not self._batch_slots.acquire(timeout=limit):
+            raise TimeoutError(busy)
+        retiring = False
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(busy)
+            return batch_diagnostics(
+                root, path, command=self.config.diagnostics_command, timeout=remaining, budget=limit
+            )
+        except BatchCleanupError as error:
+            # The slot stays taken until the group is verified gone.
+            reaper = threading.Thread(
+                target=self._retire_batch,
+                args=(error.process,),
+                name="autoform-batch-retirement",
+                daemon=True,
+            )
+            reaper.start()
+            retiring = True
+            self._batch_reapers.append(reaper)
+            raise
+        finally:
+            if not retiring:
+                self._batch_slots.release()
+
+    def _retire_batch(self, process: subprocess.Popen) -> None:
+        retire_until_gone(process)
+        self._batch_slots.release()
 
     def _acquisition_timeout(self, operation_timeout: float) -> float:
         """Reserve enough of the RPC deadline for the admitted tool operation."""

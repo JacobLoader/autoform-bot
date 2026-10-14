@@ -45,10 +45,13 @@ _SECTION = re.compile(
 )
 _MUTUAL = re.compile(r"^\s*mutual\s*$")
 _END = re.compile(r"^\s*end\b\s*(\S*)")
+# The ``*_wanted`` commands are Batteries' ``Batteries.Util.ProofWanted``: each
+# states a result whose proof or construction is deferred.
 _DECLARATION = re.compile(
     r"^\s*(?:@\[[^\]]*\]\s*)*"
     r"(?:(?:public|private|protected|noncomputable|partial|unsafe|scoped|local)\s+)*"
-    r"(theorem|lemma|def|abbrev|instance|structure|class|inductive|opaque|axiom|irreducible_def)\s+(.+)$"
+    r"(theorem|lemma|def|abbrev|instance|structure|class|inductive|opaque|axiom|irreducible_def"
+    r"|theorem_wanted|proof_wanted|def_wanted|instance_wanted)\s+(.+)$"
 )
 _IGNORED_DIRECTORIES = frozenset(
     {
@@ -291,28 +294,67 @@ def snapshot_project_sources(
     a directory holding one is never indexed.
     """
 
-    exclusions = tuple(exclude_roots)
     requested_names = None if names is None else tuple(names)
+    bound, snapshot = _open_stable_project_sources(
+        root,
+        exclude_roots=tuple(exclude_roots),
+        limits=limits,
+        opaque_markers=opaque_markers,
+        names=requested_names,
+    )
+    bound.close()
+    return snapshot
+
+
+def _open_stable_project_sources(
+    root: str | Path,
+    *,
+    exclude_roots: tuple[str | Path, ...],
+    limits: TreeCaptureLimits,
+    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
+    names: tuple[str, ...] | None = None,
+) -> tuple[BoundProjectSources, IndexedSourceSnapshot]:
+    """Open and capture a Lean root, retrying a bounded number of changed attempts.
+
+    The caller owns the returned binding.  When every attempt changed, the error
+    names each changed root-relative path the attempts reported, once, in order.
+    """
+
     changed: TreeChangedError | None = None
+    changed_paths: list[str] = []
     for attempt in range(_SNAPSHOT_ATTEMPTS):
         if attempt:
             time.sleep(_SNAPSHOT_RETRY_DELAY_SECONDS * attempt)
+        bound: BoundProjectSources | None = None
         try:
-            with bind_project_sources(
+            bound = open_project_sources(
                 root,
-                exclude_roots=exclusions,
+                exclude_roots=exclude_roots,
                 limits=limits,
                 opaque_markers=opaque_markers,
-            ) as bound:
-                return bound.capture(names=requested_names)
+            )
+            return bound, bound.capture(names=names)
         except TreeChangedError as error:
             changed = error
+            if error.relative is not None and error.relative not in changed_paths:
+                changed_paths.append(error.relative)
+            if bound is not None:
+                bound.close()
         except TreeSnapshotError as error:
+            if bound is not None:
+                bound.close()
             raise LeanSourceError(str(error)) from error
+        except BaseException:
+            if bound is not None:
+                bound.close()
+            raise
     lasting = _lasting_root_failure(root)
     if lasting is not None:
         raise LeanSourceError(lasting) from changed
-    raise LeanSourceError("Lean sources kept changing while they were indexed") from changed
+    message = "Lean sources kept changing while they were indexed"
+    if changed_paths:
+        message += "; changed: " + ", ".join(changed_paths)
+    raise LeanSourceError(message) from changed
 
 
 def _lasting_root_failure(root: str | Path) -> str | None:
@@ -344,28 +386,6 @@ def project_source_revision(
         exclude_roots=exclude_roots,
         limits=limits,
     ).revision
-
-
-@contextmanager
-def bind_project_sources(
-    root: str | Path,
-    *,
-    exclude_roots: Iterable[str | Path] = (),
-    limits: TreeCaptureLimits = TreeCaptureLimits(),
-    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
-) -> Iterator[BoundProjectSources]:
-    """Retain a Lean root while one or more source snapshots are consumed."""
-
-    bound = open_project_sources(
-        root,
-        exclude_roots=exclude_roots,
-        limits=limits,
-        opaque_markers=opaque_markers,
-    )
-    try:
-        yield bound
-    finally:
-        bound.close()
 
 
 def open_project_sources(
@@ -418,37 +438,15 @@ def bind_project_source_snapshot(
     open so a caller can verify and recapture it after using the evidence.
     """
 
-    exclusions = tuple(exclude_roots)
-    changed: TreeChangedError | None = None
-    for attempt in range(_SNAPSHOT_ATTEMPTS):
-        if attempt:
-            time.sleep(_SNAPSHOT_RETRY_DELAY_SECONDS * attempt)
-        bound: BoundProjectSources | None = None
-        try:
-            bound = open_project_sources(root, exclude_roots=exclusions, limits=limits)
-            snapshot = bound.capture()
-        except TreeChangedError as error:
-            changed = error
-            if bound is not None:
-                bound.close()
-            continue
-        except TreeSnapshotError as error:
-            if bound is not None:
-                bound.close()
-            raise LeanSourceError(str(error)) from error
-        except BaseException:
-            if bound is not None:
-                bound.close()
-            raise
-        try:
-            yield bound, snapshot
-        finally:
-            bound.close()
-        return
-    lasting = _lasting_root_failure(root)
-    if lasting is not None:
-        raise LeanSourceError(lasting) from changed
-    raise LeanSourceError("Lean sources kept changing while they were indexed") from changed
+    bound, snapshot = _open_stable_project_sources(
+        root,
+        exclude_roots=tuple(exclude_roots),
+        limits=limits,
+    )
+    try:
+        yield bound, snapshot
+    finally:
+        bound.close()
 
 
 def _project_exclusions(
@@ -495,15 +493,13 @@ def _lean_tree_selection(
             excluded,
         ),
         descend=lambda path: not _lean_path_is_excluded(path, excluded),
-        byte_limit=lambda path: (
-            _MANAGED_OUTPUT_MANIFEST_BYTE_LIMIT
-            if _is_managed_output_manifest_name(path.name)
-            else None
-        ),
-        # Omitted marker entries let the immutable snapshot classify nested Git
-        # checkouts without consulting live pathnames after capture.
-        record_omitted=True,
+        record_omitted=False,
         limits=limits,
+        # Only Lean inputs and the folders holding them must stay stable;
+        # generated sites, skeleton output, nested checkouts, editor
+        # temporaries and other folders under the root may change while
+        # sources are captured.
+        unselected_may_change=True,
         opaque_markers=(
             # A nested Git checkout is another source tree.  Treat the
             # presence of either a worktree/submodule .git file or a clone's
@@ -541,14 +537,7 @@ def _lean_snapshot_includes(
             relative.suffix == ".lean"
             and not relative.name.startswith(".#")
         )
-    return (
-        stat.S_ISDIR(mode)
-        or relative.suffix == ".lean"
-        or (
-            len(relative.parts) > 1
-            and _is_managed_output_manifest_name(relative.name)
-        )
-    )
+    return stat.S_ISDIR(mode) or relative.suffix == ".lean"
 
 
 def _lean_path_is_excluded(
@@ -579,63 +568,10 @@ def _indexed_source_snapshot(
     *,
     names: Iterable[str] | None = None,
 ) -> IndexedSourceSnapshot:
-    managed_output_manifests: dict[
-        PurePosixPath,
-        list[tuple[str, bytes | None]],
-    ] = {}
-
-    def add_manifest(relative: str, kind: str, data: bytes | None = None) -> None:
-        path = PurePosixPath(relative)
-        if len(path.parts) > 1 and _is_managed_output_manifest_name(path.name):
-            managed_output_manifests.setdefault(path.parent, []).append((kind, data))
-
-    for relative, data in snapshot.files:
-        add_manifest(relative, "file", data)
-    for relative, _target in snapshot.symlinks:
-        add_manifest(relative, "symlink")
-    for relative, _mode in snapshot.special:
-        add_manifest(relative, "special")
-    for relative in snapshot.placeholders:
-        add_manifest(relative, "placeholder")
-    for relative in snapshot.directories:
-        add_manifest(relative, "directory")
-
-    # An unrecognized manifest marks nothing; its directory stays Lean source.
-    ignored_roots: set[PurePosixPath] = {
-        PurePosixPath(relative)
-        for relative in snapshot.opaque_directories
-        if relative
-    }
-    ignored_roots.update(
-        marker.parent
-        for relative, kind in snapshot.omitted
-        if kind in {"directory", "file"}
-        and len((marker := PurePosixPath(relative)).parts) > 1
-        and unicodedata.normalize("NFC", marker.name).casefold() == ".git"
-    )
-    for parent in sorted(
-        managed_output_manifests,
-        key=lambda path: (len(path.parts), path.as_posix()),
-    ):
-        if _path_is_within_roots(parent, ignored_roots):
-            continue
-        manifests = managed_output_manifests[parent]
-        if (
-            len(manifests) == 1
-            and manifests[0][0] == "file"
-            and manifests[0][1] is not None
-            and _is_managed_output_manifest_bytes(manifests[0][1])
-        ):
-            ignored_roots.add(parent)
-
-    def in_ignored_root(relative_text: str) -> bool:
-        return _path_is_within_roots(PurePosixPath(relative_text), ignored_roots)
-
     unsupported = [
         (relative, reason)
         for relative, reason in snapshot.unsupported_entries()
-        if not in_ignored_root(relative)
-        and PurePosixPath(relative).suffix == ".lean"
+        if PurePosixPath(relative).suffix == ".lean"
     ]
     if unsupported:
         relative, reason = unsupported[0]
@@ -656,8 +592,6 @@ def _indexed_source_snapshot(
             relative,
             excluded,
         ):
-            continue
-        if _path_is_within_roots(relative, ignored_roots):
             continue
         relative_path = Path(relative.as_posix())
         _update_source_digest(digest, relative_path, data)
@@ -680,7 +614,7 @@ def _indexed_source_snapshot(
             line_counts=line_counts,
         ),
         source_digest,
-        _lean_generation_revision(snapshot, ignored_roots),
+        _lean_generation_revision(snapshot),
         tuple(source_files),
     )
 
@@ -710,29 +644,17 @@ def _short_name(name: str) -> str:
 
 def _lean_generation_revision(
     snapshot: TreeSnapshot,
-    ignored_roots: set[PurePosixPath],
 ) -> str:
     """Hash only effective Lean inputs and their ancestor directories."""
 
     def retained_entry(relative_text: str) -> bool:
-        relative = PurePosixPath(relative_text)
-        return relative.suffix == ".lean" and not _path_is_within_roots(
-            relative,
-            ignored_roots,
-        )
+        return PurePosixPath(relative_text).suffix == ".lean"
 
     files = tuple(entry for entry in snapshot.files if retained_entry(entry[0]))
     symlinks = tuple(entry for entry in snapshot.symlinks if retained_entry(entry[0]))
     special = tuple(entry for entry in snapshot.special if retained_entry(entry[0]))
     placeholders = tuple(path for path in snapshot.placeholders if retained_entry(path))
-    # The capture leaves editor lock links (``.#Name.lean``) out, and the omitted
-    # entry each one leaves behind must not change the revision either.
-    omitted = tuple(
-        entry
-        for entry in snapshot.omitted
-        if retained_entry(entry[0])
-        and not (entry[1] == "symlink" and PurePosixPath(entry[0]).name.startswith(".#"))
-    )
+    omitted = tuple(entry for entry in snapshot.omitted if retained_entry(entry[0]))
     retained_paths = {
         PurePosixPath(relative)
         for relative, _value in (*files, *symlinks, *special, *omitted)
@@ -782,17 +704,6 @@ def _is_managed_output_manifest_bytes(data: bytes) -> bool:
         and (kind, schema) in MANAGED_OUTPUT_SCHEMAS
         and isinstance(value.get(kind), list)
     )
-
-
-def _is_managed_output_manifest_name(name: str) -> bool:
-    return unicodedata.normalize("NFC", name).casefold() == _MANAGED_OUTPUT_MANIFEST
-
-
-def _path_is_within_roots(
-    path: PurePosixPath,
-    roots: set[PurePosixPath],
-) -> bool:
-    return any(candidate in roots for candidate in (path, *path.parents))
 
 
 def _update_source_digest(digest, relative: Path, data: bytes) -> None:
@@ -859,6 +770,23 @@ def _name_token(text: str) -> str | None:
 
 _RAW_OPEN = re.compile(r'r(#*)"')
 _CHAR_LITERAL = re.compile(r"'(?:\\.|[^'\\\n])*'")
+# Where a comment, literal, or interpolation brace can start. The text between
+# two of these positions is copied as one slice, not character by character.
+_CODE_EVENT = re.compile(r"""--|/-|r#*"|["«']""")
+_INTERPOLATION_EVENT = re.compile(r"""--|/-|r#*"|["«'{}]""")
+_COMMENT_EVENT = re.compile(r"-/|/-")
+_LITERAL_EVENTS: dict[tuple[str, bool, bool], re.Pattern[str]] = {}
+
+
+def _literal_event(close: str, interpolated: bool) -> re.Pattern[str]:
+    """Where a literal ended by *close* can next close, escape, or interpolate."""
+
+    key = (close[0], close in {'"', "'"}, interpolated)
+    pattern = _LITERAL_EVENTS.get(key)
+    if pattern is None:
+        chars = close[0] + ("\\" if key[1] else "") + ("{" if interpolated else "")
+        pattern = _LITERAL_EVENTS[key] = re.compile(f"[{re.escape(chars)}]")
+    return pattern
 
 
 def _without_lean_comments(text: str) -> str:
@@ -869,9 +797,16 @@ def _without_lean_comments(text: str) -> str:
     index = 0
     while index < len(text):
         top = stack[-1] if stack else None
-        char = text[index]
         if top is not None and top[0] is not None:
             close, interpolated = top
+            event = _literal_event(close, interpolated).search(text, index)
+            if event is None:
+                out.append(text[index:])
+                break
+            if event.start() > index:
+                out.append(text[index : event.start()])
+                index = event.start()
+            char = text[index]
             if text.startswith(close, index):
                 out.append(close)
                 index += len(close)
@@ -886,6 +821,14 @@ def _without_lean_comments(text: str) -> str:
             out.append(char)
             index += 1
             continue
+        event = (_CODE_EVENT if top is None else _INTERPOLATION_EVENT).search(text, index)
+        if event is None:
+            out.append(text[index:])
+            break
+        if event.start() > index:
+            out.append(text[index : event.start()])
+            index = event.start()
+        char = text[index]
         if text.startswith("--", index):
             newline = text.find("\n", index + 2)
             if newline < 0:
@@ -898,14 +841,14 @@ def _without_lean_comments(text: str) -> str:
             depth, index = 1, index + (3 if text[index + 2 : index + 3] in {"-", "!"} else 2)
             out.append(" ")
             while index < len(text) and depth:
-                pair = text[index : index + 2]
-                if pair in {"-/", "/-"}:
-                    depth += 1 if pair == "/-" else -1
-                    index += 2
-                    continue
-                if text[index] == "\n":
-                    out.append("\n")
-                index += 1
+                pair = _COMMENT_EVENT.search(text, index)
+                end = len(text) if pair is None else pair.start()
+                out.append("\n" * text.count("\n", index, end))
+                if pair is None:
+                    index = end
+                    break
+                depth += 1 if pair.group() == "/-" else -1
+                index = pair.end()
             continue
         raw = _RAW_OPEN.match(text, index)
         if raw:
@@ -985,60 +928,26 @@ class SourceLinker:
 def build_linker(
     lean_root: str | Path,
     *,
-    repository_url: str | None = None,
-    ref: str | None = None,
     names: Iterable[str] | None = None,
-    exclude_roots: Iterable[str | Path] = (),
-    source_index: SourceIndex | None = None,
-    detect_missing: bool = True,
 ) -> SourceLinker:
-    """Index *lean_root* and resolve repository coordinates.
-
-    A supplied source snapshot never inherits a live Git ref; callers must bind
-    that ref explicitly if they want permalinks.
-    """
+    """Index *lean_root* and resolve repository coordinates."""
     resolved_root = resolve_lean_root(lean_root)
-    requested_root = directory_binding.lexical_absolute_path(lean_root)
-    remapped_exclusions = tuple(
-        _remap_resolved_root_exclusion(requested_root, resolved_root, value)
-        for value in exclude_roots
+    snapshot, repository_url, ref, linkable_paths = _capture_link_state(
+        resolved_root,
+        names=names,
     )
-    if source_index is not None and source_index.root != resolved_root:
-        raise ValueError("captured source index belongs to a different Lean root")
-    resolved_repository_url = repository_url
-    resolved_ref = ref
-    linkable_paths: frozenset[Path] | None = None
-    index = source_index
-    if source_index is None:
-        if detect_missing and ref is None:
-            snapshot, detected_url, detected_ref, linkable_paths = _capture_link_state(
-                resolved_root,
-                remapped_exclusions,
-                names=names,
-            )
-            index = snapshot.index
-            resolved_repository_url = repository_url or detected_url
-            resolved_ref = detected_ref
-        else:
-            index = index_project(
-                resolved_root,
-                exclude_roots=remapped_exclusions,
-                names=names,
-            )
-    if detect_missing and resolved_repository_url is None:
-        resolved_repository_url = detect_repository_url(resolved_root)
-    assert index is not None
+    if repository_url is None:
+        repository_url = detect_repository_url(resolved_root)
     return SourceLinker(
-        index=index,
-        repository_url=resolved_repository_url,
-        ref=resolved_ref,
+        index=snapshot.index,
+        repository_url=repository_url,
+        ref=ref,
         linkable_paths=linkable_paths,
     )
 
 
 def _capture_link_state(
     root: Path,
-    exclude_roots: Iterable[str | Path],
     *,
     names: Iterable[str] | None = None,
 ) -> tuple[
@@ -1049,7 +958,6 @@ def _capture_link_state(
 ]:
     """Capture source bytes and prove which ones belong to one stable commit."""
 
-    exclusions = tuple(exclude_roots)
     requested_names = None if names is None else tuple(names)
     last_snapshot: IndexedSourceSnapshot | None = None
     last_url: str | None = None
@@ -1058,11 +966,7 @@ def _capture_link_state(
             time.sleep(_SNAPSHOT_RETRY_DELAY_SECONDS * attempt)
         before_url = detect_repository_url(root)
         before_ref = detect_ref(root)
-        snapshot = snapshot_project_sources(
-            root,
-            exclude_roots=exclusions,
-            names=requested_names,
-        )
+        snapshot = snapshot_project_sources(root, names=requested_names)
         last_snapshot = snapshot
         last_url = before_url
         after_url = detect_repository_url(root)

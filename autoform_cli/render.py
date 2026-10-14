@@ -2594,7 +2594,7 @@ def _node_references(
     graph: Graph,
     statuses: dict[str, status.NodeStatus],
     numbers: dict[str, str],
-    links: dict[str, str],
+    links: Mapping[str, str],
 ) -> str:
     """Link each node by number and title, coloured by its derived state.
 

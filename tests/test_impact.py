@@ -12,6 +12,7 @@ import pytest
 
 import autoform_cli.lean as lean_module
 from autoform_cli import __main__ as cli, claims, skeleton
+from autoform_cli import _tree_snapshot as tree_snapshot_module
 from autoform_cli._tree_snapshot import TreeChangedError
 from autoform_cli.impact import (
     IMPACT_MARKER,
@@ -178,7 +179,7 @@ def test_module_import_impact_reports_reverse_import_scope_without_blocking() ->
     assert report.affected_claim_keys == tuple(
         claims.author_claim_key(target) for target in report.affected_claim_targets
     )
-    assert re.fullmatch(r"lean-module/demo-base-[0-9a-f]{16}", report.module_claim_target)
+    assert report.module_claim_target == "lean-module/demo-base-" + hashlib.sha256(b"Demo.Base").hexdigest()[:16]
     assert report.article_local is False
     assert report.as_dict()["schema"] == MODULE_IMPORT_IMPACT_SCHEMA
     assert re.fullmatch(r"[0-9a-f]{64}", report.module_graph_revision)
@@ -249,6 +250,18 @@ def test_module_import_impact_reports_unresolved_local_articles_as_unknown_scope
     assert "Affected built articles: none in the loaded reverse-import scope." in (
         format_module_import_impact(empty)
     )
+
+
+def test_module_import_impact_cuts_a_long_module_slug_but_keeps_its_digest() -> None:
+    module = "Demo.ThisModuleNameRunsPastTheFortyEightCharacterSlugLimit"
+    modules = {module: ModuleEvidence(module, "/project/Demo/Long.lean")}
+    selected = ImpactArticle("chapter/sel", None, ())
+
+    report = compute_module_import_impact({}, modules, (selected,), selected, module, source_revision="rev")
+
+    # The slug keeps 48 characters; the digest of the full name tells long names apart.
+    digest = hashlib.sha256(module.encode()).hexdigest()[:16]
+    assert report.module_claim_target == f"lean-module/demo-thismodulenamerunspastthefortyeightcharacte-{digest}"
 
 
 def test_module_import_impact_lists_articles_through_the_helpers_they_own() -> None:
@@ -1118,10 +1131,8 @@ def test_rendered_probe_imports_modules_and_names_exact_local_modules() -> None:
     )
 
     assert source.startswith("import Demo\nimport Demo.B\n-- Autoform impact probe.")
-    assert (
-        'let projectModules : Std.HashSet Name := Std.HashSet.ofList '
-        '[Name.str (Name.anonymous) "Demo", Name.str (Name.anonymous) "Internal"]'
-    ) in source
+    # The module names reach Lean as one JSON string, not a list literal.
+    assert f"AutoformImpact.requestedNames {skeleton._lean_requests(('Demo', 'Internal'))}" in source
     assert ".isPrefixOf" not in source
     assert f'"{skeleton.PROBE_OUTPUT_ENV}"' in source
     assert IMPACT_MARKER in source
@@ -1351,6 +1362,21 @@ def test_project_modules_match_library_roots_by_whole_components(tmp_path: Path)
         ("Demo", "DemoTests"),
         ("Demo", "DemoTests", "DemoTests.DemoTests"),
     )
+
+
+def test_project_modules_accept_two_libraries_selecting_one_file_on_a_shared_srcdir(tmp_path: Path) -> None:
+    # A main library and a test library often share srcDir "."; when both select
+    # Demo.Util, that is still one module from one file, which Lake builds once.
+    root = _sources(tmp_path, "Demo", "Demo.Util", "DemoTest")
+    configured = (
+        _library(root, roots=("Demo",)),
+        _library(root, "Demo.Util", roots=("DemoTest",)),
+    )
+
+    snapshot = snapshot_project_sources(tmp_path)
+    imports, local = project_modules(configured, snapshot, strict_module_ownership=True)
+    assert "Demo.Util" in imports
+    assert set(local) == {"Demo", "Demo.Util", "DemoTest"}
 
 
 def test_project_modules_accept_the_same_stray_file_in_sibling_srcdirs(tmp_path: Path) -> None:
@@ -1710,6 +1736,26 @@ def test_cli_reports_import_impact_without_refusing_the_edit(tmp_path: Path, mon
     assert re.fullmatch(r"[0-9a-f]{64}", report["module_graph_revision"])
 
 
+def test_cli_import_impact_accepts_an_article_that_names_no_lean_declaration(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    # Unlike work impact, an import edit needs no revised declaration, so the
+    # command never asks for --declaration, which it does not have.
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _stub_lean_root(tmp_path)
+    _stub_probe(monkeypatch, modules=(ModuleEvidence("Demo", str((lean_root / "Demo.lean").resolve())),))
+
+    code = cli.main(
+        ["work", "import-impact", "chapter/empty", "Demo", str(project), "--lean-root", str(lean_root), "--json"]
+    )
+
+    output = capsys.readouterr()
+    assert code == 0, output.err
+    report = json.loads(output.out)
+    assert report["selected_affected"] is False
+    assert report["claim_targets"][0] == "chapter/empty"
+
+
 @pytest.mark.parametrize("quote_every_component", [False, True])
 def test_cli_import_impact_matches_module_names_by_component(
     tmp_path: Path, monkeypatch, capsys, quote_every_component: bool
@@ -1750,9 +1796,10 @@ def test_cli_import_impact_matches_module_names_by_component(
     output = capsys.readouterr()
     assert code == 0, output.err
     assert json.loads(output.out)["affected_modules"] == ["H", "H.«a.b»"]
-    # The probe counts the dotted and numeric stems as the modules Lean builds.
-    assert 'Name.str (Name.str (Name.anonymous) "H") "a.b"' in calls[0]["probe"]
-    assert 'Name.str (Name.str (Name.anonymous) "H") "1"' in calls[0]["probe"]
+    # The probe counts the dotted and numeric stems as the modules Lean builds:
+    # each stem is one string component, not two components or a number.
+    assert '[\\"H\\", \\"a.b\\"]' in calls[0]["probe"]
+    assert '[\\"H\\", \\"1\\"]' in calls[0]["probe"]
 
 
 def test_cli_import_impact_accepts_another_spelling_of_the_lean_root(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -1946,6 +1993,49 @@ def test_cli_text_report_lists_each_section(tmp_path: Path, monkeypatch, capsys)
     assert calls[0]["timeout"] == skeleton.DEFAULT_PROBE_TIMEOUT
 
 
+def test_cli_import_impact_text_report_lists_each_section(tmp_path: Path, monkeypatch, capsys) -> None:
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _stub_lean_root(tmp_path)
+    calls = _stub_probe(monkeypatch, modules=(ModuleEvidence("Demo", str((lean_root / "Demo.lean").resolve())),))
+    source_revision, _ = work_context(project, "chapter/base")
+
+    code = cli.main(
+        ["work", "import-impact", "chapter/base", "Demo", str(project)]
+        + ["--lean-root", str(lean_root), "--timeout", "30"]
+    )
+
+    output = capsys.readouterr()
+    assert code == 0, output.err
+    lines = output.out.splitlines()
+    for label in ("Lean source revision", "Lean build revision", "Module graph revision"):
+        assert re.fullmatch(rf"{label}: [0-9a-f]{{64}}", lines.pop(2))
+
+    def keyed(*targets: str) -> str:
+        return ", ".join(f"{target} (key {claims.author_claim_key(target)})" for target in targets)
+
+    module = "lean-module/demo-" + hashlib.sha256(b"Demo").hexdigest()[:16]
+    helpers = ("Demo.base_eq", "Demo.gone", "Demo.old")
+    assert lines == [
+        f"Import edit allowed in Demo for chapter/base [{_BASE_ID}].",
+        f"Graph source revision: {source_revision}",
+        "Module scope: loaded-root-library-graph",
+        f"Module claim target: {keyed(module)}",
+        "Affected project modules: Demo",
+        "Removing an import can also drop modules that only imports bring into the build; "
+        "this reverse-import scope does not list them.",
+        "Affected articles:",
+        "  chapter/inlines: Demo",
+        "  chapter/loose: Demo",
+        f"  chapter/uses [{_USES_ID}]: Demo",
+        "Potentially affected unowned helpers:",
+        *(f"  {name} (Demo): {keyed(_lean_key(name))}" for name in helpers),
+        "Check active claims or semantic changes for: "
+        + keyed(_USES_ID, "chapter/inlines", "chapter/loose", *map(_lean_key, helpers)),
+        f"Required claims for the import edit: {keyed(_BASE_ID, module)}",
+    ]
+    assert calls[0]["timeout"] == 30
+
+
 def test_cli_declaration_flag_replaces_the_article_s_names(tmp_path: Path, monkeypatch, capsys) -> None:
     project = _blueprint_project(tmp_path, "Demo")
     lean_root = _stub_lean_root(tmp_path)
@@ -2075,12 +2165,12 @@ def test_revision_impact_retries_an_initial_source_capture_race(
     original_capture = lean_module.BoundProjectSources.capture
     captures = 0
 
-    def changing_once(bound):
+    def changing_once(bound, **kwargs):
         nonlocal captures
         captures += 1
         if captures == 1:
             raise TreeChangedError("directory tree changed while it was captured")
-        return original_capture(bound)
+        return original_capture(bound, **kwargs)
 
     monkeypatch.setattr(lean_module.BoundProjectSources, "capture", changing_once)
     monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
@@ -2161,8 +2251,9 @@ def test_unselected_source_with_a_quoted_module_name_stays_local(tmp_path: Path,
     # local, and the module's constants are located by its source file.
     (call,) = calls
     assert str(call["probe"]).startswith("import Demo\n-- Autoform impact probe.")
-    assert 'Name.str (Name.str (Name.anonymous) "Demo") "Basic copy"' in str(call["probe"])
-    assert 'Name.str (Name.str (Name.anonymous) "Demo") "."' in str(call["probe"])
+    # Each quoted stem reaches the probe as one string component of the JSON list.
+    assert '[\\"Demo\\", \\"Basic copy\\"]' in str(call["probe"])
+    assert '[\\"Demo\\", \\".\\"]' in str(call["probe"])
     assert "x»y" not in str(call["probe"])
     helpers = {helper["name"]: helper["path"] for helper in json.loads(output.out)["helpers"]}
     assert helpers["Demo.copied"] == "Demo/Basic copy.lean"
@@ -2317,6 +2408,43 @@ def test_revision_impact_refuses_byte_identical_source_replacement_during_the_pr
         revision_impact(project, "chapter/base", lean_root=lean_root)
 
 
+def test_revision_impact_accepts_unrelated_churn_during_its_final_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if not tree_snapshot_module._DESCRIPTOR_CAPTURE_SUPPORTED:
+        pytest.skip("directory descriptor capture is unavailable")
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _stub_lean_root(tmp_path)
+    _stub_probe(monkeypatch)
+    original = skeleton.run_probe
+    probed = False
+    saves = 0
+
+    def run_then_mark(*args, **kwargs):
+        nonlocal probed
+        output = original(*args, **kwargs)
+        probed = True
+        return output
+
+    original_checkpoint = tree_snapshot_module._tree_snapshot_checkpoint
+
+    def checkpoint(name: str, path: str) -> None:
+        nonlocal saves
+        original_checkpoint(name, path)
+        if probed and name == "before-final-verification":
+            # An editor's temporary file appears while the recapture runs.
+            saves += 1
+            (lean_root / "notes.md.tmp").write_text(f"{saves}\n", encoding="utf-8")
+
+    monkeypatch.setattr("autoform_cli.skeleton.run_probe", run_then_mark)
+    monkeypatch.setattr(tree_snapshot_module, "_tree_snapshot_checkpoint", checkpoint)
+
+    report = revision_impact(project, "chapter/base", lean_root=lean_root)
+
+    assert saves == 1
+    assert report.lean_source_revision == snapshot_project_sources(lean_root).revision
+
+
 # --------------------------------------------------------------------------- #
 # The real probe
 # --------------------------------------------------------------------------- #
@@ -2455,6 +2583,18 @@ def _imp_project(root: Path) -> Path:
     (lean_root / "Imp" / "More.lean").write_text(_IMP_MORE, encoding="utf-8")
     _lake_build(lean_root)
     return lean_root
+
+
+@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+def test_impact_probe_reads_more_project_modules_than_lean_compiles_in_a_list(tmp_path: Path) -> None:
+    lean_root = _imp_project(tmp_path)
+    # Lean's code generator gives up on a list literal past about 1,500 entries.
+    modules = ("Imp", "Imp.Basic", *(f"Imp.Absent{index}" for index in range(3000)))
+    probe = render_impact_probe(imports=["Imp"], project_modules=modules)
+
+    records = parse_impact_output(skeleton.run_probe(probe, lean_root, label="impact probe"))
+
+    assert {record.module for record in records.values()} == {"Imp.Basic"}
 
 
 def _imp_roadmap(root: Path) -> Path:

@@ -680,6 +680,46 @@ def test_check_cli_reports_validation_errors(tmp_path: Path) -> None:
     assert "error: bad: missing H1 title" in result.stdout
 
 
+def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #207: the Pages workflow runs check, not audit.
+
+    In the issue's project, without `sources/`, such a link surfaced only as a
+    strict MkDocs failure naming the chapter page that absorbed the article; with
+    the directory, a missing note became a repository link that 404s. Check now
+    applies audit's rule that a Sources path names a file in the blueprint, and
+    leaves fragments and other schemes to audit.
+    """
+    blueprint = tmp_path / "blueprint"
+    sources = "# Result\n\n## Sources\n\n- [Paper](../sources/paper.md#lemma-3)\n"
+    _node(blueprint, "result.md", sources)
+
+    assert main(["check", str(blueprint)]) == 1
+    assert capsys.readouterr().out == (
+        "error: result: source target does not resolve to a file: '../sources/paper.md#lemma-3'\n"
+    )
+
+    (blueprint / "sources").mkdir()
+    (blueprint / "sources" / "paper.md").write_text("# Paper\n", encoding="utf-8")
+    sources += "- [Book](https://example.org/book)\n- [Author](mailto:author@example.org)\n"
+    _node(blueprint, "result.md", sources)
+
+    assert main(["check", str(blueprint)]) == 0
+    capsys.readouterr()
+
+    (tmp_path / "slides.pdf").write_bytes(b"%PDF-1.4\n")
+    rejected = "- [Notes](../sources/)\n- [Slides](../../slides.pdf)\n- [Bad](../sources/%00.md)\n"
+    _node(blueprint, "result.md", sources + rejected)
+
+    assert main(["check", str(blueprint)]) == 1
+    assert capsys.readouterr().out == (
+        "error: result: source target does not resolve to a file: '../sources/'\n"
+        "error: result: source target escapes the blueprint directory: '../../slides.pdf'\n"
+        "error: result: source target contains an invalid path: '../sources/%00.md'\n"
+    )
+
+
 def test_check_refuses_a_symlinked_readme_instead_of_hanging(tmp_path: Path) -> None:
     """Issue #58: this README made `a` and `a/b` each other's parent, and check never returned."""
     blueprint = tmp_path / "blueprint"

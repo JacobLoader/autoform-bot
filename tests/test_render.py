@@ -2126,11 +2126,13 @@ def test_node_links_resolve_each_target_page_once(tmp_path: Path, monkeypatch: p
 
     links = _anchored_links(targets, page)
 
+    # A page reads only the nodes it shows, so nothing is linked before then.
     assert calls == []
     assert links["a/0"] == "a.html#n0"
     assert links["a/7"] == "a.html#n7"
     assert links["b"] == "b/index.html"
     assert links["here"] == "#self"
+    assert len(dict(links)) == len(targets)
     assert sorted(calls) == [chapter, other]
     # Once to compare it with the current page, once inside relative_link.
     assert resolved.count(chapter) <= 2

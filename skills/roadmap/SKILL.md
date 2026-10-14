@@ -95,10 +95,16 @@ when one is known; the
 matched. Read each hit's statement, and narrow a query whose listing the limit
 cut short. Matching is literal, so the result is new only when retries with
 fewer words, and under other usual names for its objects, also show no article
-stating it. A refusal (exit 2) is not an empty result: resolve what it reports
-without adding the article, and search again. A dependency link to a page not
-yet written causes one, so search for a batch of articles before writing the
-first.
+stating it. Search the project's usable shared libraries in the same call, as
+the [library search rules](../formalize/references/library-search.md) describe.
+If a library already proves a result, reuse that proof instead of proving the
+result again: the result keeps its article, and its proof cites the library
+declaration. If a proof needs a library result that has no article yet, add an
+article for it, proved from the library, and link it under `## Proof depends
+on`. A refusal (exit 2) is not an empty result: resolve what it reports without
+adding the article, and search again, except that a refusal naming a library is
+handled as the library search rules say. A dependency link to a page not yet
+written causes one, so search for a batch of articles before writing the first.
 When another formalizable article already states the result, link to it from
 each article that needs it, under `## Depends on` or `## Proof depends on`, and
 from the coverage row, instead of adding a node. A hit that is more general, a
