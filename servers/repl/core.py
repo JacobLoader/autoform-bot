@@ -1003,7 +1003,7 @@ class LeanRepl:
                     except ReplStderrBacklog as error:
                         # _run_io already retired the process. The response
                         # still answers the call, so only this warning records
-                        # the retirement.
+                        # that stderr passed its ceiling or could not be drained.
                         logger.warning("Lean REPL call in %s: %s", self.cwd, error)
                         response = error.response
                     except TimeoutError:

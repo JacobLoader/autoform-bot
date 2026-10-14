@@ -2099,7 +2099,7 @@ def test_wire_protocol_keeps_the_response_when_the_deadline_ends_the_stderr_drai
     assert error.value.response == {"messages": []}
 
 
-def test_disposable_backlog_drops_the_environment_and_logs_the_retirement(monkeypatch, caplog):
+def test_disposable_backlog_drops_the_environment_and_warns_that_stderr_became_unsafe(monkeypatch, caplog):
     with ExitStack() as stack:
         process = _PipeProcess(
             stack,
