@@ -959,7 +959,8 @@ def _process_group_is_alive(pid: int) -> bool:
 def _process_group_has_live_members(pid: int) -> bool:
     """Whether the group ``pid`` leads holds a process that is not a zombie.
 
-    Its leader stays unreaped, and so a member, until the group is retired.
+    The leader counts while it is unreaped; the runner leaves it so until the
+    group is retired, unless something else reaps it first.
     """
 
     if not _process_group_is_alive(pid):
@@ -980,8 +981,11 @@ def _process_group_is_ours(process: subprocess.Popen[bytes]) -> bool:
     """Whether the command's process group id can still belong only to it, so it may be signalled.
 
     The unreaped leader keeps the id. Once something else reaps it, as the
-    kernel does when SIGCHLD is ignored, the group's live members keep it,
-    unless a new process with the leader's pid already leads a group of that id.
+    kernel does when SIGCHLD is ignored, the group's live members keep it, and
+    no process can then hold the leader's pid: Linux and macOS give out no pid
+    that is still a group's id. A process at that pid shows the id was given out
+    again. A new group at that id whose leader already exited looks the same as
+    the command's, but only if pids come round again within the run.
     """
 
     if os.name != "posix":
@@ -989,13 +993,12 @@ def _process_group_is_ours(process: subprocess.Popen[bytes]) -> bool:
     if process.returncode is None:
         return True
     try:
-        if os.getpgid(process.pid) == process.pid:
-            return False
+        os.getpgid(process.pid)
     except ProcessLookupError:
-        pass
+        return _process_group_has_live_members(process.pid)
     except OSError:
-        return False
-    return _process_group_has_live_members(process.pid)
+        pass
+    return False
 
 
 def _leader_has_exited(process: subprocess.Popen[bytes]) -> bool:
@@ -1015,7 +1018,7 @@ def _leader_has_exited(process: subprocess.Popen[bytes]) -> bool:
     except psutil.ZombieProcess:
         return True
     except (ChildProcessError, psutil.NoSuchProcess):
-        # Reaped elsewhere: poll records it, so nothing signals the group again.
+        # Reaped elsewhere: poll records it, and _process_group_is_ours stops trusting the pid.
         return process.poll() is not None
     except (OSError, psutil.Error, SystemError):
         return False
@@ -1040,8 +1043,8 @@ def _terminate_process_tree(
 ) -> None:
     """Best-effort termination of a command and every descendant observed.
 
-    The leader is reaped last, so the group is only signalled while its id
-    cannot belong to another group.
+    The leader is reaped last, and the group is only signalled while
+    _process_group_is_ours finds its id still the command's.
     """
 
     started, available = time.perf_counter(), _remaining(deadline)

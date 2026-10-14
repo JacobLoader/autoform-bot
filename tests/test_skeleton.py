@@ -559,20 +559,23 @@ def test_bounded_command_kills_a_child_that_only_its_group_reveals(
         ("gone", True, True),
         ("gone", False, False),
         ("leads its own group", True, False),
-        ("in another group", True, True),
+        ("in another group", True, False),
+        ("unreadable", True, False),
     ],
 )
 def test_a_reaped_leaders_group_is_ours_only_while_members_pin_its_id(
     monkeypatch, leader_pid_now: str, members: bool, ours: bool
 ) -> None:
-    # Once the leader is reaped, a new process with its pid leading a group of
-    # that id means the id passed to another group.
+    # Live members keep a group's id from being given out as a pid, so once the
+    # leader is reaped, any process at its pid means the id passed to another group.
     leader = subprocess.Popen([sys.executable, "-c", "pass"])
     leader.wait()
 
     def getpgid(pid: int) -> int:
         if leader_pid_now == "gone":
             raise ProcessLookupError(pid)
+        if leader_pid_now == "unreadable":
+            raise PermissionError(pid)
         return pid if leader_pid_now == "leads its own group" else pid + 1
 
     monkeypatch.setattr("autoform_cli.skeleton.os.getpgid", getpgid)
