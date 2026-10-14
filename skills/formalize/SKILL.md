@@ -174,7 +174,8 @@ such as `y n ≠ 0` where `x / 0 = 0`, keep it. If the theorem genuinely holds
 without it, such as a limsup result that holds in the extended reals, keep the
 source's statement for the article and prove the general one as a separate
 lemma that it follows from. For a hypothesis you keep, add one sentence to the
-article saying why, so a later reviewer sees the decision beside the finding.
+article giving the reason in mathematical or source terms, so a later reviewer
+sees the decision beside the finding.
 
 After the focused build passes, require an independent Agent Review of every
 changed statement or proof for source faithfulness, dependency correctness, and
