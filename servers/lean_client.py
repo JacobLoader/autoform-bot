@@ -518,9 +518,9 @@ class LeanRuntimeClient:
             chunk = connection.recv(min(65536, MAX_MESSAGE_BYTES + 1 - len(data)))
             if not chunk:
                 raise LeanRuntimeProtocolError("Lean runtime closed without a response")
+            # The buffer holds no newline yet, so search only the new bytes.
             start = len(data)
             data.extend(chunk)
-            # The response ends at its first newline, so only the new bytes can hold it.
             newline = data.find(b"\n", start)
             if newline >= 0:
                 if data[newline + 1 :]:
