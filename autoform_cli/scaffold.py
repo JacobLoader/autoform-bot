@@ -24,10 +24,7 @@ from urllib.parse import urlsplit
 
 _TEMPLATES = Path(__file__).resolve().parent / "templates"
 _MAX_GITIGNORE_BYTES = 1024 * 1024
-_MAX_TEMPLATE_ENTRIES = 512
-_MAX_TEMPLATE_DEPTH = 16
 _MAX_TEMPLATE_FILE_BYTES = 1024 * 1024
-_MAX_TEMPLATE_TOTAL_BYTES = 8 * 1024 * 1024
 _MAX_SCAFFOLD_SOURCE_BYTES = 1024 * 1024
 _MAX_GIT_TREE_LIST_BYTES = 256 * 1024
 _MAX_GIT_REMOTE_LIST_BYTES = 64 * 1024
@@ -53,8 +50,9 @@ _GITHUB_SCP_SOURCE = re.compile(
     r"git@github\.com:(?P<path>[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)+)"
 )
 _TEMPLATE_PLACEHOLDER = re.compile(r"\{\{(?P<name>[A-Z][A-Z0-9_]*)\}\}")
-#: Template files `autoform project new` refuses to publish a project without.
-_REQUIRED_TEMPLATE_PATHS = frozenset(
+#: Every template file, all required. Scaffolding reads these paths, not the
+#: folder, so a stray `.DS_Store` or editor backup there never reaches a project.
+_TEMPLATE_PATHS = frozenset(
     {
         "README.md",
         "blueprint/README.md",
@@ -315,13 +313,12 @@ def _committed_scaffold_entries(
         ref,
         "--",
         "autoform_cli/scaffold.py",
-        "autoform_cli/templates",
+        *(f"autoform_cli/templates/{relative}" for relative in _TEMPLATE_PATHS),
         limit=_MAX_GIT_TREE_LIST_BYTES,
     )
     if listing is None:
         raise ScaffoldError(["the pinned Autoform tree could not be read safely"])
     entries: dict[str, tuple[str, str]] = {}
-    template_count = 0
     object_length: int | None = None
     for record in listing.split(b"\0"):
         if not record:
@@ -342,13 +339,6 @@ def _committed_scaffold_entries(
         ):
             raise ScaffoldError(["the pinned Autoform tree is invalid"])
         object_length = len(object_name)
-        if path == "autoform_cli/scaffold.py":
-            entries[path] = (mode.decode("ascii"), object_name)
-            continue
-        prefix = "autoform_cli/templates/"
-        if not path.startswith(prefix) or template_count >= _MAX_TEMPLATE_ENTRIES:
-            raise ScaffoldError(["the pinned Autoform template tree is invalid"])
-        template_count += 1
         entries[path] = (mode.decode("ascii"), object_name)
     if "autoform_cli/scaffold.py" not in entries:
         raise ScaffoldError(["the pinned Autoform renderer is missing"])
@@ -424,7 +414,7 @@ def plugin_pin(
     Tracked checkout files must be clean, a cached tracking ref for the selected
     remote must contain HEAD, and the committed renderer plus template paths,
     bytes, and executable-bit classifications must match both the retained
-    generation snapshot and any installed plugin copy. Otherwise the source and
+    template bytes and any installed plugin copy. Otherwise the source and
     commit do not describe fetchable scaffold behavior, so no pin is returned.
     Every Git identity and tree query ignores local replacement objects.
 
@@ -453,12 +443,12 @@ def plugin_pin(
         return "", ""
     try:
         checkout_templates = _read_templates(root / "autoform_cli" / "templates")
-        running_scaffold, _running_identity, running_mode = _read_bounded_regular_file(
+        running_scaffold, running_mode = _read_bounded_regular_file(
             running_root / "autoform_cli" / "scaffold.py",
             limit=_MAX_SCAFFOLD_SOURCE_BYTES,
             label="Autoform scaffold source",
         )
-        checkout_scaffold, _checkout_identity, checkout_mode = _read_bounded_regular_file(
+        checkout_scaffold, checkout_mode = _read_bounded_regular_file(
             root / "autoform_cli" / "scaffold.py",
             limit=_MAX_SCAFFOLD_SOURCE_BYTES,
             label="Autoform scaffold source",
@@ -525,12 +515,6 @@ class _ScaffoldFile:
     relative: str
     content: bytes
     mode: int
-
-
-@dataclass(frozen=True, slots=True)
-class _TemplateSnapshot:
-    templates: tuple[tuple[str, bytes, int], ...]
-    generations: tuple[tuple[str, tuple[int, ...]], ...]
 
 
 def _destination(relative: str) -> str:
@@ -605,7 +589,7 @@ def _read_bounded_regular_file(
     *,
     limit: int,
     label: str,
-) -> tuple[bytes, tuple[int, ...], int]:
+) -> tuple[bytes, int]:
     """Read one stable, bounded regular file without following links."""
 
     descriptor: int | None = None
@@ -648,7 +632,7 @@ def _read_bounded_regular_file(
                 else f"the {label} changed while it was being read"
             )
             raise ScaffoldError([message])
-        return content, after_identity, stat.S_IMODE(opened.st_mode)
+        return content, stat.S_IMODE(opened.st_mode)
     except ScaffoldError:
         raise
     except (OSError, TypeError, ValueError):
@@ -661,103 +645,21 @@ def _read_bounded_regular_file(
                 pass
 
 
-def _capture_template_snapshot(root: Path) -> _TemplateSnapshot:
-    """Capture one bounded, link-free generation of the template tree."""
+def _read_templates(root: Path) -> tuple[tuple[str, bytes, int], ...]:
+    """Read each listed template as a bounded regular non-link file."""
 
     templates: list[tuple[str, bytes, int]] = []
-    generations: list[tuple[str, tuple[int, ...]]] = []
-    entry_count = 0
-    total_bytes = 0
-
-    def directory_names(directory: Path, *, count: bool) -> tuple[str, ...]:
-        nonlocal entry_count
-        names: list[str] = []
-        with os.scandir(directory) as entries:
-            for entry in entries:
-                if count:
-                    entry_count += 1
-                    if entry_count > _MAX_TEMPLATE_ENTRIES:
-                        raise ScaffoldError(
-                            [f"the Autoform template tree exceeds {_MAX_TEMPLATE_ENTRIES} entries"]
-                        )
-                names.append(entry.name)
-                if len(names) > _MAX_TEMPLATE_ENTRIES:
-                    raise ScaffoldError(
-                        [f"the Autoform template tree exceeds {_MAX_TEMPLATE_ENTRIES} entries"]
-                    )
-        return tuple(sorted(names))
-
-    def walk(directory: Path, relative: Path, depth: int) -> None:
-        nonlocal total_bytes
-        if depth > _MAX_TEMPLATE_DEPTH:
-            raise ScaffoldError(
-                [f"the Autoform template tree exceeds {_MAX_TEMPLATE_DEPTH} directory levels"]
-            )
-        before = os.stat(directory, follow_symlinks=False)
-        before_identity = _node_identity(before)
-        if _is_link(before) or not stat.S_ISDIR(before.st_mode):
-            raise ScaffoldError(["the Autoform template tree contains a non-directory link"])
-        names = directory_names(directory, count=True)
-        for name in names:
-            path = directory / name
-            child_relative = relative / name
-            metadata = os.stat(path, follow_symlinks=False)
-            if "__pycache__" in child_relative.parts or child_relative.suffix == ".pyc":
-                continue
-            if _is_link(metadata):
-                raise ScaffoldError(["the Autoform template tree contains a link"])
-            if stat.S_ISDIR(metadata.st_mode):
-                walk(path, child_relative, depth + 1)
-                continue
-            if not stat.S_ISREG(metadata.st_mode):
-                raise ScaffoldError(["the Autoform template tree contains a non-regular file"])
-            content, identity, mode = _read_bounded_regular_file(
-                path,
-                limit=_MAX_TEMPLATE_FILE_BYTES,
-                label="Autoform template file",
-            )
-            total_bytes += len(content)
-            if total_bytes > _MAX_TEMPLATE_TOTAL_BYTES:
-                raise ScaffoldError(
-                    [
-                        "the Autoform template tree exceeds its "
-                        f"{_MAX_TEMPLATE_TOTAL_BYTES}-byte total limit"
-                    ]
-                )
-            relative_name = child_relative.as_posix()
-            templates.append((relative_name, content, mode))
-            generations.append((relative_name, identity))
-
-        after_identity = _node_identity(os.stat(directory, follow_symlinks=False))
-        if before_identity != after_identity or names != directory_names(directory, count=False):
-            raise ScaffoldError(["the Autoform template tree changed while it was being read"])
-        generations.append(((relative.as_posix() or ".") + "/", after_identity))
-
-    try:
-        walk(root, Path(), 0)
-    except ScaffoldError:
-        raise
-    except (OSError, TypeError, ValueError, UnicodeError):
-        raise ScaffoldError(["the Autoform template tree could not be read safely"]) from None
-    return _TemplateSnapshot(tuple(sorted(templates)), tuple(sorted(generations)))
-
-
-def _read_templates(root: Path) -> tuple[tuple[str, bytes, int], ...]:
-    """Read one stable, bounded generation of regular non-link templates."""
-
-    first = _capture_template_snapshot(root)
-    second = _capture_template_snapshot(root)
-    if first != second:
-        raise ScaffoldError(["the Autoform template tree changed while it was being read"])
-    return second.templates
-
-
-def _require_complete_templates(templates: tuple[tuple[str, bytes, int], ...]) -> None:
-    template_paths = [relative for relative, _content, _mode in templates]
-    if len(template_paths) != len(set(template_paths)) or not _REQUIRED_TEMPLATE_PATHS.issubset(
-        template_paths
-    ):
-        raise ScaffoldError(["the Autoform template tree is incomplete"])
+    for relative in sorted(_TEMPLATE_PATHS):
+        path = root / relative
+        if not os.path.lexists(path):
+            raise ScaffoldError(["the Autoform template tree is incomplete"])
+        content, mode = _read_bounded_regular_file(
+            path,
+            limit=_MAX_TEMPLATE_FILE_BYTES,
+            label="Autoform template file",
+        )
+        templates.append((relative, content, mode))
+    return tuple(templates)
 
 
 def _scaffold_plan(
@@ -1094,11 +996,10 @@ def scaffold_project(
     if issues:
         raise ScaffoldError(issues)
 
-    # Retain the exact stable bytes that pin discovery validates. A later read
+    # Retain the exact bytes that pin discovery validates. A later read
     # could race with a template replacement and generate content different
     # from the commit named by the workflows.
     templates = _read_templates(_TEMPLATES)
-    _require_complete_templates(templates)
     # A ref identifies a commit in one repository. Naming a different source
     # while inheriting this checkout's HEAD produces `git+other.git@our-sha`,
     # which does not resolve there, so an explicit source carries its own ref
