@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1276,6 +1277,20 @@ def _sources(root: Path, *modules: str) -> Path:
 
 def _library(src: Path, *globs: str, roots: tuple[str, ...] = ("Demo",)) -> LeanLibrary:
     return LeanLibrary(name="Demo", src_dir=src, roots=roots, globs=globs)
+
+
+def test_project_modules_accept_more_than_ten_thousand_source_files(tmp_path: Path) -> None:
+    # atlas-lean keeps 13,080 .lean files under srcDir "." while its globs select
+    # about 3,300 of them; the size of the tree must not refuse the project.
+    unselected = [(Path("Unselected") / f"M{index}.lean", b"") for index in range(10_001)]
+    snapshot = SimpleNamespace(
+        index=SimpleNamespace(root=tmp_path), source_files=[(Path("Demo.lean"), b""), *unselected]
+    )
+
+    imports, local = project_modules([_library(tmp_path, "Demo")], snapshot)
+
+    assert imports == ("Demo",)
+    assert len(local) == 10_002
 
 
 def test_project_modules_follow_lake_globs(tmp_path: Path) -> None:
