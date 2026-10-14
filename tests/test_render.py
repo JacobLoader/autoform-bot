@@ -655,6 +655,29 @@ def test_a_hoisted_body_can_link_to_the_chapter_it_lands_on(tmp_path: Path) -> N
     assert "[the chapter](.)" in chapter
 
 
+def test_malformed_link_targets_are_published_as_written(tmp_path: Path) -> None:
+    """Issue #305: an unbalanced IPv6 bracket or a decoded NUL stopped render in a traceback.
+
+    Neither names a file, so each link is left as written, the way a URL is: in
+    a statement, under Sources, and on a chapter page, which render also reads
+    for statement slots and for the book's page order.
+    """
+    project = _project(tmp_path)
+    ipv6, nul = "https://[2001:db8::1/paper", "../sources/a%00.md"
+    top = project / "blueprint/roadmap/top.md"
+    _edit(top, "The main result.", f"The main result, after [the paper]({ipv6}) and [the note]({nul}).")
+    _edit(top, "- [Paper](../sources.md)", f"- [Paper]({ipv6})")
+    readme = project / "blueprint/roadmap/README.md"
+    _edit(readme, "- [Top](top.md)\n", f"- [Top](top.md)\n- [Reprint]({ipv6})\n- [Notes]({nul})\n")
+
+    render_site(project / "blueprint", tmp_path / "out", lean_root=project)
+
+    chapter = (tmp_path / "out/roadmap/README.md").read_text(encoding="utf-8")
+    assert f"after [the paper]({ipv6}) and [the note]({nul})." in chapter
+    assert f"- [Paper]({ipv6})" in chapter
+    assert f"- [Reprint]({ipv6})\n- [Notes]({nul})" in chapter
+
+
 def test_unresolved_declarations_are_reported_not_linked(tmp_path: Path) -> None:
     project = _project(tmp_path)
     (project / "blueprint/roadmap/top.md").write_text(
