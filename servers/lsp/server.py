@@ -1,7 +1,8 @@
-"""Lean execution backend for diagnostics and type information over LSP.
+"""Lean hover over LSP, and the MCP adapter for the LSP tools.
 
-Wraps Lean 4 language server processes and provides file diagnostics and hover
-information independently from the REPL pool.
+Wraps Lean 4 language server processes and provides hover information
+independently from the REPL pool. Diagnostics come from
+``servers/batch_diagnostics.py``; this module only formats them.
 """
 
 from __future__ import annotations
@@ -79,15 +80,11 @@ class LeanLspSession:
         self._group_retired = False
         self._retire_pending = False
         self._request_id = 0
-        # Every didOpen gets a fresh version, so a publication left over from an
-        # earlier open of the same file (Lean publishes [] on didClose) never
-        # passes for the current document's diagnostics.
-        self._document_version = 0
         self._lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
         # A session has one stdout stream. Serialize the complete document
         # lifecycle so concurrent MCP calls cannot race two readers against
-        # that stream or consume one another's diagnostics/responses.
+        # that stream or consume one another's responses.
         self._operation_lock = threading.Lock()
 
     def start(self) -> None:
@@ -266,44 +263,6 @@ class LeanLspSession:
         finally:
             self._operation_lock.release()
 
-    def get_diagnostics(self, file_path: str) -> list[dict]:
-        """Open a file and collect diagnostics from the language server."""
-        return self._admitted(
-            lambda remaining: self._get_diagnostics(file_path, timeout=remaining)
-        )
-
-    def _get_diagnostics(self, file_path: str, *, timeout: float | None = None) -> list[dict]:
-        path = Path(file_path).resolve()
-        uri = path.as_uri()
-        operation_timeout = self.config.timeout if timeout is None else timeout
-        deadline = time.monotonic() + operation_timeout
-
-        try:
-            content = path.read_text()
-        except Exception as e:
-            return [{"severity": "error", "message": f"Cannot read file: {e}"}]
-
-        version = self._open_document(
-            uri, content, timeout=self._remaining(deadline, operation_timeout)
-        )
-
-        try:
-            return self._collect_diagnostics(
-                uri,
-                version,
-                timeout=self._remaining(deadline, operation_timeout),
-            )
-        finally:
-            try:
-                self._send_notification(
-                    "textDocument/didClose",
-                    {"textDocument": {"uri": uri}},
-                    timeout=self._remaining(deadline, operation_timeout),
-                )
-            except Exception:
-                self._retire_pending = True
-                logger.warning("failed to close LSP document %s", uri, exc_info=True)
-
     def hover(self, file_path: str, line: int, character: int) -> str | None:
         """Get hover information at a position."""
         # Input failures happen before admission and cannot desynchronize the
@@ -358,22 +317,20 @@ class LeanLspSession:
             return str(contents)
         return None
 
-    def _open_document(self, uri: str, content: str, *, timeout: float) -> int:
-        """Send didOpen with a fresh document version and return that version."""
-        self._document_version += 1
+    def _open_document(self, uri: str, content: str, *, timeout: float) -> None:
+        """Send didOpen. Nothing reads a document version back, so every open is version 1."""
         self._send_notification(
             "textDocument/didOpen",
             {
                 "textDocument": {
                     "uri": uri,
                     "languageId": "lean4",
-                    "version": self._document_version,
+                    "version": 1,
                     "text": content,
                 }
             },
             timeout=timeout,
         )
-        return self._document_version
 
     def _send_request(self, method: str, params: dict, *, timeout: float = 30) -> Any:
         """Send a JSON-RPC request and wait for response."""
@@ -578,79 +535,6 @@ class LeanLspSession:
         if remaining <= 0:
             raise TimeoutError(f"LSP operation timed out after {timeout:g}s")
         return remaining
-
-    def _collect_diagnostics(self, uri: str, version: int, timeout: float) -> list[dict]:
-        """Return Lean's complete diagnostics for one opened document version.
-
-        Lean publishes interim sets while it works (an empty one once imports are
-        set up, and whatever it has when elaboration first blocks) and can then
-        stay silent for as long as a command runs, so silence proves nothing.
-        It answers textDocument/waitForDiagnostics only after publishing every
-        diagnostic for the version, on the same ordered stream, so the last
-        matching publication before that reply is final.
-        """
-        deadline = time.monotonic() + timeout
-        with self._lock:
-            self._request_id += 1
-            request_id = self._request_id
-            self._write_message(
-                {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "method": "textDocument/waitForDiagnostics",
-                    "params": {"uri": uri, "version": version},
-                },
-                timeout=self._remaining(deadline, timeout),
-            )
-            diagnostics: list[dict] | None = None
-            while True:
-                # Each read gets the whole remaining budget, so only the
-                # operation's own deadline can cut off a frame mid-way.
-                msg = self._read_message(timeout=self._remaining(deadline, timeout))
-                if msg is None:
-                    if not self.process or not self.process.stdout:
-                        raise LspProtocolError(
-                            "Lean LSP session was closed while waiting for diagnostics"
-                        )
-                    raise TimeoutError(
-                        f"timed out after {timeout:g}s waiting for diagnostics for {uri}"
-                    )
-                if "method" in msg:
-                    # Server requests and other notifications need no answer.
-                    if msg["method"] == "textDocument/publishDiagnostics":
-                        published = self._published_diagnostics(msg, uri, version)
-                        if published is not None:
-                            diagnostics = published
-                    continue
-                if msg.get("id") != request_id:
-                    continue
-                self._response_result(msg, request_id)
-                if diagnostics is None:
-                    raise LspProtocolError(
-                        f"Lean finished {uri} version {version} without publishing diagnostics"
-                    )
-                return diagnostics
-
-    @staticmethod
-    def _published_diagnostics(msg: dict, uri: str, version: int) -> list[dict] | None:
-        """Return a publication's diagnostics if it is for this document version."""
-        params = msg.get("params", {})
-        if not isinstance(params, dict):
-            raise LspProtocolError("publishDiagnostics params must be an object")
-        published = params.get("diagnostics")
-        if not isinstance(published, list):
-            raise LspProtocolError("publishDiagnostics diagnostics must be a list")
-        if params.get("uri") != uri:
-            return None
-        published_version = params.get("version")
-        if isinstance(published_version, bool) or not isinstance(published_version, int):
-            raise LspProtocolError(f"publishDiagnostics for {uri} has no document version")
-        if published_version < version:
-            # Left over from an earlier open of the same file.
-            return None
-        if published_version > version:
-            raise LspProtocolError(f"{uri} was replaced while waiting for its diagnostics")
-        return published
 
 
 class LeanLspProjects:
