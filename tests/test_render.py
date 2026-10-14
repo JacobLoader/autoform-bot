@@ -2327,8 +2327,48 @@ def test_dirty_lean_snapshot_does_not_borrow_the_clean_commit_ref(tmp_path: Path
     assert "/blob/" not in (output / "roadmap/README.md").read_text(encoding="utf-8")
     assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["git_ref"] is None
     assert report.warnings == [
-        "repository links were omitted because the captured blueprint and Lean inputs do not match one "
+        "repository links were omitted because the captured Lean inputs do not match one "
         f"verified local Git commit: Project/Basic.lean differs from commit {commit[:12]}"
+    ]
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["sibling", "nested-checkout"])
+def test_a_blueprint_outside_the_repository_keeps_its_lean_code_links(tmp_path: Path, nested: bool) -> None:
+    project = _project(tmp_path)
+    if nested:  # a submodule or a separate clone inside the Lean repository
+        subprocess.run(["git", "init", "-q"], cwd=project / "blueprint", check=True)
+        _git_commit(project / "blueprint", "notes")
+        blueprint = project / "blueprint"
+    else:
+        blueprint = (project / "blueprint").rename(tmp_path / "notes")
+    commit = _commit_project(project)
+    output = tmp_path / "out"
+
+    report = render_site(blueprint, output, lean_root=project, repository_url=_REPOSITORY, ref="HEAD")
+
+    chapter = (output / "roadmap/README.md").read_text(encoding="utf-8")
+    assert f"/blob/{commit}/Project/Basic.lean#L5" in chapter
+    # Render's copy places the vault at blueprint/, which names nothing in the Lean repository's commit.
+    assert f"/blob/{commit}/blueprint/" not in chapter
+    assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["git_ref"] == commit
+    assert report.warnings == []
+
+
+def test_an_uncommitted_blueprint_edit_drops_only_the_markdown_source_links(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    commit = _commit_project(project)
+    _edit(project / "blueprint/roadmap/top.md", "The main result.", "The main result, revised.")
+    output = tmp_path / "out"
+
+    report = render_site(project / "blueprint", output, lean_root=project, repository_url=_REPOSITORY, ref="HEAD")
+
+    chapter = (output / "roadmap/README.md").read_text(encoding="utf-8")
+    assert f"/blob/{commit}/Project/Basic.lean#L5" in chapter
+    assert f"/blob/{commit}/blueprint/" not in chapter
+    assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["git_ref"] == commit
+    assert report.warnings == [
+        "Markdown source links were omitted because the captured blueprint does not match the verified "
+        f"local Git commit: blueprint/roadmap/top.md differs from commit {commit[:12]}"
     ]
 
 
@@ -2346,7 +2386,7 @@ def test_an_untracked_source_note_or_directory_gets_no_commit_link(tmp_path: Pat
 
     assert f"/{commit}/blueprint/sources" not in (output / "roadmap/README.md").read_text(encoding="utf-8")
     assert not note or (output / "sources" / note).is_file()
-    assert "repository links were omitted" in report.warnings[0]
+    assert report.warnings[0].startswith("Markdown source links were omitted")
 
 
 def test_markdown_source_permalink_quotes_the_original_repository_path(tmp_path: Path) -> None:

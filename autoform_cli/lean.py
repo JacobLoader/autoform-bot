@@ -991,6 +991,8 @@ class SourceLinker:
     linkable_paths: frozenset[Path] | None = None
     indexed: bool = True
     """False when the sources were not read, so no name was looked up."""
+    links_blueprint: bool = False
+    """True when the blueprint's files are in ``ref``'s commit too, so links into it show the published bytes."""
 
     def location(self, name: str) -> Declaration | None:
         return self.index.find(name)

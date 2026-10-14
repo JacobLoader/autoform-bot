@@ -11,8 +11,8 @@ from autoform_cli import _directory_binding as directory_binding_module
 from autoform_cli.__main__ import main
 from autoform_cli._tree_snapshot import descriptor_capture_supported
 from autoform_cli.lean import index_project, snapshot_project_sources
-from autoform_cli.render import PUBLICATION_MANIFEST
-from tests.test_render import _REPOSITORY, _commit_project, _debris, _project, _tree
+from autoform_cli.render import PUBLICATION_MANIFEST, render_site
+from tests.test_render import _REPOSITORY, _commit_project, _debris, _edit, _project, _tree
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows capability boundary")
@@ -76,6 +76,23 @@ def test_render_without_descriptor_capture_publishes_without_code_links(
     # Links to the Markdown sources still pin the verified commit.
     assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["git_ref"] == commit
     assert f"{_REPOSITORY}/blob/{commit}/blueprint/roadmap/top.md" in page
+
+
+def test_render_without_descriptor_capture_records_no_ref_for_an_uncommitted_blueprint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _without_descriptor_capture(monkeypatch)
+    project = _project(tmp_path)
+    commit = _commit_project(project)
+    _edit(project / "blueprint/roadmap/top.md", "The main result.", "The main result, revised.")
+    output = tmp_path / "site-src"
+
+    report = render_site(project / "blueprint", output, repository_url=_REPOSITORY, ref=commit)
+
+    # No Lean byte was read, so once the blueprint differs nothing was compared with the commit.
+    assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["git_ref"] is None
+    assert "/blob/" not in (output / "roadmap" / "README.md").read_text(encoding="utf-8")
+    assert any(warning.startswith("Markdown source links were omitted") for warning in report.warnings)
 
 
 @pytest.mark.parametrize("require_declarations", [False, True])
