@@ -23,7 +23,7 @@ import sys
 import tempfile
 import time
 import unicodedata
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -1908,7 +1908,7 @@ def _anchored_links(
     *,
     extension: str = ".html",
     hrefs: dict[Path, str] | None = None,
-) -> dict[str, str]:
+) -> Mapping[str, str]:
     """Link every node to its statement on the published chapter page.
 
     Use ``.md`` for links MkDocs will parse -- it validates and rewrites those
@@ -1917,28 +1917,54 @@ def _anchored_links(
     and extension can share *hrefs*, so each target page is linked once across
     all of them.
     """
-    resolved_page = page.resolve()
-    # Many nodes share a chapter page, and resolving a path walks the disk, so
-    # each target page is linked once. The current page is cached as "" and
-    # links as a bare fragment.
-    if hrefs is None:
-        hrefs = {}
-    links: dict[str, str] = {}
-    for node_id, (target, anchor) in targets.items():
-        href = hrefs.get(target)
+    return _PageLinks(targets, page, extension, {} if hrefs is None else hrefs)
+
+
+class _PageLinks(Mapping[str, str]):
+    """The links from one page to every node, each built when first read.
+
+    A page names a few nodes but *targets* holds the whole graph, and a site
+    has a page per node, so building every link up front made rendering
+    quadratic in the size of the graph.
+    """
+
+    def __init__(self, targets: dict[str, tuple[Path, str]], page: Path, extension: str, hrefs: dict[Path, str]):
+        self._targets = targets
+        self._page = page
+        self._resolved_page = page.resolve()
+        self._extension = extension
+        self._hrefs = hrefs
+        self._links: dict[str, str] = {}
+
+    def __getitem__(self, node_id: str) -> str:
+        link = self._links.get(node_id)
+        if link is not None:
+            return link
+        target, anchor = self._targets[node_id]
+        # Many nodes share a chapter page, and resolving a path walks the disk,
+        # so each target page is linked once. The current page is cached as ""
+        # and links as a bare fragment.
+        href = self._hrefs.get(target)
         if href is None:
-            if target.resolve() == resolved_page:
+            if target.resolve() == self._resolved_page:
                 href = ""
             else:
-                href = mermaid.relative_link(target, page, extension)
-                if extension == ".html":
+                href = mermaid.relative_link(target, self._page, self._extension)
+                if self._extension == ".html":
                     href = _as_published(href)
-            hrefs[target] = href
+            self._hrefs[target] = href
         if href:
-            links[node_id] = f"{href}#{anchor}" if anchor else href
+            link = f"{href}#{anchor}" if anchor else href
         else:
-            links[node_id] = f"#{anchor}" if anchor else "#"
-    return links
+            link = f"#{anchor}" if anchor else "#"
+        self._links[node_id] = link
+        return link
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._targets)
+
+    def __len__(self) -> int:
+        return len(self._targets)
 
 
 def _as_published(href: str) -> str:
@@ -2210,7 +2236,7 @@ def _render_environment(
     numbers: dict[str, str],
     used_by: dict[str, list[str]],
     linker: SourceLinker,
-    links: dict[str, str],
+    links: Mapping[str, str],
     page: Path,
     blueprint: Path,
     repo_root: Path,
@@ -2393,7 +2419,7 @@ def _dependency_disclosure(
     statuses: dict[str, status.NodeStatus],
     numbers: dict[str, str],
     used_by: dict[str, list[str]],
-    links: dict[str, str],
+    links: Mapping[str, str],
 ) -> str:
     """Hide DAG relations behind a native, keyboard-accessible disclosure."""
     rows: list[tuple[str, str]] = []
@@ -2421,7 +2447,7 @@ def _node_references(
     graph: Graph,
     statuses: dict[str, status.NodeStatus],
     numbers: dict[str, str],
-    links: dict[str, str],
+    links: Mapping[str, str],
 ) -> str:
     """Link each node by number and title, coloured by its derived state."""
     rendered = []
