@@ -3662,6 +3662,35 @@ def test_auto_linker_only_links_bytes_present_in_the_commit(
     assert linker.url("untracked") is None
 
 
+def test_tree_lookup_matches_the_spelling_git_committed_only_when_asked_to(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    on_disk = "Poincare\u0301\u212b.lean"  # NFD é, then U+212B ANGSTROM SIGN
+    committed = "Poincar\u00e9\u212b.lean"  # what macOS Git commits and prints: é composed, the sign kept
+    oid = "a" * 40
+
+    def ls_tree(command, **_kwargs):
+        return subprocess.CompletedProcess(command, 0, f"100644 blob {oid}\t{committed}\0".encode(), b"")
+
+    monkeypatch.setattr(lean_module.subprocess, "run", ls_tree)
+    spellings: dict[str, str] = {}
+
+    assert lean_module._git_tree_oids(tmp_path, "c" * 40, (on_disk,), spellings) == {on_disk: oid}
+    assert spellings == {on_disk: committed}
+    assert lean_module._git_tree_oids(tmp_path, "c" * 40, (on_disk,)) == {committed: oid}
+
+
+def test_permalink_names_the_spelling_git_committed(tmp_path: Path) -> None:
+    linker = SourceLinker(
+        index=_index(tmp_path, "def decomposed : Nat := 0\n", "Poincare\u0301\u212b.lean"),
+        repository_url="https://github.com/owner/repo",
+        ref="deadbeef",
+        spellings={"Poincare\u0301\u212b.lean": "Poincar\u00e9\u212b.lean"},
+    )
+
+    assert linker.url("decomposed") == "https://github.com/owner/repo/blob/deadbeef/Poincar%C3%A9%E2%84%AB.lean#L1"
+
+
 def test_auto_linker_retries_ref_and_source_as_one_unit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

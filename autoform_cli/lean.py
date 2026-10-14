@@ -21,7 +21,7 @@ import stat
 import subprocess
 import time
 import unicodedata
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -818,6 +818,8 @@ class SourceLinker:
     """False when the sources were not read, so no name was looked up."""
     links_blueprint: bool = False
     """True when the blueprint's files are in ``ref``'s commit too, so links into it show the published bytes."""
+    spellings: Mapping[str, str] = field(default_factory=dict)
+    """Committed path of each repository path whose name Git stores under another spelling."""
 
     def location(self, name: str) -> Declaration | None:
         return self.index.find(name)
@@ -835,9 +837,10 @@ class SourceLinker:
             )
         ):
             return None
+        relative = declaration.path.as_posix()
         path = "/".join(
             quote_from_bytes(os.fsencode(part), safe="")
-            for part in declaration.path.parts
+            for part in self.spellings.get(relative, relative).split("/")
         )
         return f"{self.repository_url}/blob/{self.ref}/{path}#L{declaration.line}"
 
@@ -940,6 +943,7 @@ def verify_repository_snapshot(
     *,
     required_directories: Iterable[Path] = (),
     reasons: list[str] | None = None,
+    spellings: dict[str, str] | None = None,
 ) -> str | None:
     """Return the commit whose tree holds every captured file, byte for byte.
 
@@ -947,6 +951,8 @@ def verify_repository_snapshot(
     accepted by hashing the captured bytes through Git's clean filter. Otherwise
     ``None``, with the first reason appended to *reasons*, naming paths relative
     to the repository only. The shared Git runner strips ambient overrides.
+    Given *spellings*, a file Git committed under another spelling of its name
+    is accepted too, and its committed path recorded there (``_git_tree_oids``).
     """
 
     def refuse(reason: str) -> None:
@@ -973,7 +979,7 @@ def verify_repository_snapshot(
         directories = [path.relative_to(root).as_posix() for path in required_directories]
     except ValueError:
         return refuse("a captured file or directory is outside the repository")
-    blobs = _git_tree_oids(root, commit, tuple(sorted(captured)))
+    blobs = _git_tree_oids(root, commit, tuple(sorted(captured)), spellings)
     if blobs is None:
         return refuse("the commit's tree could not be read")
     for path, data in captured.items():
@@ -1012,8 +1018,15 @@ def _git_tree_oids(
     root: Path,
     commit: str,
     paths: tuple[str, ...],
+    spellings: dict[str, str] | None = None,
 ) -> dict[str, str] | None:
-    """Read raw blob IDs of regular files at exact paths without Git's quoting layer."""
+    """Read raw blob IDs of regular files at exact paths without Git's quoting layer.
+
+    macOS Git with ``core.precomposeUnicode`` finds a name decomposed on disk
+    under the composed spelling it committed, which is not always NFC, and
+    prints that spelling. Given *spellings*, such a record is matched to the
+    path asked for by NFC form, and the committed path recorded under it.
+    """
 
     result: dict[str, str] = {}
     for start in range(0, len(paths), 128):
@@ -1041,6 +1054,8 @@ def _git_tree_oids(
             return None
         if completed.returncode != 0:
             return None
+        asked = set(batch)
+        composed = {} if spellings is None else {unicodedata.normalize("NFC", path): path for path in batch}
         for record in completed.stdout.split(b"\0"):
             if not record:
                 continue
@@ -1048,7 +1063,11 @@ def _git_tree_oids(
             fields = header.split()
             if not separator or len(fields) != 3 or fields[0] not in {b"100644", b"100755"}:
                 continue
-            result[os.fsdecode(encoded_path)] = fields[2].decode("ascii")
+            printed = os.fsdecode(encoded_path)
+            path = printed if printed in asked else composed.get(unicodedata.normalize("NFC", printed), printed)
+            result[path] = fields[2].decode("ascii")
+            if spellings is not None and path != printed:
+                spellings[path] = printed
     return result
 
 

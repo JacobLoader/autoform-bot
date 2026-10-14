@@ -23,7 +23,7 @@ import sys
 import tempfile
 import time
 import unicodedata
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -385,11 +385,16 @@ def render_site(
         sources = SOURCES_DIR in snapshot.directories
         reasons: list[str] = []
         blueprint_reasons: list[str] = []
+        spellings: dict[str, str] = {}
         commit = None
         links_blueprint = False
         if repository_url and ref:
             commit = verify_repository_snapshot(
-                repo_root, ref, [(repo_root / path, data) for path, data in lean.source_files], reasons=reasons
+                repo_root,
+                ref,
+                [(repo_root / path, data) for path, data in lean.source_files],
+                reasons=reasons,
+                spellings=spellings,
             )
         # A code link depends only on the Lean bytes. A link into the blueprint also needs the blueprint's
         # bytes in that commit, which a blueprint outside the repository's working tree never has.
@@ -401,13 +406,21 @@ def render_site(
                     [(blueprint / name, data) for name, data in snapshot.files],
                     required_directories=[blueprint / SOURCES_DIR] if sources else [],
                     reasons=blueprint_reasons,
+                    spellings=spellings,
                 )
                 is not None
             )
         # Links name the verified commit, never the requested ref. With no Lean file captured, only the
         # blueprint check compared bytes with the commit.
         linked = commit if lean.source_files or links_blueprint else None
-        linker = SourceLinker(lean.index, repository_url, linked, indexed=indexed, links_blueprint=links_blueprint)
+        linker = SourceLinker(
+            lean.index,
+            repository_url,
+            linked,
+            indexed=indexed,
+            links_blueprint=links_blueprint,
+            spellings=spellings,
+        )
         source_revision = _source_revision(snapshot)
         report = _publish(
             destination,
@@ -1118,7 +1131,8 @@ def _sources_base(blueprint: Path, repo_root: Path, linker: SourceLinker) -> "_S
         # The vault is outside the repository being linked, so no blob URL
         # describes it. Better no link than one that 404s.
         return None
-    return _SourceBase(linker.repository_url, linker.ref, relative)
+    spellings = {unicodedata.normalize("NFC", path): committed for path, committed in linker.spellings.items()}
+    return _SourceBase(linker.repository_url, linker.ref, relative, spellings)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1135,10 +1149,13 @@ class _SourceBase:
     repository_url: str
     ref: str
     relative: str
+    spellings: Mapping[str, str] = field(default_factory=dict)
+    """Committed paths keyed by NFC form, since a link spells a note however its author typed it."""
 
     def href(self, tail: tuple[str, ...]) -> str:
         verb = "blob" if tail else "tree"
         path = "/".join((self.relative, *tail))
+        path = self.spellings.get(unicodedata.normalize("NFC", path), path)
         return f"{self.repository_url}/{verb}/{self.ref}/{quote(path, safe='/')}"
 
 
@@ -2384,6 +2401,7 @@ def _vault_source_link(node: Node, *, repo_root: Path, linker) -> str:
         relative = node.path.resolve().relative_to(repo_root).as_posix()
     except ValueError:
         return ""
+    relative = linker.spellings.get(relative, relative)
     href = f"{linker.repository_url}/blob/{linker.ref}/{quote(relative, safe='/')}"
     label = html.escape(f"Edit the Markdown source for {node.title}", quote=True)
     icon = (

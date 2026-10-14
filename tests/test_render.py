@@ -2375,6 +2375,56 @@ def test_markdown_source_permalink_quotes_the_original_repository_path(tmp_path:
     assert ".autoform-publication" not in page and "autoform-blueprint-" not in page
 
 
+def test_decomposed_file_names_link_to_the_spelling_git_committed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _project(tmp_path)
+    roadmap = project / "blueprint/roadmap"
+    # NFD é, as some Cocoa apps write it, and U+212B ANGSTROM SIGN, which NFC would replace but Git keeps.
+    name = "Poincare\u0301\u212b"
+    (roadmap / "top.md").rename(roadmap / f"{name}.md")
+    (project / "Project/Basic.lean").rename(project / f"Project/{name}.lean")
+    (project / "blueprint/sources").mkdir()
+    (project / "blueprint/sources" / f"{name}.md").write_text("# Notes\n", encoding="utf-8")
+    _edit(roadmap / "README.md", "(top.md)", f"({name}.md)")
+    _edit(roadmap / "README.md", "# Roadmap", f"# Roadmap\n\nSee [notes](../sources/{name}.md).")
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    subprocess.run(["git", "config", "core.precomposeunicode", "true"], cwd=project, check=True)
+    commit = _git_commit(project, "fixture")
+    output = tmp_path / "out"
+    run = subprocess.run
+
+    def precomposed_ls_tree(command, *args, **kwargs):
+        # macOS Git prints the composed spelling it committed; elsewhere Git keeps names as written.
+        completed = run(command, *args, **kwargs)
+        if command[:2] == ["git", "ls-tree"]:
+            completed.stdout = completed.stdout.replace("e\u0301".encode(), "\u00e9".encode())
+        return completed
+
+    monkeypatch.setattr(lean_module.subprocess, "run", precomposed_ls_tree)
+
+    report = render_site(project / "blueprint", output, lean_root=project, repository_url=_REPOSITORY, ref=commit)
+
+    chapter = (output / "roadmap/README.md").read_text(encoding="utf-8")
+    committed = "Poincar%C3%A9%E2%84%AB"
+    assert f"/blob/{commit}/Project/{committed}.lean#L5" in chapter
+    assert f"/blob/{commit}/blueprint/roadmap/{committed}.md" in chapter
+    assert f"/blob/{commit}/blueprint/sources/{committed}.md" in chapter
+    assert report.warnings == []
+
+
+def test_a_source_note_link_names_the_committed_spelling_however_it_was_typed() -> None:
+    from autoform_cli.render import _SourceBase
+
+    committed = "blueprint/sources/Poincar\u00e9\u212b.md"
+    base = _SourceBase(_REPOSITORY, "abc", "blueprint/sources", {"blueprint/sources/Poincar\u00e9\u00c5.md": committed})
+
+    # Keyed by NFC form, so a decomposed é in the link still finds it.
+    assert base.href(("Poincare\u0301\u212b.md",)) == (
+        f"{_REPOSITORY}/blob/abc/blueprint/sources/Poincar%C3%A9%E2%84%AB.md"
+    )
+
+
 def test_in_repo_outputs_never_supply_lean_source_links(tmp_path: Path) -> None:
     project = _project(tmp_path)
     (project / "blueprint/proofs.lean").write_text("theorem BlueprintProof : True := trivial\n", encoding="utf-8")
