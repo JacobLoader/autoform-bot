@@ -1806,7 +1806,8 @@ warns with the first mismatch. Links into the blueprint (an article's Markdown
 source, a source note) also need the blueprint's bytes in that commit. When
 they differ, render keeps the code links, keeps source notes in the site
 instead of linking to them, and warns with the first mismatch; a blueprint
-outside the repository gets the same result without a warning.
+outside the repository, or in a submodule or other checkout nested in it, gets
+the same result without a warning.
 
 The site is built and synced in a hidden `.autoform-publication-*` directory
 beside the output, then swapped in with one atomic exchange (`renamex_np` on

@@ -392,8 +392,8 @@ def render_site(
                 repo_root, ref, [(repo_root / path, data) for path, data in lean.source_files], reasons=reasons
             )
         # A code link depends only on the Lean bytes. A link into the blueprint also needs the blueprint's
-        # bytes in that commit, which a blueprint outside the repository never has.
-        if commit is not None and _is_within(blueprint, repo_root):
+        # bytes in that commit, which a blueprint outside the repository's working tree never has.
+        if commit is not None and _in_working_tree(blueprint, repo_root):
             links_blueprint = (
                 verify_repository_snapshot(
                     repo_root,
@@ -404,8 +404,10 @@ def render_site(
                 )
                 is not None
             )
-        # Links name the verified commit, never the requested ref.
-        linker = SourceLinker(lean.index, repository_url, commit, indexed=indexed, links_blueprint=links_blueprint)
+        # Links name the verified commit, never the requested ref. With no Lean file captured, only the
+        # blueprint check compared bytes with the commit.
+        linked = commit if lean.source_files or links_blueprint else None
+        linker = SourceLinker(lean.index, repository_url, linked, indexed=indexed, links_blueprint=links_blueprint)
         source_revision = _source_revision(snapshot)
         report = _publish(
             destination,
@@ -425,7 +427,7 @@ def render_site(
     report.warnings[:0] = recovered
     if repository_url and ref and commit is None:
         report.warnings.append(
-            "repository links were omitted because the captured blueprint and Lean inputs "
+            "repository links were omitted because the captured Lean inputs "
             "do not match one verified local Git commit" + (f": {reasons[0]}" if reasons else "")
         )
     elif blueprint_reasons:
@@ -2038,6 +2040,17 @@ def _is_within(path: Path, directory: Path) -> bool:
         path.relative_to(directory)
     except ValueError:
         return False
+    return True
+
+
+def _in_working_tree(path: Path, root: Path) -> bool:
+    """Whether the repository at *root* can track *path*: below it, and not in a checkout nested there."""
+    if not _is_within(path, root):
+        return False
+    while path != root:
+        if (path / ".git").exists():  # a submodule or a separate clone
+            return False
+        path = path.parent
     return True
 
 
