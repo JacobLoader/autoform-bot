@@ -1585,12 +1585,12 @@ two seconds later exits 1 naming the file and when it was modified; a lock that
 goes away within those two seconds counts as a lost race. On such a board,
 `claim cleanup` leaves a lease whose release a lock file blocks in place and
 still exits 0, and `claim list` and `claim cleanup` warn on stderr about each
-lock file at least two seconds old. Git records no owner for a lock file, so
-Autoform never deletes one: once no Git process is using the board, delete the
-file and retry. Over any other transport the board's files are not visible, so
-a lock file there shows up as a lost race or as Git's own error, depending on
-the file, the operation and the server's Git version, and Git's error also
-stops `claim cleanup`.
+lock file not modified within two seconds of the current time. Git records no
+owner for a lock file, so Autoform never deletes one: once no Git process is
+using the board, delete the file and retry. Over any other transport the
+board's files are not visible, so a lock file there shows up as a lost race or
+as Git's own error, depending on the file, the operation and the server's Git
+version, and Git's error also stops `claim cleanup`.
 
 Claims are temporary operational state, never article frontmatter.
 

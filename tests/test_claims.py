@@ -1070,14 +1070,14 @@ def test_once_the_operator_deletes_a_stale_ref_lock_the_claim_proceeds(
     assert board.holds("node")
 
 
-@pytest.mark.parametrize("change", ["create", "update", "delete", "delete-packed"])
+@pytest.mark.parametrize("change", ["create", "update", "delete", "delete-packed", "batch"])
 def test_a_lock_released_within_the_grace_is_a_lost_race(
     tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch, change: str
 ) -> None:
     monkeypatch.setattr(claims, "_LOCK_GRACE_S", 60.0)
     board = _board(tmp_path, board_repo, "worker-a")
     if change != "create":
-        assert board.acquire("node", ttl=600)
+        assert board.acquire_many(["other", "node"], ttl=600)
     before = _refs(board_repo)
     lock = _plant_ref_lock(board_repo, "packed-refs" if change == "delete-packed" else claims.CLAIM_REF_PREFIX + "node")
     existing_locks = claims.ClaimBoard._existing_locks
@@ -1096,10 +1096,68 @@ def test_a_lock_released_within_the_grace_is_a_lost_race(
         assert not board.acquire("node", ttl=600)
     elif change == "update":
         assert not board.renew("node", ttl=600)
+    elif change == "batch":
+        assert board.renew_many(["other", "node"], ttl=600) == claims.ClaimBatchResult(
+            False, ("node",), "changed concurrently"
+        )
     else:
         assert not board.release("node")
     assert [[found.path for found in locks] for locks in seen] == [[lock.resolve()], []]
     assert _refs(board_repo) == before
+
+
+@pytest.mark.parametrize("change", ["update", "delete", "delete-packed"])
+def test_a_lock_gone_before_the_first_look_is_a_lost_race(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    board = _board(tmp_path, board_repo, "worker-a")
+    assert board.acquire("node", ttl=600)
+    before = _refs(board_repo)
+    lock = _plant_ref_lock(board_repo, "packed-refs" if change == "delete-packed" else claims.CLAIM_REF_PREFIX + "node")
+    ref_store = board._ref_store
+
+    def peer_push_finishes() -> Path | None:
+        # The peer lets go between Git's refusal and the board's first look.
+        lock.unlink(missing_ok=True)
+        return ref_store()
+
+    monkeypatch.setattr(board, "_ref_store", peer_push_finishes)
+
+    assert not (board.renew("node", ttl=600) if change == "update" else board.release("node"))
+    assert _refs(board_repo) == before
+
+
+@pytest.mark.parametrize(
+    ("visible", "old", "lost"),
+    [(True, None, True), (True, "1" * 40, True), (False, None, True), (False, "1" * 40, False)],
+    ids=["visible-create", "visible-update", "unseen-create", "unseen-update"],
+)
+def test_reference_already_exists_is_a_lost_race_unless_an_unseen_lock_may_explain_it(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch, visible: bool, old: str | None, lost: bool
+) -> None:
+    # Git 2.53's whole refusal, whether a lost race or a lock file caused it.
+    board = _board(tmp_path, board_repo, "worker-a")
+    ref = claims.CLAIM_REF_PREFIX + "node"
+    new = "2" * 40
+    git = board._git
+
+    def refused_push(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] != "push":
+            return git(args, **kwargs)
+        out = f"To board\n!\t{new}:{ref}\t[remote rejected] (reference already exists)\nDone\n"
+        return subprocess.CompletedProcess(["git", *args], 1, out, "error: failed to push some refs to 'board'\n")
+
+    monkeypatch.setattr(board, "_git", refused_push)
+    if not visible:
+        monkeypatch.setattr(board, "_ref_store", lambda: None)
+
+    if lost:
+        assert board._cas_push_refs([("node", old, new)]) == claims.ClaimBatchResult(
+            False, ("node",), "changed concurrently"
+        )
+    else:
+        with pytest.raises(claims.ClaimTransportError, match="reference already exists"):
+            board._cas_push_refs([("node", old, new)])
 
 
 @pytest.mark.parametrize("change", ["create", "update", "delete"])
@@ -1208,7 +1266,6 @@ def test_a_remote_board_neither_names_nor_deletes_a_lock_file(
         else:
             assert outcome is False
 
-    assert remote.ref_locks() == []
     assert all(lock.exists() for lock in locks)
     assert _refs(board_repo) == before
 
@@ -1222,7 +1279,12 @@ def test_a_file_url_or_unusual_path_board_names_its_stale_lock(
     _git("init", "--bare", "--quiet", str(repo))
     lock = _plant_ref_lock(repo, claims.CLAIM_REF_PREFIX + "node")
 
-    for location in (repo, repo.as_uri()):
+    url_path = repo.as_uri()[len("file://") :]
+    # Git ignores a file URL's host and finds a board named without ".git".
+    locations = [repo, f"file://{url_path}", f"file://localhost{url_path}", f"file://elsewhere{url_path}"]
+    if board_name.endswith(".git"):
+        locations.append(str(repo)[: -len(".git")])
+    for location in locations:
         board = claims.ClaimBoard(location, "worker-a", tmp_path / "scratch")
         with pytest.raises(claims.ClaimRefLockedError, match="blocks updates of"):
             board.acquire("node", ttl=600)
@@ -1241,7 +1303,7 @@ def test_an_inherited_repository_variable_does_not_hide_a_stale_lock(
     lock = _plant_ref_lock(board_repo, claims.CLAIM_REF_PREFIX + "node")
     board = _board(tmp_path, board_repo, "worker-a")
     board._ensure_scratch()
-    # As inside a Git hook or `git rebase -x`.
+    # An inherited variable, as inside a Git hook, must not redirect the lock lookup.
     monkeypatch.setenv(variable, str(other))
 
     with pytest.raises(claims.ClaimRefLockedError) as raised:
@@ -1312,4 +1374,6 @@ def test_ref_locks_lists_the_lock_files_that_can_block_claims(
         (malformed.resolve(), claims.CLAIM_REF_PREFIX + "bad..key"),
     ]
     assert board.acquire("author/other", ttl=600)
-    assert claims.ClaimBoard("https://example.invalid/claims.git", "worker-a", tmp_path / "remote").ref_locks() == []
+    # Git reads "file:/path" as SSH to a host named "file".
+    for remote in ("https://example.invalid/claims.git", f"file:{board_repo}"):
+        assert claims.ClaimBoard(remote, "worker-a", tmp_path / "remote").ref_locks() == []
