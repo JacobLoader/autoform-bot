@@ -15,6 +15,12 @@ logger = getLogger(__name__)
 
 DEFAULT_RAM_FRACTION = 0.5
 _SHUTDOWN = object()
+_SHUTDOWN_REFUSAL = "Lean REPL pool is shut down; this call did not start and can be retried"
+
+
+def _slot_timeout(timeout: float) -> TimeoutError:
+    """Return the error for a call whose budget ran out before it started."""
+    return TimeoutError(f"timed out after {timeout:g} seconds waiting for an idle Lean REPL slot")
 
 
 @dataclass
@@ -123,43 +129,31 @@ class LeanReplPool:
         deadline = time.monotonic() + timeout if timeout is not None else None
         with self._condition:
             if self._shutdown:
-                raise RuntimeError(
-                    "Lean REPL pool is shut down; this call did not start and can be retried"
-                )
+                raise RuntimeError(_SHUTDOWN_REFUSAL)
             self._active_calls += 1
 
         repl: LeanRepl | None = None
         try:
             remaining = None if deadline is None else deadline - time.monotonic()
             if remaining is not None and remaining <= 0:
-                raise TimeoutError(
-                    f"timed out after {timeout:g} seconds waiting for an idle Lean REPL slot"
-                )
+                raise _slot_timeout(timeout)
             try:
                 candidate = self._idle.get(timeout=remaining)
             except queue.Empty as error:
-                raise TimeoutError(
-                    f"timed out after {timeout:g} seconds waiting for an idle Lean REPL slot"
-                ) from error
+                raise _slot_timeout(timeout) from error
             if candidate is _SHUTDOWN:
                 # Hand the wakeup to the next waiter.
                 self._idle.put(_SHUTDOWN)
-                raise RuntimeError(
-                    "Lean REPL pool is shut down; this call did not start and can be retried"
-                )
+                raise RuntimeError(_SHUTDOWN_REFUSAL)
             repl = candidate
 
             with self._condition:
                 if self._shutdown:
-                    raise RuntimeError(
-                        "Lean REPL pool is shut down; this call did not start and can be retried"
-                    )
+                    raise RuntimeError(_SHUTDOWN_REFUSAL)
 
             remaining = None if deadline is None else deadline - time.monotonic()
             if remaining is not None and remaining <= 0:
-                raise TimeoutError(
-                    f"timed out after {timeout:g} seconds waiting for an idle Lean REPL slot"
-                )
+                raise _slot_timeout(timeout)
             try:
                 return repl.run_disposable(code, timeout=remaining, budget=timeout)
             except ReplCleanupError as error:
