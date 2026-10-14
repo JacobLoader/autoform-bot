@@ -84,6 +84,7 @@ def runtime_config(**overrides):
         "rpc_read_timeout": 1.0,
         "max_connections": 8,
         "response_timeout": 900.0,
+        "diagnostics_command": ("lake", "--no-build", "lean"),
     }
     values.update(overrides)
     return LeanRuntimeConfig(**values)
@@ -551,8 +552,8 @@ def test_service_close_starts_lsp_retirement_before_blocked_repl_cleanup_finishe
             assert release_repl_close.wait(timeout=2)
 
     class ClosingLsp(FakeLsp):
-        def get_diagnostics(self, file_path):
-            return []
+        def hover(self, file_path, line, character):
+            return None
 
         def close(self):
             super().close()
@@ -569,8 +570,8 @@ def test_service_close_starts_lsp_retirement_before_blocked_repl_cleanup_finishe
         {"project_dir": str(project), "code": "#check Nat", "timeout": None},
     )
     services.dispatch(
-        "lsp.diagnostics",
-        {"project_dir": str(project), "file_path": "Main.lean"},
+        "lsp.hover",
+        {"project_dir": str(project), "file_path": "Main.lean", "line": 0, "character": 0},
     )
 
     thread = threading.Thread(
@@ -1318,8 +1319,8 @@ def test_partial_lsp_startup_transfers_cleanup_without_masking_the_error(
         started = time.monotonic()
         with pytest.raises(ValueError, match="injected LSP startup failure") as raised:
             services.dispatch(
-                "lsp.diagnostics",
-                {"project_dir": str(project), "file_path": "Main.lean"},
+                "lsp.hover",
+                {"project_dir": str(project), "file_path": "Main.lean", "line": 0, "character": 0},
             )
         assert raised.value is startup_error
         # Cleanup on the request thread would block on its release event.
@@ -1916,6 +1917,23 @@ def test_wrapped_repl_command_requires_an_explicit_header_command(monkeypatch):
     )
 
 
+def test_diagnostics_use_the_lake_that_lean_lsp_cmd_names(monkeypatch):
+    assert LeanRuntimeConfig.from_environment().diagnostics_command == ("lake", "--no-build", "lean")
+
+    monkeypatch.setenv("LEAN_LSP_CMD", "elan run leanprover/lean4:v4.32.2 lake serve")
+    assert LeanRuntimeConfig.from_environment().diagnostics_command == (
+        "elan",
+        "run",
+        "leanprover/lean4:v4.32.2",
+        "lake",
+        "--no-build",
+        "lean",
+    )
+
+    monkeypatch.setenv("LEAN_LSP_CMD", "my-lean-server --stdio")
+    assert LeanRuntimeConfig.from_environment().diagnostics_command == ("lake", "--no-build", "lean")
+
+
 def test_lowered_repl_maximum_lowers_only_the_default_timeout(monkeypatch):
     monkeypatch.setenv("AUTOFORM_MAX_REPL_REQUEST_SECONDS", "120")
 
@@ -1976,11 +1994,11 @@ def test_failed_lsp_session_is_replaced_on_the_next_call(tmp_path):
         def is_alive(self):
             return self.alive and not self.closed
 
-        def get_diagnostics(self, file_path):
+        def hover(self, file_path, line, character):
             if self.number == 1:
                 self.alive = False
                 raise LspProtocolError("broken shared stream")
-            return []
+            return None
 
     services = LeanRuntimeServices(
         runtime_config(),
@@ -1989,10 +2007,10 @@ def test_failed_lsp_session_is_replaced_on_the_next_call(tmp_path):
         start_sweepers=False,
     )
     try:
-        params = {"project_dir": str(project), "file_path": "Main.lean"}
+        params = {"project_dir": str(project), "file_path": "Main.lean", "line": 0, "character": 0}
         with pytest.raises(LspProtocolError, match="broken shared stream"):
-            services.dispatch("lsp.diagnostics", params)
-        assert services.dispatch("lsp.diagnostics", params).startswith("No diagnostics")
+            services.dispatch("lsp.hover", params)
+        assert services.dispatch("lsp.hover", params).startswith("No hover information")
         assert len(sessions) == 2
         assert sessions[0].closed is True
     finally:
@@ -2012,7 +2030,7 @@ def test_failed_lsp_request_returns_while_verified_cleanup_runs(tmp_path):
             super().__init__(root)
             self.retiring = False
 
-        def get_diagnostics(self, file_path):
+        def hover(self, file_path, line, character):
             self.retiring = True
             raise LspProtocolError("broken shared stream")
 
@@ -2037,8 +2055,8 @@ def test_failed_lsp_request_returns_while_verified_cleanup_runs(tmp_path):
         started = time.monotonic()
         with pytest.raises(LspProtocolError, match="broken shared stream"):
             services.dispatch(
-                "lsp.diagnostics",
-                {"project_dir": str(project), "file_path": "Main.lean"},
+                "lsp.hover",
+                {"project_dir": str(project), "file_path": "Main.lean", "line": 0, "character": 0},
             )
         # Cleanup on the request thread would block on its release event.
         assert time.monotonic() - started < 1.5
@@ -2096,8 +2114,7 @@ def test_hover_input_os_error_does_not_retire_healthy_session(tmp_path):
 
 
 @pytest.mark.skipif(os.name != "posix", reason="native LSP backend requires POSIX groups")
-@pytest.mark.parametrize("method", ["lsp.diagnostics", "lsp.hover"])
-def test_lsp_timeout_with_a_live_process_retires_the_session(tmp_path, method):
+def test_lsp_timeout_with_a_live_process_retires_the_session(tmp_path):
     project = make_lake_project(tmp_path, "lsp-live-timeout")
     # Larger than a pipe buffer, so didOpen cannot finish against a server
     # that never reads: the call times out while its process is still alive.
@@ -2124,11 +2141,9 @@ def test_lsp_timeout_with_a_live_process_retires_the_session(tmp_path, method):
         start_sweepers=False,
     )
     try:
-        params = {"project_dir": str(project), "file_path": str(project / "Main.lean")}
-        if method == "lsp.hover":
-            params.update(line=0, character=0)
+        params = {"project_dir": str(project), "file_path": str(project / "Main.lean"), "line": 0, "character": 0}
         with pytest.raises(TimeoutError):
-            services.dispatch(method, params)
+            services.dispatch("lsp.hover", params)
 
         # Only the failed call's retire flag tells dispatch that this live
         # process can no longer share its stream.
@@ -2156,9 +2171,9 @@ def test_successful_lsp_result_retires_a_session_poisoned_by_did_close(tmp_path)
             super().__init__(root)
             self.retiring = False
 
-        def get_diagnostics(self, file_path):
+        def hover(self, file_path, line, character):
             self.retiring = True
-            return []
+            return None
 
         def is_alive(self):
             return not self.retiring and not self.closed
@@ -2176,11 +2191,11 @@ def test_successful_lsp_result_retires_a_session_poisoned_by_did_close(tmp_path)
     )
     try:
         result = services.dispatch(
-            "lsp.diagnostics",
-            {"project_dir": str(project), "file_path": "Main.lean"},
+            "lsp.hover",
+            {"project_dir": str(project), "file_path": "Main.lean", "line": 0, "character": 0},
         )
 
-        assert result.startswith("No diagnostics")
+        assert result.startswith("No hover information")
         assert close_started.wait(timeout=1)
         assert services.lsp_projects.stats()["retiring"] == [str(project.resolve())]
     finally:
@@ -2188,8 +2203,7 @@ def test_successful_lsp_result_retires_a_session_poisoned_by_did_close(tmp_path)
         services.close()
 
 
-@pytest.mark.parametrize("method", ["lsp.diagnostics", "lsp.hover"])
-def test_failed_lsp_invalidation_survives_project_deletion(tmp_path, method):
+def test_failed_lsp_invalidation_survives_project_deletion(tmp_path):
     from servers.lsp.server import LspProtocolError
 
     project = make_lake_project(tmp_path, "lsp-deleted-root")
@@ -2206,16 +2220,10 @@ def test_failed_lsp_invalidation_survives_project_deletion(tmp_path, method):
         def is_alive(self):
             return self.alive and not self.closed
 
-        def fail(self):
+        def hover(self, file_path, line, character):
             self.alive = False
             shutil.rmtree(self.root)
             raise LspProtocolError("original protocol failure")
-
-        def get_diagnostics(self, file_path):
-            return self.fail()
-
-        def hover(self, file_path, line, character):
-            return self.fail()
 
     services = LeanRuntimeServices(
         runtime_config(),
@@ -2225,10 +2233,10 @@ def test_failed_lsp_invalidation_survives_project_deletion(tmp_path, method):
     )
     try:
         with pytest.raises(LspProtocolError, match="original protocol failure"):
-            params = {"project_dir": str(project), "file_path": "Main.lean"}
-            if method == "lsp.hover":
-                params.update({"line": 0, "character": 0})
-            services.dispatch(method, params)
+            services.dispatch(
+                "lsp.hover",
+                {"project_dir": str(project), "file_path": "Main.lean", "line": 0, "character": 0},
+            )
     finally:
         services.close()
 

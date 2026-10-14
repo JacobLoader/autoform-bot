@@ -51,13 +51,19 @@ uv run autoform-lean-runtime stop
 `stop` is graceful: it waits for admitted tool calls and Lean children to
 finish shutting down before a subsequent `start` can replace the runtime.
 
-`lean_diagnostic_messages` waits until Lean says it has finished checking the
-file (`textDocument/waitForDiagnostics`). `LEAN_LSP_TIMEOUT` (60 seconds by
-default) bounds each call, including time spent behind other LSP calls on the
-same project. A call that runs out fails rather than returning partial
-diagnostics, and the project's Lean server restarts. The value must not exceed
-`AUTOFORM_MAX_LSP_REQUEST_SECONDS` (600 seconds by default) or the runtime
-refuses to start, and raising that maximum past 745 seconds also needs
+`lean_diagnostic_messages` runs `lake --no-build lean` once per call and waits
+until Lean exits. When `LEAN_LSP_CMD` ends in `serve`, that command runs with
+`--no-build lean` in place of `serve`; otherwise the `lake` on `PATH` runs.
+Unbuilt or stale imports are reported with the modules to build, not built. At
+most `AUTOFORM_MAX_LEAN_PROJECTS` checks run at once. `lean_hover` uses the
+project's Lean server, which builds stale imports inside the call.
+
+`LEAN_LSP_TIMEOUT` (60 seconds by default) bounds each call, including time
+spent waiting for a free Lean slot or behind other LSP calls on the same
+project. A call that runs out fails rather than returning partial results, and
+a hover that runs out also restarts the project's Lean server. The value must
+not exceed `AUTOFORM_MAX_LSP_REQUEST_SECONDS` (600 seconds by default) or the
+runtime refuses to start, and raising that maximum past 745 seconds also needs
 `AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` raised. Like the limits below, it is read
 when the runtime starts: run `uv run autoform-lean-runtime stop` after changing
 it.
