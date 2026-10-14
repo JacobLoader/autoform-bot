@@ -276,6 +276,50 @@ def test_container_note_stays_while_any_sibling_is_unproved(
     assert audit_blueprint(blueprint).clean
 
 
+@pytest.mark.parametrize("layout", ["deferred-leaf", "deferred-container", "proved-deferred-leaf"])
+def test_a_container_note_counts_a_leaf_marked_not_ready_as_the_site_does(tmp_path: Path, layout: str) -> None:
+    # The site keeps a scope open for a leaf marked not_ready until it is proved, but not for a container.
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    container_id = "af_0123456789abcdef01234567"
+    _article(blueprint, "chapter/README.md", article_id=container_id)
+    proved = {"declaration": "theorem", "statement": "formalized", "proof": "formalized"}
+    if layout != "proved-deferred-leaf":
+        _article(
+            blueprint, "chapter/done.md", article_id="af_100000000000000000000000", lean="Project.done", **proved
+        )
+    if layout == "deferred-leaf":
+        _article(blueprint, "chapter/later.md", article_id="af_200000000000000000000000", not_ready="true")
+    elif layout == "deferred-container":
+        _article(
+            blueprint, "chapter/section/README.md", article_id="af_300000000000000000000000", not_ready="true"
+        )
+        _article(
+            blueprint,
+            "chapter/section/also.md",
+            article_id="af_400000000000000000000000",
+            lean="Project.also",
+            **proved,
+        )
+    else:  # the chapter's only target: a proved leaf still marked not_ready
+        _article(
+            blueprint,
+            "chapter/later.md",
+            article_id="af_200000000000000000000000",
+            lean="Project.later",
+            not_ready="true",
+            **proved,
+        )
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{container_id}.md").write_text("chapter route\n", encoding="utf-8")
+
+    findings = {(finding.article_path, finding.code) for finding in audit_blueprint(blueprint).findings}
+
+    stale = {("roadmap/chapter/README.md", "stale-implementation-note")}
+    assert findings == (set() if layout == "deferred-leaf" else stale)
+
+
 def test_container_note_without_formalizable_descendants_is_not_stale(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)

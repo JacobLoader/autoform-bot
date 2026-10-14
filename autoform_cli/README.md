@@ -114,7 +114,8 @@ that by moving anything still useful into the surviving article's note and
 deleting the orphan. When the article still exists but lost its `article_id`
 line, restore the line instead.
 Delete the file once its article is proved; for a container, delete it once
-every formalizable descendant is proved and there is at least one. The
+every formalizable descendant, and every leaf marked `not_ready` beneath it,
+is proved and there is at least one. The
 directory is hidden, so current and older renderers omit it from the site and
 publication hash without requiring an `AUTOFORM_REF` migration; `autoform
 audit` reports a note left behind after that point.
