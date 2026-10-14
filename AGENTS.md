@@ -32,15 +32,17 @@ workflow and cross-file maintenance.
   graph state. Rendered sites, Mermaid graphs, dashboards, and runtime
   projections are derived views, not another durable scheduler or graph.
 - In consumer formalization work, Lean imports are allowed. Follow Formalize's
-  `autoform work import-impact` policy: claim the article/module, check reported
-  claim keys for active conflicts, and expand ownership only for validated
-  downstream changes. Never replace that evidence boundary with a blanket
-  import ban.
+  `autoform work import-impact` policy: baseline and recheck the affected
+  articles, and when the project uses claims, claim the article/module, check
+  reported claim keys for active conflicts, and expand ownership only for
+  validated downstream changes. Never replace that evidence boundary with a
+  blanket import ban.
 - Public CLI and JSON shapes are contracts. Lean server work requires an
   explicit project root, bounded time and output, verified descendant cleanup,
   and no retry after dispatch with an unknown outcome. A project root is not an
   OS sandbox.
-- Claims coordinate across machines through Git `refs/autoform-claims/*`. Only
+- Claims are optional; a project that uses them coordinates across machines
+  through Git `refs/autoform-claims/*`. Only
   the dashboard's publication overlay is loopback-only, ephemeral, and excluded
   from the vault and public site. Pushing claims or publishing requires
   user-supplied authority.

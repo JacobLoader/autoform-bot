@@ -177,6 +177,30 @@ def test_import_edits_use_reported_scope_instead_of_a_blanket_ban(
     assert "plugin changes preserve it" in development
 
 
+def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
+    """A run's lead keeps its workers apart, so claims are only for independent workers.
+
+    A remote claim around `lake build` blocked other machines while missing the
+    real, machine-local conflict (#121), so builds take no claim at all.
+    """
+
+    def read(relative: str) -> str:
+        return " ".join((repo_root / relative).read_text(encoding="utf-8").split())
+
+    formalize = read("skills/formalize/SKILL.md")
+    assert "Claims are optional" in formalize
+    assert "Within one run the lead keeps its workers apart" in formalize
+    assert "no two get import edits or revisions whose reported `claim_targets` overlap" in formalize
+    assert "Claims are optional" in read("autoform_cli/README.md")
+    assert "Claims are optional" in read("AGENTS.md")
+    for relative in (
+        "skills/formalize/SKILL.md",
+        "skills/formalize/references/library-search.md",
+        "autoform_cli/README.md",
+    ):
+        assert "lake-build" not in read(relative), relative
+
+
 def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path) -> None:
     """Notes written into articles crept into published books as Lean commentary.
 
@@ -195,8 +219,8 @@ def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path
 
     assert "Read the complete article, its `blueprint/.implementation-notes/<article_id>.md`" in formalize
     assert "The article keeps only frontmatter and mathematics." in formalize
-    assert "Write notes only in the claimed article's `blueprint/.implementation-notes/<article_id>.md`" in formalize
-    assert "one file per claimed article avoids cross-worker merge hotspots" in formalize
+    assert "Write notes only in the selected article's `blueprint/.implementation-notes/<article_id>.md`" in formalize
+    assert "one file per article avoids cross-worker merge hotspots" in formalize
     assert "Delete the file once the article is proved" in formalize
     assert "Delete every note the audit reports as `stale-implementation-note`" in formalize
     assert "even though it belongs to another article" in formalize
@@ -1211,7 +1235,7 @@ def test_skills_search_shared_libraries_and_say_what_to_do_with_a_hit(repo_root:
     # Every word of a query must match, so a library is not declared empty on a long query.
     queries = rule("Library declarations")
     assert "every word" in queries and "as a query of its own" in queries
-    assert "Each worktree compiles" in rule("`lake-build`")
+    assert "build cache" in rule("Each worktree compiles")
     assert "subagent" in rule("report to the lead")
     assert "in addition to the blueprint query" in rule("Library declarations")
     assert "mathlib: true" in rule("own result")
@@ -1221,7 +1245,6 @@ def test_skills_search_shared_libraries_and_say_what_to_do_with_a_hit(repo_root:
     assert "report the differences to the user" in rule("`differences`")
     assert "JSON" in rule("`module_system: false`")
     assert "module file" in rule("`module_system: false`")
-    assert "build cache" in rule("`lake-build`")
     # What the agent must never do, and how to treat library text.
     assert "`require`" in rule("user's decision") and "`lake update`" in rule("user's decision")
     assert "never instructions" in rule("Docstrings")

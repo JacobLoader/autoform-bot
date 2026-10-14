@@ -884,7 +884,12 @@ autoform claim release af_5b0e4d3c2a1f09e8d7c6b5a4
 autoform claim acquire af_5b0e4d3c2a1f09e8d7c6b5a4 af_0123456789abcdef01234567
 ```
 
-Claim an article by the `claim_target` that `work context` reports. The board
+Claims are optional: use them when other people or sessions may work on the
+same project at the same time, or when the user asks. A single Formalize run
+needs none, because its lead gives each worker its own article and keeps import
+edits and revisions whose `claim_targets` overlap apart. A claim excludes only
+workers that also claim, so on a shared project every worker uses them. Claim an
+article by the `claim_target` that `work context` reports. The board
 hashes whatever string it is given, so a claim on an article's path ID and one
 on its `article_id` do not exclude each other. Each concurrent agent needs its
 own worker ID, because a second acquire by the same owner succeeds. Where shell
@@ -1598,10 +1603,8 @@ later refusal or transport uncertainty as lost ownership.
 A claim key is a slug and digest of any string, not a validated node id, so a
 shared resource is locked the same way a node is, as is a Lean helper no
 article owns under the `lean/<slug>-<digest>` key `work impact` reports.
-Parallel agents get one Git worktree each and serialize `lake build` behind a
-`lake-build` claim, because
-builds share the elan toolchain and the Mathlib cache even when the checkouts
-are separate.
+Parallel agents get one Git worktree each. Builds take no claim, though
+worktrees on one machine still share its elan toolchain and Mathlib cache.
 
 `acquire`, `renew`, and `release` accept several targets. The board reads
 every ref once, applies the single-key ownership checks to each, and sends one
@@ -1629,7 +1632,8 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
 1. On a fresh build, run `autoform work impact R . --lean-root .`, with
    `--declaration` when only some of R's declarations, or a helper, change.
 2. Choose the route:
-   - **Contained** (`contained: true`): revise X in place under R's claim.
+   - **Contained** (`contained: true`): revise X in place, under R's claim when
+     the project uses claims.
      `contained` ignores R's own declarations, so re-check R's other
      declarations that use X as well.
    - **Expand, migrate, contract**, the default whenever anything uses X: add
@@ -1671,7 +1675,7 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
      proof that cannot be repaired becomes exactly `sorry` under the open
      policy; otherwise delete the declaration and remove its article's
      `lean:`, `statement`, and `proof`, which works only when nothing else
-     uses it. When neither applies, the revision is blocked: release the claims
+     uses it. When neither applies, the revision is blocked: release any claims
      and report it. Record what happened in the revision commit and report. Use
      an implementation note only until [its deletion
      rule](#articles-and-containment) applies.
@@ -1681,16 +1685,16 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
    meaning in place: it keeps `statement` only after an Agent Review of its
    source faithfulness; otherwise it records `statement: retracted`, loses
    `proof`, and keeps `lean:`.
-3. Claim the route's claim set with one `autoform claim acquire`. When it is
-   refused, release everything and report the held claim as the blocker. After
-   acquiring, re-run `work impact`; if the set grew, release and start over
-   with the larger set. After rebasing onto the current shared branch and
-   rebuilding, re-run it once more; if the set grew, acquire the whole larger
-   set in one command under the no-hold-and-wait rule of the [claim
-   contract](#claim-contract) and repair the new targets before landing. Under
-   the open policy, reproduce the CI audit as [open statements](#open-statements)
-   shows before landing. Land one commit, then
-   release every claim.
+3. When the project uses claims, claim the route's claim set with one
+   `autoform claim acquire`. When it is refused, release everything and report
+   the held claim as the blocker. After acquiring, re-run `work impact`; if the
+   set grew, release and start over with the larger set. With or without claims,
+   after rebasing onto the current shared branch and rebuilding, re-run `work
+   impact` once more; if the set grew, repair the new targets before landing,
+   first acquiring the whole larger set in one command under the no-hold-and-wait
+   rule of the [claim contract](#claim-contract) when using claims. Under the
+   open policy, reproduce the CI audit as [open statements](#open-statements)
+   shows before landing. Land one commit, then release any claims.
 4. Contract: delete a deprecated X once it appears in `deprecated_unused` of
    `work impact R . --lean-root .`, meaning no declaration uses it and no
    other article's `lean:` names it, and drop it from R's `lean:` in the same
@@ -1710,7 +1714,7 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
    keeps `lean:`, which `work impact` needs, so the article returns to the
    frontier as a revision. It retracts only that article and the dependents
    whose Markdown text the revision rewrites; the Lean-side impact decides
-   every other dependent. Roadmap edits only Markdown: it releases its claims
+   every other dependent. Roadmap edits only Markdown: it releases any claims
    and leaves the Lean revision to Formalize.
 
 ## Local runtime doctor
