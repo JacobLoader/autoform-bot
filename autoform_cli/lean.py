@@ -46,12 +46,13 @@ _SECTION = re.compile(
 _MUTUAL = re.compile(r"^\s*mutual\s*$")
 _END = re.compile(r"^\s*end\b\s*(\S*)")
 # The ``*_wanted`` commands are Batteries' ``Batteries.Util.ProofWanted``: each
-# states a result whose proof or construction is deferred.
+# states a result whose proof or construction is deferred. ``alias`` is
+# Batteries' ``Batteries.Tactic.Alias``.
 _DECLARATION = re.compile(
     r"^\s*(?:@\[[^\]]*\]\s*)*"
     r"(?:(?:public|private|protected|noncomputable|partial|unsafe|scoped|local)\s+)*"
     r"(theorem|lemma|def|abbrev|instance|structure|class|inductive|opaque|axiom|irreducible_def"
-    r"|theorem_wanted|proof_wanted|def_wanted|instance_wanted)\s+(.+)$"
+    r"|theorem_wanted|proof_wanted|def_wanted|instance_wanted|alias)\s+(.+)$"
 )
 _IGNORED_DIRECTORIES = frozenset(
     {
@@ -84,6 +85,21 @@ MANAGED_OUTPUT_SCHEMAS = frozenset(
 )
 
 @dataclass(frozen=True, slots=True)
+class Alias:
+    """What an ``alias`` command points at, as its source writes it."""
+
+    #: The names its target can mean, in the order Lean tries them: in the
+    #: current namespace, in each enclosing one, then at the root. Empty when
+    #: the target is on neither the alias's line nor the next.
+    candidates: tuple[str, ...]
+    #: Whether the target is one component, such as ``t`` rather than ``A.t``:
+    #: Lean then skips a ``protected`` declaration in the namespaces it tries.
+    atomic: bool
+    #: ``alias ⟨mp, mpr⟩ := t``: each name is a theorem, whatever ``t`` is.
+    iff: bool
+
+
+@dataclass(frozen=True, slots=True)
 class Declaration:
     """One Lean declaration found in the project's sources."""
 
@@ -91,6 +107,9 @@ class Declaration:
     path: Path
     line: int
     keyword: str
+    #: ``private`` or ``protected`` when written before the keyword.
+    visibility: str | None = None
+    alias: Alias | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +123,43 @@ class SourceIndex:
 
     def find(self, name: str) -> Declaration | None:
         return self.declarations.get(name)
+
+    def reached(self, declaration: Declaration) -> Declaration | None:
+        """The declaration ``declaration`` stands for: itself, or what an alias names through any chain.
+
+        ``None`` when Lean may resolve a target to a declaration the index does
+        not hold, such as one in Mathlib, or when the aliases form a cycle.
+        """
+
+        seen = {declaration.name}
+        while declaration.alias is not None:
+            target = self._alias_target(declaration, declaration.alias)
+            if target is None or target.name in seen:
+                return None
+            seen.add(target.name)
+            declaration = target
+        return declaration
+
+    def _alias_target(self, declaration: Declaration, alias: Alias) -> Declaration | None:
+        """Resolve one alias's target as Lean would, as far as the index can be sure.
+
+        Lean takes the first candidate it can see. One the index lacks may
+        still be declared outside the project, so the search stops there.
+        """
+
+        last = len(alias.candidates) - 1
+        for depth, candidate in enumerate(alias.candidates):
+            found = self.declarations.get(candidate)
+            if found is None:
+                return None
+            hidden = (
+                (found.path == declaration.path and found.line >= declaration.line)
+                or (found.visibility == "private" and found.path != declaration.path)
+                or (found.visibility == "protected" and alias.atomic and depth < last)
+            )
+            if not hidden:
+                return found
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -670,7 +726,8 @@ def _scan(text: str, relative: Path) -> list[Declaration]:
     namespaces: list[str] = []
     scopes: list[str | None] = []
 
-    for number, line in enumerate(_without_lean_comments(text).splitlines(), start=1):
+    lines = _without_lean_comments(text).splitlines()
+    for number, line in enumerate(lines, start=1):
         if not line.strip():
             continue
 
@@ -698,12 +755,28 @@ def _scan(text: str, relative: Path) -> list[Declaration]:
         declaration_match = _DECLARATION.match(line)
         if declaration_match:
             keyword = declaration_match.group(1)
+            words = _ATTRIBUTE_LIST.sub(" ", line[: declaration_match.start(1)]).split()
+            visibility = next((word for word in ("private", "protected") if word in words), None)
+            if keyword == "alias":
+                following = next((lines[later] for later in range(number, len(lines)) if lines[later].strip()), "")
+                found.extend(
+                    _aliases(declaration_match.group(2), following, namespaces, relative, number, visibility)
+                )
+                continue
             name = _name_token(declaration_match.group(2))
             if name is None:
                 continue
-            qualified = ".".join([*namespaces, name])
-            found.append(Declaration(qualified, relative, number, keyword))
+            found.append(Declaration(_qualified(namespaces, name), relative, number, keyword, visibility))
     return found
+
+
+_ATTRIBUTE_LIST = re.compile(r"@\[[^\]]*\]")
+
+
+def _qualified(namespaces: list[str], name: str) -> str:
+    """The full name of ``name`` declared in ``namespaces``; ``_root_.`` leaves them out."""
+
+    return name.removeprefix("_root_.") if name.startswith("_root_.") else ".".join([*namespaces, name])
 
 
 _NAME_TOKEN = re.compile(r"(?:«[^«»]*»|[^\s:(){}\[\]⦃⦄,«»])+")
@@ -714,6 +787,53 @@ def _name_token(text: str) -> str | None:
 
     match = _NAME_TOKEN.match(text)
     return match.group() if match and text[match.end() : match.end() + 1] not in ("«", "»") else None
+
+
+#: A name as ``alias`` takes one: it starts with a letter, ``_`` or ``«``.
+_ALIAS_NAME = r"(?:«[^«»]*»|[^\W\d])(?:«[^«»]*»|[^\s:(){}\[\]⦃⦄,«»⟨⟩])*"
+#: What follows ``alias``: one name, or ``⟨mp, mpr⟩`` naming the two directions
+#: of an iff, either of which may be ``_``; then ``:=`` and, unless it is on the
+#: next line, the target.
+_ALIAS = re.compile(
+    rf"(?:⟨\s*(?P<mp>{_ALIAS_NAME})\s*,\s*(?P<mpr>{_ALIAS_NAME})\s*⟩|(?P<name>{_ALIAS_NAME}))\s*:="
+    rf"(?:\s*(?P<target>{_ALIAS_NAME}))?"
+)
+_ALIAS_TARGET = re.compile(rf"\s*({_ALIAS_NAME})")
+
+
+def _aliases(
+    text: str, following: str, namespaces: list[str], relative: Path, line: int, visibility: str | None
+) -> list[Declaration]:
+    """The declarations one ``alias`` command makes.
+
+    ``text`` is what follows the keyword, and ``following`` the next nonblank
+    line, where a long alias puts its target.
+    """
+
+    match = _ALIAS.match(text)
+    if match is None:
+        return []
+    target = match["target"]
+    if target is None and not text[match.end() :].strip():
+        next_line = _ALIAS_TARGET.match(following)
+        target = next_line.group(1) if next_line else None
+    if target is None:
+        candidates: tuple[str, ...] = ()
+    elif target.startswith("_root_."):
+        candidates = (target.removeprefix("_root_."),)
+    else:
+        parts = [part for namespace in namespaces for part in namespace.split(".")]
+        candidates = tuple(".".join([*parts[:depth], target]) for depth in range(len(parts), -1, -1))
+    atomic = target is not None and "." not in target
+    iff = match["name"] is None
+    found = []
+    for name in [match["mp"], match["mpr"]] if iff else [match["name"]]:
+        if name == "_":
+            continue
+        qualified = _qualified(namespaces, name)
+        alias = Alias(tuple(candidate for candidate in candidates if candidate != qualified), atomic, iff)
+        found.append(Declaration(qualified, relative, line, "alias", visibility, alias))
+    return found
 
 
 _RAW_OPEN = re.compile(r'r(#*)"')
@@ -1196,6 +1316,7 @@ def _git_environment() -> dict[str, str]:
 
 __all__ = [
     "IndexedSourceSnapshot",
+    "Alias",
     "Declaration",
     "LeanSourceError",
     "MANAGED_OUTPUT_SCHEMAS",

@@ -25,6 +25,7 @@ from autoform_cli._tree_snapshot import (
     bind_directory_tree,
 )
 from autoform_cli.lean import (
+    Alias,
     SourceLinker,
     build_linker,
     declaration_names,
@@ -3502,6 +3503,62 @@ def test_batteries_wanted_commands_are_indexed_with_their_keyword(tmp_path: Path
         "W.instFoo": "instance_wanted",
         "W.stated": "theorem",
     }
+
+
+def test_aliases_are_indexed_with_where_their_target_can_be(tmp_path: Path) -> None:
+    source = [
+        "namespace A.B",
+        "alias u := t",
+        '@[deprecated (since := "2025-01-01")] protected alias «old u» := _root_.Nat.succ_le',
+        "alias ⟨mp, _⟩ := t_iff",
+        "alias ⟨_, mpr⟩ := t_iff",
+        "alias u2:=A.u",
+        "alias self := self",
+        "alias long :=",
+        "",
+        "  t",
+        "private alias _root_.top := t",
+        # Without Batteries, `alias` is an ordinary identifier.
+        "  alias ++ s",
+        "  alias x",
+        "end A.B",
+    ]
+    index = _index(tmp_path, "\n".join(source) + "\n")
+
+    def alias(*candidates: str, atomic: bool = True, iff: bool = False) -> Alias:
+        return Alias(candidates, atomic, iff)
+
+    assert {name: (declaration.visibility, declaration.alias) for name, declaration in index.declarations.items()} == {
+        "A.B.u": (None, alias("A.B.t", "A.t", "t")),
+        "A.B.«old u»": ("protected", alias("Nat.succ_le", atomic=False)),
+        "A.B.mp": (None, alias("A.B.t_iff", "A.t_iff", "t_iff", iff=True)),
+        "A.B.mpr": (None, alias("A.B.t_iff", "A.t_iff", "t_iff", iff=True)),
+        "A.B.u2": (None, alias("A.B.A.u", "A.A.u", "A.u", atomic=False)),
+        "A.B.self": (None, alias("A.self", "self")),
+        "A.B.long": (None, alias("A.B.t", "A.t", "t")),
+        "top": ("private", alias("A.B.t", "A.t", "t")),
+    }
+    assert {declaration.keyword for declaration in index.declarations.values()} == {"alias"}
+    assert index.find("A.B.mpr").line == 5
+
+
+def test_root_qualified_names_leave_their_namespace_out(tmp_path: Path) -> None:
+    index = _index(tmp_path, "namespace A\ntheorem _root_.B.c : True := trivial\ntheorem d : True := trivial\nend A\n")
+
+    assert set(index.declarations) == {"B.c", "A.d"}
+
+
+def test_an_alias_reaches_nothing_through_a_cycle_or_another_file_s_private_name(tmp_path: Path) -> None:
+    (tmp_path / "A.lean").write_text(
+        "namespace X\nalias p := q\nprivate theorem hidden : True := trivial\nend X\n", encoding="utf-8"
+    )
+    (tmp_path / "B.lean").write_text("namespace X\nalias q := p\nalias seen := hidden\nend X\n", encoding="utf-8")
+    index = index_project(tmp_path)
+
+    assert index.reached(index.find("X.p")) is None
+    # Lean cannot see X.hidden from B.lean, and the root's `hidden` may be anyone's.
+    assert index.reached(index.find("X.seen")) is None
+    assert index.reached(index.find("X.hidden")) == index.find("X.hidden")
 
 
 def test_anonymous_instances_are_not_mistaken_for_names(tmp_path: Path) -> None:
