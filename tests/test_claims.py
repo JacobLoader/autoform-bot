@@ -7,6 +7,7 @@ import os
 import subprocess
 import threading
 import time
+import urllib.parse
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -1270,7 +1271,11 @@ def test_a_remote_board_neither_names_nor_deletes_a_lock_file(
     assert _refs(board_repo) == before
 
 
-@pytest.mark.parametrize("board_name", ["claims.git", "cl\u00e2ims.git "], ids=["plain", "non-ascii-trailing-space"])
+@pytest.mark.parametrize(
+    "board_name",
+    ["claims.git", "cl\u00e2ims.git ", "claims #1?.git"],
+    ids=["plain", "non-ascii-trailing-space", "hash-and-question-mark"],
+)
 def test_a_file_url_or_unusual_path_board_names_its_stale_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, board_name: str
 ) -> None:
@@ -1280,10 +1285,18 @@ def test_a_file_url_or_unusual_path_board_names_its_stale_lock(
     lock = _plant_ref_lock(repo, claims.CLAIM_REF_PREFIX + "node")
 
     url_path = repo.as_uri()[len("file://") :]
-    # Git ignores a file URL's host and finds a board named without ".git".
-    locations = [repo, f"file://{url_path}", f"file://localhost{url_path}", f"file://elsewhere{url_path}"]
+    # Git ignores a file URL's host, decodes it, keeps "?" and "#", drops
+    # trailing slashes and finds a board named without ".git".
+    locations = [
+        repo,
+        f"file://{url_path}",
+        f"file://localhost{url_path}",
+        f"file://elsewhere{url_path}",
+        f"file://{repo.as_posix()}",
+        f"file://{url_path}/",
+    ]
     if board_name.endswith(".git"):
-        locations.append(str(repo)[: -len(".git")])
+        locations += [str(repo)[: -len(".git")], f"file://{url_path[: -len('.git')]}/"]
     for location in locations:
         board = claims.ClaimBoard(location, "worker-a", tmp_path / "scratch")
         with pytest.raises(claims.ClaimRefLockedError, match="blocks updates of"):
@@ -1292,9 +1305,8 @@ def test_a_file_url_or_unusual_path_board_names_its_stale_lock(
     assert lock.exists()
 
 
-@pytest.mark.parametrize("variable", ["GIT_DIR", "GIT_COMMON_DIR"])
-def test_an_inherited_repository_variable_does_not_hide_a_stale_lock(
-    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch, variable: str
+def test_an_inherited_git_common_dir_does_not_hide_a_stale_lock(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(claims, "_LOCK_GRACE_S", 0.1)
     other = tmp_path / "other.git"
@@ -1303,14 +1315,119 @@ def test_an_inherited_repository_variable_does_not_hide_a_stale_lock(
     lock = _plant_ref_lock(board_repo, claims.CLAIM_REF_PREFIX + "node")
     board = _board(tmp_path, board_repo, "worker-a")
     board._ensure_scratch()
-    # An inherited variable, as inside a Git hook, must not redirect the lock lookup.
-    monkeypatch.setenv(variable, str(other))
+    # An inherited variable, as inside a Git hook, must not redirect the lock
+    # lookup. GIT_DIR cannot, since the lookup names --git-dir itself.
+    monkeypatch.setenv("GIT_COMMON_DIR", str(other))
 
     with pytest.raises(claims.ClaimRefLockedError) as raised:
         board.acquire("node", ttl=600)
 
     assert [found.path for found in raised.value.locks] == [lock.resolve()]
     assert [found.path for found in board.ref_locks()] == [lock.resolve()]
+
+
+def test_a_hook_refusal_stays_an_error_even_if_a_lock_came_and_went(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claims, "_LOCK_GRACE_S", 60.0)
+    board = _board(tmp_path, board_repo, "worker-a")
+    assert board.acquire("node", ttl=600)
+    lock = _plant_ref_lock(board_repo, "packed-refs")
+    existing_locks = claims.ClaimBoard._existing_locks
+
+    def peer_lets_go(paths: dict[Path, str]) -> list[claims.ClaimRefLock]:
+        found = existing_locks(paths)
+        lock.unlink(missing_ok=True)
+        return found
+
+    monkeypatch.setattr(claims.ClaimBoard, "_existing_locks", staticmethod(peer_lets_go))
+    git = board._git
+    ref = claims.CLAIM_REF_PREFIX + "node"
+
+    def declined_push(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] != "push":
+            return git(args, **kwargs)
+        # The hook's own words mention a lock and an existing reference.
+        err = (
+            "remote: fatal: Unable to create '/srv/mirror/.git/index.lock': File exists.\n"
+            "remote: the mirror says: reference already exists\n"
+            "error: failed to push some refs to 'board'\n"
+        )
+        out = f"To board\n!\t:{ref}\t[remote rejected] (pre-receive hook declined)\nDone\n"
+        return subprocess.CompletedProcess(["git", *args], 1, out, err)
+
+    monkeypatch.setattr(board, "_git", declined_push)
+
+    with pytest.raises(claims.ClaimTransportError, match="pre-receive hook declined") as raised:
+        board.release("node")
+    assert not isinstance(raised.value, claims.ClaimRefLockedError)
+
+
+def test_reference_already_exists_on_an_unseen_board_is_an_error_for_a_batch_with_an_update(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    board = _board(tmp_path, board_repo, "worker-a")
+    monkeypatch.setattr(board, "_ref_store", lambda: None)
+    new = "2" * 40
+    created, updated = (claims.CLAIM_REF_PREFIX + key for key in ("created", "updated"))
+    git = board._git
+
+    def refused_push(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] != "push":
+            return git(args, **kwargs)
+        out = (
+            f"To board\n!\t{new}:{created}\t[remote rejected] (atomic transaction failed)\n"
+            f"!\t{new}:{updated}\t[remote rejected] (reference already exists)\nDone\n"
+        )
+        return subprocess.CompletedProcess(["git", *args], 1, out, "error: failed to push some refs to 'board'\n")
+
+    monkeypatch.setattr(board, "_git", refused_push)
+
+    with pytest.raises(claims.ClaimTransportError, match="reference already exists"):
+        board._cas_push_refs([("created", None, new), ("updated", "1" * 40, new)], atomic=True)
+
+
+def test_a_packed_refs_lock_leaves_a_lost_create_race_a_refusal(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claims, "_LOCK_GRACE_S", 0.1)
+    board = _board(tmp_path, board_repo, "worker-a")
+    board._ensure_scratch()
+    lock = _plant_ref_lock(board_repo, "packed-refs")
+    rival = _git("commit-tree", _git("mktree", cwd=board_repo, input_text=""), "-m", "rival", cwd=board_repo)
+    ref = claims.CLAIM_REF_PREFIX + "node"
+    _install_pre_push_hook(board, monkeypatch, f'git --git-dir="{board_repo}" update-ref {ref} {rival}')
+
+    # packed-refs.lock blocks only deletions, so a lost race to create stays one.
+    assert not board.acquire("node", ttl=600)
+    assert _refs(board_repo) == {ref: rival}
+    assert lock.exists()
+
+
+def test_a_bad_gitfile_ends_the_board_lookup_as_it_ends_git_s(tmp_path: Path) -> None:
+    named = tmp_path / "board"
+    named.write_text("gitdir: /nonexistent\n")
+    beside = tmp_path / "board.git"
+    _git("init", "--bare", "--quiet", str(beside))
+    _plant_ref_lock(beside, claims.CLAIM_REF_PREFIX + "node")
+    board = claims.ClaimBoard(named, "worker-a", tmp_path / "scratch")
+
+    # Git stops at the bad gitfile instead of trying board.git.
+    assert board._ref_store() is None
+    assert board.ref_locks() == []
+
+
+def test_a_file_url_is_decoded_before_its_host_is_dropped(tmp_path: Path) -> None:
+    decoy = tmp_path / "c.git"
+    real = tmp_path / f"sub{tmp_path}" / "c.git"
+    for repo in (decoy, real):
+        _git("init", "--bare", "--quiet", str(repo))
+        _plant_ref_lock(repo, claims.CLAIM_REF_PREFIX + "node")
+    # Escaped slashes in the host part become part of the path Git pushes to.
+    url = "file://" + urllib.parse.quote(f"/{tmp_path}/sub", safe="") + f"{tmp_path}/c.git"
+    board = claims.ClaimBoard(url, "worker-a", tmp_path / "scratch")
+
+    assert [found.path for found in board.ref_locks()] == [(real / f"{claims.CLAIM_REF_PREFIX}node.lock").resolve()]
 
 
 def test_cleanup_skips_a_lease_whose_release_a_lock_file_blocks(
