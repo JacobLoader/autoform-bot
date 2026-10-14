@@ -10,10 +10,11 @@ on:
 permissions:
   contents: read
 
-# A newer commit on a pull request cancels the run for the older one; runs on
-# main always finish.
+# A newer commit on a pull request cancels the run for the older one. Each push
+# gets a group of its own: runs that share a group wait one at a time, and a
+# newer one cancels any still waiting, so runs on main would skip commits.
 concurrency:
-  group: tests-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.event_name == 'pull_request' && format('tests-pr-{0}', github.event.pull_request.number) || format('tests-run-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

@@ -16,10 +16,11 @@ make check-example  # validate, render, and build the bundled example site
 
 CI (`.github/workflows/tests.yml`) runs the same four steps on Python 3.10 and
 3.13 for every pull request and for pushes to `main` and `scratch/` branches; a
-newer commit on a pull request cancels the older run. A separate job runs
+newer commit on a pull request cancels the older run. One job runs
 `tests/test_skeleton.py` and one `tests/test_project_inspect.py` test against a
-real Lean toolchain; another runs the inspection, bounded-subprocess, and
-transactional-output tests on Windows; a third builds
+real Lean toolchain, and another builds a project from the bundled Mathlib
+release and runs the other real-Lean suites; another runs the inspection,
+bounded-subprocess, and transactional-output tests on Windows; another builds
 `tests/fixtures/repl-smoke` and runs `tests/test_real_repl.py` against the
 pinned upstream REPL, also checking the header parser on the oldest Lean release
 Autoform supports. Locally, tests that need Lean skip when
@@ -27,7 +28,7 @@ Autoform supports. Locally, tests that need Lean skip when
 toolchain pinned in `tests/fixtures/skeleton-project/lean-toolchain` is
 missing; the others let elan download it. The `tests/test_library_generate.py`
 ones that run Lean build a fixture that clones Batteries from GitHub, so they
-run only when `AUTOFORM_REQUIRE_REAL_LIBRARY_TESTS=1` is set, as the same CI
+run only when `AUTOFORM_REQUIRE_REAL_LIBRARY_TESTS=1` is set, as the Mathlib
 job does; a missing toolchain or a failed download then fails them. Run
 `lake build` in `skills/setup/assets/cabannes-thesis-project` when you change
 the example's Lean sources or declarations.
