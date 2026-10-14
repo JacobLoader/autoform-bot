@@ -1176,6 +1176,32 @@ def test_failed_header_command_reports_its_error_line(monkeypatch, stdout, stder
     assert repl.is_clean()
 
 
+# lake env exits without reading its input when the lakefile or toolchain is
+# broken, so writing a snippet larger than any pipe buffer meets a closed pipe.
+def test_header_command_that_exits_without_reading_reports_its_error_line(monkeypatch):
+    repl = repl_core.LeanRepl(
+        repl_core.LeanReplConfig(
+            warmup_imports=frozenset(),
+            header_command=[
+                sys.executable,
+                "-c",
+                "import sys; sys.stderr.write('error: broken lakefile\\n'); sys.exit(1)",
+            ],
+        )
+    )
+    monkeypatch.setattr(
+        repl,
+        "start",
+        lambda: pytest.fail("a failed header check must not start Lean"),
+    )
+    code = "-- " + "x" * (1 << 20) + "\n#check Nat"
+
+    assert repl.run_disposable(code, timeout=30) == {
+        "repl_error": "Lean header check failed: error: broken lakefile"
+    }
+    assert repl.is_clean()
+
+
 @pytest.mark.parametrize(
     "code",
     [
