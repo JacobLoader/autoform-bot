@@ -709,6 +709,8 @@ def test_audit_reads_an_alias_s_limits_and_wanted_command_from_its_target(tmp_pa
     _article(
         blueprint, "pending.md", declaration="theorem", statement="formalized", proof="formalized", lean="Project.ofWanted"
     )
+    _article(blueprint, "forward.md", declaration="theorem", statement="formalized", lean="Project.bigForward")
+    _article(blueprint, "wide.md", declaration="theorem", statement="formalized", lean="wide")
     lean_root = tmp_path / "lean"
     lean_root.mkdir()
     source = [
@@ -719,9 +721,14 @@ def test_audit_reads_an_alias_s_limits_and_wanted_command_from_its_target(tmp_pa
         "alias small := big",
         "theorem_wanted pending : True",
         "alias ofWanted := pending",
+        "set_option maxHeartbeats 0 in",
+        "theorem big_iff : True ↔ True := Iff.rfl",
+        "alias ⟨bigForward, _⟩ := big_iff",
         "end Project",
     ]
     (lean_root / "Aliases.lean").write_text("\n".join(source) + "\n", encoding="utf-8")
+    # An alias the index cannot place still has its own limits.
+    (lean_root / "Wide.lean").write_text("set_option maxHeartbeats 400000\nalias wide := Nat.succ_le_succ\n", encoding="utf-8")
 
     assert _finding_map(blueprint, lean_root=lean_root) == {
         "roadmap/small.md": [
@@ -736,6 +743,20 @@ def test_audit_reads_an_alias_s_limits_and_wanted_command_from_its_target(tmp_pa
                 "lean-target-wanted",
                 "lean target Project.ofWanted is an alias of a theorem_wanted, which defers its proof or "
                 "construction, so it cannot back proof: formalized",
+            )
+        ],
+        "roadmap/forward.md": [
+            (
+                "lean-target-unbounded-limit",
+                "lean target Project.big_iff has no maxHeartbeats limit: `set_option maxHeartbeats 0` at "
+                "Aliases.lean:8; set a finite limit",
+            )
+        ],
+        "roadmap/wide.md": [
+            (
+                "lean-target-unscoped-limit",
+                "lean target wide inherits the file-wide `set_option maxHeartbeats 400000` at Wide.lean:1; "
+                "put `set_option maxHeartbeats N in` on the declarations that need it",
             )
         ],
     }

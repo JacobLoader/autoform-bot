@@ -1040,12 +1040,12 @@ a declaration below the alias in its file, which Lean has not seen yet. The
 first other name must be a declaration above the alias in the same file. A
 name the index does not hold may be declared by another library such as
 Mathlib, one in another file may not be imported, and a `protected` one for a
-one-component target is skipped by Lean unless the module system has made it
-private too; such an alias matches any intent and is measured, like any other
-declaration, by its own span. Each name of `alias ⟨mp, mpr⟩`, and any alias of
-one, is a theorem whatever its target is. Batteries makes an alias of anything
-but a theorem a `def`, but the audit checks what an article's object is, and
-an alias names the same object as its target.
+one-component target is skipped by Lean unless it is also private, written or
+under the module system; such an alias matches any intent and is measured, like
+any other declaration, by its own span and limits. Each name of
+`alias ⟨mp, mpr⟩`, and any alias of one, is a theorem whatever its target is.
+Batteries makes an alias of anything but a theorem a `def`, but the audit checks
+what an article's object is, and an alias names the same object as its target.
 
 A wanted target matches the intent its command mirrors: `theorem_wanted` and
 `proof_wanted` a `theorem`, `lemma`, `proposition`, or `corollary`,

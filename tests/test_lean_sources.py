@@ -3550,26 +3550,38 @@ def test_root_qualified_names_leave_their_namespace_out(tmp_path: Path) -> None:
 def test_an_alias_is_followed_only_to_an_earlier_declaration_of_its_file(tmp_path: Path) -> None:
     source = [
         "namespace X",
-        "theorem base : True := trivial",
         "private theorem hidden : True := trivial",
         "alias nearby := hidden",
+        "theorem base : True := trivial",
         "alias chain := nearby",
         "protected def p : Nat := 0",
         "alias skips := p",
+        "protected",
+        "theorem q : True := trivial",
+        "alias skipsAbove := q",
+        "alias outside := Nat.succ_le_succ",
+        "alias partway := outside",
         "end X",
+        "theorem t : True := trivial",
+        "namespace A",
+        "alias t := t",
+        "end A",
         "alias dotted := X.p",
     ]
     (tmp_path / "A.lean").write_text("\n".join(source) + "\n", encoding="utf-8")
-    # Below `X.base`'s line, so only the file tells them apart.
-    (tmp_path / "B.lean").write_text("\n" * 5 + "namespace X\nalias remote := base\nend X\n", encoding="utf-8")
+    # `X.base` is in another file, on a later line than this alias.
+    (tmp_path / "B.lean").write_text("def base : Nat := 0\nnamespace X\nalias remote := base\nend X\n", encoding="utf-8")
     index = index_project(tmp_path)
 
     assert index.reached(index.find("X.chain")) == index.find("X.hidden")
     assert index.reached(index.find("dotted")) == index.find("X.p")
-    # Another file may not be imported, and the module system may have made a
-    # protected name private, which Lean does not skip, so neither is sure.
-    assert index.reached(index.find("X.remote")) is None
-    assert index.reached(index.find("X.skips")) is None
+    # The alias is the innermost candidate of its own target, and is not declared yet.
+    assert index.alias_target(index.find("A.t")) == index.find("t")
+    # Another file may not be imported, the module system may have made a
+    # protected name private, which Lean does not skip, and a chain whose end
+    # is outside the index leads nowhere sure.
+    for name in ("X.remote", "X.skips", "X.skipsAbove", "X.partway"):
+        assert index.reached(index.find(name)) is None, name
 
 
 def test_anonymous_instances_are_not_mistaken_for_names(tmp_path: Path) -> None:

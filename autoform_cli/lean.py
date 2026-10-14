@@ -107,7 +107,7 @@ class Declaration:
     path: Path
     line: int
     keyword: str
-    #: Whether ``protected`` is written before the keyword.
+    #: Whether ``protected`` is written before the keyword, on its line or above.
     protected: bool = False
     alias: Alias | None = None
 
@@ -146,8 +146,8 @@ class SourceIndex:
         or may not be imported: either way the answer is ``None``. A candidate
         below the alias in its file is not declared yet, so Lean looks further
         out. A ``protected`` candidate is skipped for a one-component target,
-        except when the module system has also made it private; not knowing
-        which, the answer is ``None`` again.
+        except when it is also private, written or under the module system;
+        not knowing which, the answer is ``None`` again.
         """
 
         assert declaration.alias is not None
@@ -756,7 +756,13 @@ def _scan(text: str, relative: Path) -> list[Declaration]:
         declaration_match = _DECLARATION.match(line)
         if declaration_match:
             keyword = declaration_match.group(1)
-            protected = "protected" in _ATTRIBUTE_LIST.sub(" ", line[: declaration_match.start(1)]).split()
+            # Modifiers may also stand on the lines above the keyword.
+            header = [line[: declaration_match.start(1)]]
+            for above in range(number - 2, -1, -1):
+                if not _MODIFIER_LINE.fullmatch(lines[above]):
+                    break
+                header.append(lines[above])
+            protected = "protected" in _ATTRIBUTE_LIST.sub(" ", " ".join(header)).split()
             if keyword == "alias":
                 following = next((lines[later] for later in range(number, len(lines)) if lines[later].strip()), "")
                 found.extend(
@@ -771,6 +777,10 @@ def _scan(text: str, relative: Path) -> list[Declaration]:
 
 
 _ATTRIBUTE_LIST = re.compile(r"@\[[^\]]*\]")
+#: A line holding only attribute lists and modifiers, or nothing.
+_MODIFIER_LINE = re.compile(
+    r"\s*(?:(?:@\[[^\]]*\]|public|private|protected|noncomputable|partial|unsafe|scoped|local)\s*)*"
+)
 
 
 def _qualified(namespaces: list[str], name: str) -> str:
