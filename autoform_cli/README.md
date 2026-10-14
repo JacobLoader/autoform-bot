@@ -980,6 +980,24 @@ the `manifest.json`, `publication.json` and `.git` names match in any letter
 case, except `build`, which must be lowercase. The `.lean` suffix must match
 exactly, so `A.LEAN` is not indexed.
 
+A capture rechecks only what the index uses: each captured `.lean` file must
+keep its metadata, and each folder that holds `.lean` entries must keep its
+device, inode, file type and the names of the `.lean` entries and folders it
+holds for the index. Any other folder, such as a generated site, `mkdocs`
+output, skeleton output or a nested Git checkout, may change, vanish or be
+rebuilt during a capture, and files other than `.lean` sources may change
+anywhere. Whatever is at such a path when it is rechecked must be a folder the
+walk skips or hold no `.lean` entry, so a folder that loses its marker and
+exposes `.lean` files is a change. A capture that sees Lean inputs change is
+retried; when every attempt changes, the error names the changed paths it can
+attribute, relative to the Lean root, for example `Lean sources kept changing
+while they were indexed; changed: Proj/A.lean`. A change seen only as a failed
+lookup, such as a file removed just before it is rechecked, carries no path.
+A capture is not one atomic filesystem generation: a `.lean` file or marker
+that appears at a path after the capture last looked there, or in a folder
+after the final check listed it, is not seen, so coordinated moves across
+folders can yield a set of sources that no single state had.
+
 Within each file the index records the declarations written with `theorem`,
 `lemma`, `def`, `abbrev`, `instance`, `structure`, `class`, `inductive`,
 `opaque`, `axiom`, `irreducible_def`, and Batteries' wanted commands

@@ -12,6 +12,7 @@ import pytest
 
 import autoform_cli.lean as lean_module
 from autoform_cli import __main__ as cli, claims, skeleton
+from autoform_cli import _tree_snapshot as tree_snapshot_module
 from autoform_cli._tree_snapshot import TreeChangedError
 from autoform_cli.impact import (
     IMPACT_MARKER,
@@ -2405,6 +2406,43 @@ def test_revision_impact_refuses_byte_identical_source_replacement_during_the_pr
         match="^the Lean sources changed while the impact probe ran; rebuild and rerun the command$",
     ):
         revision_impact(project, "chapter/base", lean_root=lean_root)
+
+
+def test_revision_impact_accepts_unrelated_churn_during_its_final_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if not tree_snapshot_module._DESCRIPTOR_CAPTURE_SUPPORTED:
+        pytest.skip("directory descriptor capture is unavailable")
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _stub_lean_root(tmp_path)
+    _stub_probe(monkeypatch)
+    original = skeleton.run_probe
+    probed = False
+    saves = 0
+
+    def run_then_mark(*args, **kwargs):
+        nonlocal probed
+        output = original(*args, **kwargs)
+        probed = True
+        return output
+
+    original_checkpoint = tree_snapshot_module._tree_snapshot_checkpoint
+
+    def checkpoint(name: str, path: str) -> None:
+        nonlocal saves
+        original_checkpoint(name, path)
+        if probed and name == "before-final-verification":
+            # An editor's temporary file appears while the recapture runs.
+            saves += 1
+            (lean_root / "notes.md.tmp").write_text(f"{saves}\n", encoding="utf-8")
+
+    monkeypatch.setattr("autoform_cli.skeleton.run_probe", run_then_mark)
+    monkeypatch.setattr(tree_snapshot_module, "_tree_snapshot_checkpoint", checkpoint)
+
+    report = revision_impact(project, "chapter/base", lean_root=lean_root)
+
+    assert saves == 1
+    assert report.lean_source_revision == snapshot_project_sources(lean_root).revision
 
 
 # --------------------------------------------------------------------------- #

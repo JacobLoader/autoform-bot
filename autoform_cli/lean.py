@@ -280,27 +280,64 @@ def snapshot_project_sources(
     a directory holding one is never indexed.
     """
 
-    exclusions = tuple(exclude_roots)
+    bound, snapshot = _open_stable_project_sources(
+        root,
+        exclude_roots=tuple(exclude_roots),
+        limits=limits,
+        opaque_markers=opaque_markers,
+    )
+    bound.close()
+    return snapshot
+
+
+def _open_stable_project_sources(
+    root: str | Path,
+    *,
+    exclude_roots: tuple[str | Path, ...],
+    limits: TreeCaptureLimits,
+    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
+) -> tuple[BoundProjectSources, IndexedSourceSnapshot]:
+    """Open and capture a Lean root, retrying a bounded number of changed attempts.
+
+    The caller owns the returned binding.  When every attempt changed, the error
+    names each changed root-relative path the attempts reported, once, in order.
+    """
+
     changed: TreeChangedError | None = None
+    changed_paths: list[str] = []
     for attempt in range(_SNAPSHOT_ATTEMPTS):
         if attempt:
             time.sleep(_SNAPSHOT_RETRY_DELAY_SECONDS * attempt)
+        bound: BoundProjectSources | None = None
         try:
-            with bind_project_sources(
+            bound = open_project_sources(
                 root,
-                exclude_roots=exclusions,
+                exclude_roots=exclude_roots,
                 limits=limits,
                 opaque_markers=opaque_markers,
-            ) as bound:
-                return bound.capture()
+            )
+            return bound, bound.capture()
         except TreeChangedError as error:
             changed = error
+            if error.relative is not None and error.relative not in changed_paths:
+                changed_paths.append(error.relative)
+            if bound is not None:
+                bound.close()
         except TreeSnapshotError as error:
+            if bound is not None:
+                bound.close()
             raise LeanSourceError(str(error)) from error
+        except BaseException:
+            if bound is not None:
+                bound.close()
+            raise
     lasting = _lasting_root_failure(root)
     if lasting is not None:
         raise LeanSourceError(lasting) from changed
-    raise LeanSourceError("Lean sources kept changing while they were indexed") from changed
+    message = "Lean sources kept changing while they were indexed"
+    if changed_paths:
+        message += "; changed: " + ", ".join(changed_paths)
+    raise LeanSourceError(message) from changed
 
 
 def _lasting_root_failure(root: str | Path) -> str | None:
@@ -332,28 +369,6 @@ def project_source_revision(
         exclude_roots=exclude_roots,
         limits=limits,
     ).revision
-
-
-@contextmanager
-def bind_project_sources(
-    root: str | Path,
-    *,
-    exclude_roots: Iterable[str | Path] = (),
-    limits: TreeCaptureLimits = TreeCaptureLimits(),
-    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
-) -> Iterator[BoundProjectSources]:
-    """Retain a Lean root while one or more source snapshots are consumed."""
-
-    bound = open_project_sources(
-        root,
-        exclude_roots=exclude_roots,
-        limits=limits,
-        opaque_markers=opaque_markers,
-    )
-    try:
-        yield bound
-    finally:
-        bound.close()
 
 
 def open_project_sources(
@@ -406,37 +421,15 @@ def bind_project_source_snapshot(
     open so a caller can verify and recapture it after using the evidence.
     """
 
-    exclusions = tuple(exclude_roots)
-    changed: TreeChangedError | None = None
-    for attempt in range(_SNAPSHOT_ATTEMPTS):
-        if attempt:
-            time.sleep(_SNAPSHOT_RETRY_DELAY_SECONDS * attempt)
-        bound: BoundProjectSources | None = None
-        try:
-            bound = open_project_sources(root, exclude_roots=exclusions, limits=limits)
-            snapshot = bound.capture()
-        except TreeChangedError as error:
-            changed = error
-            if bound is not None:
-                bound.close()
-            continue
-        except TreeSnapshotError as error:
-            if bound is not None:
-                bound.close()
-            raise LeanSourceError(str(error)) from error
-        except BaseException:
-            if bound is not None:
-                bound.close()
-            raise
-        try:
-            yield bound, snapshot
-        finally:
-            bound.close()
-        return
-    lasting = _lasting_root_failure(root)
-    if lasting is not None:
-        raise LeanSourceError(lasting) from changed
-    raise LeanSourceError("Lean sources kept changing while they were indexed") from changed
+    bound, snapshot = _open_stable_project_sources(
+        root,
+        exclude_roots=tuple(exclude_roots),
+        limits=limits,
+    )
+    try:
+        yield bound, snapshot
+    finally:
+        bound.close()
 
 
 def _project_exclusions(
@@ -483,13 +476,13 @@ def _lean_tree_selection(
             excluded,
         ),
         descend=lambda path: not _lean_path_is_excluded(path, excluded),
-        byte_limit=lambda path: (
-            _MANAGED_OUTPUT_MANIFEST_BYTE_LIMIT
-            if _is_managed_output_manifest_name(path.name)
-            else None
-        ),
         record_omitted=False,
         limits=limits,
+        # Only Lean inputs and the folders holding them must stay stable;
+        # generated sites, skeleton output, nested checkouts, editor
+        # temporaries and other folders under the root may change while
+        # sources are captured.
+        unselected_may_change=True,
         opaque_markers=(
             # A nested Git checkout is another source tree.  Treat the
             # presence of either a worktree/submodule .git file or a clone's
@@ -527,14 +520,7 @@ def _lean_snapshot_includes(
             relative.suffix == ".lean"
             and not relative.name.startswith(".#")
         )
-    return (
-        stat.S_ISDIR(mode)
-        or relative.suffix == ".lean"
-        or (
-            len(relative.parts) > 1
-            and _is_managed_output_manifest_name(relative.name)
-        )
-    )
+    return stat.S_ISDIR(mode) or relative.suffix == ".lean"
 
 
 def _lean_path_is_excluded(
@@ -563,56 +549,10 @@ def _indexed_source_snapshot(
     snapshot: TreeSnapshot,
     excluded: tuple[PurePosixPath, ...],
 ) -> IndexedSourceSnapshot:
-    managed_output_manifests: dict[
-        PurePosixPath,
-        list[tuple[str, bytes | None]],
-    ] = {}
-
-    def add_manifest(relative: str, kind: str, data: bytes | None = None) -> None:
-        path = PurePosixPath(relative)
-        if len(path.parts) > 1 and _is_managed_output_manifest_name(path.name):
-            managed_output_manifests.setdefault(path.parent, []).append((kind, data))
-
-    for relative, data in snapshot.files:
-        add_manifest(relative, "file", data)
-    for relative, _target in snapshot.symlinks:
-        add_manifest(relative, "symlink")
-    for relative, _mode in snapshot.special:
-        add_manifest(relative, "special")
-    for relative in snapshot.placeholders:
-        add_manifest(relative, "placeholder")
-    for relative in snapshot.directories:
-        add_manifest(relative, "directory")
-
-    # An unrecognized manifest marks nothing; its directory stays Lean source.
-    ignored_roots: set[PurePosixPath] = {
-        PurePosixPath(relative)
-        for relative in snapshot.opaque_directories
-        if relative
-    }
-    for parent in sorted(
-        managed_output_manifests,
-        key=lambda path: (len(path.parts), path.as_posix()),
-    ):
-        if _path_is_within_roots(parent, ignored_roots):
-            continue
-        manifests = managed_output_manifests[parent]
-        if (
-            len(manifests) == 1
-            and manifests[0][0] == "file"
-            and manifests[0][1] is not None
-            and _is_managed_output_manifest_bytes(manifests[0][1])
-        ):
-            ignored_roots.add(parent)
-
-    def in_ignored_root(relative_text: str) -> bool:
-        return _path_is_within_roots(PurePosixPath(relative_text), ignored_roots)
-
     unsupported = [
         (relative, reason)
         for relative, reason in snapshot.unsupported_entries()
-        if not in_ignored_root(relative)
-        and PurePosixPath(relative).suffix == ".lean"
+        if PurePosixPath(relative).suffix == ".lean"
     ]
     if unsupported:
         relative, reason = unsupported[0]
@@ -628,8 +568,6 @@ def _indexed_source_snapshot(
             relative,
             excluded,
         ):
-            continue
-        if _path_is_within_roots(relative, ignored_roots):
             continue
         relative_path = Path(relative.as_posix())
         _update_source_digest(digest, relative_path, data)
@@ -650,23 +588,18 @@ def _indexed_source_snapshot(
             line_counts=line_counts,
         ),
         source_digest,
-        _lean_generation_revision(snapshot, ignored_roots),
+        _lean_generation_revision(snapshot),
         tuple(source_files),
     )
 
 
 def _lean_generation_revision(
     snapshot: TreeSnapshot,
-    ignored_roots: set[PurePosixPath],
 ) -> str:
     """Hash only effective Lean inputs and their ancestor directories."""
 
     def retained_entry(relative_text: str) -> bool:
-        relative = PurePosixPath(relative_text)
-        return relative.suffix == ".lean" and not _path_is_within_roots(
-            relative,
-            ignored_roots,
-        )
+        return PurePosixPath(relative_text).suffix == ".lean"
 
     files = tuple(entry for entry in snapshot.files if retained_entry(entry[0]))
     symlinks = tuple(entry for entry in snapshot.symlinks if retained_entry(entry[0]))
@@ -722,17 +655,6 @@ def _is_managed_output_manifest_bytes(data: bytes) -> bool:
         and (kind, schema) in MANAGED_OUTPUT_SCHEMAS
         and isinstance(value.get(kind), list)
     )
-
-
-def _is_managed_output_manifest_name(name: str) -> bool:
-    return unicodedata.normalize("NFC", name).casefold() == _MANAGED_OUTPUT_MANIFEST
-
-
-def _path_is_within_roots(
-    path: PurePosixPath,
-    roots: set[PurePosixPath],
-) -> bool:
-    return any(candidate in roots for candidate in (path, *path.parents))
 
 
 def _update_source_digest(digest, relative: Path, data: bytes) -> None:
