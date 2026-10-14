@@ -245,7 +245,8 @@ def parse_probe_output(output: str, *, expected_roots: tuple[str, ...]) -> dict[
 
     expected = set(expected_roots)
     records: dict[str, dict[str, object]] = {}
-    for line in output.splitlines():
+    # Not `splitlines`: Lean's JSON printer leaves U+0085, U+2028 and U+2029 unescaped.
+    for line in output.split("\n"):
         if not line.startswith(PROBE_MARKER):
             continue
         try:
