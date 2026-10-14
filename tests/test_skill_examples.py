@@ -1174,26 +1174,56 @@ def test_cli_reference_documents_only_commands_that_exist(repo_root: Path) -> No
         assert exit_info.value.code == 0, f"reference documents unknown command: {' '.join(invocation)}"
 
 
+_LAUNCHER = 'uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform`'
+
+
 def test_skills_delegate_the_command_line_to_the_reference(repo_root: Path) -> None:
     """Skills state intent and link to the reference; they do not restate flags.
 
     Duplicated invocations are what let the CLI move underneath the agent's
     instructions, so a skill that needs the command line must cite the
-    reference instead of copying it.
+    reference instead of copying it. The bare launcher is not a flag, so a skill
+    may state it once.
     """
     citing = 0
     for skill in sorted((repo_root / "skills").glob("*/SKILL.md")):
-        text = skill.read_text(encoding="utf-8")
+        text = " ".join(skill.read_text(encoding="utf-8").split())
         if skill.parent.name == "setup":
             assert text.count("uv run --project") == 3
         else:
-            assert "uv run --project" not in text, (
+            invocations = re.findall(r"uv run --project[^`]*`", text)
+            assert invocations in ([], [_LAUNCHER]), (
                 f"{skill.relative_to(repo_root)} restates a CLI invocation; "
                 "link to autoform_cli/README.md#commands instead"
             )
         if "autoform_cli/README.md" in text:
             citing += 1
     assert citing >= 3
+
+
+def test_skills_that_run_the_cli_state_how_to_launch_it(repo_root: Path) -> None:
+    """A consumer project has no `autoform` on `PATH`.
+
+    Agents that read a bare `autoform work list` run `which autoform` and then
+    guess; in trials every fresh Roadmap and Formalize session did, and some
+    never reached the CLI. So every skill whose instructions or references name
+    a command states the launcher once, names the plugin root without relying
+    on how a host presents the skill, and hands both to its subagents. Setup
+    spells out its own full invocations; Develop Plugin works inside the plugin
+    checkout, where `uv run autoform` already resolves.
+    """
+    running = {
+        skill.name
+        for skill in (repo_root / "skills").iterdir()
+        if any(re.search(r"`autoform[ -][a-z]", path.read_text(encoding="utf-8")) for path in skill.rglob("*.md"))
+    }
+    assert {"roadmap", "formalize", "agent-review", "human-review"} <= running
+    for name in sorted(running - {"setup", "develop-plugin"}):
+        flat = " ".join((repo_root / "skills" / name / "SKILL.md").read_text(encoding="utf-8").split())
+        assert f"`{_LAUNCHER}" in flat, f"{name} does not state the launcher"
+        assert "no `autoform` on `PATH`" in flat
+        assert "the directory that holds this skill's `skills/` folder, along with `pyproject.toml`" in flat
+        assert "Give a subagent that root and this prefix with its task." in flat
 
 
 def test_skill_links_into_the_cli_reference_land_on_a_section(repo_root: Path) -> None:
