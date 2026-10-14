@@ -1168,9 +1168,15 @@ def _claim(args: argparse.Namespace) -> int:
         operation = args.claim_command
         if operation == "list":
             print(json.dumps(board.list(), sort_keys=True, separators=(",", ":")))
-            return 0
-        if operation == "cleanup":
+        elif operation == "cleanup":
             print(f"removed {board.cleanup()} expired claim(s)")
+        if operation in {"list", "cleanup"}:
+            # Lock files are not refs, so neither command's own output can show one.
+            for lock in board.ref_locks():
+                print(
+                    f"warning: {lock.describe()}; if no Git process is using the claim board, delete it",
+                    file=sys.stderr,
+                )
             return 0
 
         past_tense = {"acquire": "acquired", "renew": "renewed", "release": "released"}

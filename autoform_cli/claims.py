@@ -17,6 +17,7 @@ import socket
 import subprocess
 import threading
 import time
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -32,6 +33,31 @@ _WINDOWS_ROOTED_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _SCRATCH_INIT_ATTEMPTS = 10
 _SCRATCH_INIT_DELAY_S = 0.05
 _LIST_ATTEMPTS = 3
+# A peer's push holds a ref's lock file for milliseconds; one that outlasts
+# this grace after a failed push is reported as blocking the claim.
+_LOCK_GRACE_S = 2.0
+_LOCK_POLL_S = 0.05
+# What `git rev-parse --local-env-vars` prints: variables that point Git at
+# another repository than the one the working directory names.
+_LOCAL_GIT_ENV = frozenset(
+    {
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_GRAFT_FILE",
+        "GIT_INDEX_FILE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_PREFIX",
+        "GIT_SHALLOW_FILE",
+        "GIT_COMMON_DIR",
+    }
+)
 
 _GIT_ENV = {
     "GIT_AUTHOR_NAME": "autoform",
@@ -44,7 +70,17 @@ _CAS_REJECTIONS = (
     "fetch first",
     "remote ref updated since checkout",
     "cannot lock ref",
+    # Git 2.53, unlike 2.50, words a lost race to update or delete a ref with
+    # only one of these.
+    "incorrect old value provided",
+    "reference does not exist",
 )
+# Git 2.53 words a lost race to create a ref with only this, and also any push
+# a ref's lock file blocks, so where lock files are not visible it counts as a
+# lost race only for a create.
+_LOST_CREATE = "reference already exists"
+# How Git reports a lock file, such as packed-refs.lock, that it could not take.
+_LOCK_FILE_EXISTS_RE = re.compile(r"Unable to create '([^']*)\.lock': File exists")
 # When the remote aborts an atomic push, every ref reports "atomic transaction
 # failed"; only this error line names the ref whose expected value was gone.
 _LOCK_FAILURE_RE = re.compile(r"cannot lock ref '([^']+)'")
@@ -60,6 +96,37 @@ class MalformedLeaseError(ClaimTransportError):
 
 class _ClaimRefChanged(ClaimTransportError):
     """A listed claim ref moved or was deleted before its lease was read."""
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimRefLock:
+    """A Git lock file in a local claim board.
+
+    ``ref`` is the claim ref it guards, ``packed-refs``, which blocks every
+    deletion, or ``reftable``, which blocks every update of a reftable board.
+    """
+
+    path: Path
+    ref: str
+    modified: float
+
+    def describe(self) -> str:
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.modified))
+        if self.ref == "reftable":
+            blocked = "every claim update"
+        elif self.ref == "packed-refs":
+            blocked = "releasing claims"
+        else:
+            blocked = f"updates of {self.ref}"
+        return f"Git lock file {self.path} (modified {stamp}) blocks {blocked}"
+
+
+class ClaimRefLockedError(ClaimTransportError):
+    """A Git lock file on a local claim board blocks a claim update."""
+
+    def __init__(self, message: str, locks: Sequence[ClaimRefLock]) -> None:
+        super().__init__(message)
+        self.locks = tuple(locks)
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,14 +169,14 @@ def _validate_keys(keys: Sequence[str]) -> tuple[str, ...]:
     return batch
 
 
-def _rejected_keys(detail: str, keys_by_ref: Mapping[str, str]) -> tuple[str, ...]:
+def _rejected_keys(detail: str, keys_by_ref: Mapping[str, str], markers: Sequence[str]) -> tuple[str, ...]:
     """Return the keys a refused push reports as stale or contended, in push order."""
     refs = set(_LOCK_FAILURE_RE.findall(detail))
     for line in detail.splitlines():
         # Porcelain status lines read "<flag>\t<from>:<to>\t<summary>".
         flag, _, rest = line.partition("\t")
         refspec, _, summary = rest.partition("\t")
-        if flag == "!" and any(marker in summary.lower() for marker in _CAS_REJECTIONS):
+        if flag == "!" and any(marker in summary.lower() for marker in markers):
             refs.add(refspec.rpartition(":")[2])
     return tuple(key for ref, key in keys_by_ref.items() if ref in refs)
 
@@ -343,6 +410,100 @@ class ClaimBoard:
         message = json.dumps(lease, sort_keys=True, separators=(",", ":"), allow_nan=False)
         return self._git(["commit-tree", tree, "-m", message]).stdout.strip()
 
+    def _ref_store(self) -> Path | None:
+        """Return the Git directory holding the board's refs, or None when its files are not visible.
+
+        A local path, or a ``file://`` URL except on Windows, is visible, found
+        as Git's local transport finds it; any other transport is not.
+        """
+        location = self.repo_url
+        if location.startswith("file://"):
+            if os.name == "nt":
+                # Git for Windows reads drive letters and hosts in a file URL
+                # its own way; such a board is treated as not visible.
+                return None
+            # Git decodes the whole URL, then ignores the host and keeps "?" and "#".
+            decoded = os.fsdecode(urllib.parse.unquote_to_bytes(location[len("file://") :]))
+            path_start = decoded.find("/")
+            if path_start < 0:
+                return None
+            location = decoded[path_start:]
+        elif _repository_is_remote(location):
+            return None
+        while len(location) > 1 and location.endswith("/"):
+            location = location[:-1]
+        env = {name: value for name, value in os.environ.items() if name not in _LOCAL_GIT_ENV}
+        # Git's enter_repo tries these candidates in this order. It takes the
+        # first that is a file or a Git directory, and fails if a file is bad.
+        for candidate in (f"{location}/.git", location, f"{location}.git/.git", f"{location}.git"):
+            if not os.path.isfile(candidate) and not os.path.isdir(candidate):
+                continue
+            try:
+                proc = subprocess.run(
+                    ["git", f"--git-dir={candidate}", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                    capture_output=True,
+                    timeout=120,
+                    env=env,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                return None
+            if proc.returncode == 0:
+                return Path(os.fsdecode(proc.stdout.removesuffix(b"\n")))
+            if os.path.isfile(candidate):
+                return None
+        return None
+
+    def ref_locks(self) -> list[ClaimRefLock]:
+        """Return the Git lock files that can block the board's claims, once they outlast the grace.
+
+        These are the lock files under the claim refs, ``packed-refs.lock`` and
+        a reftable board's ``tables.list.lock``. Git leaves one behind when a
+        process stops while updating a ref, and refuses the updates it guards
+        until someone deletes it. A younger lock may belong to a push still in
+        progress. Git records no owner that could prove a lock abandoned, so
+        locks are reported, never deleted. Only a board given as a local path,
+        or as a ``file://`` URL except on Windows, has visible files.
+        """
+        store = self._ref_store()
+        if store is None:
+            return []
+        paths = {store / "packed-refs.lock": "packed-refs", store / "reftable" / "tables.list.lock": "reftable"}
+        for directory, _, files in os.walk(store / CLAIM_REF_PREFIX):
+            for name in files:
+                if name.endswith(".lock"):
+                    path = Path(directory) / name
+                    paths[path] = path.relative_to(store).as_posix()[: -len(".lock")]
+        now = time.time()
+        # A modification time ahead of the clock is no sign of a push in progress.
+        return [lock for lock in self._existing_locks(paths) if abs(now - lock.modified) >= _LOCK_GRACE_S]
+
+    @staticmethod
+    def _existing_locks(paths: Mapping[Path, str]) -> list[ClaimRefLock]:
+        locks: list[ClaimRefLock] = []
+        for path, ref in paths.items():
+            try:
+                locks.append(ClaimRefLock(path, ref, path.lstat().st_mtime))
+            except OSError:
+                continue
+        return sorted(locks, key=lambda lock: str(lock.path))
+
+    def _blocking_locks(self, store: Path, updates: Sequence[tuple[str, str | None, str]]) -> list[ClaimRefLock]:
+        """Return the lock files that still block a failed push's refs after the grace.
+
+        ``packed-refs.lock`` blocks only deletions; a reftable board's
+        ``tables.list.lock`` blocks every update.
+        """
+        paths = {store / f"{self._ref(key)}.lock": self._ref(key) for key, _, _ in updates}
+        if any(not new for _, _, new in updates):
+            paths[store / "packed-refs.lock"] = "packed-refs"
+        paths[store / "reftable" / "tables.list.lock"] = "reftable"
+        deadline = time.monotonic() + _LOCK_GRACE_S
+        while True:
+            locks = self._existing_locks(paths)
+            if not locks or time.monotonic() >= deadline:
+                return locks
+            time.sleep(_LOCK_POLL_S)
+
     def _cas_push(self, key: str, old: str | None, new: str) -> bool:
         return self._cas_push_refs([(key, old, new)]).ok
 
@@ -355,7 +516,10 @@ class ClaimBoard:
         """Push ``(key, old, new)`` updates, each leased on its observed ``old``; empty ``new`` deletes.
 
         With ``atomic`` the remote applies every update or none. A lost
-        compare-and-swap is a failed result; anything else raises.
+        compare-and-swap is a failed result; anything else raises, including
+        ``ClaimRefLockedError`` for a local board's lock file that outlasts the
+        grace, which Git's message alone cannot tell apart from a lost race. A
+        lock that clears within the grace is a lost race.
         """
         keys_by_ref = {self._ref(key): key for key, _, _ in updates}
         proc = self._git(
@@ -372,14 +536,40 @@ class ClaimBoard:
         )
         if proc.returncode == 0:
             return ClaimBatchResult(True)
+        store = self._ref_store()
+        locks = self._blocking_locks(store, updates) if store is not None else []
+        if locks:
+            raise ClaimRefLockedError(
+                f"{'; '.join(lock.describe() for lock in locks)}. Git leaves a lock file behind when a process "
+                "stops while updating a ref; if no Git process is using the claim board, "
+                f"delete {'them' if len(locks) > 1 else 'it'} and retry",
+                locks,
+            )
         detail = f"{proc.stdout}\n{proc.stderr}".strip()
         if atomic and "does not support --atomic" in detail:
             # Falling back to separate pushes could leave a partial claim set.
             raise ClaimTransportError("claim board does not support atomic pushes; refusing a multi-key update")
-        if any(marker in detail.lower() for marker in _CAS_REJECTIONS):
-            stale = _rejected_keys(detail, keys_by_ref)
+        markers = _CAS_REJECTIONS
+        # Read only in Git's own refusal lines, never in hook output. With no
+        # lock left on a visible board, a lock Git met belonged to a push that
+        # has since let go.
+        if store is not None or all(old is None for _, old, _ in updates):
+            markers += (_LOST_CREATE,)
+        stale = _rejected_keys(detail, keys_by_ref, markers)
+        if (
+            stale
+            or any(marker in detail.lower() for marker in _CAS_REJECTIONS)
+            or (store is not None and self._names_a_needed_lock(detail, updates))
+        ):
             return ClaimBatchResult(False, stale, "changed concurrently" if stale else "a claim changed concurrently")
         raise ClaimTransportError(f"claim CAS push failed: {detail[:300]}")
+
+    def _names_a_needed_lock(self, detail: str, updates: Sequence[tuple[str, str | None, str]]) -> bool:
+        """Whether Git could not take a pushed ref's lock, or ``packed-refs.lock`` for a deletion."""
+        needed = [f"/{self._ref(key)}" for key, _, _ in updates]
+        if any(not new for _, _, new in updates):
+            needed.append("/packed-refs")
+        return any(path.endswith(tuple(needed)) for path in _LOCK_FILE_EXISTS_RE.findall(detail))
 
     def read(self, key: str) -> dict[str, Any] | None:
         """Return the current parsed lease, including an expired lease, or ``None``."""
@@ -586,13 +776,22 @@ class ClaimBoard:
         raise ClaimTransportError(f"cannot fetch claim {key!r} from the claim board: {fetch.stderr.strip()[:300]}")
 
     def cleanup(self) -> int:
-        """CAS-delete leases expired at snapshot time and return the deletion count."""
+        """CAS-delete leases expired at snapshot time and return the deletion count.
+
+        A lease whose deletion a lock file blocks stays, as :meth:`ref_locks`
+        reports. A lock on ``packed-refs`` or a reftable board blocks every
+        deletion, so it ends the cleanup.
+        """
         removed = 0
         for lease in self.list():
-            if not lease["_malformed"] and lease["_expired"] and self._cas_push(
-                str(lease["_key"]), str(lease["_oid"]), ""
-            ):
-                removed += 1
+            if lease["_malformed"] or not lease["_expired"]:
+                continue
+            try:
+                if self._cas_push(str(lease["_key"]), str(lease["_oid"]), ""):
+                    removed += 1
+            except ClaimRefLockedError as error:
+                if any(lock.ref in {"packed-refs", "reftable"} for lock in error.locks):
+                    break
         return removed
 
     def heartbeat(
@@ -673,6 +872,8 @@ __all__ = [
     "CLAIM_TTL_S",
     "ClaimBatchResult",
     "ClaimBoard",
+    "ClaimRefLock",
+    "ClaimRefLockedError",
     "ClaimTransportError",
     "Heartbeat",
     "MalformedLeaseError",
