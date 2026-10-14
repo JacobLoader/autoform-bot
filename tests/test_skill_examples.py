@@ -264,7 +264,8 @@ def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path
     assert "`blueprint/.implementation-notes/<article_id>.md`" in roadmap
     assert "Delete it when the article is proved or marked `mathlib: true`" in roadmap
     assert (
-        "delete a container's note when every formalizable descendant is proved and there is at least one"
+        "delete a container's note when every formalizable descendant, and every leaf marked `not_ready` "
+        "beneath it, is proved and there is at least one"
         in roadmap
     )
     assert "an orphaned note blocks every command that loads the graph" in roadmap
@@ -281,7 +282,10 @@ def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path
     assert "reports as stale or repair an orphaned one" in reference
     assert "When the article still exists but lost its `article_id` line, restore the line instead" in reference
     assert "Versioned implementation notes live outside the mathematical roadmap" in reference
-    assert "delete it once every formalizable descendant is proved and there is at least one" in reference
+    assert (
+        "delete it once every formalizable descendant, and every leaf marked `not_ready` beneath it, "
+        "is proved and there is at least one" in reference
+    )
     assert "Record what happened in the revision commit and report" in reference
     assert (
         "Use an implementation note only until [its deletion rule](#articles-and-containment) applies"

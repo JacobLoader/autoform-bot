@@ -200,7 +200,8 @@ def audit_graph(
         fully_implemented = True
         for child_id in contained.get(node_id, ()):
             child = graph.nodes[child_id]
-            if child.formalizable:
+            # As on the site, a leaf marked not ready is a target too, so its scope stays open until it is proved.
+            if child.formalizable or (child.not_ready and child_id not in contained):
                 has_formalizable = True
                 fully_implemented = fully_implemented and derived[child_id].proved
             if scope_has_formalizable[child_id]:
