@@ -444,6 +444,55 @@ def test_bounded_command_rejects_a_successful_parent_with_a_live_descendant(
     _assert_dies(int(child_pid.read_text(encoding="utf-8")), "descendant", "successful parent exit")
 
 
+_OUTLIVED_BY_A_CHILD = (
+    "import subprocess, sys; "
+    "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], "
+    "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)"
+)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX-specific")
+@pytest.mark.parametrize(
+    ("program", "refusal"),
+    [("pass", None), (_OUTLIVED_BY_A_CHILD, "descendant processes"), ("import time; time.sleep(30)", "timed out")],
+    ids=["exits", "outlived", "timed-out"],
+)
+def test_bounded_command_signals_its_group_only_while_the_leader_is_unreaped(
+    tmp_path: Path, monkeypatch, program: str, refusal: str | None
+) -> None:
+    # A reaped leader's process group id can pass to an unrelated group, which
+    # a later killpg would then signal.
+    leaders: dict[int, subprocess.Popen[bytes]] = {}
+    popen, killpg = subprocess.Popen, os.killpg
+
+    def remember(*args, **kwargs):
+        process = popen(*args, **kwargs)
+        leaders[process.pid] = process
+        return process
+
+    def checked_killpg(pid: int, signal_number: int) -> None:
+        assert pid not in leaders or leaders[pid].returncode is None, "signalled a reaped leader's group"
+        killpg(pid, signal_number)
+
+    monkeypatch.setattr("autoform_cli.skeleton.subprocess.Popen", remember)
+    monkeypatch.setattr("autoform_cli.skeleton.os.killpg", checked_killpg)
+
+    if refusal is None:
+        assert _bounded(tmp_path, program).returncode == 0
+    else:
+        with pytest.raises(SkeletonError, match=refusal):
+            _bounded(tmp_path, program, **({"timeout": 1} if refusal == "timed out" else {}))
+    assert all(leader.returncode is not None for leader in leaders.values())
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX-specific")
+def test_bounded_command_sees_the_exit_without_waitid(tmp_path: Path, monkeypatch) -> None:
+    # Python before 3.13 has no os.waitid on macOS; psutil's zombie status stands in.
+    monkeypatch.delattr(os, "waitid", raising=False)
+
+    assert _bounded(tmp_path, "pass").returncode == 0
+
+
 @pytest.mark.skipif(os.name != "posix", reason="detached-session assertion is POSIX-specific")
 def test_bounded_command_finds_a_descendant_that_escapes_its_process_group(
     tmp_path: Path,
