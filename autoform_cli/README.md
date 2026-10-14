@@ -1015,7 +1015,7 @@ neither is an unnamed `instance` or `instance_wanted`. A name written
 command states a result whose proof or construction is deferred. `alias b :=
 a` records `b`, and `alias ⟨mp, mpr⟩ := a_iff` records each of its two names
 that is not `_`; the `:=` must be on the alias's line, and the target on that
-line or the next.
+line or the next nonblank one.
 
 The Markdown files are the source of truth. Graphs and sites are derived views
 that may be regenerated at any time.
@@ -1033,16 +1033,19 @@ links and explicitly declared gaps. With `--lean-root`, local declaration names
 and declaration kinds are checked against the Lean source index, along with the
 elaboration limits each target runs under.
 
-An alias has its target's kind, size, and elaboration limits. The audit
-resolves the target as Lean resolves a name: in the alias's namespace, then in
-each enclosing one, then at the root, passing over a declaration below the
-alias in its file, another file's `private` one, and, for a one-component
-target, a `protected` one. It stops at the first name the index does not hold,
-since another library such as Mathlib may declare it; such an alias matches
-any intent, and only its own line counts toward size and limits. Each name of
-`alias ⟨mp, mpr⟩` is a theorem whatever its target is. Batteries makes an alias
-of anything but a theorem a `def`, but the audit checks what an article's
-object is, and an alias names the same object as its target.
+An alias has its target's kind, size, and elaboration limits when the index
+can be sure what the target is. The audit tries the names Lean tries, in the
+alias's namespace, then in each enclosing one, then at the root, passing over
+a declaration below the alias in its file, which Lean has not seen yet. The
+first other name must be a declaration above the alias in the same file. A
+name the index does not hold may be declared by another library such as
+Mathlib, one in another file may not be imported, and a `protected` one for a
+one-component target is skipped by Lean unless the module system has made it
+private too; such an alias matches any intent and is measured, like any other
+declaration, by its own span. Each name of `alias ⟨mp, mpr⟩`, and any alias of
+one, is a theorem whatever its target is. Batteries makes an alias of anything
+but a theorem a `def`, but the audit checks what an article's object is, and
+an alias names the same object as its target.
 
 A wanted target matches the intent its command mirrors: `theorem_wanted` and
 `proof_wanted` a `theorem`, `lemma`, `proposition`, or `corollary`,

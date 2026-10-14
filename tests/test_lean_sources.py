@@ -3513,11 +3513,12 @@ def test_aliases_are_indexed_with_where_their_target_can_be(tmp_path: Path) -> N
         "alias ⟨mp, _⟩ := t_iff",
         "alias ⟨_, mpr⟩ := t_iff",
         "alias u2:=A.u",
-        "alias self := self",
-        "alias long :=",
+        "alias near :=",
+        "  t",
+        "alias far :=",
         "",
         "  t",
-        "private alias _root_.top := t",
+        "private alias _root_.top := «x.y»",
         # Without Batteries, `alias` is an ordinary identifier.
         "  alias ++ s",
         "  alias x",
@@ -3525,18 +3526,16 @@ def test_aliases_are_indexed_with_where_their_target_can_be(tmp_path: Path) -> N
     ]
     index = _index(tmp_path, "\n".join(source) + "\n")
 
-    def alias(*candidates: str, atomic: bool = True, iff: bool = False) -> Alias:
-        return Alias(candidates, atomic, iff)
-
-    assert {name: (declaration.visibility, declaration.alias) for name, declaration in index.declarations.items()} == {
-        "A.B.u": (None, alias("A.B.t", "A.t", "t")),
-        "A.B.«old u»": ("protected", alias("Nat.succ_le", atomic=False)),
-        "A.B.mp": (None, alias("A.B.t_iff", "A.t_iff", "t_iff", iff=True)),
-        "A.B.mpr": (None, alias("A.B.t_iff", "A.t_iff", "t_iff", iff=True)),
-        "A.B.u2": (None, alias("A.B.A.u", "A.A.u", "A.u", atomic=False)),
-        "A.B.self": (None, alias("A.self", "self")),
-        "A.B.long": (None, alias("A.B.t", "A.t", "t")),
-        "top": ("private", alias("A.B.t", "A.t", "t")),
+    t = ("A.B.t", "A.t", "t")
+    assert {name: (declaration.protected, declaration.alias) for name, declaration in index.declarations.items()} == {
+        "A.B.u": (False, Alias(t, atomic=True, iff=False)),
+        "A.B.«old u»": (True, Alias(("Nat.succ_le",), atomic=False, iff=False)),
+        "A.B.mp": (False, Alias(("A.B.t_iff", "A.t_iff", "t_iff"), atomic=True, iff=True)),
+        "A.B.mpr": (False, Alias(("A.B.t_iff", "A.t_iff", "t_iff"), atomic=True, iff=True)),
+        "A.B.u2": (False, Alias(("A.B.A.u", "A.A.u", "A.u"), atomic=False, iff=False)),
+        "A.B.near": (False, Alias(t, atomic=True, iff=False)),
+        "A.B.far": (False, Alias(t, atomic=True, iff=False)),
+        "top": (False, Alias(("A.B.«x.y»", "A.«x.y»", "«x.y»"), atomic=True, iff=False)),
     }
     assert {declaration.keyword for declaration in index.declarations.values()} == {"alias"}
     assert index.find("A.B.mpr").line == 5
@@ -3548,17 +3547,29 @@ def test_root_qualified_names_leave_their_namespace_out(tmp_path: Path) -> None:
     assert set(index.declarations) == {"B.c", "A.d"}
 
 
-def test_an_alias_reaches_nothing_through_a_cycle_or_another_file_s_private_name(tmp_path: Path) -> None:
-    (tmp_path / "A.lean").write_text(
-        "namespace X\nalias p := q\nprivate theorem hidden : True := trivial\nend X\n", encoding="utf-8"
-    )
-    (tmp_path / "B.lean").write_text("namespace X\nalias q := p\nalias seen := hidden\nend X\n", encoding="utf-8")
+def test_an_alias_is_followed_only_to_an_earlier_declaration_of_its_file(tmp_path: Path) -> None:
+    source = [
+        "namespace X",
+        "theorem base : True := trivial",
+        "private theorem hidden : True := trivial",
+        "alias nearby := hidden",
+        "alias chain := nearby",
+        "protected def p : Nat := 0",
+        "alias skips := p",
+        "end X",
+        "alias dotted := X.p",
+    ]
+    (tmp_path / "A.lean").write_text("\n".join(source) + "\n", encoding="utf-8")
+    # Below `X.base`'s line, so only the file tells them apart.
+    (tmp_path / "B.lean").write_text("\n" * 5 + "namespace X\nalias remote := base\nend X\n", encoding="utf-8")
     index = index_project(tmp_path)
 
-    assert index.reached(index.find("X.p")) is None
-    # Lean cannot see X.hidden from B.lean, and the root's `hidden` may be anyone's.
-    assert index.reached(index.find("X.seen")) is None
-    assert index.reached(index.find("X.hidden")) == index.find("X.hidden")
+    assert index.reached(index.find("X.chain")) == index.find("X.hidden")
+    assert index.reached(index.find("dotted")) == index.find("X.p")
+    # Another file may not be imported, and the module system may have made a
+    # protected name private, which Lean does not skip, so neither is sure.
+    assert index.reached(index.find("X.remote")) is None
+    assert index.reached(index.find("X.skips")) is None
 
 
 def test_anonymous_instances_are_not_mistaken_for_names(tmp_path: Path) -> None:

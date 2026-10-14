@@ -182,7 +182,7 @@ def test_an_alias_is_refused_without_running_lean(tmp_path: Path) -> None:
     report = find_unused_hypotheses(blueprint, lean_root=project, runner=runner)
 
     assert [item.message for item in report.unresolved] == [
-        "basics/aliased: Skel.aliased: an alias; name the declaration it stands for"
+        "basics/aliased: Skel.aliased: an alias, whose own proof only names its target"
     ]
     assert not report.clean
 

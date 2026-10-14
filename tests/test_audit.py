@@ -624,16 +624,20 @@ def test_audit_resolves_an_alias_s_target_as_lean_does(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)
     # Each intent is wrong for the declaration the alias reaches, so every
-    # alias the audit resolves shows as a finding. The last three cannot be
-    # placed: Lean may mean a name the index lacks, so any intent matches.
+    # alias the audit resolves shows as a finding. The last five cannot be
+    # placed, so any intent matches them.
     targets = {
         "same-namespace.md": ("definition", "Project.sameNamespace"),
         "chained.md": ("theorem", "Project.chained"),
-        "protected.md": ("definition", "Project.skipsProtected"),
+        "private.md": ("definition", "Project.revealed"),
         "later.md": ("definition", "Project.early"),
         "iff.md": ("definition", "Project.forward"),
+        "local-iff.md": ("definition", "Project.axForward"),
+        "alias-of-iff.md": ("definition", "Project.axForward'"),
         "inner-first.md": ("definition", "Project.Inner.innerFirst"),
+        "protected.md": ("definition", "Project.skipsProtected"),
         "outer-only.md": ("definition", "Project.Inner.outerOnly"),
+        "other-file.md": ("definition", "Project.remote"),
         "shadowed.md": ("theorem", "Nat.myLemma"),
         "external.md": ("definition", "Project.external"),
     }
@@ -649,16 +653,21 @@ def test_audit_resolves_an_alias_s_target_as_lean_does(tmp_path: Path) -> None:
         "theorem base : True := trivial",
         "def value : Nat := 0",
         "protected def t : Nat := 0",
+        "private theorem secret : True := trivial",
+        "axiom ax_iff : True ↔ True",
         "alias sameNamespace := base",
         "alias middle := value",
         "alias chained := middle",
-        # Lean passes over the protected `Project.t` for a one-component name.
-        "alias skipsProtected := t",
+        "alias revealed := secret",
         # `Project.later` does not exist yet where the alias is elaborated.
         "alias early := later",
         "def later : Nat := 0",
-        # Batteries makes each name of an iff alias a theorem.
+        # Batteries makes each name of an iff alias a theorem, and an alias of one.
         "alias ⟨forward, _⟩ := Nat.lt_iff_add_one_le",
+        "alias ⟨axForward, _⟩ := ax_iff",
+        "alias axForward' := axForward",
+        # Lean skips `Project.t` here unless the module system made it private.
+        "alias skipsProtected := t",
         "alias external := Nat.succ_le_succ",
         "namespace Inner",
         "theorem value : True := trivial",
@@ -672,6 +681,10 @@ def test_audit_resolves_an_alias_s_target_as_lean_does(tmp_path: Path) -> None:
         "end Nat",
     ]
     (lean_root / "Aliases.lean").write_text("\n".join(source) + "\n", encoding="utf-8")
+    # Below `Project.base`'s line, so only the file tells them apart.
+    (lean_root / "Other.lean").write_text(
+        "\n" * 9 + "namespace Project\nalias remote := base\nend Project\n", encoding="utf-8"
+    )
 
     def mismatch(kind: str, intent: str) -> list[tuple[str, str]]:
         reason = f"Lean target kind alias of {kind} does not match declaration intent {intent}"
@@ -680,9 +693,11 @@ def test_audit_resolves_an_alias_s_target_as_lean_does(tmp_path: Path) -> None:
     assert _finding_map(blueprint, lean_root=lean_root) == {
         "roadmap/same-namespace.md": mismatch("theorem", "definition"),
         "roadmap/chained.md": mismatch("def", "theorem"),
-        "roadmap/protected.md": mismatch("theorem", "definition"),
+        "roadmap/private.md": mismatch("theorem", "definition"),
         "roadmap/later.md": mismatch("theorem", "definition"),
         "roadmap/iff.md": mismatch("theorem", "definition"),
+        "roadmap/local-iff.md": mismatch("theorem", "definition"),
+        "roadmap/alias-of-iff.md": mismatch("theorem", "definition"),
         "roadmap/inner-first.md": mismatch("theorem", "definition"),
     }
 
@@ -739,10 +754,12 @@ def test_audit_measures_an_alias_by_its_target_s_span(tmp_path: Path) -> None:
             declaration="theorem",
             statement="formalized",
             proof="formalized",
-            lean="Project.bigAlias" if name == "Project.big" else name,
+            # The target named beside its alias still counts once.
+            lean="Project.bigAlias Project.big" if name == "Project.big" else name,
         )
     lean_root = _lean_project(tmp_path, spans)
-    (lean_root / "Alias.lean").write_text("alias Project.bigAlias := Project.big\n", encoding="utf-8")
+    with (lean_root / "big.lean").open("a", encoding="utf-8") as source:
+        source.write("alias Project.bigAlias := Project.big\n")
 
     assert _finding_map(blueprint, lean_root=lean_root) == {
         "roadmap/big.md": [

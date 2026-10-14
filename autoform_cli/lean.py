@@ -90,7 +90,7 @@ class Alias:
 
     #: The names its target can mean, in the order Lean tries them: in the
     #: current namespace, in each enclosing one, then at the root. Empty when
-    #: the target is on neither the alias's line nor the next.
+    #: the target is on neither the alias's line nor the next nonblank one.
     candidates: tuple[str, ...]
     #: Whether the target is one component, such as ``t`` rather than ``A.t``:
     #: Lean then skips a ``protected`` declaration in the namespaces it tries.
@@ -107,8 +107,8 @@ class Declaration:
     path: Path
     line: int
     keyword: str
-    #: ``private`` or ``protected`` when written before the keyword.
-    visibility: str | None = None
+    #: Whether ``protected`` is written before the keyword.
+    protected: bool = False
     alias: Alias | None = None
 
 
@@ -127,38 +127,39 @@ class SourceIndex:
     def reached(self, declaration: Declaration) -> Declaration | None:
         """The declaration ``declaration`` stands for: itself, or what an alias names through any chain.
 
-        ``None`` when Lean may resolve a target to a declaration the index does
-        not hold, such as one in Mathlib, or when the aliases form a cycle.
+        ``None`` when the index cannot be sure what an alias's target is. Each
+        step goes to an earlier line of the same file, so a chain always ends.
         """
 
-        seen = {declaration.name}
         while declaration.alias is not None:
-            target = self._alias_target(declaration, declaration.alias)
-            if target is None or target.name in seen:
+            target = self.alias_target(declaration)
+            if target is None:
                 return None
-            seen.add(target.name)
             declaration = target
         return declaration
 
-    def _alias_target(self, declaration: Declaration, alias: Alias) -> Declaration | None:
-        """Resolve one alias's target as Lean would, as far as the index can be sure.
+    def alias_target(self, declaration: Declaration) -> Declaration | None:
+        """The declaration an alias's target names, when the index can be sure which.
 
-        Lean takes the first candidate it can see. One the index lacks may
-        still be declared outside the project, so the search stops there.
+        Lean takes the first candidate it can see, so a candidate the index
+        lacks may be declared outside the project, and one in another file may
+        or may not be imported: either way the answer is ``None``. A candidate
+        below the alias in its file is not declared yet, so Lean looks further
+        out. A ``protected`` candidate is skipped for a one-component target,
+        except when the module system has also made it private; not knowing
+        which, the answer is ``None`` again.
         """
 
-        last = len(alias.candidates) - 1
-        for depth, candidate in enumerate(alias.candidates):
+        assert declaration.alias is not None
+        for candidate in declaration.alias.candidates:
             found = self.declarations.get(candidate)
-            if found is None:
+            if found is None or found.path != declaration.path:
                 return None
-            hidden = (
-                (found.path == declaration.path and found.line >= declaration.line)
-                or (found.visibility == "private" and found.path != declaration.path)
-                or (found.visibility == "protected" and alias.atomic and depth < last)
-            )
-            if not hidden:
-                return found
+            if found.line >= declaration.line:
+                continue
+            if found.protected and declaration.alias.atomic:
+                return None
+            return found
         return None
 
 
@@ -755,18 +756,17 @@ def _scan(text: str, relative: Path) -> list[Declaration]:
         declaration_match = _DECLARATION.match(line)
         if declaration_match:
             keyword = declaration_match.group(1)
-            words = _ATTRIBUTE_LIST.sub(" ", line[: declaration_match.start(1)]).split()
-            visibility = next((word for word in ("private", "protected") if word in words), None)
+            protected = "protected" in _ATTRIBUTE_LIST.sub(" ", line[: declaration_match.start(1)]).split()
             if keyword == "alias":
                 following = next((lines[later] for later in range(number, len(lines)) if lines[later].strip()), "")
                 found.extend(
-                    _aliases(declaration_match.group(2), following, namespaces, relative, number, visibility)
+                    _aliases(declaration_match.group(2), following, namespaces, relative, number, protected)
                 )
                 continue
             name = _name_token(declaration_match.group(2))
             if name is None:
                 continue
-            found.append(Declaration(_qualified(namespaces, name), relative, number, keyword, visibility))
+            found.append(Declaration(_qualified(namespaces, name), relative, number, keyword, protected))
     return found
 
 
@@ -802,7 +802,7 @@ _ALIAS_TARGET = re.compile(rf"\s*({_ALIAS_NAME})")
 
 
 def _aliases(
-    text: str, following: str, namespaces: list[str], relative: Path, line: int, visibility: str | None
+    text: str, following: str, namespaces: list[str], relative: Path, line: int, protected: bool
 ) -> list[Declaration]:
     """The declarations one ``alias`` command makes.
 
@@ -824,16 +824,17 @@ def _aliases(
     else:
         parts = [part for namespace in namespaces for part in namespace.split(".")]
         candidates = tuple(".".join([*parts[:depth], target]) for depth in range(len(parts), -1, -1))
-    atomic = target is not None and "." not in target
+    atomic = target is not None and _ONE_COMPONENT.fullmatch(target) is not None
     iff = match["name"] is None
-    found = []
-    for name in [match["mp"], match["mpr"]] if iff else [match["name"]]:
-        if name == "_":
-            continue
-        qualified = _qualified(namespaces, name)
-        alias = Alias(tuple(candidate for candidate in candidates if candidate != qualified), atomic, iff)
-        found.append(Declaration(qualified, relative, line, "alias", visibility, alias))
-    return found
+    alias = Alias(candidates, atomic, iff)
+    return [
+        Declaration(_qualified(namespaces, name), relative, line, "alias", protected, alias)
+        for name in ([match["mp"], match["mpr"]] if iff else [match["name"]])
+        if name != "_"
+    ]
+
+
+_ONE_COMPONENT = re.compile(r"(?:«[^«»]*»|[^.«»])+")
 
 
 _RAW_OPEN = re.compile(r'r(#*)"')

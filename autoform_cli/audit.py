@@ -479,8 +479,8 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
                 )
 
         # An alias's proof is its target's, so the limits and size are the
-        # target's too. An alias whose target the index cannot place has only
-        # its own line.
+        # target's too. An alias whose target the index cannot place is
+        # measured like any other declaration.
         bodies = list(dict.fromkeys(index.reached(declaration) or declaration for declaration in resolved))
         for body in bodies:
             findings.extend(_limit_findings(article_path, body, sources))
@@ -532,16 +532,19 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
 def _kind(declaration: Declaration, index: SourceIndex) -> str | None:
     """The keyword whose kind ``declaration`` has; an alias has its target's.
 
-    Each name of ``alias ⟨mp, mpr⟩`` is a theorem whatever its target is. Any
-    other alias whose target the index cannot place has no known kind: ``None``.
+    Each name of ``alias ⟨mp, mpr⟩`` is a theorem whatever its target is, and
+    so is an alias of one. Any other alias whose target the index cannot place
+    has no known kind: ``None``.
     """
 
-    if declaration.alias is None:
-        return declaration.keyword
-    reached = index.reached(declaration)
-    if reached is not None:
-        return reached.keyword
-    return "theorem" if declaration.alias.iff else None
+    while declaration.alias is not None:
+        if declaration.alias.iff:
+            return "theorem"
+        target = index.alias_target(declaration)
+        if target is None:
+            return None
+        declaration = target
+    return declaration.keyword
 
 
 def _captured_source_lines(
