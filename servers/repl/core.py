@@ -1000,7 +1000,7 @@ class LeanRepl:
                         # _run_io already retired the process. The response
                         # still answers the call, so only this warning records
                         # the retirement.
-                        logger.warning("%s", error)
+                        logger.warning("Lean REPL call in %s: %s", self.cwd, error)
                         response = error.response
                     except TimeoutError:
                         # _run passes a timeout through only before the frame is fully sent.
@@ -1022,14 +1022,14 @@ class LeanRepl:
                         message += f"; process cleanup also failed: {cleanup_failure}"
                 else:
                     message = _with_repl_require_hint(str(error))
-                logger.warning("Lean REPL call failed: %s", message)
+                logger.warning("Lean REPL call in %s failed: %s", self.cwd, message)
                 result = {
                     "repl_error": message,
                     "outcome_unknown": True,
                 }
             except (ReplProcessExited, TimeoutError, RuntimeError, OSError) as error:
                 message = _with_repl_require_hint(str(error))
-                logger.warning("Lean REPL call failed: %s", message)
+                logger.warning("Lean REPL call in %s failed: %s", self.cwd, message)
                 result = {"repl_error": message}
             except BaseException as error:
                 request_error = error

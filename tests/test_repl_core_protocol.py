@@ -802,8 +802,8 @@ def test_disposable_call_maps_each_response_outcome_without_a_retry(
     [
         # The REPL's error for the caller's command is not a runtime failure.
         ({"message": "unknown identifier 'x'"}, []),
-        (repl_core.ReplOutcomeUnknown("transport failed"), ["Lean REPL call failed: transport failed"]),
-        (repl_core.ReplProcessExited("REPL process exited"), ["Lean REPL call failed: REPL process exited"]),
+        (repl_core.ReplOutcomeUnknown("transport failed"), ["Lean REPL call in . failed: transport failed"]),
+        (repl_core.ReplProcessExited("REPL process exited"), ["Lean REPL call in . failed: REPL process exited"]),
     ],
 )
 def test_disposable_call_logs_process_failures_but_not_command_errors(monkeypatch, caplog, outcome, warnings):
@@ -1633,7 +1633,7 @@ def test_disposable_timeout_after_full_write_keeps_and_logs_a_cleanup_failure(mo
         "process cleanup also failed: cleanup failed"
     )
     assert response == {"repl_error": message, "outcome_unknown": True}
-    assert _repl_log(caplog) == [(logging.WARNING, f"Lean REPL call failed: {message}")]
+    assert _repl_log(caplog) == [(logging.WARNING, f"Lean REPL call in . failed: {message}")]
     assert close_calls == 3
     assert repl.is_clean()
 
@@ -2125,6 +2125,7 @@ def test_disposable_backlog_drops_the_environment_and_logs_the_retirement(monkey
         assert repl.process is None
     [(level, message)] = _repl_log(caplog)
     assert level == logging.WARNING
+    assert message.startswith("Lean REPL call in .: ")
     assert "stderr became unsafe" in message
 
 
