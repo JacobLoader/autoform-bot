@@ -663,6 +663,33 @@ def _selected_sources(
     )
 
 
+def test_selected_capture_releases_its_state_without_cyclic_gc(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "tree"
+    (root / "a" / "b").mkdir(parents=True)
+    (root / "a" / "b" / "kept.src").write_bytes(b"kept")
+    (root / "a" / "other.txt").write_bytes(b"other")
+    selection = _selected_sources()
+    # Selected-mode verification relists each folder through a callback; state
+    # left in a reference cycle would keep the selection alive until the cyclic
+    # collector runs.
+    released = weakref.ref(selection.include)
+
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        snapshot = _capture(root, selection, portable=False, monkeypatch=monkeypatch)
+        del selection
+        assert released() is None
+    finally:
+        if enabled:
+            gc.enable()
+
+    assert snapshot.files == (("a/b/kept.src", b"kept"),)
+
+
 def _at_final_verification(monkeypatch: pytest.MonkeyPatch, action) -> None:
     original = tree_snapshot_module._tree_snapshot_checkpoint
 

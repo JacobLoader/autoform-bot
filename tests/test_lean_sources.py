@@ -479,6 +479,7 @@ def test_snapshot_reports_sources_that_keep_changing(
     unattributed_first_open: bool,
     named: str,
 ) -> None:
+    _require_descriptor_capture()
     _index(tmp_path, "def a : Nat := 0\n", "Project/A.lean")
     _index(tmp_path, "def b : Nat := 0\n", "Project/B.lean")
     edits = 0
@@ -511,8 +512,7 @@ def test_snapshot_reports_sources_that_keep_changing(
 
     assert opens == lean_module._SNAPSHOT_ATTEMPTS
     assert edits == lean_module._SNAPSHOT_ATTEMPTS - unattributed_first_open
-    if tree_snapshot_module._DESCRIPTOR_CAPTURE_SUPPORTED:
-        assert str(error.value) == f"Lean sources kept changing while they were indexed; changed: {named}"
+    assert str(error.value) == f"Lean sources kept changing while they were indexed; changed: {named}"
 
 
 def _at(monkeypatch: pytest.MonkeyPatch, when: str, action: Callable[[], object]) -> list[str]:
@@ -520,7 +520,7 @@ def _at(monkeypatch: pytest.MonkeyPatch, when: str, action: Callable[[], object]
 
     `when` is "verify" (the checkpoint before the final verification), "list F"
     (the checkpoint after the scan lists folder F; "list " is the root),
-    "relist F" (just before folder F's end-of-scan relist), or "open N after W"
+    "relist F" (just before folder F's end-of-scan relist, not verification's), or "open N after W"
     or "opendir N after W" (just before the first descriptor-relative open of N
     as a file or as a folder once moment W has passed).
     """
@@ -540,7 +540,9 @@ def _at(monkeypatch: pytest.MonkeyPatch, when: str, action: Callable[[], object]
         original_recheck = tree_snapshot_module._recheck_scanned_directory
 
         def recheck(descriptor, *, relative: str, **kwargs):
-            if relative == rest:
+            # Verification relists through the same function; only the scan's
+            # call, which passes no verify_kept, is the end-of-scan relist.
+            if relative == rest and kwargs.get("verify_kept") is None:
                 once()
             return original_recheck(descriptor, relative=relative, **kwargs)
 
