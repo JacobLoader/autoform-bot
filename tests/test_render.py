@@ -2268,6 +2268,30 @@ def test_a_blueprint_that_changes_while_it_is_read_asks_for_a_retry(
     assert not (tmp_path / "out").exists()
 
 
+def test_entries_added_removed_or_renamed_during_a_render_publish_the_captured_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, output, previous = _published(tmp_path)
+    blueprint = project / "blueprint"
+    _edit(blueprint / "roadmap/top.md", "The main result.", "Revised.")
+    undisturbed = tmp_path / "undisturbed"
+    render_site(blueprint, undisturbed, lean_root=project)
+    render_pages = render_module._render_pages
+
+    def churn_then_render(*args, **kwargs):
+        (blueprint / "roadmap/added.md").write_text("# Added\n\nSaved mid-render.\n", encoding="utf-8")
+        (blueprint / "roadmap/base.md").unlink()
+        (blueprint / "roadmap").rename(blueprint / "moved")
+        return render_pages(*args, **kwargs)
+
+    monkeypatch.setattr(render_module, "_render_pages", churn_then_render)
+    render_site(blueprint, output, lean_root=project)
+
+    # Render replaced the previous site with the generation it captured, byte for byte: the revised article,
+    # no added page, Base still published, and nothing under the new directory name.
+    assert _tree(output) == _tree(undisturbed) != previous
+
+
 def test_repository_links_use_the_verified_commit_not_a_mutable_ref(tmp_path: Path) -> None:
     project = _project(tmp_path)
     commit = _commit_project(project)
