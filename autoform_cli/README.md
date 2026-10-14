@@ -1798,11 +1798,15 @@ Windows), Git ref, article and dependency counts, the site's file inventory, and
 available views. It contains no timestamp or absolute path, so identical inputs
 produce identical output files. Render reads the blueprint and the Lean sources
 once each and derives every page, link and hash from those bytes; an edit saved
-during a render waits for the next one. Repository links appear only when those
-bytes match one locally available Git commit, recorded by its full object ID; a
-clean checkout that Git converts on checkout still matches. Otherwise the render
-stays local, keeps source notes in the site, records no Git ref, and warns with
-the first mismatch.
+during a render waits for the next one. Repository links appear only when the
+Lean bytes match one locally available Git commit, recorded by its full object
+ID; a clean checkout that Git converts on checkout still matches. Otherwise the
+render stays local, keeps source notes in the site, records no Git ref, and
+warns with the first mismatch. Links into the blueprint (an article's Markdown
+source, a source note) also need the blueprint's bytes in that commit. When
+they differ, render keeps the code links, keeps source notes in the site
+instead of linking to them, and warns with the first mismatch; a blueprint
+outside the repository gets the same result without a warning.
 
 The site is built and synced in a hidden `.autoform-publication-*` directory
 beside the output, then swapped in with one atomic exchange (`renamex_np` on

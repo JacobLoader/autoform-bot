@@ -383,20 +383,29 @@ def render_site(
         repository_url = repository_url if repository_url is not None else detect_repository_url(repo_root)
         ref = ref if ref is not None else detect_ref(repo_root)
         sources = SOURCES_DIR in snapshot.directories
-        files = [(blueprint / name, data) for name, data in snapshot.files]
-        files += [(repo_root / path, data) for path, data in lean.source_files]
         reasons: list[str] = []
+        blueprint_reasons: list[str] = []
         commit = None
+        links_blueprint = False
         if repository_url and ref:
             commit = verify_repository_snapshot(
-                repo_root,
-                ref,
-                files,
-                required_directories=[blueprint / SOURCES_DIR] if sources else [],
-                reasons=reasons,
+                repo_root, ref, [(repo_root / path, data) for path, data in lean.source_files], reasons=reasons
+            )
+        # A code link depends only on the Lean bytes. A link into the blueprint also needs the blueprint's
+        # bytes in that commit, which a blueprint outside the repository never has.
+        if commit is not None and _is_within(blueprint, repo_root):
+            links_blueprint = (
+                verify_repository_snapshot(
+                    repo_root,
+                    commit,
+                    [(blueprint / name, data) for name, data in snapshot.files],
+                    required_directories=[blueprint / SOURCES_DIR] if sources else [],
+                    reasons=blueprint_reasons,
+                )
+                is not None
             )
         # Links name the verified commit, never the requested ref.
-        linker = SourceLinker(lean.index, repository_url, commit, indexed=indexed)
+        linker = SourceLinker(lean.index, repository_url, commit, indexed=indexed, links_blueprint=links_blueprint)
         source_revision = _source_revision(snapshot)
         report = _publish(
             destination,
@@ -418,6 +427,11 @@ def render_site(
         report.warnings.append(
             "repository links were omitted because the captured blueprint and Lean inputs "
             "do not match one verified local Git commit" + (f": {reasons[0]}" if reasons else "")
+        )
+    elif blueprint_reasons:
+        report.warnings.append(
+            "Markdown source links were omitted because the captured blueprint does not match "
+            f"the verified local Git commit: {blueprint_reasons[0]}"
         )
     return report
 
@@ -1090,10 +1104,11 @@ def _sources_base(blueprint: Path, repo_root: Path, linker: SourceLinker) -> "_S
     They stay in the vault and the site links out to them instead.
 
     Returns ``None`` when there are no repository coordinates to build a link
-    from. The pages are then published as before, because a site with no
-    sources and no way to reach them is worse than a redundant page.
+    from, or the blueprint's files are not in the linked commit. The pages are
+    then published as before, because a site with no sources and no way to
+    reach them is worse than a redundant page.
     """
-    if not linker.repository_url or not linker.ref:
+    if not linker.repository_url or not linker.ref or not linker.links_blueprint:
         return None
     try:
         relative = (blueprint / SOURCES_DIR).resolve().relative_to(repo_root).as_posix()
@@ -2350,7 +2365,7 @@ def _vault_source_link(node: Node, *, repo_root: Path, linker) -> str:
     The graph view and the published statement are both derived. This is the
     file a reader edits, so it is worth one click from the statement itself.
     """
-    if not linker.repository_url or not linker.ref:
+    if not linker.repository_url or not linker.ref or not linker.links_blueprint:
         return ""
     try:
         relative = node.path.resolve().relative_to(repo_root).as_posix()
