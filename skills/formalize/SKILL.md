@@ -8,10 +8,16 @@ description: >-
 
 # Formalize the Markdown roadmap
 
-Treat `blueprint/roadmap/**/*.md` as the sole durable work graph. Resolve the
-absolute installed plugin root and run commands through the invocation contract
-in the [CLI reference](../../autoform_cli/README.md#commands), from the Lean
-project. `<PROJECT>` is the absolute path of the checkout being edited; for a
+There is no `autoform` on `PATH` in a Lean project. Run every `autoform`
+command, from the Lean project, as
+`uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform` followed by its arguments,
+where `<AUTOFORM_PLUGIN_ROOT>` is the absolute plugin root, two directories
+above this skill's base directory. Give a subagent that root and this prefix
+with its task.
+
+Treat `blueprint/roadmap/**/*.md` as the sole durable work graph. The
+[CLI reference](../../autoform_cli/README.md#commands) documents the commands.
+`<PROJECT>` is the absolute path of the checkout being edited; for a
 subagent, that is its own worktree. Start by running `autoform work list
 <PROJECT> --lean-root <PROJECT> --json` and inspect a selected leaf with
 `autoform work context <NODE> <PROJECT> --lean-root <PROJECT> --json`. The

@@ -10,6 +10,13 @@ description: >-
 
 # Judge Autoform work as an agent
 
+There is no `autoform` on `PATH` in a Lean project. Run every `autoform`
+command, from the project under review, as
+`uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform` followed by its arguments,
+where `<AUTOFORM_PLUGIN_ROOT>` is the absolute plugin root, two directories
+above this skill's base directory. Give a subagent that root and this prefix
+with its task.
+
 Select the rubric from the artifact under review.
 
 - For a roadmap or blueprint, read [roadmap quality](references/roadmap-quality.md),

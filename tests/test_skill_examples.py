@@ -1179,21 +1179,47 @@ def test_skills_delegate_the_command_line_to_the_reference(repo_root: Path) -> N
 
     Duplicated invocations are what let the CLI move underneath the agent's
     instructions, so a skill that needs the command line must cite the
-    reference instead of copying it.
+    reference instead of copying it. The bare launcher is not a flag, so a skill
+    may state it once.
     """
     citing = 0
     for skill in sorted((repo_root / "skills").glob("*/SKILL.md")):
-        text = skill.read_text(encoding="utf-8")
+        text = " ".join(skill.read_text(encoding="utf-8").split())
         if skill.parent.name == "setup":
             assert text.count("uv run --project") == 3
         else:
-            assert "uv run --project" not in text, (
+            invocations = re.findall(r"uv run --project[^`]*`", text)
+            assert invocations in ([], [_LAUNCHER]), (
                 f"{skill.relative_to(repo_root)} restates a CLI invocation; "
                 "link to autoform_cli/README.md#commands instead"
             )
         if "autoform_cli/README.md" in text:
             citing += 1
     assert citing >= 3
+
+
+_LAUNCHER = 'uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform`'
+
+
+def test_skills_that_run_the_cli_state_how_to_launch_it(repo_root: Path) -> None:
+    """A consumer project has no `autoform` on `PATH`.
+
+    Agents that read a bare `autoform work list` run `which autoform` and then
+    guess; in trials every fresh Roadmap and Formalize session did, and some
+    never reached the CLI. So each skill whose instructions or references name
+    a command states the launcher once, says where the plugin root is, and
+    hands both to its subagents.
+    """
+    for name in ("roadmap", "formalize", "agent-review", "human-review"):
+        skill = repo_root / "skills" / name
+        named = " ".join(path.read_text(encoding="utf-8") for path in sorted(skill.rglob("*.md")))
+        assert re.search(r"`autoform [a-z]", named), f"{name} no longer runs the CLI"
+        flat = " ".join((skill / "SKILL.md").read_text(encoding="utf-8").split())
+        assert f"`{_LAUNCHER}" in flat, f"{name} does not state the launcher"
+        assert "no `autoform` on `PATH`" in flat
+        assert "two directories above this skill's base directory" in flat
+        at = flat.index(_LAUNCHER)
+        assert "subagent" in flat[max(0, at - 600) : at + 600]
 
 
 def test_skill_links_into_the_cli_reference_land_on_a_section(repo_root: Path) -> None:
