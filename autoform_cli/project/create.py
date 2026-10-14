@@ -10,7 +10,7 @@ import re
 import secrets
 import stat
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.resources import files
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
@@ -28,7 +28,7 @@ from ..scaffold import (
     _ScaffoldFile,
     _scaffold_plan,
 )
-from .catalog import SupportedRelease, load_release_catalog
+from .catalog import SharedLibrary, SupportedRelease, load_library_catalog, load_release_catalog
 
 PROJECT_CREATION_SCHEMA = "autoform-project-creation/v1"
 _CREATION_RELEASE_SCHEMA = "autoform-project-creation-release/v1"
@@ -73,6 +73,7 @@ _CONTRACTS_MESSAGE = "The generated project did not satisfy Autoform's project c
 _STAGED_MESSAGE = "The staged project did not satisfy Autoform's project contracts."
 _DESCRIPTOR_MESSAGE = "The bundled project-creation release metadata is invalid."
 _MANIFEST_MESSAGE = "The bundled release manifest is invalid."
+_LIBRARY_MESSAGE = "The bundled library catalog entry is invalid."
 _NO_RENAME_MESSAGE = "This platform cannot atomically publish a new project without replacement."
 
 
@@ -101,9 +102,10 @@ class ProjectCreateResult:
     written: tuple[str, ...]
     workflows_pinned: bool
     warnings: tuple[tuple[str, str], ...]
+    library: SharedLibrary | None = None
 
     def as_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "lean_toolchain": self.lean_toolchain,
             "mathlib_rev": self.mathlib_rev,
             "ok": True,
@@ -115,6 +117,9 @@ class ProjectCreateResult:
             "workflows_pinned": self.workflows_pinned,
             "written": list(self.written),
         }
+        if self.library is not None:
+            payload["library"] = {"git": self.library.git, "name": self.library.name, "rev": self.library.commit}
+        return payload
 
     def to_json(self) -> str:
         return json.dumps(self.as_dict(), ensure_ascii=True, sort_keys=True, separators=(",", ":"))
@@ -153,21 +158,26 @@ def create_project(
     mathlib_rev: str | None = None,
     autoform_source: str = "",
     autoform_ref: str = "",
+    library: str | None = None,
 ) -> ProjectCreateResult:
     """Create and atomically publish a new project at an absent *target*.
 
     Without *release_id* or *lean_toolchain* the project uses the catalog's
     recommended release. A version pair outside the catalog is written without
-    lake-manifest.json and reported in the result's warnings.
+    lake-manifest.json and reported in the result's warnings. A catalog
+    *library* selects its own release and is required and locked beside Mathlib.
     """
 
     requested = _validate_target(target)
     package_name = _validate_package(package, requested.parent)
-    version = _resolve_version(release_id, lean_toolchain, mathlib_rev)
+    shared = _resolve_library(library, release_id, lean_toolchain, mathlib_rev)
+    version = _resolve_version(shared.release if shared is not None else release_id, lean_toolchain, mathlib_rev)
     # Unlisted pairs still reserve the recommended release's module roots.
     roots_bundle = _load_release_bundle(version.release or load_release_catalog().recommended)
-    _validate_package_for_release(package_name, roots_bundle)
+    _validate_package_for_release(package_name, roots_bundle, shared)
     release_bundle = roots_bundle if version.release is not None else None
+    if shared is not None:
+        release_bundle = _with_library(roots_bundle, shared)
     warnings = _version_warnings(version)
     try:
         # Pin discovery validates this exact stable snapshot, and the plan keeps
@@ -175,7 +185,9 @@ def create_project(
         templates = _read_templates(_TEMPLATES)
         _require_complete_templates(templates)
         workflow_source, workflow_ref = _resolve_workflow_pin(autoform_source, autoform_ref, templates=templates)
-        plan = _build_project_plan(package_name, version, release_bundle, templates, workflow_source, workflow_ref)
+        plan = _build_project_plan(
+            package_name, version, release_bundle, templates, workflow_source, workflow_ref, shared
+        )
         tree = _plan_tree(plan)
         _validate_roadmap_plan(plan)
     except (OSError, ScaffoldError, UnicodeError):
@@ -236,6 +248,7 @@ def create_project(
             written=tuple(item.relative for item in plan),
             workflows_pinned=bool(workflow_ref),
             warnings=warnings,
+            library=shared,
         )
     except BaseException as error:
         state = _publication_state(parent_descriptor, requested.name, stage_name, stage_descriptor)
@@ -363,6 +376,44 @@ def _resolve_version(release_id: str | None, lean_toolchain: str | None, mathlib
     return _ProjectVersion(toolchain, catalog.recommended.mathlib_git, revision, None)
 
 
+def _resolve_library(
+    name: object, release_id: str | None, lean_toolchain: str | None, mathlib_rev: str | None
+) -> SharedLibrary | None:
+    """The catalog library *name* selects; it chooses the release, so version options conflict with it."""
+
+    if name is None:
+        return None
+    if release_id is not None or lean_toolchain is not None or mathlib_rev is not None:
+        raise ProjectCreateError(
+            "project-version-invalid",
+            "A library selects its own release; do not combine it with a release, Lean toolchain, or Mathlib revision.",
+        )
+    library = load_library_catalog().get(name)
+    if library is None:
+        raise ProjectCreateError("project-library-unknown", "The requested library is not in the bundled library catalog.")
+    return library
+
+
+def _with_library(bundle: _ReleaseBundle, library: SharedLibrary) -> _ReleaseBundle:
+    """*bundle* with *library*'s resolved packages locked too, in the order `lake update` writes them."""
+
+    added = list(library.manifest_packages)
+    payload = json.loads(bundle.manifest_bytes)
+    packages = payload["packages"]
+    if not all(_valid_manifest_package(entry) for entry in added):
+        raise ProjectCreateError("project-create-validation-failed", _LIBRARY_MESSAGE)
+    names = [entry["name"].casefold() for entry in (*packages, *added)]
+    if len(set(names)) != len(names):
+        raise ProjectCreateError("project-create-validation-failed", _LIBRARY_MESSAGE)
+    payload["packages"] = [
+        *(entry for entry in added if not entry["inherited"]),
+        *(entry for entry in packages if not entry["inherited"]),
+        *(entry for entry in added if entry["inherited"]),
+        *(entry for entry in packages if entry["inherited"]),
+    ]
+    return replace(bundle, manifest_bytes=json.dumps(payload).encode())
+
+
 def _valid_mathlib_revision(revision: str) -> bool:
     """Whether *revision* fits the safe grammar and Git's ref-name rules."""
 
@@ -402,12 +453,21 @@ def _version_warnings(version: _ProjectVersion) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(warnings))
 
 
-def _validate_package_for_release(package: str, bundle: _ReleaseBundle) -> None:
+def _validate_package_for_release(package: str, bundle: _ReleaseBundle, library: SharedLibrary | None = None) -> None:
     reserved = bundle.module_roots | _MATHLIB_EXTRA_ROOTS | _TOOLCHAIN_EXTRA_ROOTS
     if package.casefold() in {root.casefold() for root in reserved}:
         raise ProjectCreateError(
             "project-name-invalid",
             "Project name must not shadow a module root used by Lean, Mathlib, or Mathlib's dependencies.",
+        )
+    if library is None:
+        return
+    # Lake also refuses two packages of one name, so the library's package names are reserved too.
+    names = (*library.module_roots, *(str(entry["name"]) for entry in library.manifest_packages))
+    if package.casefold() in {name.casefold() for name in names}:
+        raise ProjectCreateError(
+            "project-name-invalid",
+            f"Project name must not shadow a module root or package of the library {library.name}.",
         )
 
 
@@ -687,6 +747,7 @@ def _build_project_plan(
     templates: tuple[tuple[str, bytes, int], ...],
     autoform_source: str,
     autoform_ref: str,
+    library: SharedLibrary | None,
 ) -> tuple[_ScaffoldFile, ...]:
     lakefile = (
         f'name = "{package}"\n'
@@ -700,6 +761,8 @@ def _build_project_plan(
         f'name = "{package}"\n'
         'srcDir = "src"\n'
     )
+    if library is not None:
+        lakefile += f'\n[[require]]\nname = "{library.name}"\ngit = "{library.git}"\nrev = "{library.commit}"\n'
     module = (
         "import Mathlib\n\n"
         f"namespace {package}\n\n"
