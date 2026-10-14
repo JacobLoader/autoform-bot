@@ -19,7 +19,6 @@ therefore yield a set of entries that no single state had.  With
 from __future__ import annotations
 
 import errno
-import functools
 import hashlib
 import os
 import stat
@@ -1096,9 +1095,9 @@ def capture_directory_descriptor(
     def scan(descriptor: int, relative: str, depth: int, identity: tuple[int, ...]) -> bool:
         """Record one folder and its descendants; return whether it was recorded.
 
-        In selected-entry mode only the root and folders that hold a recorded
-        entry are recorded, and an entry that vanishes before it is examined
-        is absent.
+        By default every descended folder is recorded.  In selected-entry mode
+        only the root and folders that hold a recorded entry or a recorded
+        folder are, and an entry that vanishes before it is examined is absent.
         """
 
         selected_only = selection.unselected_may_change
@@ -1557,17 +1556,18 @@ def _recheck_scanned_directory(
     unkept: dict[str, tuple[int, int, int]],
     selection: TreeSelection,
     budget: _CaptureBudget,
-    verify_kept: Callable[[str], None] | None = None,
+    verify_kept: Callable[[int, str, str], None] | None = None,
 ) -> None:
     """Relist a folder in selected-entry mode, at the end of its scan or at verification.
 
     Its kept names must still be present and, if it kept any, no recognized
     marker may now hide it.  Every other name must still be the entry the scan
     saw and did not keep, by its ``(dev, ino, file type)`` in *unkept*, or must
-    now hold no selected entry.  Verification passes no *unkept* and checks
-    each kept name with *verify_kept* where the listing has it.  Like the
-    strict end-of-folder relist, this bounds the folder's undetected window to
-    the time between this relist and its verification.
+    now hold no selected entry.  At the end of a scan, like the strict
+    end-of-folder relist, this bounds the folder's undetected window to the
+    time between this relist and verification.  Verification passes an empty
+    *unkept* and checks each kept name the listing has with
+    ``verify_kept(descriptor, relative, name)``.
     """
 
     names = _relist_directory(
@@ -1589,7 +1589,7 @@ def _recheck_scanned_directory(
     for name in names:
         if name in recorded:
             if verify_kept is not None:
-                verify_kept(name)
+                verify_kept(descriptor, relative, name)
             continue
         examined = unkept.get(name)
         if examined is not None:
@@ -1838,10 +1838,10 @@ def _verify_snapshot(
                 unkept={},
                 selection=selection,
                 budget=budget,
-                # Unlike a lambda, a partial adds no Python frame: verification
-                # stays at three frames per folder level, which bounds how deep
-                # a tree without max_depth can be under the recursion limit.
-                verify_kept=functools.partial(verify_recorded, descriptor, relative),
+                # Passed as it is, not wrapped in a lambda or a partial, so each
+                # folder level costs three Python frames and no C-level call,
+                # which bounds how deep a tree without max_depth can be.
+                verify_kept=verify_recorded,
             )
             return
         names_match = _directory_names_match(
