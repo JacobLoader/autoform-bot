@@ -57,6 +57,7 @@ from autoform_cli.skeleton import (
     _project_control_snapshot,
     _without_comments,
     _probe_record_issue,
+    _read_probe_records,
     extract_graph_skeletons,
     extract_skeletons,
     format_report,
@@ -71,6 +72,7 @@ from autoform_cli.skeleton import (
     write_packets,
     write_skeleton_report,
 )
+from tests.undecodable_json import UNDECODABLE_JSON
 
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "skeleton-project"
 
@@ -676,6 +678,17 @@ def test_bounded_command_termination_signal_kills_the_process_group(
     assert not survivors
 
 
+def test_unreadable_probe_records_are_refused(tmp_path: Path) -> None:
+    records = tmp_path / "records.out"
+    records.write_bytes(PROBE_MARKER.encode() + b"\xff\n")
+    with pytest.raises(SkeletonError, match="^the skeleton probe's records are not valid UTF-8$"):
+        _read_probe_records(records, "skeleton probe")
+    records.unlink()
+    records.mkdir()
+    with pytest.raises(SkeletonError, match="^the unused-hypotheses probe's records could not be read: "):
+        _read_probe_records(records, "unused-hypotheses probe")
+
+
 def _pid_is_live(pid: int) -> bool:
     try:
         process = psutil.Process(pid)
@@ -932,6 +945,10 @@ def _ambiguous_companion(record: dict[str, object]) -> None:
     [
         (lambda record: record.update(semantic_schema="unknown"), "unsupported semantic schema"),
         (lambda record: record.update(semantic="not JSON"), "invalid elaborated semantic material"),
+        (
+            lambda record: record.update(semantic=UNDECODABLE_JSON["a-number-too-long"]),
+            "invalid elaborated semantic material",
+        ),
         (_unknown_safety, "invalid elaborated semantic material"),
         (_ambiguous_companion, "invalid elaborated semantic material"),
         (lambda record: record["trusted"][0].update(depends=[False]), "invalid depends"),
@@ -1782,6 +1799,36 @@ def test_report_distinguishes_full_and_filtered_blueprint_scope(tmp_path: Path) 
     assert full.to_json() != filtered.to_json()
 
 
+@pytest.mark.parametrize("passage", ["found", "broken"])
+def test_a_root_several_files_declare_fails_closed_naming_every_file(tmp_path: Path, passage: str) -> None:
+    # Lean accepts a private declaration beside a public one of the same name
+    # in another module, and two unrelated modules may each declare it; the
+    # lexical index cannot tell which one a probe would bind.
+    project = _project(tmp_path)
+    for module, prefix, value in (("Cdup", "", "2 = 2"), ("Adup", "private ", "True"), ("Bdup", "", "1 = 1")):
+        (project / "Skel" / f"{module}.lean").write_text(
+            f"namespace Skel\n{prefix}theorem dup : {value} := sorry\nend Skel\n", encoding="utf-8"
+        )
+    blueprint = _blueprint(tmp_path, lean={"dup": "Skel.dup"})
+    if passage == "broken":
+        article = blueprint / "roadmap" / "basics" / "dup.md"
+        article.write_text(
+            article.read_text(encoding="utf-8").replace(
+                "## Depends on", "## Sources\n\n- [book](../../sources/missing.tex#L1-L1)\n\n## Depends on"
+            ),
+            encoding="utf-8",
+        )
+    def runner(probe: str, root: Path) -> str:
+        raise AssertionError("the probe must not run")
+
+    report = extract_skeletons(blueprint, lean_root=project, runner=runner)
+
+    assert report.nodes[0].declarations == ()
+    (issue,) = report.unresolved
+    assert issue.reason.endswith("several source files declare it: Skel/Adup.lean, Skel/Bdup.lean, Skel/Cdup.lean")
+    assert issue.reason.startswith("source locator ") == (passage == "broken")
+
+
 def test_report_is_identical_across_checkout_roots(tmp_path: Path) -> None:
     first, second = (_fake_report(tmp_path / name) for name in ("first", "second"))
 
@@ -1863,6 +1910,32 @@ def test_report_states_shared_material_once(tmp_path: Path) -> None:
     payload = json.loads(first)
     payload["trusted"]["Skel.Eligible"]["name"] = "Skel.NonAmbiguous"
     _assert_load_rejects(path, payload, "mismatched shared trusted declaration")
+
+
+@pytest.mark.parametrize("damage", ["nested", "a-number-too-long"])
+def test_a_report_or_packet_manifest_that_cannot_be_decoded_is_refused(tmp_path: Path, damage: str) -> None:
+    text = UNDECODABLE_JSON[damage]
+    path = tmp_path / "skeleton.json"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(SkeletonError, match=f"^cannot read skeleton report {re.escape(str(path))}: "):
+        load_skeleton_report(path)
+
+    packets = tmp_path / "packets"
+    packets.mkdir()
+    (packets / PACKET_MANIFEST).write_text(text, encoding="utf-8")
+    with pytest.raises(SkeletonError, match="refusing to overwrite non-Autoform packet output"):
+        write_packets(_fake_report(tmp_path), packets)
+    assert (packets / PACKET_MANIFEST).read_text(encoding="utf-8") == text
+
+
+def test_report_loader_refuses_a_lone_surrogate_as_unreadable(tmp_path: Path) -> None:
+    text = _fake_report(tmp_path).to_json()
+    assert '"lean_version":"' in text
+    path = tmp_path / "skeleton.json"
+    path.write_text(text.replace('"lean_version":"', '"lean_version":"\\ud800', 1), encoding="utf-8")
+
+    with pytest.raises(SkeletonError, match="surrogates not allowed"):
+        load_skeleton_report(path)
 
 
 def test_report_loader_rejects_scope_tampering(tmp_path: Path) -> None:
