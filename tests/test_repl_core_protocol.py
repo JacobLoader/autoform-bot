@@ -390,7 +390,7 @@ class _PipeProcess:
         return None
 
 
-def _repl_with_process(process: _PipeProcess, *, chunk_size: int = 4096, max_buffer_bytes: int = 1024):
+def _repl_with_process(process: _PipeProcess | None, *, chunk_size: int = 4096, max_buffer_bytes: int = 1024):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(
             chunk_size=chunk_size,
@@ -405,10 +405,8 @@ def _repl_with_process(process: _PipeProcess, *, chunk_size: int = 4096, max_buf
 
 def _disposable_repl_with_process(monkeypatch, process: _PipeProcess, **config):
     """Return a clean repl whose disposable call starts on ``process``."""
-    repl = _repl_with_process(process, **config)
-    # The slot starts clean, as a pool's does: the close() that opens a call
-    # would close the pipes of a process it found there.
-    repl.process = None
+    # Start clean, as a pool slot does: the close() that opens a call would close the stand-in's pipes.
+    repl = _repl_with_process(None, **config)
     monkeypatch.setattr(repl, "start", lambda: setattr(repl, "process", process))
     return repl
 
