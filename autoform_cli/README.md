@@ -965,7 +965,8 @@ example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml).
 links anywhere under `roadmap/`, self-dependencies, cycles introduced at any
 rolled-up containment level,
 missing or multiple H1 titles, unsupported frontmatter keys, assertion values
-it does not recognize, and assertions the Lean cannot back: `proof: formalized`
+it does not recognize, an article that starts with a byte-order mark (which
+would hide its frontmatter), and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
 `mathlib: true`. An inline `## Sources` link to a local path must name a file
 inside the blueprint, as `audit` also requires: a missing file, a directory, an

@@ -309,6 +309,10 @@ def _discover_nodes(blueprint: Path) -> tuple[list[_NodeSource], list[str]]:
         except (OSError, UnicodeError) as exc:
             issues.append(f"{relative}: cannot read roadmap page: {exc}")
             continue
+        if text.startswith("\ufeff"):
+            # Frontmatter must open the first line, so the mark would silently drop every key.
+            issues.append(f"{relative}: starts with a byte-order mark; remove it")
+            continue
         node_id = _article_id(path, roadmap_root)
         canonical = path.resolve()
         if not _is_within(canonical, roadmap_root):

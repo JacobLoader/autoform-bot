@@ -309,6 +309,16 @@ def test_rejects_noncanonical_readme_case_with_actionable_error(tmp_path: Path, 
     assert "must be named exactly README.md" in message
 
 
+def test_rejects_an_article_that_starts_with_a_byte_order_mark(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _roadmap_page(blueprint, "README.md", "# Roadmap\n")
+    _roadmap_page(blueprint, "result.md", "\ufeff" + _node_text("\n# Result\n", lean="Demo.result"))
+
+    # Read past the mark, the frontmatter would not open the first line and every key would be lost.
+    with pytest.raises(GraphValidationError, match="^result.md: starts with a byte-order mark; remove it$"):
+        load_graph(blueprint)
+
+
 @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")
 @pytest.mark.parametrize("relative", ["", "chapter"], ids=["roadmap", "chapter"])
 def test_a_roadmap_directory_that_cannot_be_listed_is_refused(tmp_path: Path, relative: str) -> None:
