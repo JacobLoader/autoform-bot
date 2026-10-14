@@ -686,6 +686,43 @@ def test_audit_accepts_wanted_targets_as_statements_but_not_proofs(tmp_path: Pat
     }
 
 
+def test_audit_rejects_a_wanted_target_behind_a_proved_catalog(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(
+        blueprint,
+        "| Area | Coverage | Evidence |\n"
+        "| --- | --- | --- |\n"
+        "| Existing modules | INVENTORIED | "
+        "[Proved](../roadmap/proved.md), [Stated](../roadmap/stated.md) |",
+    )
+    ledger = blueprint / "sources" / "existing-module.md"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text("# Existing module declarations\n", encoding="utf-8")
+    for relative, proof in (("proved.md", {"proof": "formalized"}), ("stated.md", {})):
+        _article(
+            blueprint,
+            relative,
+            catalog="module",
+            lean="W.sturm",
+            statement="formalized",
+            sources=("../sources/existing-module.md",),
+            **proof,
+        )
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    (lean_root / "Wanted.lean").write_text("namespace W\ntheorem_wanted sturm : True\nend W\n", encoding="utf-8")
+
+    assert _finding_map(blueprint, lean_root=lean_root) == {
+        "roadmap/proved.md": [
+            (
+                "lean-target-wanted",
+                "lean target W.sturm is a theorem_wanted, which defers its proof or construction, "
+                "so it cannot back proof: formalized",
+            )
+        ],
+    }
+
+
 def test_audit_reports_lean_targets_declared_deprecated(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)
