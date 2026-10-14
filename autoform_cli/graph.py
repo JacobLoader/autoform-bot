@@ -669,20 +669,32 @@ def _resolve_target(
     blueprint: Path,
     canonical_ids: dict[Path, str],
 ) -> tuple[str | None, str | None]:
-    split = urlsplit(target)
+    try:
+        split = urlsplit(target)
+    except ValueError:
+        return None, f"{node.id}: dependency target must be a relative Markdown path: {target!r}"
     if split.scheme or split.netloc or split.query:
         return None, f"{node.id}: dependency target must be a relative Markdown path: {target!r}"
     raw_path = unquote(split.path)
     if not raw_path:
         return None, f"{node.id}: dependency target must name a Markdown file: {target!r}"
+    if "\x00" in raw_path:
+        return None, f"{node.id}: dependency target contains an invalid path: {target!r}"
     relative = Path(raw_path)
     if relative.is_absolute() or relative.suffix != ".md":
         return None, f"{node.id}: dependency target must be a relative .md file: {target!r}"
 
-    resolved = (node.path.parent / relative).resolve()
+    try:
+        resolved = (node.path.parent / relative).resolve()
+    except (OSError, RuntimeError, ValueError):
+        # Before Python 3.13 a symlink loop raises RuntimeError here. From 3.13 resolve
+        # returns the looping path, so the lexical one stands in, and the checks below
+        # report it as on 3.13.
+        resolved = Path(os.path.abspath(node.path.parent / relative))
     if not _is_within(resolved, blueprint):
         return None, f"{node.id}: dependency target escapes the blueprint directory: {target!r}"
-    if not resolved.is_file():
+    # Before Python 3.14, `Path.is_file` raises under an unreadable directory.
+    if not os.path.isfile(resolved):
         return None, f"{node.id}: dependency target does not exist: {target!r}"
     dependency = canonical_ids.get(resolved)
     if dependency is None:

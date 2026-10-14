@@ -1795,6 +1795,11 @@ def test_probe_comment_ranges_must_cover_comments(tmp_path: Path, ranges: object
         ("../../sources/missing.tex#L1-L1", "names a missing file"),
         ("../../sources/binary.tex#L1-L1", "not readable UTF-8 text"),
         ("../../../outside.tex#L1-L1", "points outside the blueprint"),
+        ("../../sources/loop.txt#L1-L1", "names a path that cannot be resolved"),
+        ("../../sources/loopdir/book.tex#L1-L1", "names a path that cannot be resolved"),
+        pytest.param("../../sources/" + "a" * 300 + ".tex#L1-L1", "names a path that cannot be resolved", id="long-name"),
+        ("../../sources/bo\x00ok.tex#L1-L1", "contains an invalid path"),
+        pytest.param("../../sources/book.tex#L" + "1" * 5000, "names no lines of its file", id="5000-digits"),
     ],
 )
 def test_extraction_reports_a_locator_that_names_no_passage(tmp_path: Path, link: str, why: str) -> None:
@@ -1805,6 +1810,12 @@ def test_extraction_reports_a_locator_that_names_no_passage(tmp_path: Path, link
     (sources / "book.tex").write_text("one\ntwo\nthree\n", encoding="utf-8")
     (sources / "empty.tex").write_text("", encoding="utf-8")
     (sources / "binary.tex").write_bytes(b"\xff\xfe\n")
+    try:
+        (sources / "loop.txt").symlink_to("loop.txt")
+        (sources / "loopdir").symlink_to("loopdir")
+    except OSError:
+        if "loop" in link:
+            pytest.skip("symlinks are unavailable")
     (tmp_path / "outside.tex").write_text("outside\n", encoding="utf-8")
     article = blueprint / "roadmap" / "basics" / "determined.md"
     _replace_source(article, "## Depends on", f"## Sources\n\n- [book]({link})\n\n## Depends on")
@@ -1818,6 +1829,22 @@ def test_extraction_reports_a_locator_that_names_no_passage(tmp_path: Path, link
 
     _replace_source(article, link, "../../sources/book.tex#L2-L3")
     report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+    assert report.clean
+    assert report.nodes[0].passage == "two\nthree"
+
+
+def test_extraction_skips_a_sources_link_it_cannot_parse(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
+    sources = blueprint / "sources"
+    sources.mkdir()
+    (sources / "book.tex").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    article = blueprint / "roadmap" / "basics" / "determined.md"
+    links = "- [host](http://[oops/book.tex#L1-L1)\n- [book](../../sources/book.tex#L2-L3)"
+    _replace_source(article, "## Depends on", f"## Sources\n\n{links}\n\n## Depends on")
+
+    report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+
     assert report.clean
     assert report.nodes[0].passage == "two\nthree"
 

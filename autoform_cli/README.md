@@ -636,12 +636,12 @@ A statement's source passage can travel with it. A `## Sources` link to a
 non-Markdown file inside the blueprint with a `#L<start>-L<end>` fragment, for
 example `../../../sources/lebl-ra/ch-real-nums.tex#L693-L714`, names the exact
 text the statement came from. External URLs are skipped. A first local locator
-that names no text, because it points outside the blueprint, names a missing
-file or non-UTF-8 text, or names no lines of it, leaves the article's
-declarations unresolved. `--passages DIR` writes those passages beside
-the packets, one per article, in a separate, disjoint managed directory. It
-requires `--packets`. Each article directory also holds `article.lean`, the
-joint packet of every declaration the article
+that names no text, because it points outside the blueprint, names an invalid
+path, a symlink loop, a missing file or non-UTF-8 text, or names no lines of
+it, leaves the article's declarations unresolved. `--passages DIR` writes those
+passages beside the packets, one per article, in a separate, disjoint managed
+directory. It requires `--packets`. Each article directory also holds
+`article.lean`, the joint packet of every declaration the article
 names, because a source theorem is often formalized by several declarations
 together and each alone is honestly incomplete. A judge of faithfulness is
 given the article packet and its passage; an auditor asked what one
