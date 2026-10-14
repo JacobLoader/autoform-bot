@@ -85,6 +85,12 @@ MANAGED_OUTPUT_SCHEMAS = frozenset(
         ("passages", PASSAGE_SCHEMA),
     }
 )
+#: Render marks each finished site with this manifest. ``mkdocs`` copies it
+#: into its own output, so both folders hold rendered copies, never sources.
+PUBLICATION_MANIFEST = "publication.json"
+PUBLICATION_SCHEMA = "autoform-publication/v2"
+#: Render never writes a larger manifest, so the next render can always read it.
+PUBLICATION_MANIFEST_MAX_BYTES = 8 * 1024 * 1024
 
 @dataclass(frozen=True, slots=True)
 class Alias:
@@ -332,20 +338,17 @@ def snapshot_project_sources(
     *,
     exclude_roots: Iterable[str | Path] = (),
     limits: TreeCaptureLimits = TreeCaptureLimits(),
-    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
 ) -> IndexedSourceSnapshot:
     """Read each Lean source once and derive its index and revision together.
 
     A bind or capture that races a concurrent edit is retried a bounded number
-    of times. Callers may name markers of generated directory formats they own;
-    a directory holding one is never indexed.
+    of times.
     """
 
     bound, snapshot = _open_stable_project_sources(
         root,
         exclude_roots=tuple(exclude_roots),
         limits=limits,
-        opaque_markers=opaque_markers,
     )
     bound.close()
     return snapshot
@@ -356,7 +359,6 @@ def _open_stable_project_sources(
     *,
     exclude_roots: tuple[str | Path, ...],
     limits: TreeCaptureLimits,
-    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
 ) -> tuple[BoundProjectSources, IndexedSourceSnapshot]:
     """Open and capture a Lean root, retrying a bounded number of changed attempts.
 
@@ -375,7 +377,6 @@ def _open_stable_project_sources(
                 root,
                 exclude_roots=exclude_roots,
                 limits=limits,
-                opaque_markers=opaque_markers,
             )
             return bound, bound.capture()
         except BaseException as error:
@@ -434,7 +435,6 @@ def open_project_sources(
     *,
     exclude_roots: Iterable[str | Path] = (),
     limits: TreeCaptureLimits = TreeCaptureLimits(),
-    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
 ) -> BoundProjectSources:
     """Open a retained Lean source root; the caller must close it.
 
@@ -455,9 +455,7 @@ def open_project_sources(
             exclude_roots,
             root_identity=tree.identity,
         )
-        tree.selection = _lean_tree_selection(
-            excluded, limits=limits, opaque_markers=opaque_markers
-        )
+        tree.selection = _lean_tree_selection(excluded, limits=limits)
         tree.verify()
     except BaseException:
         tree.close()
@@ -525,7 +523,6 @@ def _lean_tree_selection(
     excluded: tuple[PurePosixPath, ...],
     *,
     limits: TreeCaptureLimits = TreeCaptureLimits(),
-    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
 ) -> TreeSelection:
     return TreeSelection(
         include=lambda path, mode: _lean_snapshot_includes(
@@ -553,7 +550,14 @@ def _lean_tree_selection(
                 _MANAGED_OUTPUT_MANIFEST_BYTE_LIMIT,
                 _is_managed_output_manifest_bytes,
             ),
-            *opaque_markers,
+            # A rendered site, and mkdocs' copy of one, holds copies of the
+            # blueprint's files. Render marks its stage before copying into it;
+            # mkdocs can copy files into site/ before it copies the manifest.
+            OpaqueDirectoryMarker(
+                PUBLICATION_MANIFEST,
+                PUBLICATION_MANIFEST_MAX_BYTES,
+                _is_complete_publication,
+            ),
         ),
     )
 
@@ -657,6 +661,18 @@ def _is_managed_output_manifest_bytes(data: bytes) -> bool:
         and isinstance(schema, str)
         and (kind, schema) in MANAGED_OUTPUT_SCHEMAS
         and isinstance(value.get(kind), list)
+    )
+
+
+def _is_complete_publication(data: bytes) -> bool:
+    try:
+        value = json.loads(data)
+    except (ValueError, RecursionError):
+        return False
+    return (
+        isinstance(value, dict)
+        and value.get("schema") in {"autoform-publication/v1", PUBLICATION_SCHEMA}
+        and value.get("complete") is True
     )
 
 
@@ -1303,6 +1319,9 @@ __all__ = [
     "MANAGED_OUTPUT_SCHEMAS",
     "PACKET_SCHEMA",
     "PASSAGE_SCHEMA",
+    "PUBLICATION_MANIFEST",
+    "PUBLICATION_MANIFEST_MAX_BYTES",
+    "PUBLICATION_SCHEMA",
     "SourceIndex",
     "SourceLinker",
     "bind_project_source_snapshot",

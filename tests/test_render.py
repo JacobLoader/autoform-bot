@@ -17,9 +17,11 @@ from types import SimpleNamespace
 
 import pytest
 
+import autoform_cli.audit as audit_module
 import autoform_cli.lean as lean_module
 import autoform_cli.render as render_module
 from autoform_cli._tree_snapshot import TreeChangedError
+from autoform_cli.audit import audit_blueprint
 from autoform_cli.coverage import COVERAGE_DISPOSITIONS
 from autoform_cli.graph import GraphValidationError, load_graph
 from autoform_cli.lean import LeanSourceError, _normalize_remote
@@ -2492,6 +2494,56 @@ def test_in_repo_outputs_never_supply_lean_source_links(tmp_path: Path) -> None:
         render_site(project / "blueprint", project / name, lean_root=project, repository_url=_REPOSITORY)
         page = (project / name / "roadmap/README.md").read_text(encoding="utf-8")
         assert f"{_REPOSITORY}/blob/{commit}/blueprint/proofs.lean#L1" in page
+
+
+def test_audit_and_render_skip_a_site_and_its_mkdocs_copy_alike(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _project(tmp_path)
+    proofs = project / "blueprint/Proofs.lean"
+    proofs.write_text("theorem BlueprintProof : True := trivial\n", encoding="utf-8")
+    render_site(project / "blueprint", project / "site-src", lean_root=project)
+    # What `mkdocs build` does with the template's docs_dir and site_dir.
+    shutil.copytree(project / "site-src", project / "site")
+    proofs.write_text("theorem RenamedProof : True := trivial\n", encoding="utf-8")
+    render_site(project / "blueprint", project / "site-src", lean_root=project)
+    rendered = json.loads((project / "site-src" / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))
+    audited: list[str] = []
+
+    def snapshot_project_sources(root):
+        snapshot = lean_module.snapshot_project_sources(root)
+        audited.append(snapshot.revision)
+        return snapshot
+
+    monkeypatch.setattr(audit_module, "snapshot_project_sources", snapshot_project_sources)
+    _edit(project / "blueprint/roadmap/top.md", "lean: Project.top", "lean: BlueprintProof")
+    result = audit_blueprint(project / "blueprint", lean_root=project)
+
+    assert audited == [rendered["lean_source_revision"]]
+    assert ("lean-target-not-found", "Lean declaration target was not found: BlueprintProof") in {
+        (finding.code, finding.reason) for finding in result.findings
+    }
+
+
+def test_a_capture_during_a_render_skips_the_stage_being_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _project(tmp_path)
+    (project / "blueprint/Proofs.lean").write_text("theorem BlueprintProof : True := trivial\n", encoding="utf-8")
+    copy2 = shutil.copy2
+    captured: list[list[str]] = []
+
+    def copy_then_capture(source, target, *args, **kwargs):
+        result = copy2(source, target, *args, **kwargs)
+        if str(target).endswith(".lean"):
+            snapshot = lean_module.snapshot_project_sources(project)
+            captured.append(sorted(path.as_posix() for path, _data in snapshot.source_files))
+        return result
+
+    monkeypatch.setattr(render_module.shutil, "copy2", copy_then_capture)
+    render_site(project / "blueprint", project / "site-src", lean_root=project)
+
+    assert captured == [["Project/Basic.lean", "blueprint/Proofs.lean"]]
 
 
 def test_an_edit_during_a_render_publishes_the_captured_generation(
