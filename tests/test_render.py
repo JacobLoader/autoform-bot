@@ -1254,6 +1254,34 @@ def test_source_notes_stay_published_when_there_is_nowhere_to_send_readers(
     assert "github.com" not in (out / "roadmap/README.md").read_text(encoding="utf-8")
 
 
+def test_a_published_link_out_of_the_blueprint_keeps_only_its_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The site holds only the blueprint, so the link could only dangle.
+
+    Source notes stay published when readers cannot be sent to the repository,
+    and they often cite Lean files beside the blueprint. MkDocs reported each
+    such link as missing, which failed a strict build.
+    """
+    for variable in ("GITHUB_REPOSITORY", "GITHUB_SERVER_URL", "GITHUB_SHA"):
+        monkeypatch.delenv(variable, raising=False)
+    project = _with_source_notes(tmp_path)
+    paper = project / "blueprint" / "sources" / "paper.md"
+    paper.write_text(
+        paper.read_text(encoding="utf-8")
+        + "\nEvidence: [Top.lean](../../Project/Top.lean#L5) and [`Lean`](../../lean/) for [Top](../roadmap/top.md).\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+
+    render_site(project / "blueprint", out, lean_root=project, repository_url="", ref="")
+
+    published = (out / "sources/paper.md").read_text(encoding="utf-8")
+    assert "Evidence: Top.lean and `Lean` for [Top](" in published
+    assert "../../Project/Top.lean" not in published
+    assert "../../lean/" not in published
+
+
 def test_permalinks_are_relative_to_the_repository_not_the_vaults_parent(
     tmp_path: Path,
 ) -> None:
