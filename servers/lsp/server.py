@@ -20,7 +20,6 @@ from typing import Any, TypeVar
 
 from fastmcp.server import FastMCP
 
-from servers import resolve_lean_project_dir
 from servers.lean_client import LeanRuntimeClient
 from servers.repl.core import (
     _process_group_has_live_members,
@@ -535,56 +534,6 @@ class LeanLspSession:
         if remaining <= 0:
             raise TimeoutError(f"LSP operation timed out after {timeout:g}s")
         return remaining
-
-
-class LeanLspProjects:
-    """Lazily keep one language-server session per explicit Lean project."""
-
-    def __init__(
-        self,
-        session_factory: Callable[[Path], LeanLspSession] | None = None,
-    ) -> None:
-        self._session_factory = session_factory or self._start_session
-        self._sessions: dict[Path, LeanLspSession] = {}
-        self._failed: dict[Path, LeanLspStartupError] = {}
-        self._lock = threading.Lock()
-        self._closed = False
-
-    @staticmethod
-    def _start_session(project_dir: Path) -> LeanLspSession:
-        session = LeanLspSession(LspConfig(cwd=str(project_dir)))
-        session.start()
-        return session
-
-    def get(self, project_dir: str) -> LeanLspSession:
-        """Return the session for a validated absolute Lake project."""
-        root = resolve_lean_project_dir(project_dir)
-        with self._lock:
-            if self._closed:
-                raise RuntimeError("Lean LSP project router is closed")
-            failed = self._failed.get(root)
-            if failed is not None:
-                raise RuntimeError("Lean LSP project startup cleanup is pending") from failed
-            session = self._sessions.get(root)
-            if session is None:
-                try:
-                    session = self._session_factory(root)
-                except LeanLspStartupError as error:
-                    self._failed[root] = error
-                    raise
-                self._sessions[root] = session
-            return session
-
-    def close(self) -> None:
-        """Close all sessions created by this router."""
-        with self._lock:
-            self._closed = True
-            for root, session in list(self._sessions.items()):
-                session.close()
-                self._sessions.pop(root, None)
-            for root, error in list(self._failed.items()):
-                error.session.close()
-                self._failed.pop(root, None)
 
 
 def format_lsp_diagnostics(diagnostics: list[dict]) -> str:
