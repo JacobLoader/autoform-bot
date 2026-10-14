@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import signal
@@ -357,11 +358,7 @@ def test_additive_response_fields_are_tolerated_but_not_exported():
         ],
     }
 
-    repl_core._validate_command_response(
-        response,
-        context="test",
-        require_environment=True,
-    )
+    repl_core._validate_command_response(response)
 
     assert repl_core._without_process_handles(response) == {
         "messages": [
@@ -393,7 +390,7 @@ class _PipeProcess:
         return None
 
 
-def _repl_with_process(process: _PipeProcess, *, chunk_size: int = 4096, max_buffer_bytes: int = 1024):
+def _repl_with_process(process: _PipeProcess | None, *, chunk_size: int = 4096, max_buffer_bytes: int = 1024):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(
             chunk_size=chunk_size,
@@ -407,8 +404,9 @@ def _repl_with_process(process: _PipeProcess, *, chunk_size: int = 4096, max_buf
 
 
 def _disposable_repl_with_process(monkeypatch, process: _PipeProcess, **config):
-    """Return a repl whose disposable call starts on ``process``."""
-    repl = _repl_with_process(process, **config)
+    """Return a clean repl whose disposable call starts on ``process``."""
+    # Start clean, as a pool slot does: the close() that opens a call would close the stand-in's pipes.
+    repl = _repl_with_process(None, **config)
     monkeypatch.setattr(repl, "start", lambda: setattr(repl, "process", process))
     return repl
 
@@ -748,31 +746,52 @@ def test_disposable_call_does_not_return_a_result_before_verified_cleanup(monkey
     assert error.value.result == {"messages": []}
 
 
+def _repl_log(caplog) -> list[tuple[int, str]]:
+    """Return the level and message of each repl_core record; caplog's root handler sees every logger."""
+    return [(level, message) for name, level, message in caplog.record_tuples if name == repl_core.logger.name]
+
+
 _MALFORMED_RESPONSE = {
     "repl_error": "Lean REPL returned a malformed response for the requested command.",
     "outcome_unknown": True,
 }
+_MALFORMED_LOGGED = f"Lean REPL call in . failed: {_MALFORMED_RESPONSE['repl_error']}"
 
 
 @pytest.mark.parametrize(
-    ("outcome", "expected"),
+    ("outcome", "expected", "logged"),
     [
-        ({"message": "bad"}, {"repl_error": "bad"}),
-        ([], _MALFORMED_RESPONSE),
-        (repl_core.ReplOutcomeUnknown("x"), {"repl_error": "x", "outcome_unknown": True}),
-        (repl_core.ReplStderrBacklog("x", {"message": "bad"}), {"repl_error": "bad"}),
-        (repl_core.ReplStderrBacklog("x", []), _MALFORMED_RESPONSE),
+        # The REPL's error variant means that Lean itself failed, here while finding its sysroot.
+        (
+            {"message": "process 'lean' exited with code 1"},
+            {"repl_error": "process 'lean' exited with code 1"},
+            ["Lean REPL call in . failed: process 'lean' exited with code 1"],
+        ),
+        ([], _MALFORMED_RESPONSE, [_MALFORMED_LOGGED]),
+        (
+            repl_core.ReplOutcomeUnknown("x"),
+            {"repl_error": "x", "outcome_unknown": True},
+            ["Lean REPL call in . failed: x"],
+        ),
+        (repl_core.ReplProcessExited("x"), {"repl_error": "x"}, ["Lean REPL call in . failed: x"]),
+        (
+            repl_core.ReplStderrBacklog("x", {"message": "bad"}),
+            {"repl_error": "bad"},
+            ["Lean REPL call in .: x", "Lean REPL call in . failed: bad"],
+        ),
+        (repl_core.ReplStderrBacklog("x", []), _MALFORMED_RESPONSE, ["Lean REPL call in .: x", _MALFORMED_LOGGED]),
         (
             repl_core.ReplStderrBacklog(
                 "x",
                 {"env": 7, "sorries": [{"goal": "False", "proofState": 9}]},
             ),
             {"sorries": [{"goal": "False"}]},
+            ["Lean REPL call in .: x"],
         ),
     ],
 )
 def test_disposable_call_maps_each_response_outcome_without_a_retry(
-    monkeypatch, outcome, expected
+    monkeypatch, caplog, outcome, expected, logged
 ):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(validate_imports=False, warmup_imports=frozenset())
@@ -788,8 +807,11 @@ def test_disposable_call_maps_each_response_outcome_without_a_retry(
     monkeypatch.setattr(repl, "start", lambda: None)
     monkeypatch.setattr(repl, "_run", run)
 
-    assert repl.run_disposable("#eval 1", timeout=1) == expected
+    with caplog.at_level(logging.WARNING, logger=repl_core.logger.name):
+        assert repl.run_disposable("#eval 1", timeout=1) == expected
+
     assert frames == ["#eval 1"]
+    assert _repl_log(caplog) == [(logging.WARNING, line) for line in logged]
 
 
 @pytest.mark.parametrize(
@@ -1057,7 +1079,7 @@ def test_header_decoder_refuses_path_like_or_empty_module_components(module):
     ],
 )
 def test_disposable_call_rejects_what_lean_reports_before_starting(
-    monkeypatch, header_output, expected_error
+    monkeypatch, caplog, header_output, expected_error
 ):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(
@@ -1072,10 +1094,13 @@ def test_disposable_call_rejects_what_lean_reports_before_starting(
         lambda: pytest.fail("invalid input must not start Lean"),
     )
 
-    response = repl.run_disposable("/- hidden -/ import Unsafe\n#check Nat")
+    with caplog.at_level(logging.WARNING, logger=repl_core.logger.name):
+        response = repl.run_disposable("/- hidden -/ import Unsafe\n#check Nat")
 
     assert expected_error in response["repl_error"]
     assert repl.is_clean()
+    # The caller's input is at fault, not the runtime, so nothing is logged.
+    assert _repl_log(caplog) == []
 
 
 _LEAN_TYPE_MISMATCH = (
@@ -1140,6 +1165,32 @@ def test_failed_header_command_reports_its_error_line(monkeypatch, stdout, stder
     )
 
     assert repl.run_disposable("#check Nat") == {"repl_error": f"Lean header check failed: {detail}"}
+    assert repl.is_clean()
+
+
+# lake env exits without reading its input when the lakefile or toolchain is
+# broken, so writing a snippet larger than any pipe buffer meets a closed pipe.
+def test_header_command_that_exits_without_reading_reports_its_error_line(monkeypatch):
+    repl = repl_core.LeanRepl(
+        repl_core.LeanReplConfig(
+            warmup_imports=frozenset(),
+            header_command=[
+                sys.executable,
+                "-c",
+                "import sys; sys.stderr.write('error: broken lakefile\\n'); sys.exit(1)",
+            ],
+        )
+    )
+    monkeypatch.setattr(
+        repl,
+        "start",
+        lambda: pytest.fail("a failed header check must not start Lean"),
+    )
+    code = "-- " + "x" * (1 << 20) + "\n#check Nat"
+
+    assert repl.run_disposable(code, timeout=30) == {
+        "repl_error": "Lean header check failed: error: broken lakefile"
+    }
     assert repl.is_clean()
 
 
@@ -1368,6 +1419,44 @@ def test_header_check_reaps_descendants_after_success(tmp_path):
     assert not repl_core._process_group_has_live_members(process_ids["group"])
 
 
+# Answers one frame, then waits for the next as the REPL does.
+_ONE_FRAME_REPL = (
+    "import sys\n"
+    "while sys.stdin.readline() not in ('\\n', ''):\n"
+    "    pass\n"
+    "sys.stdout.write('{\"env\": 0}\\n\\n')\n"
+    "sys.stdout.flush()\n"
+    "sys.stdin.read()\n"
+)
+
+
+def test_disposable_call_closes_the_pipes_of_both_process_generations(monkeypatch):
+    repl = repl_core.LeanRepl(
+        repl_core.LeanReplConfig(
+            warmup_imports=frozenset(),
+            header_command=_fake_header_command(_header_json()),
+            repl_command=[sys.executable, "-c", _ONE_FRAME_REPL],
+        )
+    )
+    processes = []
+    real_spawn = repl._spawn
+
+    def spawn(command):
+        processes.append(real_spawn(command))
+        return processes[-1]
+
+    monkeypatch.setattr(repl, "_spawn", spawn)
+
+    assert repl.run_disposable("#check Nat", timeout=30) == {}
+
+    # The header parser's pipes, then the REPL child's.
+    assert [
+        [stream.closed for stream in (process.stdin, process.stdout, process.stderr)]
+        for process in processes
+    ] == [[True, True, True], [True, True, True]]
+    assert repl.is_clean()
+
+
 def _repl_failing_first_header_cleanup(monkeypatch, error: BaseException):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(
@@ -1491,11 +1580,51 @@ def test_disposable_cleanup_failure_after_full_write_keeps_the_unknown_outcome(m
         repl.run_disposable("#eval 1", timeout=1)
 
     assert error.value.result == {
-        "repl_error": "Lean REPL combined command execution timed out after 1 seconds",
+        "repl_error": (
+            "Lean REPL combined command execution timed out after 1 seconds; "
+            "process cleanup also failed: cleanup failed"
+        ),
         "outcome_unknown": True,
     }
     assert close_calls == 3
     assert repl.process is not None
+
+
+def test_disposable_timeout_after_full_write_keeps_and_logs_a_cleanup_failure(monkeypatch, caplog):
+    repl = repl_core.LeanRepl(
+        repl_core.LeanReplConfig(warmup_imports=frozenset(), validate_imports=False)
+    )
+    real_close = repl.close
+    close_calls = 0
+
+    def close(**kwargs):
+        nonlocal close_calls
+        close_calls += 1
+        # Only the cleanup right after the timeout fails; the slot's own
+        # cleanup then retires the process.
+        if close_calls == 2:
+            raise RuntimeError("cleanup failed")
+        real_close(**kwargs)
+
+    def fail_after_send(code, timeout, mark_sent):
+        mark_sent()
+        raise TimeoutError("response timed out")
+
+    monkeypatch.setattr(repl, "close", close)
+    monkeypatch.setattr(repl, "start", lambda: setattr(repl, "process", object()))
+    monkeypatch.setattr(repl, "_run_io", fail_after_send)
+
+    with caplog.at_level(logging.WARNING, logger=repl_core.logger.name):
+        response = repl.run_disposable("#eval 1", timeout=1)
+
+    message = (
+        "Lean REPL combined command execution timed out after 1 seconds; "
+        "process cleanup also failed: cleanup failed"
+    )
+    assert response == {"repl_error": message, "outcome_unknown": True}
+    assert _repl_log(caplog) == [(logging.WARNING, f"Lean REPL call in . failed: {message}")]
+    assert close_calls == 3
+    assert repl.is_clean()
 
 
 @pytest.mark.parametrize("request_sent", [False, True])
@@ -1639,8 +1768,8 @@ def test_wire_protocol_exchanges_one_frame_over_real_pipes():
 
         worker = threading.Thread(target=serve_request, daemon=True)
         worker.start()
-        assert repl._run("#check Nat", timeout=1) == {"env": 1}
-        worker.join(timeout=1)
+        assert repl._run("#check Nat", timeout=10) == {"env": 1}
+        worker.join(timeout=10)
         assert not worker.is_alive()
         assert bytes(request) == b'{"cmd": "#check Nat"}\n\n'
 
@@ -1968,7 +2097,7 @@ def test_wire_protocol_keeps_the_response_when_the_deadline_ends_the_stderr_drai
     assert error.value.response == {"messages": []}
 
 
-def test_disposable_backlog_response_drops_the_environment_of_the_retired_process(monkeypatch):
+def test_disposable_backlog_drops_the_environment_and_warns_that_stderr_became_unsafe(monkeypatch, caplog):
     with ExitStack() as stack:
         process = _PipeProcess(
             stack,
@@ -1978,10 +2107,15 @@ def test_disposable_backlog_response_drops_the_environment_of_the_retired_proces
         repl = _disposable_repl_with_process(monkeypatch, process, chunk_size=30, max_buffer_bytes=32)
         _patch_pipe_reads(monkeypatch, process)
 
-        response = repl.run_disposable("#check Nat", timeout=5)
+        with caplog.at_level(logging.WARNING, logger=repl_core.logger.name):
+            response = repl.run_disposable("#check Nat", timeout=5)
 
         assert response == {"messages": []}
         assert repl.process is None
+    [(level, message)] = _repl_log(caplog)
+    assert level == logging.WARNING
+    assert message.startswith("Lean REPL call in .: ")
+    assert "stderr became unsafe" in message
 
 
 def test_run_never_leaves_a_reusable_process_when_a_backlog_stops_the_drain(monkeypatch):
@@ -2051,24 +2185,6 @@ def test_wire_protocol_rejects_oversized_response(monkeypatch):
             repl._run("#check Nat", timeout=1)
 
 
-_RESPONSIVE_FAKE_REPL = (
-    "import json, sys, time\n"
-    "buf = ''\n"
-    "n = 0\n"
-    "for line in sys.stdin:\n"
-    "    if line.strip():\n"
-    "        buf += line\n"
-    "        continue\n"
-    "    request = json.loads(buf)\n"
-    "    buf = ''\n"
-    "    if 'HANG' in request['cmd']:\n"
-    "        time.sleep(3600)\n"
-    "    sys.stdout.write(json.dumps({'env': n}) + '\\n\\n')\n"
-    "    sys.stdout.flush()\n"
-    "    n += 1\n"
-)
-
-
 def test_close_after_an_expired_deadline_still_reserves_cleanup_time(monkeypatch):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(warmup_imports=frozenset(), validate_imports=False)
@@ -2104,13 +2220,15 @@ def test_disposable_timeout_reaps_a_slow_to_exit_process_without_cleanup_failure
     monkeypatch.setattr(repl_core, "_kill_subprocesses", slow_reap)
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(
-            repl_command=[sys.executable, "-c", _RESPONSIVE_FAKE_REPL],
+            # Never answers. The frame still fits in the pipe buffer, so the
+            # call times out after it is fully sent.
+            repl_command=[sys.executable, "-c", "import time; time.sleep(3600)"],
             warmup_imports=frozenset(),
             validate_imports=False,
         )
     )
     try:
-        response = repl.run_disposable("HANG", timeout=0.5)
+        response = repl.run_disposable("#check Nat", timeout=0.5)
 
         assert response == {
             "repl_error": "Lean REPL combined command execution timed out after 0.5 seconds",

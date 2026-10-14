@@ -1662,6 +1662,10 @@ def test_daemon_outlives_the_separate_process_that_started_it(
         status = client.request("daemon.status", autostart=False)
         assert status["repl_projects"]["resident"] == []
         assert status["lsp_projects"]["resident"] == []
+        # `autoform-lean-runtime status` prints this reply, and servers/README.md
+        # sends operators to it for the commands the runtime resolved.
+        assert status["config"]["repl_command"] == ["lake", "exe", "@repl/repl"]
+        assert status["config"]["repl_header_command"][:2] == ["lake", "env"]
 
         repl_status = client.request(
             "repl.status",

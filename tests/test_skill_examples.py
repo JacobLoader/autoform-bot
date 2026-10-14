@@ -14,6 +14,7 @@ except ModuleNotFoundError:  # Python 3.10
 from autoform_cli.audit import audit_blueprint
 from autoform_cli.graph import load_graph
 from autoform_cli.lean import build_linker, declaration_names
+from autoform_cli.project.create import _MINIMUM_LEAN
 from autoform_cli.render import render_site
 from autoform_cli.status import derive
 from servers.repl.core import ALLOWED_IMPORTS
@@ -22,6 +23,7 @@ from tests.test_lean_sources import _git_commit
 
 _HREF = re.compile(r'href="([^"]+)"')
 _EXAMPLE = Path("skills/setup/assets/cabannes-thesis-project")
+_LEAN_FLOOR = "v" + ".".join(str(part) for part in _MINIMUM_LEAN)
 # Upstream tag v4.32.0 of leanprover-community/repl points at this commit:
 # `git ls-remote --tags https://github.com/leanprover-community/repl.git`
 # lists refs/tags/v4.32.0 at it.
@@ -460,6 +462,17 @@ def test_setup_example_pins_the_repl_that_the_real_repl_job_tests(repo_root: Pat
     assert "the upstream REPL commit tagged `v4.32.0`" in readme
 
 
+def test_minimum_lean_fixture_and_readme_name_the_lean_floor(repo_root: Path) -> None:
+    # The real-REPL CI job checks the header parser on this fixture's
+    # toolchain as the oldest Lean Autoform supports, which holds only while
+    # it names the same release as _MINIMUM_LEAN and the README.
+    fixture = repo_root / "tests/fixtures/minimum-lean/lean-toolchain"
+    readme = " ".join((repo_root / "README.md").read_text(encoding="utf-8").split())
+
+    assert fixture.read_text(encoding="utf-8").strip() == f"leanprover/lean4:{_LEAN_FLOOR}"
+    assert f"Lean 4 {_LEAN_FLOOR} or newer" in readme
+
+
 def test_setup_guidance_uses_the_offline_atomic_project_creator(repo_root: Path) -> None:
     setup_root = repo_root / "skills" / "setup"
     setup = (setup_root / "SKILL.md").read_text(encoding="utf-8")
@@ -491,7 +504,7 @@ def test_setup_guidance_uses_the_offline_atomic_project_creator(repo_root: Path)
     assert "Do not invent version pairs" not in normalized
     assert "--lean-toolchain" in normalized
     assert "lake update" in normalized
-    assert "v4.27.0" in normalized
+    assert f"Autoform needs Lean {_LEAN_FLOOR} or newer" in normalized
     assert "the project will depend on a Lean library outside the catalog, create the project on that library's Lean and Mathlib" in normalized
     # Lean alone does not pick the release: a library may lock a Mathlib commit that is not the tag.
     assert "the Mathlib `rev` its `lake-manifest.json` locks, at the revision the user plans to require" in normalized

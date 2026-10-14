@@ -49,7 +49,7 @@ LEAN_HEADER_LAUNCHER = (
 _LAKE_UNKNOWN_PACKAGE = "unknown package `"
 _REPL_REQUIRE_HINT = (
     "Lake could not find the REPL package: if the project has no REPL require, add "
-    "`leanprover-community/repl` as a require named `repl` as the Autoform setup skill "
+    "`leanprover-community/repl` as a require named `repl`, as the Autoform setup skill "
     "describes; for a require under another name, rename the require to `repl`, "
     'or restart the runtime with LEAN_REPL_CMD="lake exe @<name>/repl" for a require '
     "named <name>, which applies to every project the runtime serves"
@@ -260,27 +260,22 @@ def _decode_repl_json(content: bytes) -> Any:
         raise ReplProtocolError("Lean REPL returned invalid UTF-8.") from error
 
 
-def _validate_command_response(
-    response: Any,
-    *,
-    context: str,
-    require_environment: bool,
-) -> tuple[int | None, list[dict[str, Any]]]:
+def _validate_command_response(response: Any) -> None:
     """Validate the pinned REPL response fields used by Autoform."""
     if not isinstance(response, dict):
         raise ReplProtocolError(
-            f"Lean REPL returned a malformed response for {context}."
+            "Lean REPL returned a malformed response for the requested command."
         )
     if "message" in response:
         if set(response) == {"message"} and isinstance(response["message"], str):
             raise ReplCommandError(response["message"])
         raise ReplProtocolError(
-            f"Lean REPL returned a malformed error response for {context}."
+            "Lean REPL returned a malformed error response for the requested command."
         )
     messages = response.get("messages", [])
     if not isinstance(messages, list):
         raise ReplProtocolError(
-            f"Lean REPL returned malformed diagnostics for {context}."
+            "Lean REPL returned malformed diagnostics for the requested command."
         )
     for message in messages:
         severity = message.get("severity") if isinstance(message, dict) else None
@@ -293,17 +288,17 @@ def _validate_command_response(
             or not _valid_diagnostic_position(message.get("pos"))
         ):
             raise ReplProtocolError(
-                f"Lean REPL returned malformed diagnostics for {context}."
+                "Lean REPL returned malformed diagnostics for the requested command."
             )
         end_pos = message.get("endPos")
         if end_pos is not None and not _valid_diagnostic_position(end_pos):
             raise ReplProtocolError(
-                f"Lean REPL returned malformed diagnostics for {context}."
+                "Lean REPL returned malformed diagnostics for the requested command."
             )
     sorries = response.get("sorries", [])
     if not isinstance(sorries, list):
         raise ReplProtocolError(
-            f"Lean REPL returned malformed sorries for {context}."
+            "Lean REPL returned malformed sorries for the requested command."
         )
     for sorry in sorries:
         pos = sorry.get("pos") if isinstance(sorry, dict) else None
@@ -318,22 +313,12 @@ def _validate_command_response(
             or (proof_state is not None and not _is_natural_number(proof_state))
         ):
             raise ReplProtocolError(
-                f"Lean REPL returned malformed sorries for {context}."
+                "Lean REPL returned malformed sorries for the requested command."
             )
-    environment = response.get("env")
-    if require_environment and not _is_natural_number(environment):
+    if not _is_natural_number(response.get("env")):
         raise ReplProtocolError(
-            f"Lean REPL did not return a valid environment for {context}."
+            "Lean REPL did not return a valid environment for the requested command."
         )
-    if (
-        not require_environment
-        and environment is not None
-        and not _is_natural_number(environment)
-    ):
-        raise ReplProtocolError(
-            f"Lean REPL returned an invalid environment for {context}."
-        )
-    return environment, messages
 
 
 def _communicate_bounded(
@@ -565,8 +550,9 @@ class LeanReplConfig:
     repl_command: list[str] = field(default_factory=lambda: ["lake", "exe", "@repl/repl"])
     header_command: list[str] = field(default_factory=default_header_command)
 
-    # stdout is capped per response. stderr has no protocol framing, so its
-    # ceiling applies to the entire process generation.
+    # Caps a REPL response on stdout, the REPL child's stderr over its whole
+    # process generation (stderr has no protocol framing), and the header
+    # command's stdout and stderr combined.
     max_buffer_bytes: int = 10 * 1024 * 1024
     validate_imports: bool = True
 
@@ -742,7 +728,11 @@ class ReplProtocolError(RuntimeError):
 
 
 class ReplCommandError(RuntimeError):
-    """Raised when the REPL returns its explicit command-error variant."""
+    """Raised when the REPL returns its error variant.
+
+    For a frame without ``env`` the REPL sends that variant only when Lean
+    itself fails; errors in the submitted code arrive as diagnostics.
+    """
 
 
 class ReplProcessExited(RuntimeError):
@@ -750,7 +740,17 @@ class ReplProcessExited(RuntimeError):
 
 
 class ReplOutcomeUnknown(RuntimeError):
-    """Raised when stderr poisoning leaves a sent command's outcome unknown."""
+    """Raised when a request may have run but no valid response arrived.
+
+    Any transport failure after the frame was fully sent raises it, including
+    unsafe stderr. When the cleanup that follows fails too, the message names
+    that failure and ``cleanup_error`` carries it for callers that reword the
+    outcome.
+    """
+
+    def __init__(self, message: str, cleanup_error: Exception | None = None) -> None:
+        super().__init__(message)
+        self.cleanup_error = cleanup_error
 
 
 class ReplStderrBacklog(RuntimeError):
@@ -843,6 +843,15 @@ class LeanRepl:
                         _kill_subprocesses(process, process_group_id)
                     else:
                         _kill_subprocesses(process, process_group_id, deadline)
+                # Release the pipes now; left to the garbage collector, they
+                # stay open as long as a traceback holds this process.
+                for name in ("stdin", "stdout", "stderr"):
+                    stream = getattr(process, name, None)
+                    if stream is not None:
+                        try:
+                            stream.close()
+                        except OSError:
+                            pass
             self.process = None
             self._process_group_id = None
         finally:
@@ -992,35 +1001,38 @@ class LeanRepl:
                             timeout=command_timeout,
                         )
                     except ReplStderrBacklog as error:
-                        # _run_io already retired the process.
+                        # _run_io already retired the process. The response
+                        # still answers the call, so only this warning records
+                        # that stderr passed its ceiling or could not be drained.
+                        logger.warning("Lean REPL call in %s: %s", self.cwd, error)
                         response = error.response
                     except TimeoutError:
                         # _run passes a timeout through only before the frame is fully sent.
                         raise TimeoutError(
                             f"Lean REPL combined command execution timed out after {budget:g} seconds"
                         ) from None
-                    _validate_command_response(
-                        response,
-                        context="the requested command",
-                        require_environment=True,
-                    )
+                    _validate_command_response(response)
                     _adjust_line_numbers(response, -len(added_imports))
                     result = _without_process_handles(response)
-            except ReplCommandError as error:
-                result = {"repl_error": str(error)}
             except (ReplProtocolError, ReplOutcomeUnknown) as error:
                 if isinstance(error.__cause__, TimeoutError):
                     # _run reports a timeout after dispatch as a transport
                     # failure with the budget left at dispatch.
                     message = f"Lean REPL combined command execution timed out after {budget:g} seconds"
+                    cleanup_failure = getattr(error, "cleanup_error", None)
+                    if cleanup_failure is not None:
+                        message += f"; process cleanup also failed: {cleanup_failure}"
                 else:
                     message = _with_repl_require_hint(str(error))
+                logger.warning("Lean REPL call in %s failed: %s", self.cwd, message)
                 result = {
                     "repl_error": message,
                     "outcome_unknown": True,
                 }
-            except (ReplProcessExited, TimeoutError, RuntimeError, OSError) as error:
-                result = {"repl_error": _with_repl_require_hint(str(error))}
+            except (ReplCommandError, ReplProcessExited, TimeoutError, RuntimeError, OSError) as error:
+                message = _with_repl_require_hint(str(error))
+                logger.warning("Lean REPL call in %s failed: %s", self.cwd, message)
+                result = {"repl_error": message}
             except BaseException as error:
                 request_error = error
             finally:
@@ -1067,7 +1079,7 @@ class LeanRepl:
                 self.close(deadline=cleanup_deadline)
             except Exception as cleanup_error:
                 message += f"; process cleanup also failed: {cleanup_error}"
-                raise ReplOutcomeUnknown(message) from error
+                raise ReplOutcomeUnknown(message, cleanup_error) from error
             raise
         except ReplStderrBacklog:
             raise
@@ -1082,6 +1094,7 @@ class LeanRepl:
                     self.close(deadline=cleanup_deadline)
                 except Exception as cleanup_error:
                     message += f"; process cleanup also failed: {cleanup_error}"
+                    raise ReplOutcomeUnknown(message, cleanup_error) from error
                 raise ReplOutcomeUnknown(message) from error
             self.close(deadline=cleanup_deadline)
             raise

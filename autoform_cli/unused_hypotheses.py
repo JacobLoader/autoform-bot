@@ -180,6 +180,11 @@ def find_unused_hypotheses(
     requests: list[tuple[str, str, str]] = []
     for node, names in selected:
         for name in names:
+            located = index.find(name)
+            if located is not None and located.alias is not None:
+                # An alias's own proof only names its target, so nothing in it can be unused.
+                unresolved.append(UnresolvedTarget(node.id, name, "an alias, whose own proof only names its target"))
+                continue
             module, reason = locate_declaration(name, index=index, libraries=libraries, lean_root=root)
             if module is None:
                 unresolved.append(UnresolvedTarget(node.id, name, reason or ""))
