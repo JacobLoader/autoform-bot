@@ -2033,6 +2033,10 @@ def _rewrite_links(
     of its own directory onto the chapter page, so its remaining relative links
     have to be recomputed from there. And source notes are not published at
     all when *sources_base* says where to reach them in the repository.
+
+    The site holds only the blueprint, so an inline link to a file outside it,
+    such as a source note's evidence link to a Lean file, keeps its text and
+    loses its target instead of dangling.
     """
     # Most pages name a few nodes, so each node link is built where it is used.
     # A coverage page can name most of the graph, so one cache serves the whole
@@ -2053,7 +2057,8 @@ def _rewrite_links(
                 href = f"{'' if href == '#' else href}#{fragment}"
             return href
         if not _is_within(candidate, blueprint):
-            return None
+            # Nothing outside the blueprint is published: "" keeps only the text.
+            return ""
         relative = candidate.relative_to(blueprint)
         if sources_base is not None and relative.parts[:1] == (SOURCES_DIR,):
             return f"{_source_href(sources_base, relative.parts[1:])}{separator}{fragment}"
@@ -2062,7 +2067,9 @@ def _rewrite_links(
 
     def replace(match: re.Match[str]) -> str:
         href = moved_target(match.group("target"))
-        return match.group(0) if href is None else f"[{match.group('label')}]({href})"
+        if href is None:
+            return match.group(0)
+        return f"[{match.group('label')}]({href})" if href else match.group("label")
 
     def rewrite(line: str) -> str:
         # A reference definition carries the destination for every `[x][label]`
@@ -2071,7 +2078,7 @@ def _rewrite_links(
         definition = _LINK_DEFINITION.match(line)
         if definition is not None:
             href = moved_target(definition.group("target"))
-            if href is not None:
+            if href:
                 indent, label = definition.group("indent"), definition.group("label")
                 return f"{indent}[{label}]: {href}{definition.group('rest') or ''}"
             return line
