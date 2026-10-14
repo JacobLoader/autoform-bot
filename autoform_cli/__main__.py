@@ -20,7 +20,7 @@ from .audit import audit_blueprint
 from .claims import CLAIM_TTL_S, ClaimBoard, ClaimTransportError, author_claim_key
 from .doctor import diagnose_project
 from .dashboard import publication_bound_live_state, serve_dashboard
-from .graph import GraphValidationError, load_graph
+from .graph import Graph, GraphValidationError, load_graph
 from .impact import (
     ImpactError,
     format_impact,
@@ -34,6 +34,7 @@ from .library.index import INDEX_FILE
 from .library.listing import list_libraries
 from .library.locate import LibraryError, WorkspaceError
 from .library.search import LibraryResult, library_argument, search_with_libraries
+from .markdown import local_target_issue
 from .project import ProjectCatalogError, ProjectCreateError, create_project, inspect_project, load_release_catalog
 from .render import PublicationError, render_site
 from .runtime import RuntimeProjectionError, resolve_runtime_paths
@@ -519,11 +520,37 @@ def _init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _source_link_issues(graph: Graph) -> list[str]:
+    """Name each ``## Sources`` link to a local path that is not a file in the blueprint.
+
+    The generated workflows run ``check`` but not ``audit``, and render publishes
+    a missing or escaping target broken: a page a strict MkDocs build cannot find,
+    a repository URL that 404s, or a path off the site. Fragments and other
+    schemes stay with ``audit``, whose anchor check renders each cited note.
+    """
+    rejected = {
+        "source-not-found": "does not resolve to a file",
+        "source-escapes-blueprint": "escapes the blueprint directory",
+        "malformed-source-link": "contains an invalid path",
+    }
+    issues = []
+    for node in graph.nodes.values():
+        for target in node.sources:
+            issue = local_target_issue(node.path, target.partition("#")[0], graph.blueprint_dir, label="source")
+            if issue is not None and issue[0] in rejected:
+                issues.append(f"{node.id}: source target {rejected[issue[0]]}: {target!r}")
+    return issues
+
+
 def _check(args: argparse.Namespace) -> int:
     try:
         graph = load_graph(args.blueprint_dir)
     except GraphValidationError as exc:
         for issue in exc.issues:
+            print(f"error: {issue}")
+        return 1
+    if source_issues := _source_link_issues(graph):
+        for issue in source_issues:
             print(f"error: {issue}")
         return 1
 
