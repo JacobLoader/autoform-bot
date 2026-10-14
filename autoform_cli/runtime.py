@@ -246,7 +246,13 @@ def build_runtime_graph(
     project_root: str | Path,
     lean_root: str | Path | None = None,
 ) -> RuntimeGraph:
-    """Copy an already validated canonical graph into the runtime contract."""
+    """Copy an already validated canonical graph into the runtime contract.
+
+    Raises ``RuntimeProjectionError``, with a retry hint, when an article's
+    bytes no longer match the digest ``load_graph`` recorded. A hand-built
+    node without a digest is not checked; the source revision covers whatever
+    bytes its article holds when projected.
+    """
 
     project = Path(project_root).expanduser().resolve()
     blueprint = graph.blueprint_dir.resolve()

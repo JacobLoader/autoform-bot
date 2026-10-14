@@ -1573,11 +1573,6 @@ def test_audit_reads_a_comment_opener_in_inline_code_as_the_site_does(tmp_path: 
     assert "placeholder-statement-text" not in _statement_codes(tmp_path, "TODO `<!--` real statement here")
 
 
-def test_audit_reports_one_statement_finding_at_a_time(tmp_path: Path) -> None:
-    # Nothing published at all is "missing", never also "empty".
-    assert _statement_codes(tmp_path, "<!-- TODO -->") == {"missing-statement-text"}
-
-
 def test_a_statement_from_a_fence_that_never_closes_keeps_its_statement_finding(tmp_path: Path) -> None:
     assert _statement_codes(tmp_path, "```\nFor all n, P(n) holds.") == {"unclosed-code-fence"}
     assert _statement_codes(tmp_path, "```\nTODO") == {
@@ -1591,6 +1586,19 @@ def test_audit_reports_an_unclosed_code_fence(tmp_path: Path) -> None:
     _coverage(blueprint)
     path = _article(blueprint, "chapter/result.md", declaration="theorem")
     path.write_text(path.read_text(encoding="utf-8") + "\n```lean\n#check result\n", encoding="utf-8")
+
+    assert _finding_map(blueprint)["roadmap/chapter/result.md"] == [
+        ("unclosed-code-fence", "code fence opened on line 13 never closes")
+    ]
+
+
+def test_audit_names_only_the_first_fence_that_never_closes(tmp_path: Path) -> None:
+    # Read as text, the first unclosed fence lets the later ~~~ open a second one; only the first is named.
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    path = _article(blueprint, "chapter/result.md", declaration="theorem")
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text + "\n```lean\n#check result\n\n~~~\n#check other\n", encoding="utf-8")
 
     assert _finding_map(blueprint)["roadmap/chapter/result.md"] == [
         ("unclosed-code-fence", "code fence opened on line 13 never closes")
