@@ -1310,6 +1310,18 @@ def test_audit_reports_an_unclosed_code_fence(tmp_path: Path) -> None:
     ]
 
 
+def test_audit_names_only_the_first_fence_that_never_closes(tmp_path: Path) -> None:
+    # Read as text, the first unclosed fence lets the later ~~~ open a second one; only the first is named.
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    path = _article(blueprint, "chapter/result.md", declaration="theorem")
+    path.write_text(path.read_text(encoding="utf-8") + "\n```lean\n#check result\n\n~~~\n#check other\n", encoding="utf-8")
+
+    assert _finding_map(blueprint)["roadmap/chapter/result.md"] == [
+        ("unclosed-code-fence", "code fence opened on line 13 never closes")
+    ]
+
+
 def test_audit_reports_an_unclosed_code_fence_in_a_chapter_article(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)
