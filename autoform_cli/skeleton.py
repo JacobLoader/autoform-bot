@@ -988,11 +988,11 @@ def _leader_has_exited(process: subprocess.Popen[bytes]) -> bool:
             # Unlike a zombie status, this waits for every thread of the leader.
             return os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
         return psutil.Process(process.pid).status() == psutil.STATUS_ZOMBIE
-    except ChildProcessError:
+    except psutil.ZombieProcess:
+        return True
+    except (ChildProcessError, psutil.NoSuchProcess):
         # Reaped elsewhere: poll records it, so nothing signals the group again.
         return process.poll() is not None
-    except psutil.NoSuchProcess:
-        return True
     except (OSError, psutil.Error, SystemError):
         return False
 
@@ -1033,7 +1033,7 @@ def _terminate_process_tree(
         if os.name == "posix" and process.returncode is None:
             with contextlib.suppress(OSError):
                 os.killpg(process.pid, getattr(signal, group_signal))
-        # killpg reaches the leader on POSIX, where Popen.terminate would poll, and so reap, it.
+        # On POSIX killpg already reached the leader; Popen.terminate would poll, and so reap, it.
         leader = [process] if os.name != "posix" and process.poll() is None else []
         for target in leader + live:
             with contextlib.suppress(OSError, psutil.Error, SystemError):
@@ -1219,7 +1219,8 @@ def _run_registered_command(
                 raise _CommandTimedOut([f"{context} timed out after {timeout:g} seconds"])
             overflow.wait(min(0.05, remaining))
         _remember_descendants(process, descendants)
-        group_alive = _process_group_has_live_members(process.pid)
+        # A reap recorded elsewhere frees the group id, so it is not checked again.
+        group_alive = process.returncode is None and _process_group_has_live_members(process.pid)
         _remember_tagged_processes(token, descendants, root_pid=process.pid)
         if group_alive or any(map(_process_is_alive, descendants.values())):
             raise SkeletonError([f"{context} left descendant processes running"])
