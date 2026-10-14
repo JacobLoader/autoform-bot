@@ -248,9 +248,10 @@ def build_runtime_graph(
 ) -> RuntimeGraph:
     """Copy an already validated canonical graph into the runtime contract.
 
-    An article whose bytes no longer match the digest ``load_graph`` recorded is refused with a
-    retry hint. A hand-built node without a digest makes no snapshot claim and is projected from
-    the bytes read here.
+    Raises ``RuntimeProjectionError``, with a retry hint, when an article's
+    bytes no longer match the digest ``load_graph`` recorded. A hand-built
+    node without a digest is not checked; the source revision covers whatever
+    bytes its article holds when projected.
     """
 
     project = Path(project_root).expanduser().resolve()

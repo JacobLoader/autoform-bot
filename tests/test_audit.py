@@ -1315,7 +1315,8 @@ def test_audit_names_only_the_first_fence_that_never_closes(tmp_path: Path) -> N
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)
     path = _article(blueprint, "chapter/result.md", declaration="theorem")
-    path.write_text(path.read_text(encoding="utf-8") + "\n```lean\n#check result\n\n~~~\n#check other\n", encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text + "\n```lean\n#check result\n\n~~~\n#check other\n", encoding="utf-8")
 
     assert _finding_map(blueprint)["roadmap/chapter/result.md"] == [
         ("unclosed-code-fence", "code fence opened on line 13 never closes")

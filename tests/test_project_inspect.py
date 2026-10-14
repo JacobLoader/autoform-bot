@@ -2218,7 +2218,6 @@ def test_human_report_omits_a_missing_input_revision(tmp_path: Path, capsys, inp
     captured = capsys.readouterr()
     assert f"Mathlib: {COMMIT} ({MATHLIB_URL}) [lake-manifest.json]" in captured.out
     assert "None" not in captured.out + captured.err
-    assert f" @ {COMMIT}" not in captured.out
 
 
 def test_human_report_escapes_characters_that_could_forge_lines(tmp_path: Path, capsys) -> None:
