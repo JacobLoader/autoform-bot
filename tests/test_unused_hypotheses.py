@@ -55,6 +55,15 @@ def test_parse_skips_lean_s_own_output() -> None:
     assert set(parse_probe_output(output, expected_roots=("A.p",))) == {"A.p"}
 
 
+def test_parse_breaks_lines_only_at_newlines() -> None:
+    # Lean's JSON printer leaves U+0085, U+2028 and U+2029 unescaped, and
+    # `str.splitlines` would split a record at each of them.
+    root = "A.«p\x85q\u2028r\u2029s»"
+    output = PROBE_MARKER + json.dumps(json.loads(_theorem(root).removeprefix(PROBE_MARKER)), ensure_ascii=False)
+
+    assert set(parse_probe_output(output, expected_roots=(root,))) == {root}
+
+
 @pytest.mark.parametrize(
     ("lines", "message"),
     [

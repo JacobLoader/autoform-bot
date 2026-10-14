@@ -62,6 +62,13 @@ def list_libraries(root: str | Path) -> LibraryListing:
     return LibraryListing(tuple(listed))
 
 
+def indexed_packages(root: str | Path) -> tuple[str, ...]:
+    """The packages ``root`` locks whose checkout holds an index file, without verifying it."""
+
+    workspace = read_workspace(root)
+    return tuple(package.name for package in workspace.packages if _has_index(workspace, package))
+
+
 def _has_index(workspace, package) -> bool:
     if package.type != "git":
         return False
@@ -72,4 +79,4 @@ def _has_index(workspace, package) -> bool:
         return False
 
 
-__all__ = ["LIBRARY_LIST_SCHEMA", "LibraryListing", "ListedPackage", "list_libraries"]
+__all__ = ["LIBRARY_LIST_SCHEMA", "LibraryListing", "ListedPackage", "indexed_packages", "list_libraries"]

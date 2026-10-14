@@ -212,6 +212,7 @@ Create or inspect a Lean project and list Autoform's bundled known-good release 
 autoform project versions
 autoform project new ./FiniteFlat --package FiniteFlat
 autoform project new ./FiniteFlat430 --package FiniteFlat --lean-toolchain v4.30.0
+autoform project new ./Gauss --package Gauss --library atlas
 autoform project inspect .
 autoform project inspect path/inside/project --json
 autoform project versions --json
@@ -280,6 +281,18 @@ warning. With `--json`, such a pair reports `"release": null` and its warnings
 go to the `warnings` array; otherwise warnings go to stderr. Either way the
 exit status stays 0. Successful JSON uses schema
 `autoform-project-creation/v1`.
+
+`--library NAME` names an entry of the bundled library catalog,
+`autoform_cli/project/libraries.json`. Each entry pins a shared Lean library
+to a full commit on a listed release. The project is created on that release,
+its `lakefile.toml` gains the library's `[[require]]` after the existing
+blocks, and its `lake-manifest.json` is the release's bundled manifest plus the
+library's resolved packages, so it needs no `lake update`. The first Lake
+command clones the packages the manifest locks, which needs network access.
+`--library` combines with no version option. An unknown name is
+`project-library-unknown`, and a package name that is one of the library's
+module roots or packages is `project-name-invalid`. The JSON result adds
+`library: {name, git, rev}`.
 
 `project inspect` is local and read-only. It inspects the nearest enclosing Lean
 project without running Lake, Lean, Git, or the network. For automation, use
@@ -942,7 +955,11 @@ rolled-up containment level,
 missing or multiple H1 titles, unsupported frontmatter keys, assertion values
 it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
-`mathlib: true`. With `--lean-root` it also fails on a `lean:` name
+`mathlib: true`. An inline `## Sources` link to a local path must name a file
+inside the blueprint, as `audit` also requires: a missing file, a directory, an
+invalid path, or a target outside the blueprint fails, and `audit` alone checks
+fragments and links with other schemes. With `--lean-root`
+it also fails on a `lean:` name
 absent from the sources, as `leanblueprint checkdecls` does for LaTeX
 blueprints. It validates structure and leaves mathematical correctness to the
 agent and the Lean kernel.
@@ -1222,6 +1239,10 @@ first 12 characters of the revision, and `usable` or `not usable: REASON`.
 `name`, `type`, `revision`, `index` (whether the checkout holds an index
 file), `usable`, and `reason` (`null` when usable).
 Neither command starts a process or writes a file.
+A search without `--library` whose project locks a package with an index file
+adds one `note:` line on stderr naming the package and the flags that search
+it; stdout, the JSON and the exit status are unchanged. The note only checks
+that the file exists, so `library list` still decides whether it is usable.
 
 The index is the file `autoform-library-index.jsonl` at the package root, or
 the file given as `--library NAME=PATH`. Its format,
@@ -1616,6 +1637,23 @@ when it is refused, release everything already held and retry with the whole
 set, never holding some claims while waiting for others. The CLI does not
 enforce the rule; it is what keeps two multi-article revisions from
 deadlocking.
+
+A Git process that stops while updating a claim ref leaves a lock file in the
+board, and Git then refuses the updates it guards:
+`refs/autoform-claims/<key>.lock` blocks that claim, `packed-refs.lock` blocks
+every release, and on a board in the reftable ref format
+`reftable/tables.list.lock` blocks every claim update. On a board given as a
+local path, or as a `file://` URL except on Windows, a command whose push such
+a file still blocks two seconds later exits 1 naming the file and when it was
+modified; a lock that goes away within those two seconds counts as a lost race.
+On such a board, `claim cleanup` leaves a lease whose release a lock file
+blocks in place and still exits 0, and `claim list` and `claim cleanup` warn on
+stderr about each lock file not modified within two seconds of the current
+time. Git records no owner for a lock file, so Autoform never deletes one: once
+no Git process is using the board, delete the file and retry. Over any other
+transport the board's files are not visible, so a lock file there shows up as a
+lost race or as Git's own error, depending on the file, the operation and the
+server's Git version, and Git's error also stops `claim cleanup`.
 
 Claims are temporary operational state, never article frontmatter.
 

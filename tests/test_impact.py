@@ -989,6 +989,27 @@ def _module_line(
     )
 
 
+def test_probe_output_breaks_lines_only_at_newlines() -> None:
+    # Lean's JSON printer leaves U+0085, U+2028 and U+2029 unescaped, and
+    # `str.splitlines` would split a record at each of them.
+    name = "A.«b\x85c\u2028d\u2029e»"
+    module = {
+        "module": "Demo",
+        "source_path": "/project/Demo\u2028.lean",
+        "olean_path": "/project/.lake/build/lib/lean/Demo.olean",
+        "direct_local_imports": [],
+    }
+    text = "\n".join(
+        [
+            IMPACT_MARKER + json.dumps(_payload(name), ensure_ascii=False),
+            IMPACT_MODULE_MARKER + json.dumps(module, ensure_ascii=False),
+        ]
+    )
+
+    assert list(parse_impact_output(text)) == [name]
+    assert parse_module_evidence(text)["Demo"].source_path == "/project/Demo\u2028.lean"
+
+
 def test_probe_output_is_read_from_marker_lines() -> None:
     text = "\n".join(
         [
@@ -1124,6 +1145,14 @@ def test_malformed_probe_output_fails_closed(lines: list[str], message: str) -> 
         parse_impact_output("\n".join(lines))
 
 
+def _glob_walks(probe: str) -> object:
+    """The JSON glob walks a rendered impact probe decodes."""
+
+    literal = re.search(r'AutoformImpact\.globDirectories ("(?:[^"\\]|\\.)*")', probe)
+    assert literal is not None
+    return json.loads(json.loads(literal.group(1)))
+
+
 def test_rendered_probe_imports_modules_and_names_exact_local_modules() -> None:
     source = render_impact_probe(
         imports=["Demo.B", "Demo", "Demo.B"],
@@ -1141,7 +1170,7 @@ def test_rendered_probe_imports_modules_and_names_exact_local_modules() -> None:
     assert "findOLean module" in source
     # Neither the inventory checks nor module evidence run by default.
     assert source.count("if false then") == 2
-    assert "([] : List (System.FilePath × Name × String))" in source
+    assert _glob_walks(source) == []
     # The root artifact directory turns on the inventory checks, with the walk
     # of each `M.*` or `M.+` glob's directory, and module evidence is separate.
     checked = render_impact_probe(
@@ -1152,7 +1181,7 @@ def test_rendered_probe_imports_modules_and_names_exact_local_modules() -> None:
     )
     assert (checked.count("if true then"), checked.count("if false then")) == (1, 1)
     assert 'IO.FS.realPath "/lean/.lake/build/lib/lean"' in checked
-    assert '[(System.FilePath.mk "/lean/Demo", Name.str (Name.anonymous) "Demo", "Demo.*")]' in checked
+    assert _glob_walks(checked) == [[str(Path("/lean/Demo")), ["Demo"], "Demo.*"]]
     evidence = render_impact_probe(
         imports=["Demo"],
         project_modules=["Demo"],
@@ -1924,9 +1953,8 @@ def test_cli_import_impact_has_the_probe_walk_each_glob_directory(tmp_path: Path
     assert code == 0, output.err
     # Only the `M.+` glob reaches into a directory, which the probe walks for
     # modules the inventory lacks.
-    directory = json.dumps(str(lean_root.resolve() / "Demo" / "Sub"))
-    walk = f'(System.FilePath.mk {directory}, Name.str (Name.str (Name.anonymous) "Demo") "Sub", "Demo.Sub.+")'
-    assert f"([{walk}] : List" in str(calls[0]["probe"])
+    directory = str(lean_root.resolve() / "Demo" / "Sub")
+    assert _glob_walks(str(calls[0]["probe"])) == [[directory, ["Demo", "Sub"], "Demo.Sub.+"]]
 
 
 def test_cli_import_impact_reports_an_empty_loaded_module_without_false_locality(

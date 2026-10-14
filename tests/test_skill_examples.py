@@ -467,7 +467,7 @@ def test_setup_guidance_uses_the_offline_atomic_project_creator(repo_root: Path)
     assert "--lean-toolchain" in normalized
     assert "lake update" in normalized
     assert f"Autoform needs Lean {_LEAN_FLOOR} or newer" in normalized
-    assert "the project will depend on a Lean library, create the project on that library's Lean and Mathlib" in normalized
+    assert "the project will depend on a Lean library outside the catalog, create the project on that library's Lean and Mathlib" in normalized
     # Lean alone does not pick the release: a library may lock a Mathlib commit that is not the tag.
     assert "the Mathlib `rev` its `lake-manifest.json` locks, at the revision the user plans to require" in normalized
     assert "Pass both, as `--lean-toolchain` and `--mathlib-rev`" in normalized
@@ -486,6 +486,40 @@ def test_setup_guidance_uses_the_offline_atomic_project_creator(repo_root: Path)
             assert (repo_root / reference).is_file(), (
                 f"{document.relative_to(repo_root)} references missing helper {reference}"
             )
+
+
+def test_setup_offers_catalog_libraries_only_to_new_projects_on_a_yes(repo_root: Path) -> None:
+    setup = (repo_root / "skills/setup/SKILL.md").read_text(encoding="utf-8")
+    normalized = " ".join(setup.split())
+
+    assert "autoform_cli/project/libraries.json" in normalized
+    # Which libraries, and to which projects.
+    assert "only when its entry has `offered: true`" in normalized
+    assert "only when Setup creates a new project with `project new`" in normalized
+    assert "never when inspecting, repairing, or running `init` on an existing repository" in normalized
+    assert "a request that names a catalog library uses it even when the entry is not offered" in normalized
+    # The cost, stated in the question.
+    assert "Ask in the single round of questions, and state the cost in the question" in normalized
+    assert "moves from the recommended release to the library's `release`" in normalized
+    assert "needs network access and downloads the library and its dependencies (about 270 MB for ATLAS)" in normalized
+    assert "built locally" in normalized
+    # Where a yes may come from, and the default.
+    assert "in the setup request itself" in normalized
+    assert "Without a yes, add no library, including in a headless run" in normalized
+    # What a yes runs and reports.
+    assert "run the `project new` command above with `--library <NAME>` and no version flags" in normalized
+    assert "Then run `autoform library list` on the project" in normalized
+    assert "When it lists the library as usable, report the entry's `git` and pinned commit" in normalized
+    assert "otherwise report its reason and do not claim the library works" in normalized
+    assert "say that the project builds once the fetch succeeds, and give the retry command" in normalized
+    assert "Never run a bare `lake update` in such a project" in normalized
+    # A failed fetch resumes the validation sequence where it stopped, so a
+    # failed `lake update repl` is retried as such rather than as a bare update.
+    assert "resume the validation sequence from the step that failed" in normalized
+    assert "`lake update repl` when the REPL require was added" in normalized
+    # The catalog pin is used only when the request names no other source.
+    assert "names no other repository or revision for it" in normalized
+    assert "`<NAME>` is the entry's `name` exactly, such as `atlas`" in normalized
 
 
 def test_setup_asset_is_a_repo_shaped_thesis_vault(repo_root: Path) -> None:
@@ -1174,6 +1208,25 @@ def test_skills_search_the_blueprint_before_adding_a_result(repo_root: Path) -> 
     assert "dependencies reach" in sentence(formalize, "Use the declaration")
     assert "never restate" in sentence(formalize, "missing prerequisite")
     assert "duplicate" in rubric and "not proof" in rubric
+
+
+def test_roadmap_states_the_library_search_without_the_link(repo_root: Path) -> None:
+    """Roadmap carries the library flags itself, not only behind the link to the rules.
+
+    In trials, Roadmap agents never opened the linked rules: one never learned
+    `--library`, another searched once and, finding the new project's blueprint
+    empty, wrote every article without searching the library that proved them.
+    """
+
+    blocks = (repo_root / "skills/roadmap/SKILL.md").read_text(encoding="utf-8").split("\n\n")
+    search = next(" ".join(block.split()) for block in blocks if "`autoform search`" in block)
+    flat = " ".join("\n\n".join(blocks).split())
+
+    assert "`autoform library list .`" in search
+    assert "`--library NAME --lean-root .`" in search
+    assert "even while the blueprint is empty" in search
+    assert "library search rules" in search  # the details still live once, behind the link
+    assert "Search the pinned Mathlib checkout and every usable shared library before planning a replacement" in flat
 
 
 def test_skills_search_shared_libraries_and_say_what_to_do_with_a_hit(repo_root: Path) -> None:

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 from dataclasses import replace
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,14 @@ import pytest
 from autoform_cli import scaffold as scaffold_module
 from autoform_cli.__main__ import main
 from autoform_cli.graph import load_graph
-from autoform_cli.project import ProjectCreateError, create_project, inspect_project, load_release_catalog
+from autoform_cli.project import (
+    LibraryCatalog,
+    ProjectCreateError,
+    create_project,
+    inspect_project,
+    load_library_catalog,
+    load_release_catalog,
+)
 from autoform_cli.project import create as create_module
 from autoform_cli.scaffold import DEFAULT_AUTOFORM_SOURCE
 
@@ -2068,3 +2076,152 @@ def test_cli_warnings_follow_the_created_line_on_a_shared_pipe(tmp_path: Path) -
         "warning[project-lean-below-minimum",
         "warning[project-release-unlisted",
     ]
+
+
+_ATLAS_RELEASE = "lean-v4.34.1-mathlib-v4.34.1"
+_ATLAS_GIT = "https://github.com/zibo-yang/atlas-lean"
+_ATLAS_COMMIT = "0ca59c787215c3638311b0a14af59aaae3208f6b"
+_ATLAS_ENTRY = {
+    "url": _ATLAS_GIT, "type": "git", "subDir": None, "scope": "", "rev": _ATLAS_COMMIT, "name": "atlas",
+    "manifestFile": "lake-manifest.json", "inputRev": _ATLAS_COMMIT, "inherited": False,
+    "configFile": "lakefile.toml",
+}
+_CSLIB_ENTRY = {
+    "url": "https://github.com/leanprover/cslib", "type": "git", "subDir": None, "scope": "leanprover",
+    "rev": "7c8f6c0f67015df29b152fdcffaf7850db2e9185", "name": "cslib", "manifestFile": "lake-manifest.json",
+    "inputRev": "v4.34.1", "inherited": True, "configFile": "lakefile.toml",
+}
+_CREATION_KEYS = {
+    "lean_toolchain", "mathlib_rev", "ok", "package", "release", "schema", "target", "warnings",
+    "workflows_pinned", "written",
+}
+
+
+def test_library_project_is_complete_and_locked(tmp_path: Path) -> None:
+    target = tmp_path / "Gauss"
+    result = create_project(target, package="Gauss", release_id=None, library="atlas")
+
+    assert result.release == _ATLAS_RELEASE
+    assert result.warnings == ()
+    payload = result.as_dict()
+    assert payload["schema"] == "autoform-project-creation/v1"
+    assert set(payload) == _CREATION_KEYS | {"library"}
+    assert payload["library"] == {"git": _ATLAS_GIT, "name": "atlas", "rev": _ATLAS_COMMIT}
+    assert (target / "lean-toolchain").read_text(encoding="utf-8") == "leanprover/lean4:v4.34.1\n"
+    assert (target / "lakefile.toml").read_text(encoding="utf-8") == (
+        'name = "Gauss"\n'
+        'version = "0.1.0"\n'
+        'defaultTargets = ["Gauss"]\n\n'
+        "[[require]]\n"
+        'name = "mathlib"\n'
+        'git = "https://github.com/leanprover-community/mathlib4"\n'
+        'rev = "v4.34.1"\n\n'
+        "[[lean_lib]]\n"
+        'name = "Gauss"\n'
+        'srcDir = "src"\n\n'
+        "[[require]]\n"
+        'name = "atlas"\n'
+        f'git = "{_ATLAS_GIT}"\n'
+        f'rev = "{_ATLAS_COMMIT}"\n'
+    )
+    manifest = json.loads((target / "lake-manifest.json").read_text(encoding="utf-8"))
+    bundled = json.loads(
+        files("autoform_cli.project")
+        .joinpath(f"release-manifest-{_ATLAS_RELEASE}.json")
+        .read_text(encoding="utf-8")
+    )
+    assert manifest["name"] == "Gauss"
+    assert [entry["name"] for entry in manifest["packages"]] == [
+        "atlas", "mathlib", "cslib", "plausible", "LeanSearchClient", "importGraph", "proofwidgets", "aesop",
+        "Qq", "batteries", "Cli",
+    ]
+    by_name = {entry["name"]: entry for entry in manifest["packages"]}
+    assert [by_name[entry["name"]] for entry in bundled["packages"]] == bundled["packages"]
+    assert by_name["atlas"] == _ATLAS_ENTRY
+    assert by_name["cslib"] == _CSLIB_ENTRY
+    inspection = inspect_project(target)
+    assert inspection.ok
+    assert inspection.compatibility.status == "supported"
+    assert inspection.compatibility.release == _ATLAS_RELEASE
+    assert not list(tmp_path.glob(".autoform-new-*"))
+
+
+def test_without_a_library_the_creation_result_keeps_its_shape(tmp_path: Path) -> None:
+    result = create_project(tmp_path / "Project", package="Project", release_id=_ATLAS_RELEASE)
+
+    assert set(result.as_dict()) == _CREATION_KEYS
+    assert result.library is None
+    assert "atlas" not in (tmp_path / "Project" / "lakefile.toml").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "versions",
+    [
+        {"release_id": _ATLAS_RELEASE},
+        {"release_id": None, "lean_toolchain": "v4.34.1"},
+        {"release_id": None, "lean_toolchain": "v4.34.1", "mathlib_rev": "v4.34.1"},
+        {"release_id": None, "mathlib_rev": "v4.34.1"},
+    ],
+)
+def test_library_refuses_version_options_before_writing(tmp_path: Path, versions: dict[str, str | None]) -> None:
+    _refused(tmp_path / "Project", "project-version-invalid", library="atlas", **versions)
+
+
+@pytest.mark.parametrize("library", ["", "ATLAS", "Atlas", "mathlib", "atlas-lean", 7])
+def test_unknown_library_is_refused_before_writing(tmp_path: Path, library: object) -> None:
+    _refused(tmp_path / "Project", "project-library-unknown", release_id=None, library=library)
+
+
+@pytest.mark.parametrize(
+    "package",
+    ["MathlibExt", "CSLibExt", "WantedExt", "MathlibExtTest", "CSLibExtTest", "Cslib", "CslibTests", "CSLIB",
+     "Atlas", "ATLAS", "Mathlib"],
+)
+def test_library_roots_and_packages_are_reserved(tmp_path: Path, package: str) -> None:
+    _refused(tmp_path / "Project", "project-name-invalid", package=package, release_id=None, library="atlas")
+
+
+def test_library_roots_are_reserved_only_with_the_library(tmp_path: Path) -> None:
+    create_project(tmp_path / "Project", package="WantedExt", release_id=_ATLAS_RELEASE)
+
+
+def _catalog_with_packages(*packages: dict) -> LibraryCatalog:
+    atlas = load_library_catalog().get("atlas")
+    return LibraryCatalog((replace(atlas, manifest_packages=(_ATLAS_ENTRY, *packages)),))
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {**_CSLIB_ENTRY, "rev": "7c8f6c0f"},  # not a full commit
+        {**_CSLIB_ENTRY, "url": "http://github.com/leanprover/cslib"},
+        {**_CSLIB_ENTRY, "extra": 1},
+        {**_CSLIB_ENTRY, "name": "batteries"},  # the release already locks it
+        {**_CSLIB_ENTRY, "name": "Mathlib"},  # case-folded duplicate
+    ],
+)
+def test_malformed_library_entries_are_refused_before_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extra: dict
+) -> None:
+    monkeypatch.setattr(create_module, "load_library_catalog", lambda: _catalog_with_packages(extra))
+    _refused(tmp_path / "Project", "project-create-validation-failed", release_id=None, library="atlas")
+
+
+def test_cli_creates_a_library_project(tmp_path: Path, capsys) -> None:
+    assert main(["project", "new", str(tmp_path / "Json"), "--package", "Gauss", "--library", "atlas", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["release"] == _ATLAS_RELEASE
+    assert payload["library"] == {"git": _ATLAS_GIT, "name": "atlas", "rev": _ATLAS_COMMIT}
+
+    assert main(["project", "new", str(tmp_path / "Text"), "--package", "Gauss", "--library", "atlas"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == f"Created Gauss at Text ({_ATLAS_RELEASE})"
+    assert lines[1] == f"Library: atlas @ {_ATLAS_COMMIT} ({_ATLAS_GIT})"
+
+
+def test_cli_refuses_a_library_with_a_release(tmp_path: Path, capsys) -> None:
+    target = tmp_path / "Gauss"
+    argv = ["project", "new", str(target), "--package", "Gauss", "--library", "atlas", "--release", _ATLAS_RELEASE]
+    assert main([*argv, "--json"]) == 1
+    assert json.loads(capsys.readouterr().out)["error"]["code"] == "project-version-invalid"
+    assert not target.exists()

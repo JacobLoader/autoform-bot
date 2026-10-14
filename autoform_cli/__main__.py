@@ -20,7 +20,7 @@ from .audit import audit_blueprint
 from .claims import CLAIM_TTL_S, ClaimBoard, ClaimTransportError, author_claim_key
 from .doctor import diagnose_project
 from .dashboard import publication_bound_live_state, serve_dashboard
-from .graph import GraphValidationError, load_graph
+from .graph import Graph, GraphValidationError, load_graph
 from .impact import (
     ImpactError,
     format_impact,
@@ -31,9 +31,10 @@ from .impact import (
 from .lean import build_linker, declaration_names, index_failure_message
 from .library.generate import GenerateError, check_index, generate_index, write_index
 from .library.index import INDEX_FILE
-from .library.listing import list_libraries
+from .library.listing import indexed_packages, list_libraries
 from .library.locate import LibraryError, WorkspaceError
 from .library.search import LibraryResult, library_argument, search_with_libraries
+from .markdown import local_target_issue
 from .project import ProjectCatalogError, ProjectCreateError, create_project, inspect_project, load_release_catalog
 from .render import PublicationError, render_site
 from .runtime import RuntimeProjectionError, resolve_runtime_paths
@@ -133,6 +134,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=(
             "Mathlib tag, branch, or commit to require with --lean-toolchain "
             "(default: the same tag as the toolchain)"
+        ),
+    )
+    project_new.add_argument(
+        "--library",
+        metavar="NAME",
+        help=(
+            "shared Lean library from the bundled library catalog to require at its pinned commit; "
+            "it selects the release, so it combines with no version option"
         ),
     )
     project_new.add_argument(
@@ -519,11 +528,37 @@ def _init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _source_link_issues(graph: Graph) -> list[str]:
+    """Name each ``## Sources`` link to a local path that is not a file in the blueprint.
+
+    The generated workflows run ``check`` but not ``audit``, and render publishes
+    a missing or escaping target broken: a page a strict MkDocs build cannot find,
+    a repository URL that 404s, or a path off the site. Fragments and other
+    schemes stay with ``audit``, whose anchor check renders each cited note.
+    """
+    rejected = {
+        "source-not-found": "does not resolve to a file",
+        "source-escapes-blueprint": "escapes the blueprint directory",
+        "malformed-source-link": "contains an invalid path",
+    }
+    issues = []
+    for node in graph.nodes.values():
+        for target in node.sources:
+            issue = local_target_issue(node.path, target.partition("#")[0], graph.blueprint_dir, label="source")
+            if issue is not None and issue[0] in rejected:
+                issues.append(f"{node.id}: source target {rejected[issue[0]]}: {target!r}")
+    return issues
+
+
 def _check(args: argparse.Namespace) -> int:
     try:
         graph = load_graph(args.blueprint_dir)
     except GraphValidationError as exc:
         for issue in exc.issues:
+            print(f"error: {issue}")
+        return 1
+    if source_issues := _source_link_issues(graph):
+        for issue in source_issues:
             print(f"error: {issue}")
         return 1
 
@@ -648,6 +683,7 @@ def _project(args: argparse.Namespace) -> int:
                     mathlib_rev=args.mathlib_rev,
                     autoform_source=args.autoform_source,
                     autoform_ref=args.autoform_ref,
+                    library=args.library,
                 )
             except KeyboardInterrupt:
                 # An interrupt during create_project's final cleanup can follow a
@@ -669,6 +705,9 @@ def _project(args: argparse.Namespace) -> int:
             else:
                 label = result.release or f"unlisted: {result.lean_toolchain}, Mathlib {result.mathlib_rev}"
                 print(_ascii_text(f"Created {result.package} at {result.target} ({label})"))
+                if result.library is not None:
+                    library = result.library
+                    print(_ascii_text(f"Library: {library.name} @ {library.commit} ({library.git})"))
                 # Flush first so the warnings never appear ahead of the line they qualify.
                 sys.stdout.flush()
                 for code, message in result.warnings:
@@ -838,8 +877,11 @@ def _search(args: argparse.Namespace) -> int:
         print("error: project, blueprint, or Lean root path cannot be read", file=sys.stderr)
         return 2
 
+    note = None if args.libraries else _unsearched_library_note(args.target, args.lean_root)
     if args.json:
         print(result.to_json() if combined is None else combined.to_json())
+        if note:
+            print(note, file=sys.stderr)
         return 0
     if not result.hits:
         print("No matching articles.")
@@ -867,7 +909,37 @@ def _search(args: argparse.Namespace) -> int:
         print(f"{len(result.hits)} of {result.total_matches} matching article(s) shown.")
     for library in libraries:
         _print_library(library)
+    if note:
+        sys.stdout.flush()
+        print(note, file=sys.stderr)
     return 0
+
+
+def _unsearched_library_note(target: str, lean_root: str | None) -> str | None:
+    """Name the locked packages that publish an index a blueprint-only search skipped.
+
+    An empty blueprint answers every query with no match, which reads as "this
+    result is new" although a library the project depends on may prove it.
+    The note is best effort: any failure to read the project leaves it out.
+    """
+
+    candidates = [Path(lean_root)] if lean_root else [Path(target), Path(target).parent]
+    for root in candidates:
+        try:
+            if not (root / "lake-manifest.json").is_file():
+                continue
+            names = indexed_packages(root)
+        except (LibraryError, WorkspaceError, OSError, ValueError):
+            return None
+        if not names:
+            return None
+        listed = " and ".join(names)
+        flags = " ".join(f"--library {name}" for name in names)
+        verb, pronoun = ("publishes a search index", "it") if len(names) == 1 else ("publish search indexes", "them")
+        return _human_text(
+            f"note: {listed} {verb} this search did not read; search {pronoun} too with --lean-root {root} {flags}"
+        )
+    return None
 
 
 def _print_library(library: LibraryResult) -> None:
@@ -1141,9 +1213,15 @@ def _claim(args: argparse.Namespace) -> int:
         operation = args.claim_command
         if operation == "list":
             print(json.dumps(board.list(), sort_keys=True, separators=(",", ":")))
-            return 0
-        if operation == "cleanup":
+        elif operation == "cleanup":
             print(f"removed {board.cleanup()} expired claim(s)")
+        if operation in {"list", "cleanup"}:
+            # Lock files are not refs, so neither command's own output can show one.
+            for lock in board.ref_locks():
+                print(
+                    f"warning: {lock.describe()}; if no Git process is using the claim board, delete it",
+                    file=sys.stderr,
+                )
             return 0
 
         past_tense = {"acquire": "acquired", "renew": "renewed", "release": "released"}

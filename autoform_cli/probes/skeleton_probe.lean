@@ -732,7 +732,8 @@ end AutoformSkeleton
 
 set_option maxHeartbeats 0 in
 run_cmd do
-  let projectRoots : List Name := [{project_roots}]
+  -- The library roots come as JSON too: the code generator gives up on a long list literal.
+  let projectRoots := (← AutoformSkeleton.requestedRoots {project_roots}).toList.map (·.2)
   let coreModules ← AutoformSkeleton.toolchainModules (← getEnv)
   -- A command's `IO.println` output is captured and printed as one message when
   -- the command ends, at a cost quadratic in its size: on a Mathlib project that
