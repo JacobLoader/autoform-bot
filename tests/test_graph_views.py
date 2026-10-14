@@ -155,7 +155,7 @@ def test_status_rings_count_only_leaves_that_declare_something(tmp_path: Path) -
     assert scopes["scope:mixed"].status_key == "can_state"
     assert scopes["scope:prose"].status_counts == ()
     assert scopes["scope:prose"].status_key == "planned"
-    legend = _selected_statuses(graph, statuses, project)
+    legend = _selected_statuses(graph, statuses, project, {"roadmap", "mixed", "prose"})
     assert {node_id: status.key for node_id, status in legend.items()} == {"mixed/result": "can_state"}
 
     complete = {view_node.id: view_node for view_node in full_view(graph, statuses).nodes}

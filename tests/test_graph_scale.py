@@ -525,6 +525,7 @@ def test_bulk_scope_views_scale_linearly_with_the_number_of_containers(tmp_path:
 
 def _index_builds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chapters: int) -> dict[str, int]:
     graph = _nested_graph(tmp_path / str(chapters), chapters, 3)
+    nodes = _CountingDict(graph.nodes)
     builds = {"_containment_children": 0, "_relations": 0}
 
     def counted(name: str):
@@ -540,14 +541,14 @@ def _index_builds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chapters: int
         for name in builds:
             patch.setattr(graph_views, name, counted(name))
         graph_pages.write_graph_pages(
-            graph,
+            Graph(graph.blueprint_dir, nodes),
             derive(graph),
             tmp_path / str(chapters) / "site",
             node_links=lambda page, node_ids: {
                 node_id: "book.html" for node_id in node_ids
             },
         )
-    return builds
+    return {**builds, "graph walks": nodes.values_calls}
 
 
 def test_graph_page_publication_builds_whole_graph_indexes_a_fixed_number_of_times(
@@ -557,8 +558,10 @@ def test_graph_page_publication_builds_whole_graph_indexes_a_fixed_number_of_tim
     small = _index_builds(tmp_path, monkeypatch, 4)
     large = _index_builds(tmp_path, monkeypatch, 8)
 
+    # Every section has its own page. Rebuilding the containers set for each
+    # page's legend made the graph walks grow with the chapters.
     assert large == small
-    assert max(small.values()) <= 5
+    assert max(small["_containment_children"], small["_relations"]) <= 5
 
 
 def _written_blueprint(tmp_path: Path, sections: int = 1) -> Path:

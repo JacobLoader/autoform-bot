@@ -9,7 +9,7 @@ another source of graph state.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from urllib.parse import quote
@@ -51,7 +51,7 @@ def write_graph_pages(
     search_index = destination / "dependencies/index.json"
     chapter_pages = {group: destination / "dependencies/chapters" / f"{group or 'roadmap'}.md" for group in groups}
     scope_maps = scope_views(graph, statuses)
-    containers = list(scope_maps)
+    containers = scope_maps.keys()
     scope_pages = {
         node_id: (
             project_page
@@ -109,7 +109,7 @@ def write_graph_pages(
         _write_page(
             project_page,
             view=project,
-            statuses=_selected_statuses(graph, statuses, project),
+            statuses=_selected_statuses(graph, statuses, project, containers),
             links=project_links,
             heading="Mathematics atlas",
             lead=(
@@ -151,7 +151,7 @@ def write_graph_pages(
             _write_page(
                 chapter_page,
                 view=view,
-                statuses=_selected_statuses(graph, statuses, view),
+                statuses=_selected_statuses(graph, statuses, view, containers),
                 links=links,
                 heading=_dependency_heading(view),
                 lead=(
@@ -190,7 +190,7 @@ def write_graph_pages(
             _write_page(
                 scope_page,
                 view=view,
-                statuses=_selected_statuses(graph, statuses, view),
+                statuses=_selected_statuses(graph, statuses, view, containers),
                 links=links,
                 heading=_dependency_heading(view),
                 lead=(
@@ -234,7 +234,7 @@ def write_graph_pages(
         _write_page(
             full_page,
             view=project,
-            statuses=_selected_statuses(graph, statuses, project),
+            statuses=_selected_statuses(graph, statuses, project, containers),
             links=full_project_links,
             heading="Mathematics atlas",
             lead=(
@@ -348,11 +348,14 @@ def _selected_statuses(
     graph: Graph,
     statuses: dict[str, NodeStatus],
     view: GraphView,
+    containers: Collection[str],
 ) -> dict[str, NodeStatus]:
-    """Select the leaves the explorer's rings count, for the legend beside them."""
-    containers = frozenset(
-        node.parent for node in graph.nodes.values() if node.parent is not None
-    )
+    """Select the leaves the explorer's rings count, for the legend beside them.
+
+    ``containers`` holds every node with children. The caller passes its
+    scope maps' keys, since rebuilding the set would walk the whole graph
+    for every page.
+    """
     return {
         node_id: statuses[node_id]
         for node_id in view.member_ids
