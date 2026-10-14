@@ -114,7 +114,73 @@ def test_audit_cli_reports_stable_json_and_failure(tmp_path: Path, capsys) -> No
                 "reason": "coverage contract is missing",
             }
         ],
+        "warnings": [],
     }
+
+
+def test_audit_cli_passes_with_only_warnings_and_prints_them(tmp_path: Path, capsys) -> None:
+    blueprint = tmp_path / "blueprint"
+    (blueprint / "roadmap").mkdir(parents=True)
+    (blueprint / "sources").mkdir()
+    (blueprint / "coverage").mkdir()
+    (blueprint / "roadmap" / "inventory.md").write_text(
+        "---\ncatalog: module\nlean: Inv.a Inv.b\n---\n\n"
+        "# Inventory\n\nAn existing module.\n\n## Sources\n\n- [Ledger](../sources/ledger.md)\n",
+        encoding="utf-8",
+    )
+    (blueprint / "sources" / "ledger.md").write_text("# Ledger\n", encoding="utf-8")
+    (blueprint / "coverage" / "README.md").write_text(
+        "# Coverage\n\n"
+        "| Area | Coverage | Evidence |\n"
+        "| --- | --- | --- |\n"
+        "| Inventory | INVENTORIED | [Inventory](../roadmap/inventory.md) |\n",
+        encoding="utf-8",
+    )
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    (lean_root / "Inv.lean").write_text(
+        "set_option maxHeartbeats 0\ntheorem Inv.a : True := trivial\ntheorem Inv.b : True := trivial\n",
+        encoding="utf-8",
+    )
+    command = ["audit", str(blueprint), "--lean-root", str(lean_root)]
+    message = (
+        "2 of 2 catalogued declarations have no maxHeartbeats limit (Inv.a at Inv.lean:1 and 1 more); "
+        "set a finite limit"
+    )
+
+    assert main(command) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "OK: roadmap audit passed",
+        "    coverage: 0 mapped · 0 decomposed · 1 inventoried · 0 deferred · 0 out",
+        f"warning: roadmap/inventory.md: catalog-unbounded-limit: {message}",
+    ]
+    assert main([*command, "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert (payload["clean"], payload["findings"]) == (True, [])
+    assert payload["warnings"] == [
+        {
+            "article_path": "roadmap/inventory.md",
+            "code": "catalog-unbounded-limit",
+            "message": message,
+            "declarations": [
+                {"name": name, "option": "maxHeartbeats", "value": 0, "location": "Inv.lean:1", "scope": "file"}
+                for name in ("Inv.a", "Inv.b")
+            ],
+        }
+    ]
+
+    # An error fails the audit, and the warning still prints, after the error.
+    (blueprint / "roadmap" / "inventory.md").write_text(
+        "---\ncatalog: module\nlean: Inv.a Inv.b Inv.missing\n---\n\n"
+        "# Inventory\n\nAn existing module.\n\n## Sources\n\n- [Ledger](../sources/ledger.md)\n",
+        encoding="utf-8",
+    )
+    assert main(command) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "    coverage: 0 mapped · 0 decomposed · 1 inventoried · 0 deferred · 0 out",
+        "error: roadmap/inventory.md: lean-target-not-found: Lean declaration target was not found: Inv.missing",
+        f"warning: roadmap/inventory.md: catalog-unbounded-limit: {message}",
+    ]
 
 
 def test_coverage_role_mismatch_warns_in_render_and_fails_audit(tmp_path: Path, capsys) -> None:

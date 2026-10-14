@@ -133,7 +133,12 @@ while remaining a readable catalog page, but stays outside the mathematical
 catalog lists, and every command that loads the blueprint validates the local
 ledger link. They cannot prove that the list omitted no newly added public
 declaration; completeness remains an authored assertion pending
-repository-inventory reconciliation.
+repository-inventory reconciliation. `audit --lean-root` also reads the
+[elaboration limits](#elaboration-limits) of the declarations a catalog
+resolves and reports them as warnings, which never fail the audit. A catalog
+that records `proof: formalized` also gets `lean-target-wanted` for a wanted
+target it names; the deprecation, declaration-kind, and node-size checks apply
+only to declaration articles.
 
 Versioned implementation notes live outside the mathematical roadmap at
 `blueprint/.implementation-notes/<article_id>.md`, one file per article. The
@@ -377,8 +382,9 @@ autoform audit blueprint --lean-root .
 `check` validates the graph contract. `audit` adds deterministic completeness,
 provenance, coverage, checked-fact, and optional Lean-target checks. It is local
 and read-only: it neither contacts network services nor writes findings back
-into the blueprint. Pass `--json` for stable machine-readable output; a nonzero
-exit status means the audit found at least one issue. The machine-checkable
+into the blueprint. Pass `--json` for stable machine-readable output. A nonzero
+exit status means the audit found at least one finding; [warnings](#warnings)
+never change it. The machine-checkable
 `coverage/README.md` contract contains one `Area | Coverage | Evidence` table
 with `MAPPED`, `INVENTORIED`, `DECOMPOSED`, `DEFERRED`, or `OUT` dispositions.
 `MAPPED` is nonterminal. `INVENTORIED` is the terminal disposition for exact
@@ -1144,6 +1150,21 @@ workflow does not resolve wanted targets yet: Batteries declares every
 placeholder `private`, so that audit reports a `lean:` name naming one as not a
 declaration of the Lean build, as it does for any `private` declaration.
 
+### Warnings
+
+A finding is a problem the audit fails on. A warning tells the agent about code
+it may decide to leave alone, and never fails the audit: `clean` and the exit
+status depend on findings alone, so a repository that passes keeps passing when
+a warning appears. The text output prints a
+`warning: <path>: <code>: <message>` line for each, after the error lines.
+`--json` lists them after `findings` as `warnings`, sorted by `article_path`
+and `code`. Each also carries a `message` and `declarations`, one object per
+affected declaration and setting with its `name`, `option`, `value`,
+`location` (the `set_option` as `path:line` relative to the Lean root), and
+`scope` (`file`, `section`, `declaration`, or `proof`), sorted by name. The
+catalog limit warnings under [Elaboration limits](#elaboration-limits) are the
+only warnings so far.
+
 ### Structure
 
 Containment is inferred from nested `README.md` articles, so a chapter
@@ -1181,8 +1202,9 @@ rejected on that evidence.
 
 With `--lean-root`, the audit reads the `maxHeartbeats`,
 `synthInstance.maxHeartbeats`, and `maxRecDepth` settings each resolved `lean:`
-target is elaborated under. `lean-target-unbounded-limit` reports a target with
-no heartbeat limit: a `set_option maxHeartbeats 0` or
+target is elaborated under, including a catalog's. For a declaration article,
+`lean-target-unbounded-limit` reports a target with no heartbeat limit: a
+`set_option maxHeartbeats 0` or
 `set_option synthInstance.maxHeartbeats 0` in force at the declaration or inside
 its proof, which lets elaboration run indefinitely instead of failing.
 `lean-target-unscoped-limit` reports a target whose raised limit comes from a
@@ -1194,6 +1216,15 @@ not reported. The pass is lexical: it follows `namespace`, `mutual`, `end`, and
 `section` nesting, including `noncomputable section` and the module system's
 `@[expose] public section`, and treats an indented `set_option` as part of the
 proof above it.
+
+A catalog inventories code that already exists, so its declarations get the
+same two checks as [warnings](#warnings), at most one per catalog and code:
+`catalog-unbounded-limit` and `catalog-unscoped-limit`. The message counts the
+affected declarations against all the resolved ones the catalog names, names
+the options involved, and locates the `set_option` of the first by name, for
+example `2 of 40 catalogued declarations have no maxHeartbeats limit
+(Inv.alpha at Inv.lean:1 and 1 more); set a finite limit`. A name that does not
+resolve is a `lean-target-not-found` finding and is not counted.
 
 ATLAS v1, built with Autoform, shows what accumulates without this check: 901
 raised `maxHeartbeats` settings, 497 of them file- or section-wide and 9 of them
@@ -1803,14 +1834,14 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
    other article's `lean:` names it, and drop it from R's `lean:` in the same
    commit. `contained` is not enough: it ignores R's own declarations, such as
    an X' built from X.
-5. `autoform audit --lean-root` reports `lean-target-deprecated` for an article
-   whose `lean:` names a declaration with `deprecated` in its own `@[...]`
-   attribute list; point it at the replacement. The check is lexical, so it
-   misses a later `attribute [deprecated] X`, which the deprecated list of
-   `work impact` does see. Under the open policy the finding is expected for a
-   superseded X that step 2 keeps in R's `lean:` until step 4, so `autoform
-   audit --lean-root` and `autoform doctor --lean-root` fail in that window by
-   design, while CI, which runs neither, passes.
+5. `autoform audit --lean-root` reports `lean-target-deprecated` for a
+   declaration article whose `lean:` names a declaration with `deprecated` in
+   its own `@[...]` attribute list; point it at the replacement. The check is
+   lexical, so it misses a later `attribute [deprecated] X`, which the
+   deprecated list of `work impact` does see. Under the open policy the finding
+   is expected for a superseded X that step 2 keeps in R's `lean:` until step 4,
+   so `autoform audit --lean-root` and `autoform doctor --lean-root` fail in
+   that window by design, while CI, which runs neither, passes.
 6. When Roadmap revises an article, its statement text or only its Lean, it
    records the decision and retracts the article: it replaces `statement:
    formalized` with `statement: retracted`, removes `proof: formalized`, and

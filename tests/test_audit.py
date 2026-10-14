@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 import autoform_cli.audit as audit_module
-from autoform_cli.audit import audit_blueprint, audit_graph
-from autoform_cli.elaboration_limits import limits_in_force
+from autoform_cli.audit import AuditWarning, DeclarationLimit, audit_blueprint, audit_graph
+from autoform_cli.elaboration_limits import limits_by_line, limits_in_force
 from autoform_cli.graph import Graph, Node, load_graph
 from autoform_cli.lean import LeanSourceError
 
@@ -867,6 +867,129 @@ def test_the_limit_scan_reads_commands_at_the_declaration_s_indentation() -> Non
 
     assert found(3) == [("maxHeartbeats", 800000, "section")]
     assert found(6) == [("maxHeartbeats", 0, "declaration"), ("maxRecDepth", 2000, "proof")]
+
+
+def test_the_limit_scan_reads_several_indentations_in_one_batch() -> None:
+    # A catalog asks for all its declarations in a file at once, and this file
+    # indents the one inside its namespace.
+    lines = [
+        "set_option maxHeartbeats 800000",
+        "namespace Project",
+        "  set_option maxRecDepth 4096",
+        "  theorem inner : True := by",
+        "    set_option maxHeartbeats 0 in",
+        "    trivial",
+        "end Project",
+        "set_option synthInstance.maxHeartbeats 0 in",
+        "theorem outer : True := trivial",
+    ]
+    found = limits_by_line(lines, (4, 9))
+
+    def settings(line: int) -> list[tuple[str, int, int, str]]:
+        return [(setting.option, setting.value, setting.line, setting.scope) for setting in found[line]]
+
+    assert settings(4) == [
+        ("maxHeartbeats", 800000, 1, "file"),
+        ("maxRecDepth", 4096, 3, "section"),
+        ("maxHeartbeats", 0, 5, "proof"),
+    ]
+    assert settings(9) == [
+        ("maxHeartbeats", 800000, 1, "file"),
+        ("synthInstance.maxHeartbeats", 0, 8, "declaration"),
+    ]
+
+
+def test_audit_warns_once_per_catalog_and_code_about_elaboration_limits(tmp_path: Path) -> None:
+    """A catalog inventories code that already exists, so its limits never fail the audit.
+
+    By path, inventory-extra.md sorts before inventory.md, although node
+    inventory sorts before node inventory-extra.
+    """
+    blueprint = tmp_path / "blueprint"
+    _coverage(
+        blueprint,
+        "| Area | Coverage | Evidence |\n"
+        "| --- | --- | --- |\n"
+        "| Existing module | INVENTORIED | [Inventory](../roadmap/inventory.md), "
+        "[Extra](../roadmap/inventory-extra.md), [Scoped](../roadmap/scoped.md) |",
+    )
+    ledger = blueprint / "sources" / "ledger.md"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text("# Module declarations\n", encoding="utf-8")
+    catalogs = {
+        # A name listed twice counts once, and one that does not resolve not at all.
+        "inventory.md": "Inv.delta Inv.alpha Inv.gamma Inv.beta Inv.alpha Inv.missing",
+        "inventory-extra.md": "Inv.gamma Inv.alpha",
+        "scoped.md": "Inv.gamma",
+    }
+    for relative, names in catalogs.items():
+        _article(blueprint, relative, catalog="module", lean=names, sources=("../sources/ledger.md",))
+    _article(blueprint, "beta.md", declaration="theorem", statement="formalized", lean="Inv.beta")
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    source = [
+        "set_option maxHeartbeats 800000",
+        "namespace Inv",
+        "theorem alpha : True := trivial",
+        "set_option synthInstance.maxHeartbeats 0 in",
+        "theorem beta : True := trivial",
+        "set_option maxHeartbeats 400000 in",
+        "theorem gamma : True := trivial",
+        "section",
+        "set_option maxRecDepth 4096",
+        "theorem delta : True := by",
+        "  set_option maxHeartbeats 0 in",
+        "  trivial",
+        "end",
+        "end Inv",
+    ]
+    (lean_root / "Inv.lean").write_text("\n".join(source) + "\n", encoding="utf-8")
+
+    result = audit_blueprint(blueprint, lean_root=lean_root)
+
+    # A declaration article's limits stay findings.
+    assert [(finding.article_path, finding.code) for finding in result.findings] == [
+        ("roadmap/beta.md", "lean-target-unbounded-limit"),
+        ("roadmap/beta.md", "lean-target-unscoped-limit"),
+        ("roadmap/inventory.md", "lean-target-not-found"),
+    ]
+
+    def limit(name: str, option: str, value: int, line: int, scope: str) -> DeclarationLimit:
+        return DeclarationLimit(f"Inv.{name}", option, value, f"Inv.lean:{line}", scope)
+
+    file_wide = ("maxHeartbeats", 800000, 1, "file")
+    inherit = "catalogued declarations inherit a file- or section-wide raised"
+    assert result.warnings == (
+        AuditWarning(
+            "roadmap/inventory-extra.md",
+            "catalog-unscoped-limit",
+            "1 of 2 catalogued declarations inherits a file- or section-wide raised maxHeartbeats limit "
+            "(Inv.alpha at Inv.lean:1); put `set_option maxHeartbeats N in` on the declarations that need it",
+            (limit("alpha", *file_wide),),
+        ),
+        AuditWarning(
+            "roadmap/inventory.md",
+            "catalog-unbounded-limit",
+            "2 of 4 catalogued declarations have no maxHeartbeats limit or no synthInstance.maxHeartbeats "
+            "limit (Inv.beta at Inv.lean:4 and 1 more); set a finite limit",
+            (
+                limit("beta", "synthInstance.maxHeartbeats", 0, 4, "declaration"),
+                limit("delta", "maxHeartbeats", 0, 11, "proof"),
+            ),
+        ),
+        AuditWarning(
+            "roadmap/inventory.md",
+            "catalog-unscoped-limit",
+            f"3 of 4 {inherit} maxHeartbeats or maxRecDepth limit (Inv.alpha at Inv.lean:1 and 2 more); "
+            "put `set_option maxHeartbeats N in` or `set_option maxRecDepth N in` on the declarations that need it",
+            (
+                limit("alpha", *file_wide),
+                limit("beta", *file_wide),
+                limit("delta", *file_wide),
+                limit("delta", "maxRecDepth", 4096, 9, "section"),
+            ),
+        ),
+    )
 
 
 def test_audit_reads_deprecation_from_the_captured_source_generation(

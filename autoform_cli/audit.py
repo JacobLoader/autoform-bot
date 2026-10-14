@@ -16,7 +16,7 @@ from pathlib import Path
 
 from . import status
 from .coverage import CoverageSummary, load_coverage, validate_coverage_roles
-from .elaboration_limits import limits_in_force
+from .elaboration_limits import LimitSetting, limits_by_line, limits_in_force
 from .graph import (
     IMPLEMENTATION_NOTES_DIR,
     Graph,
@@ -112,16 +112,39 @@ class AuditFinding:
     reason: str
 
 
+@dataclass(frozen=True, order=True, slots=True)
+class DeclarationLimit:
+    """One elaboration-limit setting a catalogued declaration is elaborated under."""
+
+    name: str
+    option: str
+    value: int
+    #: The ``set_option``'s ``path:line``, relative to the Lean root.
+    location: str
+    scope: str
+
+
+@dataclass(frozen=True, order=True, slots=True)
+class AuditWarning:
+    """Information about an article that the audit reports but never fails on."""
+
+    article_path: str
+    code: str
+    message: str
+    declarations: tuple[DeclarationLimit, ...]
+
+
 @dataclass(frozen=True, slots=True)
 class AuditResult:
     """The complete, canonically ordered result of one audit."""
 
     findings: tuple[AuditFinding, ...] = ()
     coverage: CoverageSummary | None = None
+    warnings: tuple[AuditWarning, ...] = ()
 
     @property
     def clean(self) -> bool:
-        """Whether the audit found no roadmap problems."""
+        """Whether the audit found no roadmap problems; warnings do not count."""
 
         return not self.findings
 
@@ -132,6 +155,7 @@ class AuditResult:
             "clean": self.clean,
             "coverage": self.coverage.as_dict() if self.coverage is not None else None,
             "findings": [asdict(finding) for finding in self.findings],
+            "warnings": [asdict(warning) for warning in self.warnings],
         }
 
     def to_json(self) -> str:
@@ -331,9 +355,10 @@ def audit_graph(
     findings.extend(coverage_findings)
     if coverage is not None:
         findings.extend(_coverage_role_findings(graph, coverage))
+    warnings: list[AuditWarning] = []
     if lean_root is not None:
-        findings.extend(_lean_findings(graph, lean_root))
-    return _result(findings, coverage=coverage)
+        findings.extend(_lean_findings(graph, lean_root, warnings=warnings))
+    return _result(findings, coverage=coverage, warnings=warnings)
 
 
 @dataclass(frozen=True, slots=True)
@@ -466,7 +491,14 @@ def _coverage_role_findings(
     ]
 
 
-def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
+def _lean_findings(
+    graph: Graph,
+    lean_root: str | Path,
+    *,
+    warnings: list[AuditWarning] | None = None,
+) -> list[AuditFinding]:
+    """Check every article's Lean targets, adding catalog warnings to *warnings* if given."""
+
     try:
         root = resolve_lean_root(lean_root)
     except LeanSourceError as error:
@@ -494,6 +526,7 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
     spans = _source_spans(index)
     sizes: dict[str, int] = {}
     sources = _captured_source_lines(snapshot.source_files)
+    catalogs: dict[str, tuple[Declaration, ...]] = {}
     for node_id in sorted(graph.nodes):
         node = graph.nodes[node_id]
         article_path = _relative_path(node.path, graph.blueprint_dir)
@@ -535,9 +568,11 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
                     )
 
         # Catalog declarations must resolve like every other asserted Lean
-        # target. Only declaration-specific policy is inapplicable to a
-        # non-dispatchable inventory container.
+        # target. A catalog inventories code that already exists, so its
+        # limits are only warnings, and declaration-specific policy is
+        # inapplicable to a non-dispatchable inventory container.
         if node.catalog is not None:
+            catalogs[article_path] = tuple(dict.fromkeys(resolved))
             continue
 
         for declaration in resolved:
@@ -568,6 +603,8 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
             sizes[node_id] = sum(spans[declaration.name] for declaration in resolved)
 
     findings.extend(_size_findings(graph, sizes))
+    if warnings is not None:
+        warnings.extend(_catalog_limit_warnings(catalogs, sources))
     return findings
 
 
@@ -633,7 +670,8 @@ def _limit_findings(
     findings: list[AuditFinding] = []
     for setting in limits_in_force(lines, declaration.line):
         option = f"set_option {setting.option} {setting.value}"
-        if setting.unbounded:
+        problem = _limit_problem(setting)
+        if problem == "unbounded":
             findings.append(
                 AuditFinding(
                     article_path,
@@ -642,7 +680,7 @@ def _limit_findings(
                     f"`{option}` at {location}:{setting.line}; set a finite limit",
                 )
             )
-        elif setting.raised and setting.scope in {"file", "section"}:
+        elif problem == "unscoped":
             findings.append(
                 AuditFinding(
                     article_path,
@@ -653,6 +691,65 @@ def _limit_findings(
                 )
             )
     return findings
+
+
+def _limit_problem(setting: LimitSetting) -> str | None:
+    """Classify a limit setting as ``unbounded``, ``unscoped``, or ``None`` when it is accepted.
+
+    Declaration findings and catalog warnings share this one rule.
+    """
+
+    if setting.unbounded:
+        return "unbounded"
+    if setting.raised and setting.scope in {"file", "section"}:
+        return "unscoped"
+    return None
+
+
+def _catalog_limit_warnings(
+    catalogs: dict[str, tuple[Declaration, ...]],
+    sources: dict[Path, list[str] | None],
+) -> list[AuditWarning]:
+    """Aggregate what :func:`_limit_findings` reports into one warning per catalog and code.
+
+    A catalog can name thousands of declarations, so each file is read once.
+    """
+
+    starts: dict[Path, set[int]] = {}
+    for declarations in catalogs.values():
+        for declaration in declarations:
+            starts.setdefault(declaration.path, set()).add(declaration.line)
+    in_force = {path: limits_by_line(sources.get(path) or [], numbers) for path, numbers in starts.items()}
+    warnings: list[AuditWarning] = []
+    for article_path, declarations in catalogs.items():
+        affected: dict[str, list[DeclarationLimit]] = {}
+        for declaration in declarations:
+            for setting in in_force[declaration.path].get(declaration.line, ()):
+                problem = _limit_problem(setting)
+                if problem is None:
+                    continue
+                location = f"{declaration.path.as_posix()}:{setting.line}"
+                affected.setdefault(problem, []).append(
+                    DeclarationLimit(declaration.name, setting.option, setting.value, location, setting.scope)
+                )
+        noun = "declaration" if len(declarations) == 1 else "declarations"
+        for problem, entries in affected.items():
+            entries.sort(key=lambda entry: entry.name)
+            count = len({entry.name for entry in entries})
+            options = sorted({entry.option for entry in entries})
+            example = f"{entries[0].name} at {entries[0].location}" + (f" and {count - 1} more" if count > 1 else "")
+            if problem == "unbounded":
+                verb = "has" if count == 1 else "have"
+                summary = f"{verb} " + " or ".join(f"no {option} limit" for option in options)
+                action = "set a finite limit"
+            else:
+                verb = "inherits" if count == 1 else "inherit"
+                summary = f"{verb} a file- or section-wide raised {' or '.join(options)} limit"
+                wrappers = " or ".join(f"`set_option {option} N in`" for option in options)
+                action = f"put {wrappers} on the declarations that need it"
+            message = f"{count} of {len(declarations)} catalogued {noun} {summary} ({example}); {action}"
+            warnings.append(AuditWarning(article_path, f"catalog-{problem}-limit", message, tuple(entries)))
+    return warnings
 
 
 def _source_spans(index: SourceIndex) -> dict[str, int]:
@@ -737,8 +834,9 @@ def _result(
     findings: list[AuditFinding],
     *,
     coverage: CoverageSummary | None = None,
+    warnings: list[AuditWarning] | None = None,
 ) -> AuditResult:
-    return AuditResult(tuple(sorted(set(findings))), coverage)
+    return AuditResult(tuple(sorted(set(findings))), coverage, tuple(sorted(warnings or ())))
 
 
-__all__ = ["AuditFinding", "AuditResult", "audit_blueprint", "audit_graph"]
+__all__ = ["AuditFinding", "AuditResult", "AuditWarning", "DeclarationLimit", "audit_blueprint", "audit_graph"]

@@ -629,6 +629,8 @@ def _audit(args: argparse.Namespace) -> int:
             )
         for finding in result.findings:
             print(f"error: {finding.article_path}: {finding.code}: {finding.reason}")
+        for warning in result.warnings:
+            print(f"warning: {warning.article_path}: {warning.code}: {warning.message}")
     return 0 if result.clean else 1
 
 
