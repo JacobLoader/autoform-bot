@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 import autoform_cli.lean as lean_module
-from autoform_cli import __main__ as cli, claims, skeleton
+from autoform_cli import __main__ as cli, claims, runtime, skeleton
 from autoform_cli import _tree_snapshot as tree_snapshot_module
 from autoform_cli._tree_snapshot import TreeChangedError
 from autoform_cli.impact import (
@@ -35,7 +35,6 @@ from autoform_cli.impact import (
     revision_impact,
 )
 from autoform_cli.lean import snapshot_project_sources
-from autoform_cli.runtime import load_runtime_graph
 from autoform_cli.skeleton import LeanLibrary, SkeletonError, lean_libraries
 from autoform_cli.work import work_context
 
@@ -2308,27 +2307,23 @@ def _rewrite_base(project: Path) -> None:
     _write_article(project, "base.md", metadata=metadata, title="Base, revised")
 
 
-def _delete_empty(project: Path) -> None:
-    (project / "blueprint/roadmap/chapter/empty.md").unlink()
-
-
-@pytest.mark.parametrize(("selector", "change"), [("chapter/base", _rewrite_base), ("chapter/empty", _delete_empty)])
-def test_revision_impact_refuses_a_roadmap_that_changes_while_it_is_read(
-    tmp_path: Path, monkeypatch, selector: str, change
-) -> None:
+def test_revision_impact_reads_the_roadmap_once_before_the_probe(tmp_path: Path, monkeypatch) -> None:
     project = _blueprint_project(tmp_path, "Demo")
     lean_root = _stub_lean_root(tmp_path)
     calls = _stub_probe(monkeypatch)
+    build = runtime.build_runtime_graph
+    probes_before_each_read = []
 
-    def changed(target: Path):
-        change(project)
-        return load_runtime_graph(target)
+    def counted(*args, **kwargs):
+        probes_before_each_read.append(len(calls))
+        return build(*args, **kwargs)
 
-    monkeypatch.setattr("autoform_cli.impact.load_runtime_graph", changed)
+    monkeypatch.setattr(runtime, "build_runtime_graph", counted)
 
-    with pytest.raises(ImpactError, match="^the roadmap changed while it was read; rerun the command$"):
-        revision_impact(project, selector, lean_root=lean_root)
-    assert calls == []
+    revision_impact(project, "chapter/base", lean_root=lean_root)
+
+    # One read selects the article; the read after the probe checks that the roadmap held still.
+    assert probes_before_each_read == [0, 1]
 
 
 def test_revision_impact_refuses_a_roadmap_that_changes_during_the_probe(
