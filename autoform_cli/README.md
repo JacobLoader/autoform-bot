@@ -1239,6 +1239,10 @@ first 12 characters of the revision, and `usable` or `not usable: REASON`.
 `name`, `type`, `revision`, `index` (whether the checkout holds an index
 file), `usable`, and `reason` (`null` when usable).
 Neither command starts a process or writes a file.
+A search without `--library` whose project locks a package with an index file
+adds one `note:` line on stderr naming the package and the flags that search
+it; stdout, the JSON and the exit status are unchanged. The note only checks
+that the file exists, so `library list` still decides whether it is usable.
 
 The index is the file `autoform-library-index.jsonl` at the package root, or
 the file given as `--library NAME=PATH`. Its format,

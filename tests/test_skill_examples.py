@@ -1197,6 +1197,25 @@ def test_skills_search_the_blueprint_before_adding_a_result(repo_root: Path) -> 
     assert "duplicate" in rubric and "not proof" in rubric
 
 
+def test_roadmap_states_the_library_search_without_the_link(repo_root: Path) -> None:
+    """Roadmap carries the library flags itself, not only behind the link to the rules.
+
+    In trials, Roadmap agents never opened the linked rules: one never learned
+    `--library`, another searched once and, finding the new project's blueprint
+    empty, wrote every article without searching the library that proved them.
+    """
+
+    blocks = (repo_root / "skills/roadmap/SKILL.md").read_text(encoding="utf-8").split("\n\n")
+    search = next(" ".join(block.split()) for block in blocks if "`autoform search`" in block)
+    flat = " ".join("\n\n".join(blocks).split())
+
+    assert "`autoform library list .`" in search
+    assert "`--library NAME --lean-root .`" in search
+    assert "even while the blueprint is empty" in search
+    assert "library search rules" in search  # the details still live once, behind the link
+    assert "Search the pinned Mathlib checkout and every usable shared library before planning a replacement" in flat
+
+
 def test_skills_search_shared_libraries_and_say_what_to_do_with_a_hit(repo_root: Path) -> None:
     """A library hit prevents a second proof only if the agent searches the library and knows what to do.
 

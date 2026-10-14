@@ -355,6 +355,59 @@ def test_search_cli_without_library_is_unchanged_by_this_feature(tmp_path: Path,
     assert "libraries" not in payload
 
 
+def test_search_cli_without_library_notes_a_package_that_publishes_an_index(tmp_path: Path, capsys) -> None:
+    # An agent that searched only the blueprint read "no match" as "new": the
+    # note names the library it skipped and how to search it.
+    library = _library(tmp_path, declaration())
+
+    assert cli.main(_cli(library, "separating")) == 0
+    captured = capsys.readouterr()
+
+    assert "note:" not in captured.out
+    assert captured.err == (
+        "note: atlas publishes a search index this search did not read; search it too with "
+        f"--lean-root {library.project} --library atlas\n"
+    )
+
+
+def test_search_cli_notes_the_library_on_stderr_and_keeps_the_json(tmp_path: Path, capsys) -> None:
+    library = _library(tmp_path, declaration())
+
+    assert cli.main([*_cli(library, "separating"), "--json"]) == 0
+    captured = capsys.readouterr()
+
+    assert json.loads(captured.out)["schema"] == "autoform-search/v1"
+    assert "--library atlas" in captured.err
+
+
+def test_search_cli_notes_the_library_for_a_blueprint_target_without_lean_root(tmp_path: Path, capsys) -> None:
+    library = _library(tmp_path, declaration())
+
+    assert cli.main(["search", str(library.project / "blueprint"), "separating"]) == 0
+
+    assert f"--lean-root {library.project} --library atlas" in capsys.readouterr().err
+
+
+def test_search_cli_has_no_note_when_the_library_is_searched(tmp_path: Path, capsys) -> None:
+    library = _library(tmp_path, declaration())
+
+    assert cli.main([*_cli(library, "separation"), "--library", "atlas"]) == 0
+
+    assert "note:" not in capsys.readouterr().err
+
+
+def test_search_cli_has_no_note_without_an_indexed_package(tmp_path: Path, capsys) -> None:
+    library = _library(tmp_path, declaration())
+    (library.root / "autoform-library-index.jsonl").unlink()
+
+    assert cli.main(_cli(library, "separating")) == 0
+    assert "note:" not in capsys.readouterr().err
+
+    _project(tmp_path / "plain")  # a blueprint with no Lake project at all
+    assert cli.main(["search", str(tmp_path / "plain" / "project"), "separating"]) == 0
+    assert capsys.readouterr().err == ""
+
+
 def test_search_cli_emits_v2_json_with_a_library(tmp_path: Path, capsys) -> None:
     library = _library(tmp_path, declaration())
 
