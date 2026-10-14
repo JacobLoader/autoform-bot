@@ -625,9 +625,11 @@ def test_portable_capture_sanitizes_unsupported_reparse_points(
     assert "private" not in str(caught.value)
 
 
-def test_descriptor_capture_releases_its_state_without_cyclic_gc(
+@pytest.mark.parametrize("portable", [False, True])
+def test_capture_releases_its_state_without_cyclic_gc(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    portable: bool,
 ) -> None:
     root = tmp_path / "tree"
     root.mkdir()
@@ -637,13 +639,15 @@ def test_descriptor_capture_releases_its_state_without_cyclic_gc(
     # its include callable, alive until the cyclic collector runs.
     released = weakref.ref(selection.include)
 
+    enabled = gc.isenabled()
     gc.disable()
     try:
-        snapshot = _capture(root, selection, portable=False, monkeypatch=monkeypatch)
+        snapshot = _capture(root, selection, portable=portable, monkeypatch=monkeypatch)
         del selection
         assert released() is None
     finally:
-        gc.enable()
+        if enabled:
+            gc.enable()
 
     assert snapshot.files == (("payload", b"payload"),)
 
