@@ -947,7 +947,11 @@ rolled-up containment level,
 missing or multiple H1 titles, unsupported frontmatter keys, assertion values
 it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
-`mathlib: true`. With `--lean-root` it also fails on a `lean:` name
+`mathlib: true`. An inline `## Sources` link to a local path must name a file
+inside the blueprint, as `audit` also requires: a missing file, a directory, an
+invalid path, or a target outside the blueprint fails, and `audit` alone checks
+fragments and links with other schemes. With `--lean-root`
+it also fails on a `lean:` name
 absent from the sources, as `leanblueprint checkdecls` does for LaTeX
 blueprints. It validates structure and leaves mathematical correctness to the
 agent and the Lean kernel.
@@ -1619,6 +1623,23 @@ when it is refused, release everything already held and retry with the whole
 set, never holding some claims while waiting for others. The CLI does not
 enforce the rule; it is what keeps two multi-article revisions from
 deadlocking.
+
+A Git process that stops while updating a claim ref leaves a lock file in the
+board, and Git then refuses the updates it guards:
+`refs/autoform-claims/<key>.lock` blocks that claim, `packed-refs.lock` blocks
+every release, and on a board in the reftable ref format
+`reftable/tables.list.lock` blocks every claim update. On a board given as a
+local path, or as a `file://` URL except on Windows, a command whose push such
+a file still blocks two seconds later exits 1 naming the file and when it was
+modified; a lock that goes away within those two seconds counts as a lost race.
+On such a board, `claim cleanup` leaves a lease whose release a lock file
+blocks in place and still exits 0, and `claim list` and `claim cleanup` warn on
+stderr about each lock file not modified within two seconds of the current
+time. Git records no owner for a lock file, so Autoform never deletes one: once
+no Git process is using the board, delete the file and retry. Over any other
+transport the board's files are not visible, so a lock file there shows up as a
+lost race or as Git's own error, depending on the file, the operation and the
+server's Git version, and Git's error also stops `claim cleanup`.
 
 Claims are temporary operational state, never article frontmatter.
 

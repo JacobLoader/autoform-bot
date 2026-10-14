@@ -114,7 +114,9 @@ jobs:
         env:
           AUTOFORM_REQUIRE_REAL_LEAN_TESTS: "1"
       - name: Run the LSP lifecycle and diagnostics checks against real Lean
-        run: timeout --signal=TERM --kill-after=30s 10m uv run pytest -q tests/test_lsp_protocol.py -k real_lean
+        run: >-
+          timeout --signal=TERM --kill-after=30s 10m uv run pytest -q -k real_lean
+          tests/test_lsp_protocol.py tests/test_batch_diagnostics.py
         env:
           AUTOFORM_REQUIRE_REAL_LEAN_TESTS: "1"
           AUTOFORM_REAL_LEAN_MATHLIB_PROJECT: ${{ runner.temp }}/autoform-created-project
