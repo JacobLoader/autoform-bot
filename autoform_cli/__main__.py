@@ -137,6 +137,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     project_new.add_argument(
+        "--library",
+        metavar="NAME",
+        help=(
+            "shared Lean library from the bundled library catalog to require at its pinned commit; "
+            "it selects the release, so it combines with no version option"
+        ),
+    )
+    project_new.add_argument(
         "--autoform-source",
         default="",
         help=(
@@ -675,6 +683,7 @@ def _project(args: argparse.Namespace) -> int:
                     mathlib_rev=args.mathlib_rev,
                     autoform_source=args.autoform_source,
                     autoform_ref=args.autoform_ref,
+                    library=args.library,
                 )
             except KeyboardInterrupt:
                 # An interrupt during create_project's final cleanup can follow a
@@ -696,6 +705,9 @@ def _project(args: argparse.Namespace) -> int:
             else:
                 label = result.release or f"unlisted: {result.lean_toolchain}, Mathlib {result.mathlib_rev}"
                 print(_ascii_text(f"Created {result.package} at {result.target} ({label})"))
+                if result.library is not None:
+                    library = result.library
+                    print(_ascii_text(f"Library: {library.name} @ {library.commit} ({library.git})"))
                 # Flush first so the warnings never appear ahead of the line they qualify.
                 sys.stdout.flush()
                 for code, message in result.warnings:

@@ -2205,3 +2205,23 @@ def test_malformed_library_entries_are_refused_before_writing(
 ) -> None:
     monkeypatch.setattr(create_module, "load_library_catalog", lambda: _catalog_with_packages(extra))
     _refused(tmp_path / "Project", "project-create-validation-failed", release_id=None, library="atlas")
+
+
+def test_cli_creates_a_library_project(tmp_path: Path, capsys) -> None:
+    assert main(["project", "new", str(tmp_path / "Json"), "--package", "Gauss", "--library", "atlas", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["release"] == _ATLAS_RELEASE
+    assert payload["library"] == {"git": _ATLAS_GIT, "name": "atlas", "rev": _ATLAS_COMMIT}
+
+    assert main(["project", "new", str(tmp_path / "Text"), "--package", "Gauss", "--library", "atlas"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == f"Created Gauss at Text ({_ATLAS_RELEASE})"
+    assert lines[1] == f"Library: atlas @ {_ATLAS_COMMIT} ({_ATLAS_GIT})"
+
+
+def test_cli_refuses_a_library_with_a_release(tmp_path: Path, capsys) -> None:
+    target = tmp_path / "Gauss"
+    argv = ["project", "new", str(target), "--package", "Gauss", "--library", "atlas", "--release", _ATLAS_RELEASE]
+    assert main([*argv, "--json"]) == 1
+    assert json.loads(capsys.readouterr().out)["error"]["code"] == "project-version-invalid"
+    assert not target.exists()
