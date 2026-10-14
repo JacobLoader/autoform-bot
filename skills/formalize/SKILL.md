@@ -46,22 +46,23 @@ and `revision` it is dispatched for. A new worktree has no `.lake`: in a Mathlib
 project, run `lake exe cache get` once in the lead's checkout before creating
 worktrees, rerunning it there if it fails, then in each worktree before its
 first build or Lean tool call, so the worktrees unpack from a full cache instead
-of downloading into it together.
+of downloading into it together. If it still fails, tell the user before
+creating worktrees, since each would then fetch or build Mathlib on its own.
 
 Claims are optional. Within one run the lead keeps its workers apart, so the run
 needs none: no two workers, the lead included, hold the same target at once. A
-worker holds its article's `claim_target` and the `claim_targets` it reported
-until its work lands or it abandons the leaf without a candidate, so a handoff
-keeps them. A subagent that must edit beyond what it holds, for an import edit,
-a revision, a revision's grown `claim_targets`, or an article its import edit
-broke, reports the new targets to the lead before editing, and goes ahead only
-once the lead confirms that no other worker holds them. A subagent that cannot
-wait for the lead's answer stops and reports instead, and the lead answers when
-it dispatches the leaf again. A worker does not hold its import edit's
-`affected_claim_targets`, but the lead checks them when it confirms the edit's
-new targets and again before the edit lands; one that another worker holds is an
-active conflict. If workers would wait on each other, the lead has one of them
-give up what it holds.
+worker holds its article's `claim_target` and the `claim_targets` the lead
+confirmed until its work lands or it abandons the leaf without a candidate, so a
+handoff keeps them. A subagent that must edit beyond what it holds, for an
+import edit, a revision, a revision's grown `claim_targets`, or an article its
+import edit broke, reports the new targets to the lead before editing, and goes
+ahead only once the lead confirms that no other worker holds them. A subagent
+that cannot wait for the lead's answer commits its work, stops and reports
+instead, and the lead answers when it dispatches the leaf again from that
+commit. A worker does not hold its import edit's `affected_claim_targets`, but
+the lead checks them when it confirms the edit's new targets and again before
+the edit lands; one that another worker holds is an active conflict. If workers
+would wait on each other, the lead has one of them give up what it holds.
 
 Use claims only when other people or sessions may work on the same project at
 the same time, or when the user asks for them. A claim excludes only workers
@@ -73,17 +74,18 @@ follow the [claim rules](references/claims.md) at each step.
 
 Lean imports are allowed; do not pre-block a proof because it needs one. Before
 an effective module header or import change, run `autoform work import-impact`
-as documented in the CLI reference, and when the run uses claims, follow the
-[import claims](references/claims.md#import-edits) from then on. Capture
-baseline skeleton evidence for its currently built, named affected articles. The
-report covers added imports, so when an edit removes an import, also baseline
-the articles of modules only that import kept in the build. The report's
-affected articles are not a lock. Do not acquire or edit them merely because
-they are listed; treat reported unresolved declarations as unknown validation
-scope, not proof they are unaffected. Disclosure alone is not a conflict or
-failed validation. After rebuilding, repeat the skeleton evidence and use Agent
-Review to judge semantic changes. If any article actually needs changes, then
-repair each under the review gates of the [revision
+as documented in the CLI reference. When the run uses claims, follow the [import
+claims](references/claims.md#import-edits) from then on; otherwise send the lead
+the report's `claim_targets` and `affected_claim_targets` and wait for its
+answer, as above. Capture baseline skeleton evidence for its currently built,
+named affected articles. The report covers added imports, so when an edit
+removes an import, also baseline the articles of modules only that import kept
+in the build. The report's affected articles are not a lock. Do not acquire or
+edit them merely because they are listed; treat reported unresolved declarations
+as unknown validation scope, not proof they are unaffected. Disclosure alone is
+not a conflict or failed validation. After rebuilding, repeat the skeleton
+evidence and use Agent Review to judge semantic changes. If any article actually
+needs changes, then repair each under the review gates of the [revision
 contract](../../autoform_cli/README.md#revision-contract). Stop for an active
 conflict (an affected target another worker holds, or another owner's live claim
 on one) or failed validation, not for a blanket import rule.
@@ -197,13 +199,13 @@ prior art, friction, partial progress, and, after a useful failed route,
 distilled reusable evidence (the remaining goal, checked lemmas, and next
 route), never a transcript or retry counter, and never a secret or machine-local
 path. The durable ID keeps the note with an article when its roadmap path moves,
-and one file per article avoids cross-worker merge hotspots. Move
-still-useful notes already in the article there and drop the rest. Delete the
-file once the article is proved; an empty file fails `autoform check`. Never
-link the hidden note from an article, because publication omits it. A missing
-prerequisite, an incorrect decomposition, a change another article needs beyond
-an import repair, or a proof recorded without its statement returns to Roadmap
-instead of silently changing the DAG.
+and one file per article avoids cross-worker merge hotspots. Move still-useful
+notes already in the article there and drop the rest. Delete the file once the
+article is proved; an empty file fails `autoform check`. Never link the hidden
+note from an article, because publication omits it. A missing prerequisite, an
+incorrect decomposition, a change another article needs beyond an import repair,
+or a proof recorded without its statement returns to Roadmap instead of silently
+changing the DAG.
 
 Run `autoform check <PROJECT>/blueprint --lean-root <PROJECT>` and `autoform
 audit <PROJECT>/blueprint --lean-root <PROJECT>`. Resolve every finding this
@@ -224,10 +226,13 @@ integration changed the candidate, repeat the review, check, and audit. For an
 import edit, also re-run `autoform work import-impact` on the result; if
 integration brought in a change to an article it lists as affected, that changed
 the candidate too, so capture a fresh baseline of that article on the shared
-branch. For a revision, also re-run `autoform work impact` on the rebuilt result
-and repair any new targets before landing. Without authority to update or push
-the shared branch, or when integration fails, report the branch and commit for
-handoff. When the run uses claims, the [claim
+branch. Then send the lead that report's `affected_claim_targets`, and land the
+edit only once the lead confirms that no other worker holds them; a subagent
+that cannot wait reports the branch and commit for handoff instead. For a
+revision, also re-run `autoform work impact` on the rebuilt result and repair
+any new targets before landing. Without authority to update or push the shared
+branch, or when integration fails, report the branch and commit for handoff.
+When the run uses claims, the [claim
 rules](references/claims.md#integration-and-handoff) say how to renew, keep,
 hand off, and release the claim set.
 

@@ -905,14 +905,14 @@ autoform claim release af_5b0e4d3c2a1f09e8d7c6b5a4
 autoform claim acquire af_5b0e4d3c2a1f09e8d7c6b5a4 af_0123456789abcdef01234567
 ```
 
-Claims are optional: use them when other people or sessions may work on the
-same project at the same time, or when the user asks. A single Formalize run
-needs none, because its lead keeps its workers apart. A claim excludes only
-workers that also claim, so on a shared project every worker uses them. Claim
-an article by the `claim_target` that `work context` reports. The board
-hashes whatever string it is given, so a claim on an article's path ID and one
-on its `article_id` do not exclude each other. Each concurrent agent needs its
-own worker ID, because a second acquire by the same owner succeeds. Where shell
+Claims are optional: use them when other people or sessions may work on the same
+project at the same time, or when the user asks. A single Formalize run needs
+none, because its lead keeps its workers apart. A claim excludes only workers
+that also claim, so on a shared project every worker uses them. Claim an article
+by the `claim_target` that `work context` reports. The board hashes whatever
+string it is given, so a claim on an article's path ID and one on its
+`article_id` do not exclude each other. Each concurrent agent needs its own
+worker ID, because a second acquire by the same owner succeeds. Where shell
 state does not persist between commands, as in agent tool calls, pass it with
 `--worker-id` on every command instead of exporting `AUTOFORM_WORKER_ID` once.
 Leases expire after 1500 seconds unless `--ttl` sets another length. Renew well
@@ -1753,14 +1753,15 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
 3. When using claims, claim the route's claim set with one
    `autoform claim acquire`. When it is refused, release everything and report
    the held claim as the blocker. After acquiring, re-run `work impact`; if the
-   set grew, release and start over with the larger set. With or without claims,
-   after rebasing onto the current shared branch and rebuilding, re-run
+   set grew, release and start over with the larger set. Without claims, a
+   Formalize subagent has its lead confirm the set instead. With or without
+   claims, after rebasing onto the current shared branch and rebuilding, re-run
    `work impact` once more; if the set grew, repair the new targets before
-   landing. When using claims, first acquire the whole larger set in one command
-   under the no-hold-and-wait rule of the [claim contract](#claim-contract).
-   Under the open policy, reproduce the CI audit as [open
-   statements](#open-statements) shows before landing. Land one commit, then
-   release any claims.
+   landing, first acquiring the whole larger set in one command under the
+   no-hold-and-wait rule of the [claim contract](#claim-contract) when using
+   claims, or having the lead confirm the new targets without them. Under the
+   open policy, reproduce the CI audit as [open statements](#open-statements)
+   shows before landing. Land one commit, then release any claims.
 4. Contract: delete a deprecated X once it appears in `deprecated_unused` of
    `work impact R . --lean-root .`, meaning no declaration uses it and no
    other article's `lean:` names it, and drop it from R's `lean:` in the same

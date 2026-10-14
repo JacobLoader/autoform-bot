@@ -185,11 +185,12 @@ def test_import_edits_use_reported_scope_instead_of_a_blanket_ban(
 
 
 def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
-    """A run's lead keeps its workers apart, so claims are only for independent workers.
+    """A run's lead keeps its workers apart, so claims are only for other people and sessions.
 
-    A remote claim around `lake build` blocked other machines while missing the
-    real, machine-local conflict (#121): worktrees downloading into one Mathlib
-    cache at once. Builds take no claim, and the lead fills the cache first.
+    A remote claim around `lake build` made unrelated machines wait on each other,
+    while agents on one machine using different boards still downloaded into one
+    Mathlib cache at once (#121). Builds take no claim, and the lead fills the cache
+    first and stops if it cannot.
     """
 
     def read(relative: str) -> str:
@@ -201,12 +202,17 @@ def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
     assert "Within one run the lead keeps its workers apart" in formalize
     assert "no two workers, the lead included, hold the same target at once" in formalize
     assert (
-        "A worker holds its article's `claim_target` and the `claim_targets` it reported until its work lands "
-        "or it abandons the leaf without a candidate, so a handoff keeps them"
+        "A worker holds its article's `claim_target` and the `claim_targets` the lead confirmed until its work "
+        "lands or it abandons the leaf without a candidate, so a handoff keeps them"
     ) in formalize
     assert "reports the new targets to the lead before editing" in formalize
     assert "goes ahead only once the lead confirms that no other worker holds them" in formalize
-    assert "A subagent that cannot wait for the lead's answer stops and reports instead" in formalize
+    assert "A subagent that cannot wait for the lead's answer commits its work, stops and reports instead" in formalize
+    assert "the lead answers when it dispatches the leaf again from that commit" in formalize
+    assert "otherwise send the lead the report's `claim_targets` and `affected_claim_targets`" in formalize
+    assert "land the edit only once the lead confirms that no other worker holds them" in formalize
+    assert "so capture a fresh baseline of that article on the shared branch" in formalize
+    assert "If it still fails, tell the user before creating worktrees" in formalize
     assert "the lead checks them when it confirms the edit's new targets and again before the edit lands" in formalize
     assert "If workers would wait on each other, the lead has one of them give up what it holds" in formalize
     assert "re-run `autoform work import-impact` on the result; if integration brought in a change" in formalize
@@ -223,7 +229,8 @@ def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
     assert "They replace asking the lead" in " ".join(claims.split())
     headings = {line[3:].lower().replace(" ", "-") for line in claims.splitlines() if line.startswith("## ")}
     anchors = re.findall(r"references/claims\.md#([a-z-]+)", formalize)
-    assert len(anchors) == 3 and set(anchors) <= headings, anchors
+    assert set(anchors) == {"acquire-and-renew", "import-edits", "integration-and-handoff"}, anchors
+    assert set(anchors) <= headings, set(anchors) - headings
     for relative in (
         "skills/formalize/SKILL.md",
         "skills/formalize/references/claims.md",
