@@ -739,8 +739,14 @@ class ReplOutcomeUnknown(RuntimeError):
     """Raised when a request may have run but no valid response arrived.
 
     Any transport failure after the frame was fully sent raises it, including
-    unsafe stderr.
+    unsafe stderr. When the cleanup that follows fails too, the message names
+    that failure and ``cleanup_error`` carries it for callers that reword the
+    outcome.
     """
+
+    def __init__(self, message: str, cleanup_error: Exception | None = None) -> None:
+        super().__init__(message)
+        self.cleanup_error = cleanup_error
 
 
 class ReplStderrBacklog(RuntimeError):
@@ -982,7 +988,10 @@ class LeanRepl:
                             timeout=command_timeout,
                         )
                     except ReplStderrBacklog as error:
-                        # _run_io already retired the process.
+                        # _run_io already retired the process. The response
+                        # still answers the call, so only this warning records
+                        # the retirement.
+                        logger.warning("%s", error)
                         response = error.response
                     except TimeoutError:
                         # _run passes a timeout through only before the frame is fully sent.
@@ -999,14 +1008,20 @@ class LeanRepl:
                     # _run reports a timeout after dispatch as a transport
                     # failure with the budget left at dispatch.
                     message = f"Lean REPL combined command execution timed out after {budget:g} seconds"
+                    cleanup_failure = getattr(error, "cleanup_error", None)
+                    if cleanup_failure is not None:
+                        message += f"; process cleanup also failed: {cleanup_failure}"
                 else:
                     message = _with_repl_require_hint(str(error))
+                logger.warning("Lean REPL call failed: %s", message)
                 result = {
                     "repl_error": message,
                     "outcome_unknown": True,
                 }
             except (ReplProcessExited, TimeoutError, RuntimeError, OSError) as error:
-                result = {"repl_error": _with_repl_require_hint(str(error))}
+                message = _with_repl_require_hint(str(error))
+                logger.warning("Lean REPL call failed: %s", message)
+                result = {"repl_error": message}
             except BaseException as error:
                 request_error = error
             finally:
@@ -1053,7 +1068,7 @@ class LeanRepl:
                 self.close(deadline=cleanup_deadline)
             except Exception as cleanup_error:
                 message += f"; process cleanup also failed: {cleanup_error}"
-                raise ReplOutcomeUnknown(message) from error
+                raise ReplOutcomeUnknown(message, cleanup_error) from error
             raise
         except ReplStderrBacklog:
             raise
@@ -1068,6 +1083,7 @@ class LeanRepl:
                     self.close(deadline=cleanup_deadline)
                 except Exception as cleanup_error:
                     message += f"; process cleanup also failed: {cleanup_error}"
+                    raise ReplOutcomeUnknown(message, cleanup_error) from error
                 raise ReplOutcomeUnknown(message) from error
             self.close(deadline=cleanup_deadline)
             raise

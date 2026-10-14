@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import signal
@@ -789,6 +790,36 @@ def test_disposable_call_maps_each_response_outcome_without_a_retry(
 
 
 @pytest.mark.parametrize(
+    ("outcome", "warnings"),
+    [
+        # The REPL's error for the caller's command is not a runtime failure.
+        ({"message": "unknown identifier 'x'"}, []),
+        (repl_core.ReplOutcomeUnknown("transport failed"), ["Lean REPL call failed: transport failed"]),
+        (repl_core.ReplProcessExited("REPL process exited"), ["Lean REPL call failed: REPL process exited"]),
+    ],
+)
+def test_disposable_call_logs_process_failures_but_not_command_errors(monkeypatch, caplog, outcome, warnings):
+    repl = repl_core.LeanRepl(
+        repl_core.LeanReplConfig(validate_imports=False, warmup_imports=frozenset())
+    )
+
+    def run(**kwargs):
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(repl, "start", lambda: None)
+    monkeypatch.setattr(repl, "_run", run)
+
+    with caplog.at_level(logging.WARNING, logger=repl_core.logger.name):
+        repl.run_disposable("#eval 1", timeout=1)
+
+    assert [(record.levelno, record.getMessage()) for record in caplog.records] == [
+        (logging.WARNING, warning) for warning in warnings
+    ]
+
+
+@pytest.mark.parametrize(
     "raw_response",
     [
         {},
@@ -1053,7 +1084,7 @@ def test_header_decoder_refuses_path_like_or_empty_module_components(module):
     ],
 )
 def test_disposable_call_rejects_what_lean_reports_before_starting(
-    monkeypatch, header_output, expected_error
+    monkeypatch, caplog, header_output, expected_error
 ):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(
@@ -1068,10 +1099,13 @@ def test_disposable_call_rejects_what_lean_reports_before_starting(
         lambda: pytest.fail("invalid input must not start Lean"),
     )
 
-    response = repl.run_disposable("/- hidden -/ import Unsafe\n#check Nat")
+    with caplog.at_level(logging.WARNING, logger=repl_core.logger.name):
+        response = repl.run_disposable("/- hidden -/ import Unsafe\n#check Nat")
 
     assert expected_error in response["repl_error"]
     assert repl.is_clean()
+    # The caller's input is at fault, not the runtime, so nothing is logged.
+    assert caplog.records == []
 
 
 _LEAN_TYPE_MISMATCH = (
@@ -1487,11 +1521,53 @@ def test_disposable_cleanup_failure_after_full_write_keeps_the_unknown_outcome(m
         repl.run_disposable("#eval 1", timeout=1)
 
     assert error.value.result == {
-        "repl_error": "Lean REPL combined command execution timed out after 1 seconds",
+        "repl_error": (
+            "Lean REPL combined command execution timed out after 1 seconds; "
+            "process cleanup also failed: cleanup failed"
+        ),
         "outcome_unknown": True,
     }
     assert close_calls == 3
     assert repl.process is not None
+
+
+def test_disposable_timeout_after_full_write_keeps_and_logs_a_cleanup_failure(monkeypatch, caplog):
+    repl = repl_core.LeanRepl(
+        repl_core.LeanReplConfig(warmup_imports=frozenset(), validate_imports=False)
+    )
+    real_close = repl.close
+    close_calls = 0
+
+    def close(**kwargs):
+        nonlocal close_calls
+        close_calls += 1
+        # Only the cleanup right after the timeout fails; the slot's own
+        # cleanup then retires the process.
+        if close_calls == 2:
+            raise RuntimeError("cleanup failed")
+        real_close(**kwargs)
+
+    def fail_after_send(code, timeout, mark_sent):
+        mark_sent()
+        raise TimeoutError("response timed out")
+
+    monkeypatch.setattr(repl, "close", close)
+    monkeypatch.setattr(repl, "start", lambda: setattr(repl, "process", object()))
+    monkeypatch.setattr(repl, "_run_io", fail_after_send)
+
+    with caplog.at_level(logging.WARNING, logger=repl_core.logger.name):
+        response = repl.run_disposable("#eval 1", timeout=1)
+
+    message = (
+        "Lean REPL combined command execution timed out after 1 seconds; "
+        "process cleanup also failed: cleanup failed"
+    )
+    assert response == {"repl_error": message, "outcome_unknown": True}
+    assert [(record.levelno, record.getMessage()) for record in caplog.records] == [
+        (logging.WARNING, f"Lean REPL call failed: {message}")
+    ]
+    assert close_calls == 3
+    assert repl.is_clean()
 
 
 @pytest.mark.parametrize("request_sent", [False, True])
@@ -1964,7 +2040,7 @@ def test_wire_protocol_keeps_the_response_when_the_deadline_ends_the_stderr_drai
     assert error.value.response == {"messages": []}
 
 
-def test_disposable_backlog_response_drops_the_environment_of_the_retired_process(monkeypatch):
+def test_disposable_backlog_drops_the_environment_and_logs_the_retirement(monkeypatch, caplog):
     with ExitStack() as stack:
         process = _PipeProcess(
             stack,
@@ -1974,10 +2050,21 @@ def test_disposable_backlog_response_drops_the_environment_of_the_retired_proces
         repl = _disposable_repl_with_process(monkeypatch, process, chunk_size=30, max_buffer_bytes=32)
         _patch_pipe_reads(monkeypatch, process)
 
-        response = repl.run_disposable("#check Nat", timeout=5)
+        with caplog.at_level(logging.WARNING, logger=repl_core.logger.name):
+            response = repl.run_disposable("#check Nat", timeout=5)
 
         assert response == {"messages": []}
         assert repl.process is None
+    # The response still answers the call, so the warning is the only record
+    # that the process overflowed its stderr ceiling and was retired.
+    assert [(record.levelno, record.getMessage()) for record in caplog.records] == [
+        (
+            logging.WARNING,
+            "REPL process-generation stderr became unsafe (stderr exceeded the "
+            "32-byte process-generation ceiling; 60 bytes observed); the process "
+            f"was retired. Tail: {'e' * 60!r}",
+        )
+    ]
 
 
 def test_run_never_leaves_a_reusable_process_when_a_backlog_stops_the_drain(monkeypatch):
