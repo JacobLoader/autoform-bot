@@ -1016,9 +1016,8 @@ that may be regenerated at any time.
 
 `autoform audit` reports structured findings at blueprint-relative paths. It
 checks that no article leaves a code fence open, that formalizable articles are
-declaration-sized leaves with statement text (prose in the statement, outside
-code blocks, HTML comments, and headings) and an explicit dependency section,
-that asserted Mathlib facts are
+declaration-sized leaves with statement text and an explicit dependency
+section, that asserted Mathlib facts are
 internally consistent, and that cited work resolves to local source
 material without escaping the blueprint. Coverage files are checked for broken
 links and explicitly declared gaps. With `--lean-root`, local declaration names

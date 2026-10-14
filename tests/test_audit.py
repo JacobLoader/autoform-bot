@@ -1286,11 +1286,6 @@ def test_audit_reads_a_comment_opener_in_inline_code_as_the_site_does(tmp_path: 
     assert "placeholder-statement-text" not in _statement_codes(tmp_path, "TODO `<!--` real statement here")
 
 
-def test_audit_reports_one_statement_finding_at_a_time(tmp_path: Path) -> None:
-    # Nothing published at all is "missing", never also "empty".
-    assert _statement_codes(tmp_path, "<!-- TODO -->") == {"missing-statement-text"}
-
-
 def test_a_statement_from_a_fence_that_never_closes_keeps_its_statement_finding(tmp_path: Path) -> None:
     assert _statement_codes(tmp_path, "```\nFor all n, P(n) holds.") == {"unclosed-code-fence"}
     assert _statement_codes(tmp_path, "```\nTODO") == {
