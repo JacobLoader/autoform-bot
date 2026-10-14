@@ -19,6 +19,7 @@ therefore yield a set of entries that no single state had.  With
 from __future__ import annotations
 
 import errno
+import functools
 import hashlib
 import os
 import stat
@@ -1837,7 +1838,10 @@ def _verify_snapshot(
                 unkept={},
                 selection=selection,
                 budget=budget,
-                verify_kept=lambda name: verify_recorded(descriptor, relative, name),
+                # Unlike a lambda, a partial adds no Python frame: verification
+                # stays at three frames per folder level, which bounds how deep
+                # a tree without max_depth can be under the recursion limit.
+                verify_kept=functools.partial(verify_recorded, descriptor, relative),
             )
             return
         names_match = _directory_names_match(

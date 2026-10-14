@@ -7,6 +7,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -1458,6 +1459,38 @@ def test_lasting_capture_failure_is_reported_without_retrying(
         snapshot_project_sources(tmp_path)
 
     assert len(attempts) == 1
+
+
+def test_selected_verification_recurses_in_three_frames_per_folder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Lean capture sets no max_depth, so the frames verification spends per
+    # folder level decide how deep a tree fits under the recursion limit.
+    _require_descriptor_capture()
+    folder = tmp_path / "d" / "d" / "d" / "d"
+    folder.mkdir(parents=True)
+    (folder / "Deep.lean").write_text("def deep : Nat := 0\n")
+    frames_at_level: dict[int, int] = {}
+    lookup = tree_snapshot_module._lookup
+
+    def counting_lookup(descriptor: int, name: str, relative: str) -> os.stat_result:
+        names = []
+        frame = sys._getframe()
+        while frame is not None:
+            names.append(frame.f_code.co_name)
+            frame = frame.f_back
+        if "_verify_snapshot" in names:
+            level = relative.count("/") + 1 if relative else 0
+            frames_at_level.setdefault(level, len(names))
+        return lookup(descriptor, name, relative)
+
+    monkeypatch.setattr(tree_snapshot_module, "_lookup", counting_lookup)
+
+    snapshot = snapshot_project_sources(tmp_path)
+
+    assert snapshot.index.find("deep") is not None
+    assert [frames_at_level[level + 1] - frames_at_level[level] for level in range(4)] == [3, 3, 3, 3]
 
 
 @pytest.mark.parametrize(
