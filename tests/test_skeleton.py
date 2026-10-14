@@ -446,6 +446,98 @@ def test_bounded_command_rejects_a_successful_parent_with_a_live_descendant(
     _assert_dies(int(child_pid.read_text(encoding="utf-8")), "descendant", "successful parent exit")
 
 
+_OUTLIVED_BY_A_CHILD = (
+    "import subprocess, sys; "
+    "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], "
+    "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)"
+)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX-specific")
+@pytest.mark.parametrize("sigchld", ["default", "ignored"])
+@pytest.mark.parametrize("waitid", [True, False], ids=["waitid", "zombie-status"])
+@pytest.mark.parametrize(
+    ("program", "refusal"),
+    [("pass", None), (_OUTLIVED_BY_A_CHILD, "descendant processes"), ("import time; time.sleep(30)", "timed out")],
+    ids=["exits", "outlived", "timed-out"],
+)
+def test_bounded_command_signals_its_group_only_while_the_leader_is_unreaped(
+    tmp_path: Path, monkeypatch, program: str, refusal: str | None, waitid: bool, sigchld: str
+) -> None:
+    # A reaped leader's process group id can pass to an unrelated group, which
+    # a later killpg would then signal. Python before 3.13 has no os.waitid on
+    # macOS, where psutil's zombie status stands in, and a launcher that ignores
+    # SIGCHLD has the kernel reap every child as it exits.
+    leaders: dict[int, subprocess.Popen[bytes]] = {}
+    popen, killpg = subprocess.Popen, os.killpg
+
+    def remember(*args, **kwargs):
+        process = popen(*args, **kwargs)
+        leaders[process.pid] = process
+        return process
+
+    def unreaped(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)  # a zombie still answers; a reaped process does not
+        except ProcessLookupError:
+            return False
+        return True
+
+    def checked_killpg(pid: int, signal_number: int) -> None:
+        assert pid not in leaders or (leaders[pid].returncode is None and unreaped(pid)), (
+            "signalled a reaped leader's group"
+        )
+        killpg(pid, signal_number)
+
+    monkeypatch.setattr("autoform_cli.skeleton.subprocess.Popen", remember)
+    monkeypatch.setattr("autoform_cli.skeleton.os.killpg", checked_killpg)
+    if not waitid:
+        monkeypatch.delattr(os, "waitid", raising=False)
+    previous = signal.signal(signal.SIGCHLD, signal.SIG_IGN if sigchld == "ignored" else signal.SIG_DFL)
+    try:
+        if refusal is None:
+            assert _bounded(tmp_path, program).returncode == 0
+        else:
+            with pytest.raises(SkeletonError, match=refusal):
+                _bounded(tmp_path, program, **({"timeout": 1} if refusal == "timed out" else {}))
+    finally:
+        signal.signal(signal.SIGCHLD, previous)
+    assert all(leader.returncode is not None for leader in leaders.values())
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX-specific")
+def test_bounded_command_defers_a_signal_that_arrives_while_the_leader_is_reaped(tmp_path: Path, monkeypatch) -> None:
+    # A signal between waitpid's reap and Popen's recorded status must not reach
+    # cleanup while the leader still looks unreaped, or cleanup would signal its
+    # freed group id. The signal is handled once the reap is recorded.
+    reaped: set[int] = set()
+    waitpid, killpg = os.waitpid, os.killpg
+
+    def signalled_waitpid(pid: int, options: int) -> tuple[int, int]:
+        result = waitpid(pid, options)
+        if result[0]:
+            reaped.add(result[0])
+            signal.raise_signal(signal.SIGTERM)
+        return result
+
+    def checked_killpg(pid: int, signal_number: int) -> None:
+        assert pid not in reaped, "signalled a reaped leader's group"
+        killpg(pid, signal_number)
+
+    delivered: list[int] = []
+    previous = signal.signal(signal.SIGTERM, lambda signum, frame: delivered.append(signum))
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr("autoform_cli.skeleton.os.waitpid", signalled_waitpid)
+            patch.setattr("autoform_cli.skeleton.os.killpg", checked_killpg)
+            with pytest.raises(SkeletonError, match="interrupted by SIGTERM"):
+                _bounded(tmp_path, "pass")
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    assert reaped
+    assert delivered == [signal.SIGTERM]
+
+
 @pytest.mark.skipif(os.name != "posix", reason="detached-session assertion is POSIX-specific")
 def test_bounded_command_finds_a_descendant_that_escapes_its_process_group(
     tmp_path: Path,

@@ -880,6 +880,8 @@ def _remember_descendants(
 ) -> None:
     """Retain handles for children that may outlive their immediate parent."""
 
+    if process.returncode is not None:
+        return  # a reaped leader's PID may belong to another process
     try:
         children = psutil.Process(process.pid).children(recursive=True)
     except (psutil.Error, OSError, SystemError):
@@ -954,6 +956,49 @@ def _process_group_is_alive(pid: int) -> bool:
     return True
 
 
+def _process_group_has_live_members(pid: int) -> bool:
+    """Whether the group ``pid`` leads holds a process that is not a zombie.
+
+    Its leader stays unreaped, and so a member, until the group is retired.
+    """
+
+    if not _process_group_is_alive(pid):
+        return False
+    try:
+        for candidate in psutil.process_iter(["pid", "status"]):
+            try:
+                if os.getpgid(candidate.info["pid"]) == pid and candidate.info["status"] != psutil.STATUS_ZOMBIE:
+                    return True
+            except (OSError, psutil.Error):
+                continue
+    except (OSError, psutil.Error, SystemError):
+        return True  # a table that cannot be read proves nothing gone
+    return False
+
+
+def _leader_has_exited(process: subprocess.Popen[bytes]) -> bool:
+    """Whether the command has exited, leaving it unreaped on POSIX.
+
+    ``Popen.poll`` would reap it, and a reaped leader's process group id can
+    pass to an unrelated group before the next ``killpg``.
+    """
+
+    if os.name != "posix" or process.returncode is not None:
+        return process.poll() is not None
+    try:
+        if hasattr(os, "waitid"):
+            # Unlike a zombie status, this waits for every thread of the leader.
+            return os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+        return psutil.Process(process.pid).status() == psutil.STATUS_ZOMBIE
+    except psutil.ZombieProcess:
+        return True
+    except (ChildProcessError, psutil.NoSuchProcess):
+        # Reaped elsewhere: poll records it, so nothing signals the group again.
+        return process.poll() is not None
+    except (OSError, psutil.Error, SystemError):
+        return False
+
+
 def _remaining(deadline: float) -> float:
     return max(0.0, deadline - time.perf_counter())
 
@@ -971,7 +1016,11 @@ def _terminate_process_tree(
     deadline: float,
     token: str,
 ) -> None:
-    """Best-effort termination of a command and every descendant observed."""
+    """Best-effort termination of a command and every descendant observed.
+
+    The leader is reaped last, so the group is only signalled while its id
+    cannot belong to another group.
+    """
 
     started, available = time.perf_counter(), _remaining(deadline)
     for share, group_signal, method in ((0.4, "SIGTERM", "terminate"), (0.8, "SIGKILL", "kill")):
@@ -983,17 +1032,21 @@ def _terminate_process_tree(
             strict=False,
         )
         live = [child for child in descendants.values() if child.pid != process.pid and _process_is_alive(child)]
-        if os.name == "posix":
+        if os.name == "posix" and process.returncode is None:
             with contextlib.suppress(OSError):
                 os.killpg(process.pid, getattr(signal, group_signal))
-        for target in ([process] if process.poll() is None else []) + live:
+        # On POSIX killpg already reached the leader; Popen.terminate would poll, and so reap, it.
+        leader = [process] if os.name != "posix" and process.poll() is None else []
+        for target in leader + live:
             with contextlib.suppress(OSError, psutil.Error, SystemError):
                 getattr(target, method)()
         phase_deadline = started + available * share
-        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
-            process.wait(timeout=_remaining(phase_deadline))
+        while not _leader_has_exited(process) and _remaining(phase_deadline):
+            time.sleep(min(0.01, _remaining(phase_deadline)))
         with contextlib.suppress(OSError, psutil.Error, SystemError):
             psutil.wait_procs(live, timeout=_remaining(phase_deadline))
+    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+        process.wait(timeout=_remaining(deadline))
 
 
 class _CommandSignalled(BaseException):
@@ -1160,7 +1213,7 @@ def _run_registered_command(
             reader = threading.Thread(target=drain, args=(name, stream), daemon=True)
             reader.start()
             readers.append(reader)
-        while process.poll() is None:
+        while not _leader_has_exited(process):
             _remember_descendants(process, descendants)
             check_output()
             remaining = deadline - time.monotonic()
@@ -1168,9 +1221,15 @@ def _run_registered_command(
                 raise _CommandTimedOut([f"{context} timed out after {timeout:g} seconds"])
             overflow.wait(min(0.05, remaining))
         _remember_descendants(process, descendants)
+        # A reap recorded elsewhere frees the group id, so it is not checked again.
+        group_alive = process.returncode is None and _process_group_has_live_members(process.pid)
         _remember_tagged_processes(token, descendants, root_pid=process.pid)
-        if _process_group_is_alive(process.pid) or any(map(_process_is_alive, descendants.values())):
+        if group_alive or any(map(_process_is_alive, descendants.values())):
             raise SkeletonError([f"{context} left descendant processes running"])
+        # The group is retired. No signal may land between the reap and the recorded status.
+        guard.disarm()
+        process.wait()
+        guard.arm()
         cleanup_deadline = time.perf_counter() + _PROCESS_TERMINATION_GRACE
         if not _join_readers(readers, deadline=time.perf_counter() + _PROCESS_TERMINATION_GRACE * 0.2):
             raise SkeletonError([f"{context} left descendant processes holding its output pipes open"])
