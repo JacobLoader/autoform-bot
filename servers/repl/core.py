@@ -728,7 +728,11 @@ class ReplProtocolError(RuntimeError):
 
 
 class ReplCommandError(RuntimeError):
-    """Raised when the REPL returns its explicit command-error variant."""
+    """Raised when the REPL returns its error variant.
+
+    For a frame without ``env`` the REPL sends that variant only when Lean
+    itself fails; errors in the submitted code arrive as diagnostics.
+    """
 
 
 class ReplProcessExited(RuntimeError):
@@ -1010,8 +1014,6 @@ class LeanRepl:
                     _validate_command_response(response)
                     _adjust_line_numbers(response, -len(added_imports))
                     result = _without_process_handles(response)
-            except ReplCommandError as error:
-                result = {"repl_error": str(error)}
             except (ReplProtocolError, ReplOutcomeUnknown) as error:
                 if isinstance(error.__cause__, TimeoutError):
                     # _run reports a timeout after dispatch as a transport
@@ -1027,7 +1029,7 @@ class LeanRepl:
                     "repl_error": message,
                     "outcome_unknown": True,
                 }
-            except (ReplProcessExited, TimeoutError, RuntimeError, OSError) as error:
+            except (ReplCommandError, ReplProcessExited, TimeoutError, RuntimeError, OSError) as error:
                 message = _with_repl_require_hint(str(error))
                 logger.warning("Lean REPL call in %s failed: %s", self.cwd, message)
                 result = {"repl_error": message}

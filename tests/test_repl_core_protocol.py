@@ -757,27 +757,43 @@ _MALFORMED_RESPONSE = {
     "repl_error": "Lean REPL returned a malformed response for the requested command.",
     "outcome_unknown": True,
 }
+_MALFORMED_LOGGED = f"Lean REPL call in . failed: {_MALFORMED_RESPONSE['repl_error']}"
 
 
 @pytest.mark.parametrize(
-    ("outcome", "expected"),
+    ("outcome", "expected", "logged"),
     [
-        ({"message": "bad"}, {"repl_error": "bad"}),
-        ([], _MALFORMED_RESPONSE),
-        (repl_core.ReplOutcomeUnknown("x"), {"repl_error": "x", "outcome_unknown": True}),
-        (repl_core.ReplStderrBacklog("x", {"message": "bad"}), {"repl_error": "bad"}),
-        (repl_core.ReplStderrBacklog("x", []), _MALFORMED_RESPONSE),
+        # The REPL's error variant means that Lean itself failed, here while finding its sysroot.
+        (
+            {"message": "process 'lean' exited with code 1"},
+            {"repl_error": "process 'lean' exited with code 1"},
+            ["Lean REPL call in . failed: process 'lean' exited with code 1"],
+        ),
+        ([], _MALFORMED_RESPONSE, [_MALFORMED_LOGGED]),
+        (
+            repl_core.ReplOutcomeUnknown("x"),
+            {"repl_error": "x", "outcome_unknown": True},
+            ["Lean REPL call in . failed: x"],
+        ),
+        (repl_core.ReplProcessExited("x"), {"repl_error": "x"}, ["Lean REPL call in . failed: x"]),
+        (
+            repl_core.ReplStderrBacklog("x", {"message": "bad"}),
+            {"repl_error": "bad"},
+            ["Lean REPL call in .: x", "Lean REPL call in . failed: bad"],
+        ),
+        (repl_core.ReplStderrBacklog("x", []), _MALFORMED_RESPONSE, ["Lean REPL call in .: x", _MALFORMED_LOGGED]),
         (
             repl_core.ReplStderrBacklog(
                 "x",
                 {"env": 7, "sorries": [{"goal": "False", "proofState": 9}]},
             ),
             {"sorries": [{"goal": "False"}]},
+            ["Lean REPL call in .: x"],
         ),
     ],
 )
 def test_disposable_call_maps_each_response_outcome_without_a_retry(
-    monkeypatch, outcome, expected
+    monkeypatch, caplog, outcome, expected, logged
 ):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(validate_imports=False, warmup_imports=frozenset())
@@ -793,36 +809,11 @@ def test_disposable_call_maps_each_response_outcome_without_a_retry(
     monkeypatch.setattr(repl, "start", lambda: None)
     monkeypatch.setattr(repl, "_run", run)
 
-    assert repl.run_disposable("#eval 1", timeout=1) == expected
-    assert frames == ["#eval 1"]
-
-
-@pytest.mark.parametrize(
-    ("outcome", "warnings"),
-    [
-        # The REPL's error for the caller's command is not a runtime failure.
-        ({"message": "unknown identifier 'x'"}, []),
-        (repl_core.ReplOutcomeUnknown("transport failed"), ["Lean REPL call in . failed: transport failed"]),
-        (repl_core.ReplProcessExited("REPL process exited"), ["Lean REPL call in . failed: REPL process exited"]),
-    ],
-)
-def test_disposable_call_logs_process_failures_but_not_command_errors(monkeypatch, caplog, outcome, warnings):
-    repl = repl_core.LeanRepl(
-        repl_core.LeanReplConfig(validate_imports=False, warmup_imports=frozenset())
-    )
-
-    def run(**kwargs):
-        if isinstance(outcome, Exception):
-            raise outcome
-        return outcome
-
-    monkeypatch.setattr(repl, "start", lambda: None)
-    monkeypatch.setattr(repl, "_run", run)
-
     with caplog.at_level(logging.WARNING, logger=repl_core.logger.name):
-        repl.run_disposable("#eval 1", timeout=1)
+        assert repl.run_disposable("#eval 1", timeout=1) == expected
 
-    assert _repl_log(caplog) == [(logging.WARNING, warning) for warning in warnings]
+    assert frames == ["#eval 1"]
+    assert _repl_log(caplog) == [(logging.WARNING, line) for line in logged]
 
 
 @pytest.mark.parametrize(
