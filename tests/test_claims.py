@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -984,12 +985,38 @@ def test_single_key_push_is_unchanged_and_batches_push_atomically(
     ]
 
 
-def _plant_ref_lock(repo: Path, ref: str) -> Path:
+# Old enough to outlast any grace; it formats as 2023-11-14T22:13:20Z.
+_STALE_LOCK_MTIME = 1_700_000_000
+
+
+def _plant_ref_lock(repo: Path, ref: str, *, modified: float = _STALE_LOCK_MTIME) -> Path:
     """Leave the lock file a Git process that stopped while updating ``ref`` would leave."""
     lock = repo / f"{ref}.lock"
     lock.parent.mkdir(parents=True, exist_ok=True)
     lock.write_text("")
+    os.utime(lock, (modified, modified))
     return lock
+
+
+def _new_board_repo(tmp_path: Path, ref_format: str) -> Path:
+    repo = tmp_path / "claims.git"
+    flags = [] if ref_format == "files" else [f"--ref-format={ref_format}"]
+    init = subprocess.run(["git", "init", "--bare", "--quiet", *flags, str(repo)], capture_output=True, text=True)
+    if init.returncode != 0:
+        pytest.skip(f"this Git cannot create a {ref_format} repository: {init.stderr.strip()}")
+    return repo
+
+
+def _install_pre_push_hook(board: claims.ClaimBoard, monkeypatch: pytest.MonkeyPatch, command: str) -> None:
+    """Run ``command`` after our lease check and before the remote's ref transaction."""
+    hooks = board.scratch / "hooks"
+    hooks.mkdir(exist_ok=True)
+    hook = hooks / "pre-push"
+    hook.write_text(f"#!/bin/sh\ncat >/dev/null\nexec {command}\n")
+    hook.chmod(0o755)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(hooks))
 
 
 @pytest.mark.parametrize(
@@ -1016,10 +1043,12 @@ def test_a_stale_ref_lock_refuses_the_update_names_its_file_and_stays(
     with pytest.raises(claims.ClaimRefLockedError) as raised:
         operation(board)
 
-    message = str(raised.value)
-    assert message.startswith(f"Git lock file {lock.resolve()} (modified ")
-    assert f"blocks updates of {claims.CLAIM_REF_PREFIX}{locked}. " in message
-    assert message.endswith("if no Git process is using the claim board, delete it and retry")
+    assert str(raised.value) == (
+        f"Git lock file {lock.resolve()} (modified 2023-11-14T22:13:20Z) blocks updates of "
+        f"{claims.CLAIM_REF_PREFIX}{locked}. Git leaves a lock file behind when a process stops while "
+        "updating a ref; if no Git process is using the claim board, delete it and retry"
+    )
+    assert [found.path for found in raised.value.locks] == [lock.resolve()]
     assert lock.exists()
     assert _refs(board_repo) == before
 
@@ -1063,26 +1092,28 @@ def test_a_ref_lock_released_within_the_grace_is_a_lost_race(
     assert board.read("node") is None
 
 
-def test_a_lost_race_to_create_a_claim_is_refused_rather_than_an_error(
-    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("change", ["create", "update", "delete"])
+def test_a_lost_race_is_refused_rather_than_an_error(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch, change: str
 ) -> None:
+    # Git 2.53 words each of these losses differently from Git 2.50. As in the
+    # atomic test above, the rival change passes our lease check and meets the
+    # remote's own check inside the ref transaction.
     board = _board(tmp_path, board_repo, "worker-a")
     board._ensure_scratch()
-    rival = _git("commit-tree", _git("mktree", cwd=board_repo, input_text=""), "-m", "rival", cwd=board_repo)
     ref = claims.CLAIM_REF_PREFIX + "node"
-    # As in the atomic test above, the rival claim passes our lease check and
-    # meets the remote's own check inside the ref transaction.
-    hooks = board.scratch / "hooks"
-    hooks.mkdir(exist_ok=True)
-    hook = hooks / "pre-push"
-    hook.write_text(f'#!/bin/sh\ncat >/dev/null\nexec git --git-dir="{board_repo}" update-ref {ref} {rival}\n')
-    hook.chmod(0o755)
-    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
-    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
-    monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(hooks))
+    if change != "create":
+        assert board.acquire("node", ttl=600)
+    rival = _git("commit-tree", _git("mktree", cwd=board_repo, input_text=""), "-m", "rival", cwd=board_repo)
 
-    assert not board.acquire("node", ttl=600)
-    assert _refs(board_repo) == {ref: rival}
+    if change == "delete":
+        _install_pre_push_hook(board, monkeypatch, f'git --git-dir="{board_repo}" update-ref -d {ref}')
+        assert not board.release("node")
+        assert _refs(board_repo) == {}
+    else:
+        _install_pre_push_hook(board, monkeypatch, f'git --git-dir="{board_repo}" update-ref {ref} {rival}')
+        assert not (board.acquire("node", ttl=600) if change == "create" else board.renew("node", ttl=600))
+        assert _refs(board_repo) == {ref: rival}
 
 
 def test_a_packed_refs_lock_blocks_releasing_claims(
@@ -1099,6 +1130,27 @@ def test_a_packed_refs_lock_blocks_releasing_claims(
 
     assert lock.exists()
     assert _refs(board_repo) == before
+
+
+def test_a_stale_reftable_lock_blocks_every_claim_update(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(claims, "_LOCK_GRACE_S", 0.1)
+    repo = _new_board_repo(tmp_path, "reftable")
+    board = _board(tmp_path, repo, "worker-a")
+    assert board.acquire("held", ttl=600)
+    before = _refs(repo)
+    lock = _plant_ref_lock(repo, "reftable/tables.list")
+
+    for operation in (
+        lambda: board.acquire("free", ttl=600),
+        lambda: board.renew("held", ttl=600),
+        lambda: board.release("held"),
+    ):
+        with pytest.raises(claims.ClaimRefLockedError, match="blocks every claim update"):
+            operation()
+
+    assert [(found.path, found.ref) for found in board.ref_locks()] == [(lock.resolve(), "reftable")]
+    assert lock.exists()
+    assert _refs(repo) == before
 
 
 def test_a_stale_ref_lock_never_lets_a_takeover_replace_a_lease(
@@ -1122,29 +1174,79 @@ def test_a_stale_ref_lock_never_lets_a_takeover_replace_a_lease(
     assert _refs(board_repo) == before
 
 
-def test_cleanup_keeps_a_lease_a_lock_file_blocks_and_removes_the_rest(
+def test_a_remote_board_neither_names_nor_deletes_a_lock_file(
     tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(claims, "_LOCK_GRACE_S", 0.1)
+    assert _board(tmp_path, board_repo, "worker-a").acquire("held", ttl=600)
+    remote = claims.ClaimBoard(board_repo.as_uri(), "worker-a", tmp_path / "scratch-remote")
+    locks = [_plant_ref_lock(board_repo, claims.CLAIM_REF_PREFIX + key) for key in ("held", "free")]
+    before = _refs(board_repo)
+
+    for operation in (
+        lambda: remote.acquire("free", ttl=600),
+        lambda: remote.renew("held", ttl=600),
+        lambda: remote.release("held"),
+    ):
+        # Git's own error or a lost race, depending on the Git version.
+        try:
+            outcome = operation()
+        except claims.ClaimTransportError as error:
+            assert not isinstance(error, claims.ClaimRefLockedError)
+        else:
+            assert outcome is False
+
+    assert remote.ref_locks() == []
+    assert all(lock.exists() for lock in locks)
+    assert _refs(board_repo) == before
+
+
+def test_cleanup_skips_a_lease_whose_release_a_lock_file_blocks(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claims, "_LOCK_GRACE_S", 0.1)
     monkeypatch.setattr(claims.time, "time", lambda: 1_000.0)
-    for key in ("locked", "free"):
+    for key in ("a-locked", "b-free"):
         _plant_lease(board_repo, key)
-    key_lock = _plant_ref_lock(board_repo, claims.CLAIM_REF_PREFIX + "locked")
+    _plant_ref_lock(board_repo, claims.CLAIM_REF_PREFIX + "a-locked")
     board = _board(tmp_path, board_repo, "worker-a")
 
     assert board.cleanup() == 1
-    assert list(_refs(board_repo)) == [claims.CLAIM_REF_PREFIX + "locked"]
+    assert list(_refs(board_repo)) == [claims.CLAIM_REF_PREFIX + "a-locked"]
 
-    key_lock.unlink()
-    _plant_ref_lock(board_repo, "packed-refs")
+
+@pytest.mark.parametrize(("ref_format", "lock_ref"), [("files", "packed-refs"), ("reftable", "reftable/tables.list")])
+def test_a_lock_that_blocks_every_release_ends_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ref_format: str, lock_ref: str
+) -> None:
+    monkeypatch.setattr(claims, "_LOCK_GRACE_S", 0.1)
+    monkeypatch.setattr(claims.time, "time", lambda: 1_000.0)
+    repo = _new_board_repo(tmp_path, ref_format)
+    for key in ("a", "b"):
+        _plant_lease(repo, key)
+    _plant_ref_lock(repo, lock_ref)
+    board = _board(tmp_path, repo, "worker-a")
+    push = board._cas_push
+    pushed: list[str] = []
+
+    def recording_push(key: str, old: str | None, new: str) -> bool:
+        pushed.append(key)
+        return push(key, old, new)
+
+    monkeypatch.setattr(board, "_cas_push", recording_push)
 
     assert board.cleanup() == 0
-    assert list(_refs(board_repo)) == [claims.CLAIM_REF_PREFIX + "locked"]
+    assert pushed == ["a"]
+    assert sorted(_refs(repo)) == [claims.CLAIM_REF_PREFIX + "a", claims.CLAIM_REF_PREFIX + "b"]
 
-def test_ref_locks_lists_claim_and_packed_refs_locks_only(tmp_path: Path, board_repo: Path) -> None:
+
+def test_ref_locks_lists_the_lock_files_that_can_block_claims(tmp_path: Path, board_repo: Path) -> None:
     board = _board(tmp_path, board_repo, "worker-a")
     valid = _plant_ref_lock(board_repo, claims.CLAIM_REF_PREFIX + "author/node")
     malformed = _plant_ref_lock(board_repo, claims.CLAIM_REF_PREFIX + "bad..key")
     packed = _plant_ref_lock(board_repo, "packed-refs")
+    # A lock younger than the grace may still belong to a push in progress.
+    _plant_ref_lock(board_repo, claims.CLAIM_REF_PREFIX + "author/fresh", modified=time.time())
     (board_repo / claims.CLAIM_REF_PREFIX / "directory.lock").mkdir()
     _plant_ref_lock(board_repo, "refs/heads/main")
 

@@ -1575,16 +1575,20 @@ set, never holding some claims while waiting for others. The CLI does not
 enforce the rule; it is what keeps two multi-article revisions from
 deadlocking.
 
-A Git process that stops while updating a claim ref leaves a lock file such as
-`refs/autoform-claims/<key>.lock` in the board, and Git then refuses every
-update of that ref; a leftover `packed-refs.lock` refuses every release. On a
-board given as a local path, a command whose push such a file still blocks two
-seconds later exits 1 naming the file and when it was modified, instead of
-reporting a lost race, and `claim list` and `claim cleanup` warn on stderr about
-each one. Git records no owner for a lock file, so Autoform never deletes one:
-once no Git process is using the board, delete the file and retry. A remote
-board's files are not visible, so a claim a lock file blocks there reports a
-lost race.
+A Git process that stops while updating a claim ref leaves a lock file in the
+board, and Git then refuses the updates it guards:
+`refs/autoform-claims/<key>.lock` blocks that claim, `packed-refs.lock` blocks
+every release, and on a board in the reftable ref format
+`reftable/tables.list.lock` blocks every claim update. On a board given as a
+local path, a command whose push such a file still blocks two seconds later
+exits 1 naming the file and when it was modified, instead of reporting a lost
+race. `claim cleanup` leaves a lease whose release a lock file blocks in place
+and still exits 0, and `claim list` and `claim cleanup` warn on stderr about
+each lock file at least two seconds old. Git records no owner for a lock file,
+so Autoform never deletes one: once no Git process is using the board, delete
+the file and retry. A remote board's files are not visible, so there a lock
+file shows up as a lost race or as Git's own error, depending on the file and
+the server's Git version.
 
 Claims are temporary operational state, never article frontmatter.
 

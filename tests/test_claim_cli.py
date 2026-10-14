@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -223,21 +224,18 @@ def test_claim_cli_names_a_stale_ref_lock_and_list_and_cleanup_warn_about_it(
     lock = repo / f"{ref}.lock"
     lock.parent.mkdir(parents=True)
     lock.write_text("")
+    os.utime(lock, (1_700_000_000, 1_700_000_000))
+    described = f"Git lock file {lock.resolve()} (modified 2023-11-14T22:13:20Z) blocks updates of {ref}"
 
     assert main(_args(repo, scratch, "acquire", "a")) == 1
-    out = capsys.readouterr().out
-    assert out.startswith(f"error: Git lock file {lock.resolve()} (modified ")
-    assert out.endswith(
-        f"blocks updates of {ref}. Git leaves a lock file behind when a process stops while "
-        "updating a ref; if no Git process is using the claim board, delete it and retry\n"
+    assert capsys.readouterr().out == (
+        f"error: {described}. Git leaves a lock file behind when a process stops while updating a ref; "
+        "if no Git process is using the claim board, delete it and retry\n"
     )
 
     for command, stdout in (("list", "[]\n"), ("cleanup", "removed 0 expired claim(s)\n")):
         assert main(_args(repo, scratch, command)) == 0
         captured = capsys.readouterr()
         assert captured.out == stdout
-        assert captured.err.startswith(f"warning: Git lock file {lock.resolve()} (modified ")
-        assert captured.err.endswith(
-            f"blocks updates of {ref}; if no Git process is using the claim board, delete it\n"
-        )
+        assert captured.err == f"warning: {described}; if no Git process is using the claim board, delete it\n"
     assert lock.exists()
