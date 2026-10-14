@@ -104,7 +104,7 @@ def write_graph_pages(
 
     for group, chapter_page in chapter_pages.items():
         view = scope_maps[group] if group in scope_maps else chapter_view(graph, statuses, group)
-        links = dict(node_links(chapter_page))
+        links = _view_links(view, node_links(chapter_page))
         for node in view.nodes:
             if node.kind == "boundary":
                 external = node.id.removeprefix("boundary:")
@@ -144,7 +144,7 @@ def write_graph_pages(
             continue
         scope_page = scope_pages[scope]
         view = scope_maps[scope]
-        links = dict(node_links(scope_page))
+        links = _view_links(view, node_links(scope_page))
         for node in view.nodes:
             if node.kind == "scope":
                 nested = node.id.removeprefix("scope:")
@@ -233,7 +233,7 @@ def _write_page(
     navigation: str = "",
     extra: str = "",
 ) -> Path:
-    diagram = mermaid.render_view_diagram(view, links=dict(links), include_classdefs=False)
+    diagram = mermaid.render_view_diagram(view, links=_view_links(view, links), include_classdefs=False)
     sections = [
         "---",
         "kind: graph",
@@ -261,6 +261,15 @@ def _selected_statuses(
     view: GraphView,
 ) -> dict[str, NodeStatus]:
     return {node_id: statuses[node_id] for node_id in view.member_ids if node_id in statuses}
+
+
+def _view_links(view: GraphView, links: Mapping[str, str]) -> dict[str, str]:
+    """The links of the nodes *view* draws.
+
+    ``node_links`` covers the whole graph and builds each link when it is read,
+    so taking only these keeps a page's cost to the size of its view.
+    """
+    return {node.id: links[node.id] for node in view.nodes if node.id in links}
 
 
 def _navigation(*items: tuple[str, str]) -> str:
