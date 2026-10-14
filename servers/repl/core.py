@@ -839,6 +839,15 @@ class LeanRepl:
                         _kill_subprocesses(process, process_group_id)
                     else:
                         _kill_subprocesses(process, process_group_id, deadline)
+                # Release the pipes now; left to the garbage collector, they
+                # stay open as long as a traceback holds this process.
+                for name in ("stdin", "stdout", "stderr"):
+                    stream = getattr(process, name, None)
+                    if stream is not None:
+                        try:
+                            stream.close()
+                        except OSError:
+                            pass
             self.process = None
             self._process_group_id = None
         finally:

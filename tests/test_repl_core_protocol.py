@@ -404,8 +404,11 @@ def _repl_with_process(process: _PipeProcess, *, chunk_size: int = 4096, max_buf
 
 
 def _disposable_repl_with_process(monkeypatch, process: _PipeProcess, **config):
-    """Return a repl whose disposable call starts on ``process``."""
+    """Return a clean repl whose disposable call starts on ``process``."""
     repl = _repl_with_process(process, **config)
+    # The slot starts clean, as a pool's does: the close() that opens a call
+    # would close the pipes of a process it found there.
+    repl.process = None
     monkeypatch.setattr(repl, "start", lambda: setattr(repl, "process", process))
     return repl
 
@@ -1396,6 +1399,44 @@ def test_header_check_reaps_descendants_after_success(tmp_path):
     assert _header_modules([sys.executable, "-c", script]) == ["Mathlib"]
     process_ids = json.loads(process_record.read_text())
     assert not repl_core._process_group_has_live_members(process_ids["group"])
+
+
+# Answers one frame, then waits for the next as the REPL does.
+_ONE_FRAME_REPL = (
+    "import sys\n"
+    "while sys.stdin.readline() not in ('\\n', ''):\n"
+    "    pass\n"
+    "sys.stdout.write('{\"env\": 0}\\n\\n')\n"
+    "sys.stdout.flush()\n"
+    "sys.stdin.read()\n"
+)
+
+
+def test_disposable_call_closes_the_pipes_of_both_process_generations(monkeypatch):
+    repl = repl_core.LeanRepl(
+        repl_core.LeanReplConfig(
+            warmup_imports=frozenset(),
+            header_command=_fake_header_command(_header_json()),
+            repl_command=[sys.executable, "-c", _ONE_FRAME_REPL],
+        )
+    )
+    processes = []
+    real_spawn = repl._spawn
+
+    def spawn(command):
+        processes.append(real_spawn(command))
+        return processes[-1]
+
+    monkeypatch.setattr(repl, "_spawn", spawn)
+
+    assert repl.run_disposable("#check Nat", timeout=30) == {}
+
+    # The header parser's pipes, then the REPL child's.
+    assert [
+        [stream.closed for stream in (process.stdin, process.stdout, process.stderr)]
+        for process in processes
+    ] == [[True, True, True], [True, True, True]]
+    assert repl.is_clean()
 
 
 def _repl_failing_first_header_cleanup(monkeypatch, error: BaseException):
