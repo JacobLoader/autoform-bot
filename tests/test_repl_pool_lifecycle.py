@@ -157,8 +157,8 @@ def test_request_timeout_includes_waiting_for_an_idle_worker(monkeypatch):
         pool.shutdown()
 
 
-def test_pool_subtracts_queue_time_from_the_disposable_call(monkeypatch):
-    observed = []
+def test_slot_that_arrives_at_the_deadline_times_out_before_the_call_starts(monkeypatch):
+    calls = []
     clock = {"now": 0.0}
 
     class FakeRepl:
@@ -166,7 +166,7 @@ def test_pool_subtracts_queue_time_from_the_disposable_call(monkeypatch):
             pass
 
         def run_disposable(self, code, **kwargs):
-            observed.append(kwargs["timeout"])
+            calls.append(code)
             return {"messages": []}
 
         def is_clean(self):
@@ -181,13 +181,15 @@ def test_pool_subtracts_queue_time_from_the_disposable_call(monkeypatch):
     take_slot = pool._idle.get
 
     def wait_for_slot(*args, **kwargs):
-        clock["now"] += 2
+        # The wait for an idle slot takes the caller's whole 10 seconds.
+        clock["now"] += 10
         return take_slot(*args, **kwargs)
 
     monkeypatch.setattr(pool._idle, "get", wait_for_slot)
 
-    assert pool.run("#check Nat", timeout=10) == {"messages": []}
-    assert observed == [8]
+    with pytest.raises(TimeoutError, match=r"timed out after 10 seconds waiting for an idle Lean REPL slot"):
+        pool.run("#check Nat", timeout=10)
+    assert calls == []
     pool.shutdown()
 
 
