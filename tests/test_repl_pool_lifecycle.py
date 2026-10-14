@@ -14,6 +14,24 @@ from servers.repl import pool as repl_pool
 _SHUTDOWN_REFUSAL = "Lean REPL pool is shut down; this call did not start and can be retried"
 
 
+def _record_parked_waiters(monkeypatch, pool) -> list[threading.Thread]:
+    """Record each thread as it parks on the pool's idle queue.
+
+    Queue.get calls wait with the queue's mutex held, and Condition.wait
+    queues the waiter before releasing that mutex, so a waiter started after
+    another is counted can never park ahead of it.
+    """
+    parked: list[threading.Thread] = []
+    wait_on_queue = pool._idle.not_empty.wait
+
+    def park(timeout=None):
+        parked.append(threading.current_thread())
+        return wait_on_queue(timeout)
+
+    monkeypatch.setattr(pool._idle.not_empty, "wait", park)
+    return parked
+
+
 def test_partial_pool_construction_closes_all_constructed_workers(monkeypatch):
     workers = []
 
@@ -323,17 +341,8 @@ def test_capacity_one_waiters_keep_arrival_order(monkeypatch):
     pool = repl_pool.LeanReplPool(repl_pool.LeanReplPoolConfig(num_repls=1))
     held = pool._idle.get_nowait()
     # A call counts as active before it parks on the idle queue, so the loop
-    # below waits for each waiter to park. Queue.get calls wait with the queue's
-    # mutex held, and Condition.wait queues the waiter before releasing that
-    # mutex, so no waiter started after the count can park ahead.
-    parked = []
-    wait_on_queue = pool._idle.not_empty.wait
-
-    def park(timeout=None):
-        parked.append(threading.current_thread())
-        return wait_on_queue(timeout)
-
-    monkeypatch.setattr(pool._idle.not_empty, "wait", park)
+    # below waits for each waiter to park instead.
+    parked = _record_parked_waiters(monkeypatch, pool)
     waiters = []
     try:
         for index in range(6):
@@ -404,7 +413,8 @@ def test_shutdown_waits_for_the_request_owned_cleanup(monkeypatch):
     assert not stopper.is_alive()
 
 
-def test_shutdown_unblocks_a_call_waiting_for_a_cold_slot(monkeypatch):
+@pytest.mark.parametrize("waiter_count", [1, 2])
+def test_shutdown_unblocks_a_call_waiting_for_a_cold_slot(monkeypatch, waiter_count):
     class FakeRepl:
         def __init__(self, config):
             pass
@@ -415,27 +425,34 @@ def test_shutdown_unblocks_a_call_waiting_for_a_cold_slot(monkeypatch):
     monkeypatch.setattr(repl_pool, "LeanRepl", FakeRepl)
     pool = repl_pool.LeanReplPool(repl_pool.LeanReplPoolConfig(num_repls=1))
     pool._idle.get_nowait()
+    # Each waiter parks before the next starts.
+    parked = _record_parked_waiters(monkeypatch, pool)
     errors = []
-    waiter = threading.Thread(
-        target=lambda: errors.append(
-            pytest.raises(RuntimeError, pool.run, "#check Nat", timeout=5).value
-        ),
-        daemon=True,
-    )
-    waiter.start()
-    deadline = time.monotonic() + 2
-    while pool._active_calls == 0 and time.monotonic() < deadline:
-        time.sleep(0.01)
+    waiters = []
+    # Each call's budget outlasts the joins below, so a waiter that misses the
+    # shutdown wakeup is still parked when the test checks it.
+    for index in range(waiter_count):
+        waiter = threading.Thread(
+            target=lambda: errors.append(
+                pytest.raises(RuntimeError, pool.run, "#check Nat", timeout=30).value
+            ),
+            daemon=True,
+        )
+        waiter.start()
+        waiters.append(waiter)
+        deadline = time.monotonic() + 10
+        while len(parked) < index + 1 and time.monotonic() < deadline:
+            time.sleep(0.001)
 
     stopper = threading.Thread(target=pool.shutdown, daemon=True)
     stopper.start()
-    waiter.join(timeout=2)
-    stopper.join(timeout=2)
+    for waiter in waiters:
+        waiter.join(timeout=5)
+    stopper.join(timeout=5)
 
-    assert not waiter.is_alive()
+    assert not any(waiter.is_alive() for waiter in waiters)
     assert not stopper.is_alive()
-    assert len(errors) == 1
-    assert str(errors[0]) == _SHUTDOWN_REFUSAL
+    assert [str(error) for error in errors] == [_SHUTDOWN_REFUSAL] * waiter_count
 
 
 def test_shutdown_refuses_a_call_that_already_took_a_slot(monkeypatch):
