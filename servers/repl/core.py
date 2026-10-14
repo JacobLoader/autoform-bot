@@ -1362,6 +1362,10 @@ class LeanRepl:
                         raise_unknown_stderr_outcome()
                     stderr_text = self._stderr_tail.decode("utf-8", errors="replace")
                     raise ReplProcessExited(f"REPL process exited. stderr: {stderr_text}")
+                # Only the new bytes, and one before them for a delimiter split
+                # across reads, can complete the frame, so the search starts
+                # there and a large response is scanned once, not per read.
+                search_from = max(0, len(response_buffer) - 1)
                 response_buffer.extend(chunk)
 
                 if len(response_buffer) > max_buffer:
@@ -1375,7 +1379,7 @@ class LeanRepl:
                         f"REPL response exceeded {max_buffer} bytes. Tail: {tail!r}"
                     )
 
-                separator = response_buffer.find(b"\n\n")
+                separator = response_buffer.find(b"\n\n", search_from)
                 if separator >= 0:
                     trailing = response_buffer[separator + 2 :]
                     if trailing:

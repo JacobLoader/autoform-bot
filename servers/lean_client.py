@@ -518,8 +518,10 @@ class LeanRuntimeClient:
             chunk = connection.recv(min(65536, MAX_MESSAGE_BYTES + 1 - len(data)))
             if not chunk:
                 raise LeanRuntimeProtocolError("Lean runtime closed without a response")
+            start = len(data)
             data.extend(chunk)
-            newline = data.find(b"\n")
+            # The response ends at its first newline, so only the new bytes can hold it.
+            newline = data.find(b"\n", start)
             if newline >= 0:
                 if data[newline + 1 :]:
                     raise LeanRuntimeProtocolError("Lean runtime returned trailing response data")
