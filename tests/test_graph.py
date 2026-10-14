@@ -560,6 +560,28 @@ def test_check_cli_reports_validation_errors(tmp_path: Path) -> None:
     assert "error: bad: missing H1 title" in result.stdout
 
 
+def test_check_rejects_a_container_that_declares_something(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #221: audit reports this as formalizable-container, but the generated workflows run check.
+
+    A declaring README.md with nothing below it is a leaf, and a container below the top level is caught.
+    """
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "chapter/section/leaf.md", "# Leaf\n", declaration="theorem")
+    _node(blueprint, "chapter/other/README.md", "# Other\n", declaration="theorem")
+    assert main(["check", str(blueprint)]) == 0
+    capsys.readouterr()
+
+    _node(blueprint, "chapter/section/README.md", "# Section\n", declaration="theorem")
+
+    assert main(["check", str(blueprint)]) == 1
+    assert capsys.readouterr().out == (
+        "error: chapter/section: formalizable article has contained articles; declaration-sized articles must be "
+        "leaves; move the declaration and its lean, statement and proof fields into a leaf article\n"
+    )
+
+
 def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
