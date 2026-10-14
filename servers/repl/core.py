@@ -260,27 +260,22 @@ def _decode_repl_json(content: bytes) -> Any:
         raise ReplProtocolError("Lean REPL returned invalid UTF-8.") from error
 
 
-def _validate_command_response(
-    response: Any,
-    *,
-    context: str,
-    require_environment: bool,
-) -> tuple[int | None, list[dict[str, Any]]]:
+def _validate_command_response(response: Any) -> None:
     """Validate the pinned REPL response fields used by Autoform."""
     if not isinstance(response, dict):
         raise ReplProtocolError(
-            f"Lean REPL returned a malformed response for {context}."
+            "Lean REPL returned a malformed response for the requested command."
         )
     if "message" in response:
         if set(response) == {"message"} and isinstance(response["message"], str):
             raise ReplCommandError(response["message"])
         raise ReplProtocolError(
-            f"Lean REPL returned a malformed error response for {context}."
+            "Lean REPL returned a malformed error response for the requested command."
         )
     messages = response.get("messages", [])
     if not isinstance(messages, list):
         raise ReplProtocolError(
-            f"Lean REPL returned malformed diagnostics for {context}."
+            "Lean REPL returned malformed diagnostics for the requested command."
         )
     for message in messages:
         severity = message.get("severity") if isinstance(message, dict) else None
@@ -293,17 +288,17 @@ def _validate_command_response(
             or not _valid_diagnostic_position(message.get("pos"))
         ):
             raise ReplProtocolError(
-                f"Lean REPL returned malformed diagnostics for {context}."
+                "Lean REPL returned malformed diagnostics for the requested command."
             )
         end_pos = message.get("endPos")
         if end_pos is not None and not _valid_diagnostic_position(end_pos):
             raise ReplProtocolError(
-                f"Lean REPL returned malformed diagnostics for {context}."
+                "Lean REPL returned malformed diagnostics for the requested command."
             )
     sorries = response.get("sorries", [])
     if not isinstance(sorries, list):
         raise ReplProtocolError(
-            f"Lean REPL returned malformed sorries for {context}."
+            "Lean REPL returned malformed sorries for the requested command."
         )
     for sorry in sorries:
         pos = sorry.get("pos") if isinstance(sorry, dict) else None
@@ -318,22 +313,12 @@ def _validate_command_response(
             or (proof_state is not None and not _is_natural_number(proof_state))
         ):
             raise ReplProtocolError(
-                f"Lean REPL returned malformed sorries for {context}."
+                "Lean REPL returned malformed sorries for the requested command."
             )
-    environment = response.get("env")
-    if require_environment and not _is_natural_number(environment):
+    if not _is_natural_number(response.get("env")):
         raise ReplProtocolError(
-            f"Lean REPL did not return a valid environment for {context}."
+            "Lean REPL did not return a valid environment for the requested command."
         )
-    if (
-        not require_environment
-        and environment is not None
-        and not _is_natural_number(environment)
-    ):
-        raise ReplProtocolError(
-            f"Lean REPL returned an invalid environment for {context}."
-        )
-    return environment, messages
 
 
 def _communicate_bounded(
@@ -999,11 +984,7 @@ class LeanRepl:
                         raise TimeoutError(
                             f"Lean REPL combined command execution timed out after {budget:g} seconds"
                         ) from None
-                    _validate_command_response(
-                        response,
-                        context="the requested command",
-                        require_environment=True,
-                    )
+                    _validate_command_response(response)
                     _adjust_line_numbers(response, -len(added_imports))
                     result = _without_process_handles(response)
             except ReplCommandError as error:

@@ -357,11 +357,7 @@ def test_additive_response_fields_are_tolerated_but_not_exported():
         ],
     }
 
-    repl_core._validate_command_response(
-        response,
-        context="test",
-        require_environment=True,
-    )
+    repl_core._validate_command_response(response)
 
     assert repl_core._without_process_handles(response) == {
         "messages": [
