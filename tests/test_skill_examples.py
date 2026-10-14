@@ -23,6 +23,7 @@ from tests.test_lean_sources import _git_commit
 
 _HREF = re.compile(r'href="([^"]+)"')
 _EXAMPLE = Path("skills/setup/assets/cabannes-thesis-project")
+_LEAN_FLOOR = "v" + ".".join(str(part) for part in _MINIMUM_LEAN)
 # Upstream tag v4.32.0 of leanprover-community/repl points at this commit:
 # `git ls-remote --tags https://github.com/leanprover-community/repl.git`
 # lists refs/tags/v4.32.0 at it.
@@ -427,12 +428,11 @@ def test_minimum_lean_fixture_and_readme_name_the_lean_floor(repo_root: Path) ->
     # The real-REPL CI job checks the header parser on this fixture's
     # toolchain as the oldest Lean Autoform supports, which holds only while
     # it names the same release as _MINIMUM_LEAN and the README.
-    floor = "v" + ".".join(str(part) for part in _MINIMUM_LEAN)
     fixture = repo_root / "tests/fixtures/minimum-lean/lean-toolchain"
     readme = " ".join((repo_root / "README.md").read_text(encoding="utf-8").split())
 
-    assert fixture.read_text(encoding="utf-8").strip() == f"leanprover/lean4:{floor}"
-    assert f"Lean 4 {floor} or newer" in readme
+    assert fixture.read_text(encoding="utf-8").strip() == f"leanprover/lean4:{_LEAN_FLOOR}"
+    assert f"Lean 4 {_LEAN_FLOOR} or newer" in readme
 
 
 def test_setup_guidance_uses_the_offline_atomic_project_creator(repo_root: Path) -> None:
@@ -466,7 +466,7 @@ def test_setup_guidance_uses_the_offline_atomic_project_creator(repo_root: Path)
     assert "Do not invent version pairs" not in normalized
     assert "--lean-toolchain" in normalized
     assert "lake update" in normalized
-    assert "v4.27.0" in normalized
+    assert f"Autoform needs Lean {_LEAN_FLOOR} or newer" in normalized
     assert "the project will depend on a Lean library, create the project on that library's Lean and Mathlib" in normalized
     # Lean alone does not pick the release: a library may lock a Mathlib commit that is not the tag.
     assert "the Mathlib `rev` its `lake-manifest.json` locks, at the revision the user plans to require" in normalized
