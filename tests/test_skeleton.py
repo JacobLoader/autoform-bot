@@ -486,12 +486,14 @@ def test_bounded_command_signals_its_group_only_while_the_group_id_is_its_own(
         return True
 
     def pinned(pid: int) -> bool:
-        # Live members keep the id, unless a new process with the pid leads it.
+        # Live members keep the id, and then no process can hold the pid.
         try:
-            if os.getpgid(pid) == pid:
-                return False
+            os.getpgid(pid)
+            return False
         except ProcessLookupError:
             pass
+        except OSError:
+            return False
         for candidate in psutil.process_iter(["pid", "status"]):
             try:
                 if candidate.info["status"] != psutil.STATUS_ZOMBIE and os.getpgid(candidate.info["pid"]) == pid:
