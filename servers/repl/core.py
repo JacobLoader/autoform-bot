@@ -49,7 +49,7 @@ LEAN_HEADER_LAUNCHER = (
 _LAKE_UNKNOWN_PACKAGE = "unknown package `"
 _REPL_REQUIRE_HINT = (
     "Lake could not find the REPL package: if the project has no REPL require, add "
-    "`leanprover-community/repl` as a require named `repl` as the Autoform setup skill "
+    "`leanprover-community/repl` as a require named `repl`, as the Autoform setup skill "
     "describes; for a require under another name, rename the require to `repl`, "
     'or restart the runtime with LEAN_REPL_CMD="lake exe @<name>/repl" for a require '
     "named <name>, which applies to every project the runtime serves"
@@ -550,8 +550,9 @@ class LeanReplConfig:
     repl_command: list[str] = field(default_factory=lambda: ["lake", "exe", "@repl/repl"])
     header_command: list[str] = field(default_factory=default_header_command)
 
-    # stdout is capped per response. stderr has no protocol framing, so its
-    # ceiling applies to the entire process generation.
+    # Caps a REPL response on stdout, the REPL child's stderr over its whole
+    # process generation (stderr has no protocol framing), and the header
+    # command's stdout and stderr combined.
     max_buffer_bytes: int = 10 * 1024 * 1024
     validate_imports: bool = True
 
@@ -735,7 +736,11 @@ class ReplProcessExited(RuntimeError):
 
 
 class ReplOutcomeUnknown(RuntimeError):
-    """Raised when stderr poisoning leaves a sent command's outcome unknown."""
+    """Raised when a request may have run but no valid response arrived.
+
+    Any transport failure after the frame was fully sent raises it, including
+    unsafe stderr.
+    """
 
 
 class ReplStderrBacklog(RuntimeError):
