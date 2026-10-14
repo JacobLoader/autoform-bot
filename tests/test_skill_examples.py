@@ -149,24 +149,29 @@ def test_import_edits_use_reported_scope_instead_of_a_blanket_ban(
 
     formalize = " ".join(documents["skills/formalize/SKILL.md"].split())
     assert "Lean imports are allowed; do not pre-block" in formalize
-    assert "already-held same-worker article claim is upgraded, not released first" in formalize
-    assert "best-effort coordination, not a lock" in formalize
     assert "Do not acquire or edit them merely because they are listed" in formalize
     assert "Capture baseline skeleton evidence" in formalize
-    assert "malformed evidence is unverifiable" in formalize
-    assert "An expired valid claim is not active" in formalize
     assert "Disclosure alone is not a conflict or failed validation" in formalize
-    assert "atomically acquire the full held set plus its targets" in formalize
-    assert "On a refused import-claim acquisition or a recheck conflict" in formalize
-    assert "release the complete currently held import set before waiting or reporting" in formalize
-    assert "unless handing off an existing verified candidate" in formalize
-    assert "Renew, hand off, and release the full import claim set together" in formalize
+    assert "[import claims](references/claims.md#import-edits)" in formalize
     assert (
         "then repair each under the review gates of the "
         "[revision contract](../../autoform_cli/README.md#revision-contract)"
     ) in formalize
     assert "repairing another article's Lean that an [import edit](#import-edits) breaks" in formalize
     assert "a change another article needs beyond an import repair" in formalize
+
+    claims = " ".join((repo_root / "skills/formalize/references/claims.md").read_text(encoding="utf-8").split())
+    assert "already-held same-worker article claim is upgraded, not released first" in claims
+    assert "best-effort coordination, not a lock" in claims
+    assert "malformed evidence is unverifiable" in claims
+    assert "An expired valid claim is not active" in claims
+    assert "atomically acquire the full held set plus its targets" in claims
+    assert "On a refused import-claim acquisition or a recheck conflict" in claims
+    assert "release the complete currently held import set before waiting or reporting" in claims
+    assert "unless handing off an existing verified candidate" in claims
+    assert "Renew, hand off, and release the full import claim set together" in claims
+    assert "Recheck affected keys after acquisition and before integration" in claims
+    assert "Before repairing any article that actually needs changes, listed as affected or not" in claims
 
     agents = " ".join(documents["AGENTS.md"].split())
     assert "consumer formalization work" in agents
@@ -181,20 +186,45 @@ def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
     """A run's lead keeps its workers apart, so claims are only for independent workers.
 
     A remote claim around `lake build` blocked other machines while missing the
-    real, machine-local conflict (#121), so builds take no claim at all.
+    real, machine-local conflict (#121): worktrees downloading into one Mathlib
+    cache at once. Builds take no claim, and the lead fills the cache first.
     """
 
     def read(relative: str) -> str:
         return " ".join((repo_root / relative).read_text(encoding="utf-8").split())
 
     formalize = read("skills/formalize/SKILL.md")
+    cli = read("autoform_cli/README.md")
     assert "Claims are optional" in formalize
     assert "Within one run the lead keeps its workers apart" in formalize
-    assert "no two get import edits or revisions whose reported `claim_targets` overlap" in formalize
-    assert "Claims are optional" in read("autoform_cli/README.md")
+    assert "no two workers, the lead included, hold the same target at once" in formalize
+    assert (
+        "A worker holds its article's `claim_target` and the `claim_targets` it reported until its work lands "
+        "or it abandons the leaf without a candidate, so a handoff keeps them"
+    ) in formalize
+    assert "reports the new targets to the lead before editing" in formalize
+    assert "goes ahead only once the lead confirms that no other worker holds them" in formalize
+    assert "A subagent that cannot wait for the lead's answer stops and reports instead" in formalize
+    assert "the lead checks them when it confirms the edit's new targets and again before the edit lands" in formalize
+    assert "If workers would wait on each other, the lead has one of them give up what it holds" in formalize
+    assert "re-run `autoform work import-impact` on the result; if integration brought in a change" in formalize
+    assert "A claim excludes only workers that also claim" in formalize
+    assert "When the run uses claims, tell each subagent so" in formalize
+    assert "Use claims only when other people or sessions may work on the same project at the same time" in formalize
+    assert "[claim rules](references/claims.md)" in formalize
+    assert "once in the lead's checkout before creating worktrees" in formalize
+    assert "Claims are optional" in cli
+    assert "builds take no claim" in cli
+    assert "use them when other people or sessions may work on the same project at the same time" in cli
     assert "Claims are optional" in read("AGENTS.md")
+    claims = (repo_root / "skills/formalize/references/claims.md").read_text(encoding="utf-8")
+    assert "They replace asking the lead" in " ".join(claims.split())
+    headings = {line[3:].lower().replace(" ", "-") for line in claims.splitlines() if line.startswith("## ")}
+    anchors = re.findall(r"references/claims\.md#([a-z-]+)", formalize)
+    assert len(anchors) == 3 and set(anchors) <= headings, anchors
     for relative in (
         "skills/formalize/SKILL.md",
+        "skills/formalize/references/claims.md",
         "skills/formalize/references/library-search.md",
         "autoform_cli/README.md",
     ):

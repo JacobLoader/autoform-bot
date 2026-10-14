@@ -35,72 +35,56 @@ worktree, so nothing reaches that branch before its default build passes.
 Before dispatching, commit the roadmap state the frontier was read from and base
 each worktree on that commit, not on the remote's default branch (Claude Code's
 agent isolation does so only with `worktree.baseRef: head`). Give each subagent
-a different article, with the `claim_target`, `phase`, `article_revision`,
-`open_statements`, `assumes`, and `revision` it is dispatched for. A new
-worktree has no `.lake`: in a Mathlib project, run `lake exe cache get` there
-before its first build or Lean tool call.
+the `claim_target`, `phase`, `article_revision`, `open_statements`, `assumes`,
+and `revision` it is dispatched for. A new worktree has no `.lake`: in a Mathlib
+project, run `lake exe cache get` once in the lead's checkout before creating
+worktrees, rerunning it there if it fails, then in each worktree before its
+first build or Lean tool call, so the worktrees unpack from a full cache instead
+of downloading into it together.
 
 Claims are optional. Within one run the lead keeps its workers apart, so the run
-needs none: each subagent gets a different article, and no two get import edits
-or revisions whose reported `claim_targets` overlap. A subagent that finds it
-needs an import edit or a revision, or whose revision's `claim_targets` grow,
-reports them to the lead before editing, and goes ahead only once those targets,
-and an import edit's `affected_claim_targets`, overlap no other worker's article
-or `claim_targets`. Use claims only when other people or sessions may work on the
-same project at the same time, or when the user asks for them. A claim excludes
-only workers that also claim, and `work list` does not read the board, so on such
-a project every worker uses them. When the run uses claims, tell each subagent
-so, and give every concurrent agent and subagent its own worker ID, such as its
-host and worktree name, and pass it as `--worker-id` on every claim command.
-Never reuse the lead's, because a board accepts a second acquire from the same
-owner, and do not rely on exporting `AUTOFORM_WORKER_ID` once: a later tool call
-can start from a profile that sets a shared value. Run claim commands from the
-project worktree so every worker uses its `origin` board, or pass the same
-`--repo` everywhere when it has none. Claims write refs to that board's remote,
-which is outward-facing: make sure the request covers it before the first claim.
+needs none: no two workers, the lead included, hold the same target at once. A
+worker holds its article's `claim_target` and the `claim_targets` it reported
+until its work lands or it abandons the leaf without a candidate, so a handoff
+keeps them. A subagent that must edit beyond what it holds, for an import edit,
+a revision, a revision's grown `claim_targets`, or an article its import edit
+broke, reports the new targets to the lead before editing, and goes ahead only
+once the lead confirms that no other worker holds them. A subagent that cannot
+wait for the lead's answer stops and reports instead, and the lead answers when
+it dispatches the leaf again. A worker does not hold its import edit's
+`affected_claim_targets`, but the lead checks them when it confirms the edit's
+new targets and again before the edit lands; one that another worker holds is an
+active conflict. If workers would wait on each other, the lead has one of them
+give up what it holds.
 
-When the run uses claims, acquire the exact `claim_target` returned by `work
-context` before editing. A failed acquire or renewal means ownership is
-unproven: stop writing.
-Leases expire after 25 minutes, so run `autoform claim renew` about every five
-minutes and immediately before integrating; renew, not acquire, is the check
-that a claim is still held.
+Use claims only when other people or sessions may work on the same project at
+the same time, or when the user asks for them. A claim excludes only workers
+that also claim, and `work list` does not read the board, so on such a project
+every worker uses them. When the run uses claims, tell each subagent so, and
+follow the [claim rules](references/claims.md) at each step.
 
 ### Import edits
 
 Lean imports are allowed; do not pre-block a proof because it needs one. Before
 an effective module header or import change, run `autoform work import-impact`
-as documented in the CLI reference. Capture baseline skeleton evidence for its
-currently built, named affected articles. The report covers added imports, so
-when an edit removes an import, also baseline the articles of modules only that
-import kept in the build. The report's affected articles are not a lock. Do not
-acquire or edit them merely because they are listed; treat reported unresolved
-declarations as unknown validation scope, not proof they are unaffected.
-Disclosure alone is not a conflict or failed validation. After rebuilding,
-repeat the skeleton evidence and use Agent Review to judge semantic changes. If
-any article actually needs changes, take the claims below when the run uses
-them, then repair each under the review gates of the [revision
+as documented in the CLI reference, and when the run uses claims, follow the
+[import claims](references/claims.md#import-edits) from then on. Capture
+baseline skeleton evidence for its currently built, named affected articles. The
+report covers added imports, so when an edit removes an import, also baseline
+the articles of modules only that import kept in the build. The report's
+affected articles are not a lock. Do not acquire or edit them merely because
+they are listed; treat reported unresolved declarations as unknown validation
+scope, not proof they are unaffected. Disclosure alone is not a conflict or
+failed validation. After rebuilding, repeat the skeleton evidence and use Agent
+Review to judge semantic changes. If any article actually needs changes, then
+repair each under the review gates of the [revision
 contract](../../autoform_cli/README.md#revision-contract). Stop for an active
-conflict (another owner's live affected claim, or an overlap the lead reports)
-or failed validation, not for a blanket import rule.
+conflict (an affected target another worker holds, or another owner's live claim
+on one) or failed validation, not for a blanket import rule.
 
-When the run uses claims, compare the report's claim keys with the JSON
-from `autoform claim list --worker-id WORKER`: another owner's live affected
-claim is a conflict, and malformed evidence is unverifiable. An expired valid
-claim is not active. Before the edit, atomically acquire the required article
-and module `claim_targets`; an already-held same-worker article claim is
-upgraded, not released first. Recheck affected keys after acquisition and
-before integration. These checks are best-effort coordination, not a lock on
-downstream articles. Before repairing an affected article, atomically acquire
-the full held set plus its targets. On a refused import-claim acquisition or a
-recheck conflict, release the complete currently held import set before
-waiting or reporting, unless handing off an existing verified candidate under
-the later handoff contract. Renew, hand off, and release the full import claim
-set together.
-
-Bring the worktree up to date with the shared branch (after acquiring the claim,
-when the run uses claims) and reload `work context`. Before editing, require the same
-`phase`, `blockers`,
+Bring the worktree up to date with the shared branch (after [acquiring the
+claim](references/claims.md#acquire-and-renew), when the run uses claims) and
+reload `work context`. Before editing, require the same `phase`, `blockers`,
 `dependencies`, `article_revision`, `open_statements`, `assumes`, and `revision`
 as the first read and, for a subagent, the same `phase`, `article_revision`,
 `open_statements`, `assumes`, and `revision` it was dispatched with. Unrelated
@@ -116,8 +100,7 @@ orphaned ones, as this skill describes, repairing another article's Lean that an
 articles' Lean uses: start from
 `autoform work impact` and make only the edits the
 [revision contract](../../autoform_cli/README.md#revision-contract) requires,
-under the claims it requires when the run uses claims. A work item flagged
-`revision`, whose article
+under the claims it requires. A work item flagged `revision`, whose article
 records `statement: retracted`, is such a revision; restating it replaces
 `statement: retracted` with `statement: formalized`. Never add a new use of a
 deprecated declaration. Search the pinned Mathlib checkout before adding
@@ -226,31 +209,20 @@ to another article; the audit fails until they are all gone. Report other
 pre-existing findings instead of fixing them.
 
 Commit the verified result in its worktree and rebase onto or merge the current
-shared branch. On the result, run the default
-`lake build` and `autoform audit`, delete every note the audit now reports as
-stale in a follow-up commit, confirm that dependency readiness is unchanged,
-and confirm that the selected
-article differs from its starting `article_revision` only by this worker's
-edits; if integration changed the candidate, repeat the review, check, and
-audit. For a revision, also re-run `autoform work impact` on the rebuilt result
+shared branch. On the result, run the default `lake build` and `autoform audit`,
+delete every note the audit now reports as stale in a follow-up commit, confirm
+that dependency readiness is unchanged, and confirm that the selected article
+differs from its starting `article_revision` only by this worker's edits; if
+integration changed the candidate, repeat the review, check, and audit. For an
+import edit, also re-run `autoform work import-impact` on the result; if
+integration brought in a change to an article it lists as affected, that changed
+the candidate too, so capture a fresh baseline of that article on the shared
+branch. For a revision, also re-run `autoform work impact` on the rebuilt result
 and repair any new targets before landing. Without authority to update or push
 the shared branch, or when integration fails, report the branch and commit for
-handoff.
-
-When the run uses claims, renew the complete claim set before integrating, and
-if a revision's claim set grew, acquire the whole larger set in one command
-under the no-hold-and-wait rule before repairing the new targets. Keep the
-complete acquired set until every checkout
-on the claim board can see the verified commit: on the shared branch and, for
-an `origin` board, pushed, since other clones read their frontier from the
-remote. For a handoff, keep the set and report the complete claim set and
-worker ID with the branch and commit instead of making the leaf look free. The
-integrator renews, integrates, and releases a handed-off set with `--worker-id`
-set to the reported ID; if the lease has lapsed, it acquires the complete set
-under its own ID and repeats the reload gate before integrating. Release the
-complete set once the result is visible that way, or when abandoning the leaf
-without a candidate. For ordinary work that set is just the article; for an
-import edit it also includes the module and any validated expansion.
+handoff. When the run uses claims, the [claim
+rules](references/claims.md#integration-and-handoff) say how to renew, keep,
+hand off, and release the claim set.
 
 Re-read the work frontier from the updated shared branch and repeat while
 independent ready leaves and authorized capacity remain. Stop when the frontier
