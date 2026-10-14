@@ -15,7 +15,8 @@ make check-example  # validate, render, and build the bundled example site
 ```
 
 CI (`.github/workflows/tests.yml`) runs the same four steps on Python 3.10 and
-3.13 for every push and pull request. A separate job runs
+3.13 for every pull request and for pushes to `main` and `scratch/` branches; a
+newer commit on a pull request cancels the older run. A separate job runs
 `tests/test_skeleton.py` and one `tests/test_project_inspect.py` test against a
 real Lean toolchain; another runs the inspection, bounded-subprocess, and
 transactional-output tests on Windows; a third builds
