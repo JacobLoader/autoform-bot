@@ -2209,14 +2209,16 @@ def test_cli_reports_and_exit_codes(tmp_path: Path, capsys) -> None:
     assert "error[missing-lean-toolchain]" in capsys.readouterr().err
 
 
-def test_human_report_omits_a_missing_input_revision(tmp_path: Path, capsys) -> None:
-    root = _project(tmp_path, manifest=(_mathlib(input_rev=None),))
+@pytest.mark.parametrize("input_rev", [None, ""], ids=["missing", "empty"])
+def test_human_report_omits_a_missing_input_revision(tmp_path: Path, capsys, input_rev: str | None) -> None:
+    root = _project(tmp_path, manifest=(_mathlib(input_rev=input_rev),))
 
     assert main(["project", "inspect", str(root)]) == 0
 
     captured = capsys.readouterr()
     assert f"Mathlib: {COMMIT} ({MATHLIB_URL}) [lake-manifest.json]" in captured.out
     assert "None" not in captured.out + captured.err
+    assert f" @ {COMMIT}" not in captured.out
 
 
 def test_human_report_escapes_characters_that_could_forge_lines(tmp_path: Path, capsys) -> None:
