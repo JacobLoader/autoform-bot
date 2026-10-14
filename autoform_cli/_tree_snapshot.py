@@ -1095,12 +1095,9 @@ def capture_directory_descriptor(
     def scan(descriptor: int, relative: str, depth: int, identity: tuple[int, ...]) -> bool:
         """Record one folder and its descendants; return whether it was recorded.
 
-        By default every descended folder is recorded.  With
-        ``selection.unselected_may_change`` only relevant folders are: the root
-        and a folder that directly holds a selected entry or a relevant folder.
-        Unselected entries and folders hidden by a recognized marker leave no
-        record, and an entry that vanishes before it is examined is treated as
-        absent.
+        In selected-entry mode only the root and folders that hold a recorded
+        entry are recorded, and an entry that vanishes before it is examined
+        is absent.
         """
 
         selected_only = selection.unselected_may_change
@@ -1621,12 +1618,10 @@ def _relist_directory(
     selection: TreeSelection,
     budget: _CaptureBudget,
 ) -> tuple[str, ...] | None:
-    """List a folder again for a selected-mode recheck, as the scan lists it.
+    """List a folder again as the scan lists it, or return ``None`` if a marker now hides it.
 
-    Return ``None`` when a recognized marker now hides the folder; the caller
-    decides whether that hides recorded entries.  Limit, name and permission failures
-    become changes too: the scan already passed this folder, so the retry's
-    scan decides whether such a condition lasts.
+    Limit, name and permission failures are changes: the scan already passed
+    this folder, so the retry's scan decides whether such a condition lasts.
     """
 
     try:
@@ -1657,14 +1652,11 @@ def _require_no_inputs(
     selection: TreeSelection,
     budget: _CaptureBudget,
 ) -> None:
-    """Prove that whatever is now at *name* contributes no selected entry.
+    """Prove that whatever is now at *name* in the folder *relative* holds no selected entry.
 
-    *relative* and *depth* describe the parent folder.  Nothing here is
-    compared with the scan: a missing entry holds nothing, an unselected entry
-    contributes nothing, a folder hidden by a recognized marker contributes
-    nothing, and any other folder may be new or rebuilt as long as it
-    recursively holds nothing selected.  Folders the scan never descends into
-    are not opened.
+    Nothing is compared with the scan: a missing or unselected entry, a folder
+    the scan does not descend into and a folder hidden by a recognized marker
+    hold nothing; any other folder is walked.
     """
 
     child_relative = f"{relative}/{name}" if relative else name
