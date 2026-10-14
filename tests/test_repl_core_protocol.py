@@ -2201,24 +2201,6 @@ def test_wire_protocol_rejects_oversized_response(monkeypatch):
             repl._run("#check Nat", timeout=1)
 
 
-_RESPONSIVE_FAKE_REPL = (
-    "import json, sys, time\n"
-    "buf = ''\n"
-    "n = 0\n"
-    "for line in sys.stdin:\n"
-    "    if line.strip():\n"
-    "        buf += line\n"
-    "        continue\n"
-    "    request = json.loads(buf)\n"
-    "    buf = ''\n"
-    "    if 'HANG' in request['cmd']:\n"
-    "        time.sleep(3600)\n"
-    "    sys.stdout.write(json.dumps({'env': n}) + '\\n\\n')\n"
-    "    sys.stdout.flush()\n"
-    "    n += 1\n"
-)
-
-
 def test_close_after_an_expired_deadline_still_reserves_cleanup_time(monkeypatch):
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(warmup_imports=frozenset(), validate_imports=False)
@@ -2254,13 +2236,15 @@ def test_disposable_timeout_reaps_a_slow_to_exit_process_without_cleanup_failure
     monkeypatch.setattr(repl_core, "_kill_subprocesses", slow_reap)
     repl = repl_core.LeanRepl(
         repl_core.LeanReplConfig(
-            repl_command=[sys.executable, "-c", _RESPONSIVE_FAKE_REPL],
+            # Never answers. The frame still fits in the pipe buffer, so the
+            # call times out after it is fully sent.
+            repl_command=[sys.executable, "-c", "import time; time.sleep(3600)"],
             warmup_imports=frozenset(),
             validate_imports=False,
         )
     )
     try:
-        response = repl.run_disposable("HANG", timeout=0.5)
+        response = repl.run_disposable("#check Nat", timeout=0.5)
 
         assert response == {
             "repl_error": "Lean REPL combined command execution timed out after 0.5 seconds",
