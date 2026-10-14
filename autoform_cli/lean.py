@@ -122,11 +122,10 @@ class BoundProjectSources:
 
     root: Path
     tree: BoundDirectoryTree
-    excluded: tuple[PurePosixPath, ...]
 
     def capture(self) -> IndexedSourceSnapshot:
         snapshot = self.tree.capture()
-        return _indexed_source_snapshot(self.root, snapshot, self.excluded)
+        return _indexed_source_snapshot(self.root, snapshot)
 
     def verify(self) -> None:
         self.tree.verify()
@@ -317,19 +316,16 @@ def _open_stable_project_sources(
                 opaque_markers=opaque_markers,
             )
             return bound, bound.capture()
-        except TreeChangedError as error:
-            changed = error
-            if error.relative is not None and error.relative not in changed_paths:
-                changed_paths.append(error.relative)
+        except BaseException as error:
             if bound is not None:
                 bound.close()
-        except TreeSnapshotError as error:
-            if bound is not None:
-                bound.close()
-            raise LeanSourceError(str(error)) from error
-        except BaseException:
-            if bound is not None:
-                bound.close()
+            if isinstance(error, TreeChangedError):
+                changed = error
+                if error.relative is not None and error.relative not in changed_paths:
+                    changed_paths.append(error.relative)
+                continue
+            if isinstance(error, TreeSnapshotError):
+                raise LeanSourceError(str(error)) from error
             raise
     lasting = _lasting_root_failure(root)
     if lasting is not None:
@@ -404,7 +400,7 @@ def open_project_sources(
     except BaseException:
         tree.close()
         raise
-    return BoundProjectSources(root_path, tree, excluded)
+    return BoundProjectSources(root_path, tree)
 
 
 @contextmanager
@@ -544,16 +540,11 @@ def _folded_path(path: PurePosixPath) -> tuple[str, ...]:
     return tuple(unicodedata.normalize("NFC", part).casefold() for part in path.parts)
 
 
-def _indexed_source_snapshot(
-    root: Path,
-    snapshot: TreeSnapshot,
-    excluded: tuple[PurePosixPath, ...],
-) -> IndexedSourceSnapshot:
-    unsupported = [
-        (relative, reason)
-        for relative, reason in snapshot.unsupported_entries()
-        if PurePosixPath(relative).suffix == ".lean"
-    ]
+def _indexed_source_snapshot(root: Path, snapshot: TreeSnapshot) -> IndexedSourceSnapshot:
+    # The Lean selection captures only .lean entries outside excluded folders,
+    # so every captured entry is a source and the snapshot's own revisions
+    # cover exactly the Lean inputs and the folders holding them.
+    unsupported = snapshot.unsupported_entries()
     if unsupported:
         relative, reason = unsupported[0]
         raise LeanSourceError(f"unsafe Lean source {relative}: {reason}")
@@ -563,13 +554,7 @@ def _indexed_source_snapshot(
     source_files: list[tuple[Path, bytes]] = []
     digest = hashlib.sha256(b"autoform-lean-source-index/v1\0")
     for relative_text, data in snapshot.files:
-        relative = PurePosixPath(relative_text)
-        if relative.suffix != ".lean" or _lean_path_is_excluded(
-            relative,
-            excluded,
-        ):
-            continue
-        relative_path = Path(relative.as_posix())
+        relative_path = Path(relative_text)
         _update_source_digest(digest, relative_path, data)
         source_files.append((relative_path, data))
         try:
@@ -588,54 +573,9 @@ def _indexed_source_snapshot(
             line_counts=line_counts,
         ),
         source_digest,
-        _lean_generation_revision(snapshot),
+        snapshot.generation_revision,
         tuple(source_files),
     )
-
-
-def _lean_generation_revision(
-    snapshot: TreeSnapshot,
-) -> str:
-    """Hash only effective Lean inputs and their ancestor directories."""
-
-    def retained_entry(relative_text: str) -> bool:
-        return PurePosixPath(relative_text).suffix == ".lean"
-
-    files = tuple(entry for entry in snapshot.files if retained_entry(entry[0]))
-    symlinks = tuple(entry for entry in snapshot.symlinks if retained_entry(entry[0]))
-    special = tuple(entry for entry in snapshot.special if retained_entry(entry[0]))
-    placeholders = tuple(path for path in snapshot.placeholders if retained_entry(path))
-    omitted = tuple(entry for entry in snapshot.omitted if retained_entry(entry[0]))
-    retained_paths = {
-        PurePosixPath(relative)
-        for relative, _value in (*files, *symlinks, *special, *omitted)
-    }
-    retained_paths.update(PurePosixPath(relative) for relative in placeholders)
-    retained_directories = {PurePosixPath()}
-    for path in retained_paths:
-        retained_directories.update(path.parents)
-
-    directories = tuple(
-        path
-        for path in snapshot.directories
-        if PurePosixPath(path) in retained_directories
-    )
-    retained_identity_paths = set(directories)
-    retained_identity_paths.update(path.as_posix() for path in retained_paths)
-    filtered = TreeSnapshot(
-        root_identity=snapshot.root_identity,
-        directories=directories,
-        files=files,
-        symlinks=symlinks,
-        special=special,
-        placeholders=placeholders,
-        omitted=omitted,
-        identities=tuple(
-            entry for entry in snapshot.identities if entry[0] in retained_identity_paths
-        ),
-        opaque_directories=(),
-    )
-    return filtered.generation_revision
 
 
 def _is_managed_output_manifest_bytes(data: bytes) -> bool:
