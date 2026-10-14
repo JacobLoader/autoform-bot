@@ -260,9 +260,13 @@ def test_doctor_captures_the_lean_sources_once(tmp_path: Path, monkeypatch: pyte
 
 
 def test_runtime_projection_failure_is_reported_without_traceback(tmp_path: Path) -> None:
-    project = _clean_project(
-        tmp_path,
-        metadata=("declaration: theorem", "mathlib_file: ../Outside.lean"),
+    project = _clean_project(tmp_path)
+    # The graph loads, but the runtime projection refuses a Sources link that is
+    # neither a local file nor an http(s) link.
+    article = project / "blueprint" / "roadmap" / "result.md"
+    article.write_text(
+        article.read_text(encoding="utf-8") + "\n## Sources\n\n- [Author](mailto:author@example.org)\n",
+        encoding="utf-8",
     )
 
     result = diagnose_project(project)
@@ -270,7 +274,7 @@ def test_runtime_projection_failure_is_reported_without_traceback(tmp_path: Path
     assert not result.clean
     assert _checks(result)["runtime"] == (
         False,
-        "result: mathlib file must be a portable relative path",
+        "result: source target escapes the blueprint or uses an unsupported location",
     )
     assert _checks(result)["graph"] == (False, "not summarized because runtime projection failed")
     assert len(result.checks) == 6

@@ -957,8 +957,9 @@ it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
 `mathlib: true`. An inline `## Sources` link to a local path must name a file
 inside the blueprint, as `audit` also requires: a missing file, a directory, an
-invalid path, or a target outside the blueprint fails, and `audit` alone checks
-fragments and links with other schemes. With `--lean-root`
+invalid path, or a target outside the blueprint fails. A link with a scheme
+other than http(s), or a network location, fails too, as every runtime command
+refuses it; `audit` alone checks fragments. With `--lean-root`
 it also fails on a `lean:` name
 absent from the sources, as `leanblueprint checkdecls` does for LaTeX
 blueprints. It validates structure and leaves mathematical correctness to the

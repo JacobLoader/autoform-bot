@@ -344,6 +344,8 @@ def test_splits_statement_and_proof_dependencies(tmp_path: Path) -> None:
         ({"mathlib": "maybe"}, "accepts only true or false"),
         ({"not_ready": "1"}, "accepts only true or false"),
         ({"origin": "unknown"}, "accepts cited, bridged, or background"),
+        ({"mathlib_file": "../Outside.lean"}, "'mathlib_file' must be a portable relative path"),
+        ({"mathlib_file": "C:/Mathlib/Basic.lean"}, "'mathlib_file' must be a portable relative path"),
     ],
 )
 def test_rejects_invalid_assertions(tmp_path: Path, metadata: dict[str, str], message: str) -> None:
@@ -490,7 +492,7 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
     strict MkDocs failure naming the chapter page that absorbed the article; with
     the directory, a missing note became a repository link that 404s. Check now
     applies audit's rule that a Sources path names a file in the blueprint, and
-    leaves fragments and other schemes to audit.
+    refuses other schemes as every runtime command does; fragments stay with audit.
     """
     blueprint = tmp_path / "blueprint"
     sources = "# Result\n\n## Sources\n\n- [Paper](../sources/paper.md#lemma-3)\n"
@@ -503,14 +505,17 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
 
     (blueprint / "sources").mkdir()
     (blueprint / "sources" / "paper.md").write_text("# Paper\n", encoding="utf-8")
-    sources += "- [Book](https://example.org/book)\n- [Author](mailto:author@example.org)\n"
+    sources += "- [Book](https://example.org/book)\n"
     _node(blueprint, "result.md", sources)
 
     assert main(["check", str(blueprint)]) == 0
     capsys.readouterr()
 
     (tmp_path / "slides.pdf").write_bytes(b"%PDF-1.4\n")
-    rejected = "- [Notes](../sources/)\n- [Slides](../../slides.pdf)\n- [Bad](../sources/%00.md)\n"
+    rejected = (
+        "- [Notes](../sources/)\n- [Slides](../../slides.pdf)\n- [Bad](../sources/%00.md)\n"
+        "- [Author](mailto:author@example.org)\n"
+    )
     _node(blueprint, "result.md", sources + rejected)
 
     assert main(["check", str(blueprint)]) == 1
@@ -518,6 +523,7 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
         "error: result: source target does not resolve to a file: '../sources/'\n"
         "error: result: source target escapes the blueprint directory: '../../slides.pdf'\n"
         "error: result: source target contains an invalid path: '../sources/%00.md'\n"
+        "error: result: source target is not a local file or an http(s) link: 'mailto:author@example.org'\n"
     )
 
 
