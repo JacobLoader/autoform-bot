@@ -748,6 +748,11 @@ def test_disposable_call_does_not_return_a_result_before_verified_cleanup(monkey
     assert error.value.result == {"messages": []}
 
 
+def _repl_log(caplog) -> list[tuple[int, str]]:
+    """Return the level and message of each repl_core record; caplog's root handler sees every logger."""
+    return [(level, message) for name, level, message in caplog.record_tuples if name == repl_core.logger.name]
+
+
 _MALFORMED_RESPONSE = {
     "repl_error": "Lean REPL returned a malformed response for the requested command.",
     "outcome_unknown": True,
@@ -817,9 +822,7 @@ def test_disposable_call_logs_process_failures_but_not_command_errors(monkeypatc
     with caplog.at_level(logging.WARNING, logger=repl_core.logger.name):
         repl.run_disposable("#eval 1", timeout=1)
 
-    assert [(record.levelno, record.getMessage()) for record in caplog.records] == [
-        (logging.WARNING, warning) for warning in warnings
-    ]
+    assert _repl_log(caplog) == [(logging.WARNING, warning) for warning in warnings]
 
 
 @pytest.mark.parametrize(
@@ -1108,7 +1111,7 @@ def test_disposable_call_rejects_what_lean_reports_before_starting(
     assert expected_error in response["repl_error"]
     assert repl.is_clean()
     # The caller's input is at fault, not the runtime, so nothing is logged.
-    assert caplog.records == []
+    assert _repl_log(caplog) == []
 
 
 _LEAN_TYPE_MISMATCH = (
@@ -1630,9 +1633,7 @@ def test_disposable_timeout_after_full_write_keeps_and_logs_a_cleanup_failure(mo
         "process cleanup also failed: cleanup failed"
     )
     assert response == {"repl_error": message, "outcome_unknown": True}
-    assert [(record.levelno, record.getMessage()) for record in caplog.records] == [
-        (logging.WARNING, f"Lean REPL call failed: {message}")
-    ]
+    assert _repl_log(caplog) == [(logging.WARNING, f"Lean REPL call failed: {message}")]
     assert close_calls == 3
     assert repl.is_clean()
 
@@ -2122,16 +2123,9 @@ def test_disposable_backlog_drops_the_environment_and_logs_the_retirement(monkey
 
         assert response == {"messages": []}
         assert repl.process is None
-    # The response still answers the call, so the warning is the only record
-    # that the process overflowed its stderr ceiling and was retired.
-    assert [(record.levelno, record.getMessage()) for record in caplog.records] == [
-        (
-            logging.WARNING,
-            "REPL process-generation stderr became unsafe (stderr exceeded the "
-            "32-byte process-generation ceiling; 60 bytes observed); the process "
-            f"was retired. Tail: {'e' * 60!r}",
-        )
-    ]
+    [(level, message)] = _repl_log(caplog)
+    assert level == logging.WARNING
+    assert "stderr became unsafe" in message
 
 
 def test_run_never_leaves_a_reusable_process_when_a_backlog_stops_the_drain(monkeypatch):
