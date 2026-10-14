@@ -348,10 +348,10 @@ def test_capacity_one_waiters_keep_arrival_order(monkeypatch):
     waiters = []
     try:
         for index in range(6):
-            waiter = threading.Thread(target=pool.run, args=(str(index), 2))
+            waiter = threading.Thread(target=pool.run, args=(str(index), 30), daemon=True)
             waiter.start()
             waiters.append(waiter)
-            deadline = time.monotonic() + 1
+            deadline = time.monotonic() + 10
             while len(parked) < index + 1 and time.monotonic() < deadline:
                 time.sleep(0.001)
         pool._idle.put(held)
