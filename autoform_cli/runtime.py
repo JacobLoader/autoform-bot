@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote, urlsplit
 
-from .graph import Graph, load_graph, roadmap_symlink_issues
+from .graph import Graph, _is_portable_relative_path, load_graph, roadmap_symlink_issues
 from .lean import LeanSourceError, declaration_names, index_failure_message, index_project, resolve_lean_root
 from .status import derive, is_definition
 
@@ -319,8 +319,6 @@ def build_runtime_graph(
         for target in node.sources:
             if not _source_target_is_confined(node.path, target, blueprint):
                 issues.append(f"{node.id}: source target escapes the blueprint or uses an unsupported location")
-        if node.mathlib_file is not None and not _is_portable_relative_path(node.mathlib_file):
-            issues.append(f"{node.id}: mathlib file must be a portable relative path")
 
     _validate_depths(graph, issues)
     if issues:
@@ -454,17 +452,6 @@ def _source_target_is_confined(article: Path, target: str, blueprint: Path) -> b
     except (OSError, ValueError):
         return False
     return True
-
-
-def _is_portable_relative_path(value: str) -> bool:
-    path = Path(value)
-    windows = PureWindowsPath(value)
-    return (
-        not path.is_absolute()
-        and not windows.is_absolute()
-        and ".." not in path.parts
-        and ".." not in windows.parts
-    )
 
 
 def _validate_depths(graph: Graph, issues: list[str]) -> None:
