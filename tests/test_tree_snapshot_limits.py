@@ -651,11 +651,13 @@ def test_descriptor_capture_releases_its_state_without_cyclic_gc(
 def _selected_sources(
     *,
     markers: tuple[OpaqueDirectoryMarker, ...] = (),
+    limits: TreeCaptureLimits = TreeCaptureLimits(),
 ) -> TreeSelection:
     return TreeSelection(
         include=lambda path, _mode: path.suffix == ".src",
         descend=lambda _path: True,
         record_omitted=False,
+        limits=limits,
         opaque_markers=markers,
         unselected_may_change=True,
     )
@@ -745,13 +747,7 @@ def test_selected_capture_relist_uses_the_selection_limits(
     _require_descriptor_capture()
     (tmp_path / "kept.src").write_bytes(b"kept\n")
     (tmp_path / "notes.md").write_bytes(b"0\n")
-    selection = TreeSelection(
-        include=lambda path, _mode: path.suffix == ".src",
-        descend=lambda _path: True,
-        record_omitted=False,
-        unselected_may_change=True,
-        limits=TreeCaptureLimits(max_entries=2),
-    )
+    selection = _selected_sources(limits=TreeCaptureLimits(max_entries=2))
 
     snapshot = _capture(tmp_path, selection, portable=False, monkeypatch=monkeypatch)
     assert snapshot.files == (("kept.src", b"kept\n"),)
@@ -777,11 +773,26 @@ def test_selected_capture_relist_uses_the_selection_limits(
     assert error.value.relative == "."
 
 
-@pytest.mark.parametrize("holds_selected_entry", [False, True])
+@pytest.mark.parametrize(
+    ("holds_selected_entry", "recognized", "named"),
+    [
+        # An unrecognized marker name hides nothing: a selected entry that
+        # appears beside it is a change.
+        (False, False, "X/late.src"),
+        # A folder that holds nothing selected may become hidden by a marker
+        # the walk recognizes from its bytes, as the scan does; it then
+        # contributes nothing, whatever it holds.
+        (False, True, None),
+        # A marker that now hides recorded selected entries is a change.
+        (True, True, "X"),
+    ],
+)
 def test_verification_recognizes_markers_like_the_scan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     holds_selected_entry: bool,
+    recognized: bool,
+    named: str | None,
 ) -> None:
     _require_descriptor_capture()
     (tmp_path / "kept.src").write_bytes(b"kept\n")
@@ -798,35 +809,18 @@ def test_verification_recognizes_markers_like_the_scan(
     assert ("X" in snapshot.directories) is holds_selected_entry
     assert snapshot.opaque_directories == ()
 
-    def add_late_entry() -> None:
+    def change() -> None:
+        if recognized:
+            (folder / "m.json").write_bytes(b"ok")
         (folder / "late.src").write_bytes(b"late\n")
 
-    def recognize() -> None:
-        (folder / "m.json").write_bytes(b"ok")
-        add_late_entry()
-
-    changes = [recognize]
-    _at_final_verification(monkeypatch, lambda: changes[0]())
-    if not holds_selected_entry:
-        # An unrecognized marker name hides nothing: a selected entry that
-        # appears beside it is a change.
-        changes[0] = add_late_entry
+    _at_final_verification(monkeypatch, change)
+    if named is not None:
         with pytest.raises(TreeChangedError) as error:
             _capture(tmp_path, selection, portable=False, monkeypatch=monkeypatch)
-        assert error.value.relative == "X/late.src"
-        (folder / "late.src").unlink()
-        # A folder that holds nothing selected may become hidden by a marker
-        # the walk recognizes from its bytes, as the scan does; it then
-        # contributes nothing, whatever it holds.
-        changes[0] = recognize
-        snapshot = _capture(tmp_path, selection, portable=False, monkeypatch=monkeypatch)
-        assert snapshot.directories == ("",)
-        assert snapshot.files == (("kept.src", b"kept\n"),)
-        assert snapshot.opaque_directories == ()
+        assert error.value.relative == named
         return
-
-    # A marker that now hides recorded selected entries is a change.
-    with pytest.raises(TreeChangedError) as error:
-        _capture(tmp_path, selection, portable=False, monkeypatch=monkeypatch)
-
-    assert error.value.relative == "X"
+    snapshot = _capture(tmp_path, selection, portable=False, monkeypatch=monkeypatch)
+    assert snapshot.directories == ("",)
+    assert snapshot.files == (("kept.src", b"kept\n"),)
+    assert snapshot.opaque_directories == ()

@@ -8,7 +8,7 @@ import shutil
 import stat
 import subprocess
 from collections.abc import Callable
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 import pytest
 
@@ -458,126 +458,105 @@ def test_snapshot_retries_a_capture_that_races_one_edit(
     assert snapshot.index.find("before") is None
 
 
-@pytest.mark.parametrize("entry", ["snapshot", "bind"])
+@pytest.mark.parametrize(
+    ("entry", "edited", "unattributed_first_open", "named"),
+    [
+        ("snapshot", "B", False, "Project/B.lean"),
+        ("bind", "B", False, "Project/B.lean"),
+        # Each changed path is named once, in the order the attempts saw it.
+        ("snapshot", "AB", False, "Project/A.lean, Project/B.lean"),
+        # An attempt whose change names no path adds nothing to the list.
+        ("snapshot", "B", True, "Project/B.lean"),
+    ],
+    ids=["snapshot", "bind", "two-paths", "unattributed"],
+)
 def test_snapshot_reports_sources_that_keep_changing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     entry: str,
+    edited: str,
+    unattributed_first_open: bool,
+    named: str,
 ) -> None:
-    source = tmp_path / "Project" / "Basic.lean"
-    _index(tmp_path, "def churn : Nat := 0\n")
+    _index(tmp_path, "def a : Nat := 0\n", "Project/A.lean")
+    _index(tmp_path, "def b : Nat := 0\n", "Project/B.lean")
     edits = 0
+    opens = 0
+    original_open = lean_module.open_project_sources
+
+    def open_sources(*args, **kwargs):
+        nonlocal opens
+        opens += 1
+        if unattributed_first_open and opens == 1:
+            raise TreeChangedError("directory tree changed before it was captured")
+        return original_open(*args, **kwargs)
 
     def change_source() -> None:
         nonlocal edits
+        name = edited[min(edits, len(edited) - 1)]
         edits += 1
         # Each edit also changes the size, so coarse timestamps cannot hide it.
-        source.write_text(f"def churn : Nat := {'1' * (edits + 1)}\n", encoding="utf-8")
+        (tmp_path / "Project" / f"{name}.lean").write_text(
+            f"def churn : Nat := {'1' * (edits + 1)}\n",
+            encoding="utf-8",
+        )
 
+    monkeypatch.setattr(lean_module, "open_project_sources", open_sources)
     _on_checkpoint(monkeypatch, "before-final-verification", change_source)
     monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
 
     with pytest.raises(lean_module.LeanSourceError, match="Lean sources kept changing while they were indexed") as error:
         _capture_through(entry, tmp_path)
 
-    assert edits == lean_module._SNAPSHOT_ATTEMPTS
-    if tree_snapshot_module._DESCRIPTOR_CAPTURE_SUPPORTED:
-        assert str(error.value).endswith("; changed: Project/Basic.lean")
-
-
-def test_kept_changing_names_each_changed_path_once(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _require_descriptor_capture()
-    _index(tmp_path, "def a : Nat := 0\n", "Project/A.lean")
-    _index(tmp_path, "def b : Nat := 0\n", "Project/B.lean")
-    edits = 0
-
-    def change_source() -> None:
-        nonlocal edits
-        edits += 1
-        name = "A.lean" if edits == 1 else "B.lean"
-        (tmp_path / "Project" / name).write_text(
-            f"def churn : Nat := {'1' * (edits + 1)}\n",
-            encoding="utf-8",
-        )
-
-    _on_checkpoint(monkeypatch, "before-final-verification", change_source)
-    monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
-
-    with pytest.raises(lean_module.LeanSourceError) as error:
-        snapshot_project_sources(tmp_path)
-
-    assert edits == lean_module._SNAPSHOT_ATTEMPTS
-    assert str(error.value) == (
-        "Lean sources kept changing while they were indexed; "
-        "changed: Project/A.lean, Project/B.lean"
-    )
-
-
-def test_kept_changing_names_only_known_paths(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _require_descriptor_capture()
-    source = tmp_path / "Project" / "Basic.lean"
-    _index(tmp_path, "def churn : Nat := 0\n")
-    original_open = lean_module.open_project_sources
-    opens = 0
-    edits = 0
-
-    def open_with_unattributed_change(*args, **kwargs):
-        nonlocal opens
-        opens += 1
-        if opens == 1:
-            raise TreeChangedError("directory tree changed before it was captured")
-        return original_open(*args, **kwargs)
-
-    def change_source() -> None:
-        nonlocal edits
-        edits += 1
-        source.write_text(f"def churn : Nat := {'1' * (edits + 1)}\n", encoding="utf-8")
-
-    monkeypatch.setattr(lean_module, "open_project_sources", open_with_unattributed_change)
-    _on_checkpoint(monkeypatch, "before-final-verification", change_source)
-    monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
-
-    with pytest.raises(lean_module.LeanSourceError) as error:
-        snapshot_project_sources(tmp_path)
-
     assert opens == lean_module._SNAPSHOT_ATTEMPTS
-    assert str(error.value) == (
-        "Lean sources kept changing while they were indexed; changed: Project/Basic.lean"
-    )
+    assert edits == lean_module._SNAPSHOT_ATTEMPTS - unattributed_first_open
+    if tree_snapshot_module._DESCRIPTOR_CAPTURE_SUPPORTED:
+        assert str(error.value) == f"Lean sources kept changing while they were indexed; changed: {named}"
 
 
-def test_relevant_folder_replaced_by_identical_copy_is_named(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _require_descriptor_capture()
-    _index(tmp_path, "def kept : Nat := 0\n", "Project/A.lean")
-    replaced = False
+def _at(monkeypatch: pytest.MonkeyPatch, when: str, action: Callable[[], object]) -> list[str]:
+    """Run `action` once at the capture moment `when`; the returned list records that it ran.
 
-    def replace_folder() -> None:
-        nonlocal replaced
-        if replaced:
-            return
-        replaced = True
-        (tmp_path / "Project").rename(tmp_path / "Moved")
-        (tmp_path / "Project").mkdir()
-        (tmp_path / "Project" / "A.lean").write_bytes(
-            (tmp_path / "Moved" / "A.lean").read_bytes()
-        )
-        (tmp_path / "Moved" / "A.lean").unlink()
-        (tmp_path / "Moved").rmdir()
+    `when` is "verify" (the checkpoint before the final verification), "list F"
+    (the checkpoint after the scan lists folder F; "list " is the root),
+    "relist F" (just before folder F's end-of-scan relist), or "open N after W"
+    or "opendir N after W" (just before the first descriptor-relative open of N
+    as a file or as a folder once moment W has passed).
+    """
+    fired: list[str] = []
 
-    _on_checkpoint(monkeypatch, "before-final-verification", replace_folder)
-    named = _changed_path(tmp_path)
+    def once() -> None:
+        if not fired:
+            fired.append(when)
+            action()
 
-    assert replaced
-    assert named == "Project"
+    kind, _, rest = when.partition(" ")
+    if kind == "verify":
+        _on_checkpoint(monkeypatch, "before-final-verification", once)
+    elif kind == "list":
+        _on_checkpoint(monkeypatch, "after-directory-list", once, relative=rest)
+    elif kind == "relist":
+        original_recheck = tree_snapshot_module._recheck_scanned_directory
+
+        def recheck(descriptor, *, relative: str, **kwargs):
+            if relative == rest:
+                once()
+            return original_recheck(descriptor, relative=relative, **kwargs)
+
+        monkeypatch.setattr(tree_snapshot_module, "_recheck_scanned_directory", recheck)
+    else:
+        name, _, after = rest.partition(" after ")
+        armed = _at(monkeypatch, after, lambda: None)
+        original_open = os.open
+
+        def open_after(path, flags, mode=0o777, *, dir_fd=None):
+            directory = bool(flags & getattr(os, "O_DIRECTORY", 0))
+            if armed and path == name and dir_fd is not None and directory == (kind == "opendir"):
+                once()
+            return original_open(path, flags, mode, dir_fd=dir_fd)
+
+        monkeypatch.setattr(os, "open", open_after)
+    return fired
 
 
 def _write_site(site: Path, generation: int) -> None:
@@ -586,250 +565,492 @@ def _write_site(site: Path, generation: int) -> None:
     (site / "index.html").write_text(f"<p>{generation}</p>\n", encoding="utf-8")
 
 
-def _captured_tree(root: Path) -> TreeSnapshot:
-    sources = open_project_sources(root)
+_PACKETS_MANIFEST = '{"kind":"packets","packets":[],"schema":"autoform-skeleton-packets/v2"}\n'
+
+
+def _packets_output(folder: Path, revision: int) -> None:
+    folder.mkdir()
+    (folder / "manifest.json").write_text(_PACKETS_MANIFEST, encoding="utf-8")
+    (folder / "Packet.lean").write_text(f"def generated{revision} : Nat := 0\n", encoding="utf-8")
+
+
+def _clone(worker: Path, revision: int) -> None:
+    (worker / ".git").mkdir(parents=True)
+    (worker / ".git/HEAD").write_text(f"ref: refs/heads/r{revision}\n", encoding="utf-8")
+    (worker / "Project").mkdir()
+    (worker / "Project/Worker.lean").write_text(f"def nestedWorker{revision} : Nat := 0\n", encoding="utf-8")
+
+
+def _lean(path: Path, name: str = "x") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"def {name} : Nat := 0\n", encoding="utf-8")
+
+
+def _lock_link(path: Path, number: int = 1) -> Path:
+    path.unlink(missing_ok=True)
     try:
-        return sources.tree.capture()
-    finally:
-        sources.close()
-
-
-@pytest.mark.parametrize("folder", ["Aout/site", "zz/site"])
-@pytest.mark.parametrize("shape", ["rmtree", "clean", "vanish"])
-def test_rebuilt_folder_without_lean_inputs_is_captured_once(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    folder: str,
-    shape: str,
-) -> None:
-    _require_descriptor_capture()
-    _index(tmp_path, "def kept : Nat := 0\n", "Proj/A.lean")
-    site = tmp_path / folder
-    _write_site(site, 0)
-    rebuilds = 0
-
-    def rebuild() -> None:
-        nonlocal rebuilds
-        rebuilds += 1
-        if shape == "clean":
-            # mkdocs keeps the output folder and replaces its children.
-            for entry in site.iterdir():
-                if entry.is_dir():
-                    shutil.rmtree(entry)
-                else:
-                    entry.unlink()
-        else:
-            shutil.rmtree(site, ignore_errors=True)
-        if shape != "vanish":
-            _write_site(site, rebuilds)
-
-    _on_checkpoint(monkeypatch, "before-final-verification", rebuild)
-
-    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
-
-    assert rebuilds == 1
-    assert snapshot.index.find("kept") is not None
-    if shape == "vanish":
-        _write_site(site, 0)
-    directories = _captured_tree(tmp_path).directories
-    assert folder not in directories
-    assert folder.split("/")[0] not in directories
-
-
-@pytest.mark.parametrize("listed_in", ["", "site"])
-def test_folder_removed_while_it_is_scanned_is_tolerated(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    listed_in: str,
-) -> None:
-    _require_descriptor_capture()
-    _index(tmp_path, "def kept : Nat := 0\n", "Proj/A.lean")
-    site = tmp_path / "site"
-    _write_site(site, 0)
-    removed = False
-
-    def remove() -> None:
-        nonlocal removed
-        if not removed:
-            removed = True
-            shutil.rmtree(site)
-
-    _on_checkpoint(monkeypatch, "after-directory-list", remove, relative=listed_in)
-
-    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
-
-    assert removed
-    assert snapshot.index.find("kept") is not None
-
-
-@pytest.mark.parametrize("folder", ["", "Proj"])
-def test_atomic_save_of_non_lean_file_is_captured_once(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    folder: str,
-) -> None:
-    _require_descriptor_capture()
-    _index(tmp_path, "def kept : Nat := 0\n", "Proj/A.lean")
-    parent = tmp_path / folder if folder else tmp_path
-    notes = parent / "notes.md"
-    notes.write_text("0\n", encoding="utf-8")
-    saves = 0
-
-    def save() -> None:
-        nonlocal saves
-        saves += 1
-        (parent / f".notes.md.{saves}.swp").write_text("swap\n", encoding="utf-8")
-        temporary = parent / "notes.md.tmp"
-        temporary.write_text(f"{saves}\n", encoding="utf-8")
-        os.replace(temporary, notes)
-
-    _on_checkpoint(monkeypatch, "before-final-verification", save)
-
-    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
-
-    assert saves == 1
-    assert snapshot.index.find("kept") is not None
-
-
-def test_editor_lock_link_appearing_during_capture_is_accepted(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _require_descriptor_capture()
-    _index(tmp_path, "def kept : Nat := 0\n", "Proj/A.lean")
-    lock = tmp_path / "Proj" / ".#A.lean"
-    links = 0
-
-    def lock_file() -> None:
-        nonlocal links
-        links += 1
-        lock.unlink(missing_ok=True)
-        lock.symlink_to(f"user@host.{links}:1")
-
-    try:
-        lock_file()
+        path.symlink_to(f"user@host.{number}:1700000000")
     except OSError:
         pytest.skip("symlinks are unavailable")
-    lock.unlink()
-    _on_checkpoint(monkeypatch, "before-final-verification", lock_file)
-
-    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
-
-    assert snapshot.index.find("kept") is not None
+    return path
 
 
-def test_marker_candidate_removed_before_it_is_read_is_absent(
+def _notes_folder(path: Path) -> None:
+    path.mkdir()
+    (path / "notes.txt").write_text("notes\n", encoding="utf-8")
+
+
+def _remove(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
+
+
+def _replace(path: Path, make: Callable[[Path], object]) -> None:
+    _remove(path)
+    make(path)
+
+
+def _clean_site(site: Path) -> None:
+    # mkdocs keeps the output folder and replaces its children.
+    for entry in site.iterdir():
+        _remove(entry)
+    _write_site(site, 1)
+
+
+def _atomic_save(folder: Path) -> None:
+    (folder / ".notes.md.1.swp").write_text("swap\n", encoding="utf-8")
+    (folder / "notes.md.tmp").write_text("1\n", encoding="utf-8")
+    os.replace(folder / "notes.md.tmp", folder / "notes.md")
+
+
+def _republish_packets(root: Path) -> None:
+    # Publish as skeleton output does: stage beside the output, move the old
+    # output to a backup, rename the stage into place, drop the backup.
+    generated = root / "review-packets"
+    stage = root / ".review-packets.autoform-stage-1"
+    _packets_output(stage, 1)
+    _replace_outputs([(generated, stage, _output_identity(generated))])
+    assert sorted(path.name for path in root.iterdir()) == ["Proj", "review-packets"]
+
+
+def _git_folder(path: Path) -> None:
+    (path / ".git").mkdir(parents=True)
+    _lean(path / "Packet.lean", "generated0")
+
+
+def _web_app(path: Path, revision: int) -> None:
+    path.mkdir()
+    (path / "manifest.json").write_text(f'{{"name": "web app {revision}"}}\n', encoding="utf-8")
+
+
+def _expose_packets(generated: Path) -> None:
+    generated.rename(generated.parent / ".held")
+    _lean(generated / "Packet.lean", "exposed")
+
+
+def _rehide_packets(generated: Path) -> None:
+    shutil.rmtree(generated)
+    (generated.parent / ".held").rename(generated)
+
+
+# Each case: (setup, [(moment, change), ...], names the capture must not
+# index).  The root holds Proj/A.lean ("kept") besides what setup adds, and
+# setup and change receive the root.  Every change leaves Lean inputs alone, so
+# the capture succeeds in one attempt.
+_UNRELATED_CHANGES = [
+    pytest.param(
+        lambda r: _write_site(r / "Aout/site", 0),
+        [("verify", lambda r: _replace(r / "Aout/site", lambda p: _write_site(p, 1)))],
+        (),
+        id="site-rebuilt",
+    ),
+    pytest.param(
+        lambda r: _write_site(r / "zz/site", 0),
+        [("verify", lambda r: _clean_site(r / "zz/site"))],
+        (),
+        id="site-cleaned",
+    ),
+    pytest.param(
+        lambda r: _write_site(r / "Aout/site", 0),
+        [("verify", lambda r: _remove(r / "Aout/site"))],
+        (),
+        id="site-removed",
+    ),
+    pytest.param(
+        lambda r: _write_site(r / "site", 0),
+        [("list ", lambda r: _remove(r / "site"))],
+        (),
+        id="site-removed-after-root-listing",
+    ),
+    pytest.param(
+        lambda r: _write_site(r / "site", 0),
+        [("list site", lambda r: _remove(r / "site"))],
+        (),
+        id="site-removed-after-its-listing",
+    ),
+    pytest.param(
+        lambda r: _write_site(r / "site", 0),
+        [("opendir site after verify", lambda r: _remove(r / "site"))],
+        (),
+        id="site-removed-before-verification-opens-it",
+    ),
+    pytest.param(
+        lambda r: (r / "notes.md").write_text("0\n", encoding="utf-8"),
+        [("verify", _atomic_save)],
+        (),
+        id="atomic-save-in-root",
+    ),
+    pytest.param(
+        lambda r: (r / "Proj/notes.md").write_text("0\n", encoding="utf-8"),
+        [("verify", lambda r: _atomic_save(r / "Proj"))],
+        (),
+        id="atomic-save-beside-lean-file",
+    ),
+    pytest.param(
+        lambda r: _lock_link(r / "Proj/.#A.lean").unlink(),
+        [("verify", lambda r: _lock_link(r / "Proj/.#A.lean"))],
+        (),
+        id="lock-link-appearing",
+    ),
+    pytest.param(
+        lambda r: _notes_folder(r / "Proj/site"),
+        [("relist Proj", lambda r: _replace(r / "Proj/site", lambda p: p.write_text("<html></html>\n")))],
+        (),
+        id="folder-turned-file-before-relist",
+    ),
+    pytest.param(
+        lambda r: _lock_link(r / "Proj/.#A.lean"),
+        [("relist Proj", lambda r: _lock_link(r / "Proj/.#A.lean", 2))],
+        (),
+        id="lock-link-rewritten-before-relist",
+    ),
+    pytest.param(
+        lambda r: _lean(r / "Proj/B.lean", "b"),
+        [("list Proj", lambda r: _remove(r / "Proj/B.lean"))],
+        ("b",),
+        id="lean-file-removed-before-its-lookup",
+    ),
+    pytest.param(
+        lambda r: _lean(r / "Proj/B.lean", "b"),
+        [("open B.lean after list Proj", lambda r: _remove(r / "Proj/B.lean"))],
+        ("b",),
+        id="lean-file-removed-before-its-read",
+    ),
+    pytest.param(
+        lambda r: _web_app(r / "site", 0),
+        [("verify", lambda r: _replace(r / "site", lambda p: _web_app(p, 1)))],
+        (),
+        id="unrecognized-manifest-rebuilt",
+    ),
+    pytest.param(
+        lambda r: _clone(r / "vendor/worker", 0),
+        [("verify", lambda r: _replace(r / "vendor/worker", lambda p: _clone(p, 1)))],
+        ("nestedWorker0", "nestedWorker1"),
+        id="nested-checkout-recloned",
+    ),
+    pytest.param(
+        lambda r: _packets_output(r / "review-packets", 0),
+        [("verify", _republish_packets)],
+        ("generated0", "generated1"),
+        id="skeleton-output-republished",
+    ),
+    pytest.param(
+        lambda r: _packets_output(r / "hidden", 0),
+        [("verify", lambda r: _remove(r / "hidden"))],
+        ("generated0",),
+        id="skeleton-output-removed",
+    ),
+    pytest.param(
+        lambda r: _git_folder(r / "hidden"),
+        [("verify", lambda r: _remove(r / "hidden"))],
+        ("generated0",),
+        id="nested-checkout-removed",
+    ),
+]
+
+
+@pytest.mark.parametrize(("setup", "changes", "absent"), _UNRELATED_CHANGES)
+def test_change_without_lean_inputs_is_captured_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    setup: Callable[[Path], object],
+    changes: list,
+    absent: tuple[str, ...],
 ) -> None:
     _require_descriptor_capture()
     _index(tmp_path, "def kept : Nat := 0\n", "Proj/A.lean")
-    site = tmp_path / "site"
-    site.mkdir()
-    manifest = site / "manifest.json"
-    manifest.write_text('{"name": "web app"}\n', encoding="utf-8")
-    original_names = tree_snapshot_module._capture_directory_names
-    removed = False
-
-    def list_then_remove(descriptor, **kwargs):
-        nonlocal removed
-        names = original_names(descriptor, **kwargs)
-        if not removed and "manifest.json" in names:
-            # The site generator removes its output between the listing and
-            # the marker lookup.
-            removed = True
-            manifest.unlink()
-        return names
-
-    monkeypatch.setattr(tree_snapshot_module, "_capture_directory_names", list_then_remove)
+    setup(tmp_path)
+    fired = [_at(monkeypatch, when, lambda change=change: change(tmp_path)) for when, change in changes]
 
     snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
-    assert removed
+    assert fired == [[when] for when, _change in changes]
     assert snapshot.index.find("kept") is not None
+    for name in absent:
+        assert snapshot.index.find(name) is None
 
 
-def test_unrecognized_manifest_in_rebuilt_folder_is_captured_once(
+def _away(r: Path, relative: str, *, copy: bool = False) -> None:
+    (r / relative).rename(r.parent / "away")
+    if copy:
+        shutil.copytree(r.parent / "away", r / relative)
+
+
+def _back(r: Path, relative: str) -> None:
+    if (r / relative).exists():
+        shutil.rmtree(r / relative)
+    (r.parent / "away").rename(r / relative)
+
+
+def _swap_for_copy(r: Path, relative: str) -> None:
+    _away(r, relative, copy=True)
+    shutil.rmtree(r.parent / "away")
+
+
+def _sub_and_tail(r: Path) -> None:
+    _lean(r / "Proj/Sub/S.lean", "s")
+    (r / "Proj/Tail").mkdir()
+
+
+def _lean_in_site(site: Path, rebuilt: bool = False) -> None:
+    if rebuilt:
+        _replace(site, lambda path: _write_site(path, 1))
+    _lean(site / "New.lean")
+
+
+def _moved_out(r: Path, name: str, make: Callable[[Path], object] | None = None) -> None:
+    (r.parent / "outside").mkdir(exist_ok=True)
+    (r / "Proj" / name).rename(r.parent / "outside" / name)
+    if make is not None:
+        make(r / "Proj" / name)
+
+
+def _moved_in(r: Path, name: str) -> None:
+    if (r / "Proj" / name).exists():
+        (r / "Proj" / name).rename(r.parent / "outside" / "replacement")
+    (r.parent / "outside" / name).rename(r / "Proj" / name)
+
+
+# Each case: (setup, [(moment, change), ...], the path the failed capture
+# names).  The root holds Proj/A.lean besides what setup adds; setup and change
+# receive the root, whose parent holds entries moved out of the tree.
+_LEAN_CHANGES = [
+    pytest.param(
+        lambda r: None,
+        [("verify", lambda r: _swap_for_copy(r, "Proj"))],
+        "Proj",
+        id="lean-folder-replaced-by-copy",
+    ),
+    pytest.param(
+        lambda r: _lean(r / "Proj/B.lean", "b"),
+        [("verify", lambda r: _remove(r / "Proj/A.lean"))],
+        "Proj/A.lean",
+        id="lean-file-removed",
+    ),
+    pytest.param(
+        lambda r: _write_site(r / "site", 0),
+        [("verify", lambda r: _lean_in_site(r / "site"))],
+        "site/New.lean",
+        id="lean-file-in-unrelated-folder",
+    ),
+    pytest.param(
+        lambda r: _write_site(r / "site", 0),
+        [("verify", lambda r: _lean_in_site(r / "site", rebuilt=True))],
+        "site/New.lean",
+        id="lean-file-in-rebuilt-unrelated-folder",
+    ),
+    pytest.param(
+        lambda r: _write_site(r / "site", 0),
+        [("verify", lambda r: _lean(r / "fresh/New.lean"))],
+        "fresh/New.lean",
+        id="lean-file-in-new-folder",
+    ),
+    pytest.param(
+        lambda r: _write_site(r / "site", 0),
+        [("verify", lambda r: _lean(r / "site/deep/New.lean"))],
+        "site/deep/New.lean",
+        id="lean-file-in-new-nested-folder",
+    ),
+    # Only the relist at the end of the folder's scan sees X.lean, as on the
+    # strict path: it appears after the listing and is gone by verification.
+    pytest.param(
+        lambda r: _lean(r / "Zed/B.lean", "b"),
+        [("list Zed", lambda r: _lean(r / "Zed/X.lean")), ("verify", lambda r: _remove(r / "Zed/X.lean"))],
+        "Zed/X.lean",
+        id="lean-file-only-during-its-lean-folders-scan",
+    ),
+    # site holds no Lean file, so it is relisted although it is not recorded.
+    pytest.param(
+        lambda r: _write_site(r / "site", 0),
+        [("list site", lambda r: _lean(r / "site/X.lean")), ("verify", lambda r: _remove(r / "site/X.lean"))],
+        "site/X.lean",
+        id="lean-file-only-during-its-unrelated-folders-scan",
+    ),
+    # An empty folder named X.lean becomes a regular file between the
+    # verification walk's stat and its open, which fails with ENOTDIR.
+    pytest.param(
+        lambda r: (r / "X.lean").mkdir(),
+        [("opendir X.lean after verify", lambda r: _replace(r / "X.lean", _lean))],
+        "X.lean",
+        id="lean-named-folder-turned-file-during-verification-walk",
+    ),
+    # The scan keeps nothing for the entry, which becomes a .lean file before
+    # Proj's end-of-scan relist and is gone before verification.
+    pytest.param(
+        lambda r: _notes_folder(r / "Proj/X.lean"),
+        [("relist Proj", lambda r: _replace(r / "Proj/X.lean", _lean)), ("verify", lambda r: _remove(r / "Proj/X.lean"))],
+        "Proj/X.lean",
+        id="unselected-folder-turned-lean-file-before-relist",
+    ),
+    pytest.param(
+        lambda r: _lock_link(r / "Proj/.#A.lean"),
+        [("relist Proj", lambda r: _replace(r / "Proj/.#A.lean", _lean)), ("verify", lambda r: _remove(r / "Proj/.#A.lean"))],
+        "Proj/.#A.lean",
+        id="lock-link-turned-lean-file-before-relist",
+    ),
+    # Moved out of the tree between the scan's lookup and its open, so the scan
+    # drops B.lean as vanished or walks the notes folder that took D's place;
+    # moved back before Proj's relist, it loses its Lean input before
+    # verification.  Only the relist sees it, and only because the scan keeps
+    # no identity for a dropped file and the opened identity of a walked folder.
+    pytest.param(
+        lambda r: _lean(r / "Proj/B.lean", "b"),
+        [
+            ("open B.lean after list Proj", lambda r: _moved_out(r, "B.lean")),
+            ("relist Proj", lambda r: _moved_in(r, "B.lean")),
+            ("verify", lambda r: _remove(r / "Proj/B.lean")),
+        ],
+        "Proj/B.lean",
+        id="lean-file-moved-out-at-open-and-back-before-relist",
+    ),
+    pytest.param(
+        lambda r: _lean(r / "Proj/D/New.lean", "n"),
+        [
+            ("opendir D after list Proj", lambda r: _moved_out(r, "D", _notes_folder)),
+            ("relist Proj", lambda r: _moved_in(r, "D")),
+            ("verify", lambda r: _remove(r / "Proj/D/New.lean")),
+        ],
+        "Proj/D/New.lean",
+        id="lean-folder-moved-out-at-open-and-back-before-relist",
+    ),
+    # Proj/Sub is restored before verification, so only the scan's own checks
+    # see it: gone at Proj's relist, or a different folder when Proj looks at
+    # Sub again after descending into it.
+    pytest.param(
+        _sub_and_tail,
+        [("list Proj/Tail", lambda r: _away(r, "Proj/Sub")), ("verify", lambda r: _back(r, "Proj/Sub"))],
+        "Proj/Sub",
+        id="lean-folder-moved-away-during-its-parents-scan",
+    ),
+    pytest.param(
+        lambda r: _lean(r / "Proj/Sub/S.lean", "s"),
+        [("list Proj/Sub", lambda r: _away(r, "Proj/Sub", copy=True)), ("verify", lambda r: _back(r, "Proj/Sub"))],
+        "Proj/Sub",
+        id="lean-folder-replaced-by-copy-during-its-scan",
+    ),
+    # A marker that appears in a folder of Lean files hides them; only the
+    # folder's end-of-scan relist sees one that is gone again by verification.
+    pytest.param(
+        lambda r: _lean(r / "vendor/lib/Lib.lean", "vendored"),
+        [("relist vendor/lib", lambda r: (r / "vendor/lib/.git").mkdir()), ("verify", lambda r: (r / "vendor/lib/.git").rmdir())],
+        "vendor/lib",
+        id="checkout-marker-only-at-its-folders-relist",
+    ),
+    pytest.param(
+        lambda r: _packets_output(r / "review-packets", 0),
+        [("verify", lambda r: _expose_packets(r / "review-packets"))],
+        "review-packets/Packet.lean",
+        id="skeleton-output-replaced-by-lean-folder",
+    ),
+    pytest.param(
+        lambda r: _packets_output(r / "review-packets", 0),
+        [("verify", lambda r: _remove(r / "review-packets/manifest.json"))],
+        "review-packets/Packet.lean",
+        id="skeleton-output-unmarked-in-place",
+    ),
+    pytest.param(
+        lambda r: _packets_output(r / "review-packets", 0),
+        [("relist ", lambda r: _expose_packets(r / "review-packets")), ("verify", lambda r: _rehide_packets(r / "review-packets"))],
+        "review-packets/Packet.lean",
+        id="skeleton-output-exposed-only-at-root-relist",
+    ),
+]
+
+
+@pytest.mark.parametrize(("setup", "changes", "named"), _LEAN_CHANGES)
+def test_lean_change_is_caught_and_named(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    setup: Callable[[Path], object],
+    changes: list,
+    named: str,
 ) -> None:
     _require_descriptor_capture()
-    _index(tmp_path, "def kept : Nat := 0\n", "Proj/A.lean")
-    site = tmp_path / "site"
-    site.mkdir()
-    (site / "manifest.json").write_text('{"name": "web app 0"}\n', encoding="utf-8")
-    rebuilds = 0
+    root = tmp_path / "root"
+    _index(root, "def kept : Nat := 0\n", "Proj/A.lean")
+    setup(root)
+    fired = [_at(monkeypatch, when, lambda change=change: change(root)) for when, change in changes]
 
-    def rebuild() -> None:
-        nonlocal rebuilds
-        rebuilds += 1
-        shutil.rmtree(site)
-        site.mkdir()
-        (site / "manifest.json").write_text(
-            f'{{"name": "web app {rebuilds}"}}\n',
-            encoding="utf-8",
-        )
-
-    _on_checkpoint(monkeypatch, "before-final-verification", rebuild)
-
-    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
-
-    assert snapshot.index.find("kept") is not None
+    assert _changed_path(root) == named
+    expected = [[when] for when, _change in changes]
+    if len(changes) > 1:
+        # The last change hides the first from the final verification, so an
+        # earlier check must catch it and verification is never reached.
+        expected[-1] = []
+    assert fired == expected
 
 
+@pytest.mark.parametrize("step", ["lookup", "examine"])
 @pytest.mark.parametrize(
-    ("case", "expected"),
-    [
-        ("same", "site/New.lean"),
-        ("rebuilt", "site/New.lean"),
-        ("new", "fresh/New.lean"),
-        ("nested", "site/deep/New.lean"),
-    ],
+    ("name", "named"),
+    [("B.lean", "Proj/B.lean"), ("Sub", "Proj/Sub/S.lean"), ("L.lean", "Proj/L.lean")],
+    ids=["file", "folder", "link"],
 )
-def test_lean_file_appearing_in_unrelated_folder_is_named(
+def test_lean_entry_dropped_as_vanished_and_back_at_its_folders_relist_is_caught(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    case: str,
-    expected: str,
+    name: str,
+    named: str,
+    step: str,
 ) -> None:
-    _require_descriptor_capture()
-    _index(tmp_path, "def kept : Nat := 0\n", "Proj/A.lean")
-    site = tmp_path / "site"
-    _write_site(site, 0)
-    appeared = False
-
-    def appear() -> None:
-        nonlocal appeared
-        if appeared:
-            return
-        appeared = True
-        if case == "rebuilt":
-            shutil.rmtree(site)
-            _write_site(site, 1)
-        target = tmp_path / PurePosixPath(expected).parent
-        target.mkdir(parents=True, exist_ok=True)
-        (target / "New.lean").write_text("def appeared : Nat := 0\n", encoding="utf-8")
-
-    _on_checkpoint(monkeypatch, "before-final-verification", appear)
-
-    assert _changed_path(tmp_path) == expected
-    assert snapshot_project_sources(tmp_path).index.find("appeared") is not None
-
-
-def test_lean_file_removed_after_scan_is_named(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    # The scan finds the entry gone at its lookup, or when it examines it (the
+    # open of a file or folder, the readlink of a link), and drops it.  The
+    # entry is back right after that call, so Proj's end-of-scan relist lists
+    # it, and it is gone again before verification.  Only that relist can see
+    # it, by examining the name it dropped.
     _require_descriptor_capture()
     _index(tmp_path, "def a : Nat := 0\n", "Proj/A.lean")
-    _index(tmp_path, "def b : Nat := 0\n", "Proj/B.lean")
+    entry = tmp_path / "Proj" / name
 
-    def remove() -> None:
-        (tmp_path / "Proj" / "A.lean").unlink(missing_ok=True)
+    def restore() -> None:
+        if name == "L.lean":
+            entry.symlink_to("A.lean")
+        else:
+            _lean(entry / "S.lean" if name == "Sub" else entry, "b")
 
-    _on_checkpoint(monkeypatch, "before-final-verification", remove)
+    restore()
+    call = "stat" if step == "lookup" else "readlink" if name == "L.lean" else "open"
+    original = getattr(os, call)
+    armed = _at(monkeypatch, "list Proj", lambda: None)
+    fired: list[str] = []
 
-    assert _changed_path(tmp_path) == "Proj/A.lean"
+    def vanish_around_call(path, *args, **kwargs):
+        if armed and not fired and path == name and kwargs.get("dir_fd") is not None:
+            fired.append(step)
+            _remove(entry)
+            try:
+                return original(path, *args, **kwargs)
+            finally:
+                restore()
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, call, vanish_around_call)
+    _at(monkeypatch, "verify", lambda: _remove(entry))
+
+    assert _changed_path(tmp_path) == named
+    assert fired == [step]
 
 
 def test_lean_file_edited_while_it_is_read_is_named(
@@ -863,473 +1084,38 @@ def test_lean_file_edited_while_it_is_read_is_named(
     assert snapshot.index.find("edited") is not None
 
 
-def test_lean_file_removed_before_it_is_examined_is_absent(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _require_descriptor_capture()
-    _index(tmp_path, "def a : Nat := 0\n", "Proj/A.lean")
-    _index(tmp_path, "def b : Nat := 0\n", "Proj/B.lean")
-    removed = False
-
-    def remove() -> None:
-        nonlocal removed
-        if not removed:
-            removed = True
-            (tmp_path / "Proj" / "B.lean").unlink()
-
-    _on_checkpoint(monkeypatch, "after-directory-list", remove, relative="Proj")
-
-    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
-
-    assert removed
-    assert snapshot.index.find("a") is not None
-    assert snapshot.index.find("b") is None
 
 
-@pytest.mark.parametrize("folder", ["Zed", "site"])
-def test_lean_file_present_only_during_its_folders_scan_is_caught(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    folder: str,
-) -> None:
-    # The folder is listed without X.lean; X.lean appears before the folder's
-    # scan ends and is gone again before verification.  Only the relist at the
-    # end of the folder's scan sees it, as on the strict path.  Zed holds a Lean
-    # file; site holds none, so it is relisted although it is not recorded.
-    _require_descriptor_capture()
-    _index(tmp_path, "def w : Nat := 0\n", "Proj/W.lean")
-    if folder == "Zed":
-        _index(tmp_path, "def b : Nat := 0\n", "Zed/B.lean")
-    else:
-        _write_site(tmp_path / folder, 0)
-    transient = tmp_path / folder / "X.lean"
-
-    def create() -> None:
-        transient.write_text("def x : Nat := 0\n", encoding="utf-8")
-
-    def remove() -> None:
-        transient.unlink(missing_ok=True)
-
-    original_checkpoint = tree_snapshot_module._tree_snapshot_checkpoint
-
-    def checkpoint(name: str, path: str) -> None:
-        original_checkpoint(name, path)
-        if name == "after-directory-list" and path == folder:
-            create()
-        elif name == "before-final-verification":
-            remove()
-
-    monkeypatch.setattr(tree_snapshot_module, "_tree_snapshot_checkpoint", checkpoint)
-
-    assert _changed_path(tmp_path) == f"{folder}/X.lean"
-
-
-def _on_open_after_checkpoint(
-    monkeypatch: pytest.MonkeyPatch,
-    event: str,
-    name: str,
-    action: Callable[[], None],
-    *,
-    directory: bool,
-    relative: str | None = None,
-) -> list[str]:
-    """Run `action` once, just before the first descriptor-relative open of `name` after `event`."""
-    armed: list[bool] = []
-    fired: list[str] = []
-    _on_checkpoint(monkeypatch, event, lambda: armed.append(True), relative=relative)
-    original_open = os.open
-
-    def open_after_action(path, flags, mode=0o777, *, dir_fd=None):
-        opens_directory = bool(flags & getattr(os, "O_DIRECTORY", 0))
-        if (
-            armed
-            and not fired
-            and path == name
-            and dir_fd is not None
-            and opens_directory == directory
-        ):
-            fired.append(name)
-            action()
-        return original_open(path, flags, mode, dir_fd=dir_fd)
-
-    monkeypatch.setattr(os, "open", open_after_action)
-    return fired
-
-
-def test_folder_replaced_by_lean_file_while_it_is_walked_is_named(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # An empty folder named X.lean holds no input.  Between the verification
-    # walk's stat and its open it becomes a regular X.lean file, so the open
-    # fails with ENOTDIR and the walk must look at the entry again.
-    _require_descriptor_capture()
-    _index(tmp_path, "def kept : Nat := 0\n", "Proj/A.lean")
-    folder = tmp_path / "X.lean"
-    folder.mkdir()
-
-    def replace() -> None:
-        folder.rmdir()
-        folder.write_text("def appeared : Nat := 0\n", encoding="utf-8")
-
-    fired = _on_open_after_checkpoint(
-        monkeypatch,
-        "before-final-verification",
-        "X.lean",
-        replace,
-        directory=True,
-    )
-    named = _changed_path(tmp_path)
-
-    assert fired
-    assert named == "X.lean"
-
-
-def test_folder_removed_before_the_walk_opens_it_is_tolerated(
+def test_marker_candidate_removed_before_it_is_read_is_absent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _require_descriptor_capture()
     _index(tmp_path, "def kept : Nat := 0\n", "Proj/A.lean")
     site = tmp_path / "site"
-    _write_site(site, 0)
-    fired = _on_open_after_checkpoint(
-        monkeypatch,
-        "before-final-verification",
-        "site",
-        lambda: shutil.rmtree(site),
-        directory=True,
-    )
+    site.mkdir()
+    manifest = site / "manifest.json"
+    manifest.write_text('{"name": "web app"}\n', encoding="utf-8")
+    original_names = tree_snapshot_module._capture_directory_names
+    removed = False
+
+    def list_then_remove(descriptor, **kwargs):
+        nonlocal removed
+        names = original_names(descriptor, **kwargs)
+        if not removed and "manifest.json" in names:
+            # The site generator removes its output between the listing and
+            # the marker lookup.
+            removed = True
+            manifest.unlink()
+        return names
+
+    monkeypatch.setattr(tree_snapshot_module, "_capture_directory_names", list_then_remove)
 
     snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
 
-    assert fired
+    assert removed
     assert snapshot.index.find("kept") is not None
 
-
-def test_lean_file_removed_before_it_is_read_is_absent(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # B.lean is listed and stat'ed by the scan, then removed before the scan
-    # opens it to read its bytes.
-    _require_descriptor_capture()
-    _index(tmp_path, "def a : Nat := 0\n", "Proj/A.lean")
-    _index(tmp_path, "def b : Nat := 0\n", "Proj/B.lean")
-    fired = _on_open_after_checkpoint(
-        monkeypatch,
-        "after-directory-list",
-        "B.lean",
-        lambda: (tmp_path / "Proj" / "B.lean").unlink(),
-        directory=False,
-        relative="Proj",
-    )
-
-    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
-
-    assert fired
-    assert snapshot.index.find("a") is not None
-    assert snapshot.index.find("b") is None
-
-
-@pytest.mark.parametrize("step", ["lookup", "examine"])
-@pytest.mark.parametrize("kind", ["file", "folder", "link"])
-def test_lean_entry_dropped_as_vanished_and_back_at_its_folders_relist_is_caught(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    kind: str,
-    step: str,
-) -> None:
-    # The scan finds the entry gone at its lookup, or when it examines it (the
-    # open of a file or folder, the readlink of a link), and drops it.  The
-    # entry is back right after that call, so Proj's relist at the end of
-    # its scan lists it, and it is gone again before verification.  Only that
-    # relist can see it, by examining the name it dropped.
-    _require_descriptor_capture()
-    _index(tmp_path, "def a : Nat := 0\n", "Proj/A.lean")
-    if kind == "file":
-        name = "B.lean"
-        _index(tmp_path, "def b : Nat := 0\n", "Proj/B.lean")
-        expected = "Proj/B.lean"
-    elif kind == "folder":
-        name = "Sub"
-        _index(tmp_path, "def s : Nat := 0\n", "Proj/Sub/S.lean")
-        expected = "Proj/Sub/S.lean"
-    else:
-        name = "L.lean"
-        (tmp_path / "Proj" / name).symlink_to("A.lean")
-        expected = "Proj/L.lean"
-    entry = tmp_path / "Proj" / name
-
-    def remove() -> None:
-        if entry.is_dir() and not entry.is_symlink():
-            shutil.rmtree(entry)
-        else:
-            entry.unlink(missing_ok=True)
-
-    def restore() -> None:
-        if kind == "file":
-            entry.write_text("def b : Nat := 1\n", encoding="utf-8")
-        elif kind == "link":
-            entry.symlink_to("A.lean")
-        else:
-            entry.mkdir()
-            (entry / "S.lean").write_text("def s : Nat := 1\n", encoding="utf-8")
-
-    armed: list[bool] = []
-    fired: list[str] = []
-    original_checkpoint = tree_snapshot_module._tree_snapshot_checkpoint
-
-    def checkpoint(event: str, path: str) -> None:
-        original_checkpoint(event, path)
-        if event == "after-directory-list" and path == "Proj":
-            armed.append(True)
-        elif event == "before-final-verification":
-            remove()
-
-    def around(call, path, *args, **kwargs):
-        if armed and not fired and path == name and kwargs.get("dir_fd") is not None:
-            fired.append(step)
-            remove()
-            try:
-                return call(path, *args, **kwargs)
-            finally:
-                restore()
-        return call(path, *args, **kwargs)
-
-    original_stat = os.stat
-    original_open = os.open
-    original_readlink = os.readlink
-    examine = "readlink" if kind == "link" else "open"
-
-    def stat_once(path, *args, **kwargs):
-        if step == "lookup":
-            return around(original_stat, path, *args, **kwargs)
-        return original_stat(path, *args, **kwargs)
-
-    def open_once(path, *args, **kwargs):
-        if step == "examine" and examine == "open":
-            return around(original_open, path, *args, **kwargs)
-        return original_open(path, *args, **kwargs)
-
-    def readlink_once(path, *args, **kwargs):
-        if step == "examine" and examine == "readlink":
-            return around(original_readlink, path, *args, **kwargs)
-        return original_readlink(path, *args, **kwargs)
-
-    monkeypatch.setattr(tree_snapshot_module, "_tree_snapshot_checkpoint", checkpoint)
-    monkeypatch.setattr(os, "stat", stat_once)
-    monkeypatch.setattr(os, "open", open_once)
-    monkeypatch.setattr(os, "readlink", readlink_once)
-    named = _changed_path(tmp_path)
-
-    assert fired == [step]
-    assert named == expected
-
-
-def _before_relist_of(
-    monkeypatch: pytest.MonkeyPatch,
-    folder: str,
-    action: Callable[[], None],
-) -> list[str]:
-    """Run `action` once, just before the end-of-scan relist of `folder`."""
-    fired: list[str] = []
-    original_recheck = tree_snapshot_module._recheck_scanned_directory
-
-    def recheck(descriptor, *, relative: str, **kwargs):
-        if relative == folder and not fired:
-            fired.append(relative)
-            action()
-        return original_recheck(descriptor, relative=relative, **kwargs)
-
-    monkeypatch.setattr(tree_snapshot_module, "_recheck_scanned_directory", recheck)
-    return fired
-
-
-def _unselected_entry(entry: Path, kind: str) -> None:
-    if kind == "folder":
-        entry.mkdir()
-        (entry / "notes.txt").write_text("notes\n", encoding="utf-8")
-    else:
-        entry.symlink_to("user@host.1234:1700000000")
-
-
-@pytest.mark.parametrize(
-    ("name", "kind"),
-    [("X.lean", "folder"), (".#A.lean", "link")],
-    ids=["folder-to-file", "lock-link-to-file"],
-)
-def test_unselected_entry_turned_lean_file_before_its_folders_relist_is_caught(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    name: str,
-    kind: str,
-) -> None:
-    # The scan lists and examines the entry, an X.lean folder holding no Lean
-    # input or an Emacs lock link, and keeps nothing for it.  Before Proj's
-    # end-of-scan relist it becomes a regular .lean file, and it is gone
-    # before verification, so only that relist can see the file.
-    _require_descriptor_capture()
-    _index(tmp_path, "def a : Nat := 0\n", "Proj/A.lean")
-    entry = tmp_path / "Proj" / name
-    _unselected_entry(entry, kind)
-
-    def turn_into_lean_file() -> None:
-        if kind == "folder":
-            shutil.rmtree(entry)
-        else:
-            entry.unlink()
-        entry.write_text("def appeared : Nat := 0\n", encoding="utf-8")
-
-    fired = _before_relist_of(monkeypatch, "Proj", turn_into_lean_file)
-    _on_checkpoint(
-        monkeypatch,
-        "before-final-verification",
-        lambda: entry.unlink(missing_ok=True),
-    )
-    named = _changed_path(tmp_path)
-
-    assert fired == ["Proj"]
-    assert named == f"Proj/{name}"
-
-
-@pytest.mark.parametrize(
-    ("name", "kind"),
-    [("site", "folder"), (".#A.lean", "link")],
-    ids=["folder-to-file", "lock-link-to-link"],
-)
-def test_unselected_entry_replaced_by_unselected_entry_before_its_folders_relist_is_tolerated(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    name: str,
-    kind: str,
-) -> None:
-    # The entry changes identity before Proj's relist, but what replaces it
-    # (a regular file named site, another lock link) is still unselected.
-    _require_descriptor_capture()
-    _index(tmp_path, "def a : Nat := 0\n", "Proj/A.lean")
-    entry = tmp_path / "Proj" / name
-    _unselected_entry(entry, kind)
-
-    def replace() -> None:
-        if kind == "folder":
-            shutil.rmtree(entry)
-            entry.write_text("<html></html>\n", encoding="utf-8")
-        else:
-            entry.unlink()
-            entry.symlink_to("user@host.5678:1700000001")
-
-    fired = _before_relist_of(monkeypatch, "Proj", replace)
-
-    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
-
-    assert fired == ["Proj"]
-    assert snapshot.index.find("a") is not None
-
-
-@pytest.mark.parametrize("kind", ["file", "folder"])
-def test_entry_moved_away_at_its_open_and_back_at_its_folders_relist_is_caught(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    kind: str,
-) -> None:
-    # Between the scan's lookup of the entry and its open, the entry is moved
-    # out of the tree.  The scan then drops B.lean as vanished, or walks the
-    # folder holding only notes.txt that took D's place and keeps nothing.
-    # Just before Proj's end-of-scan relist the original entry, with the
-    # inode the lookup saw, is moved back, and it loses its Lean input before
-    # verification.  Only that relist can see it, and only if the scan
-    # recorded no identity for the dropped file and the opened folder's
-    # identity, not the lookup's, for the walked one.
-    _require_descriptor_capture()
-    root = tmp_path / "root"
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    _index(root, "def a : Nat := 0\n", "Proj/A.lean")
-    if kind == "file":
-        name = "B.lean"
-        _index(root, "def b : Nat := 0\n", "Proj/B.lean")
-        expected = "Proj/B.lean"
-    else:
-        name = "D"
-        _index(root, "def n : Nat := 0\n", "Proj/D/New.lean")
-        expected = "Proj/D/New.lean"
-    entry = root / "Proj" / name
-
-    def move_away() -> None:
-        entry.rename(outside / "original")
-        if kind == "folder":
-            entry.mkdir()
-            (entry / "notes.txt").write_text("notes\n", encoding="utf-8")
-
-    def move_back() -> None:
-        if kind == "folder":
-            entry.rename(outside / "replacement")
-        (outside / "original").rename(entry)
-
-    def remove_lean_input() -> None:
-        (entry if kind == "file" else entry / "New.lean").unlink()
-
-    opened = _on_open_after_checkpoint(
-        monkeypatch,
-        "after-directory-list",
-        name,
-        move_away,
-        directory=kind == "folder",
-        relative="Proj",
-    )
-    relisted = _before_relist_of(monkeypatch, "Proj", move_back)
-    _on_checkpoint(monkeypatch, "before-final-verification", remove_lean_input)
-    named = _changed_path(root)
-
-    assert opened == [name]
-    assert relisted == ["Proj"]
-    assert named == expected
-
-
-@pytest.mark.parametrize("change", ["moved-away", "replaced-by-copy"])
-def test_relevant_folder_changed_during_its_parents_scan_is_caught(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    change: str,
-) -> None:
-    # Proj/Sub holds a Lean file and is restored before verification, so only
-    # the scan's own rechecks can see the change: moved-away is gone when
-    # Proj is relisted at the end of its scan, and replaced-by-copy is a
-    # different folder when Proj re-looks at Sub after descending into it.
-    _require_descriptor_capture()
-    root = tmp_path / "root"
-    _index(root, "def s : Nat := 0\n", "Proj/Sub/S.lean")
-    (root / "Proj" / "Tail").mkdir()
-    sub = root / "Proj" / "Sub"
-    away = tmp_path / "away"
-
-    def move() -> None:
-        if not away.exists():
-            sub.rename(away)
-            if change == "replaced-by-copy":
-                shutil.copytree(away, sub)
-
-    def restore() -> None:
-        if away.exists():
-            if sub.exists():
-                shutil.rmtree(sub)
-            away.rename(sub)
-
-    original_checkpoint = tree_snapshot_module._tree_snapshot_checkpoint
-    moved_at = "Proj/Tail" if change == "moved-away" else "Proj/Sub"
-
-    def checkpoint(name: str, path: str) -> None:
-        original_checkpoint(name, path)
-        if name == "after-directory-list" and path == moved_at:
-            move()
-        elif name == "before-final-verification":
-            restore()
-
-    monkeypatch.setattr(tree_snapshot_module, "_tree_snapshot_checkpoint", checkpoint)
-
-    assert _changed_path(root) == "Proj/Sub"
 
 
 def test_checkout_marker_appearing_beside_lean_files_is_caught(
@@ -1356,25 +1142,6 @@ def test_checkout_marker_appearing_beside_lean_files_is_caught(
     assert len(binds) == 2
     assert snapshot.index.find("main") is not None
     assert snapshot.index.find("vendored") is None
-
-
-def test_checkout_marker_seen_only_by_its_folders_relist_is_caught(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A marker that appears in a folder holding Lean files hides them, even
-    # if it is gone again by verification; only the folder's end-of-scan
-    # relist sees it.
-    _require_descriptor_capture()
-    _index(tmp_path, "def main : Nat := 0\n", "Main.lean")
-    _index(tmp_path, "def vendored : Nat := 0\n", "vendor/lib/Lib.lean")
-    marker = tmp_path / "vendor" / "lib" / ".git"
-    fired = _before_relist_of(monkeypatch, "vendor/lib", marker.mkdir)
-    _on_checkpoint(monkeypatch, "before-final-verification", marker.rmdir)
-    named = _changed_path(tmp_path)
-
-    assert fired == ["vendor/lib"]
-    assert named == "vendor/lib"
 
 
 def test_unrelated_folders_do_not_change_tree_revisions(tmp_path: Path) -> None:
@@ -1623,42 +1390,6 @@ def test_nested_checkout_marker_replacement_is_captured_once(
     assert changed
     assert snapshot.index.find("toplevel") is not None
     assert snapshot.index.find("nestedWorker") is None
-
-
-def test_nested_checkout_recloned_during_capture_is_captured_once(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _require_descriptor_capture()
-    _index(tmp_path)
-    worker = tmp_path / "vendor/worker"
-
-    def clone(revision: int) -> None:
-        (worker / ".git").mkdir(parents=True)
-        (worker / ".git/HEAD").write_text(f"ref: refs/heads/r{revision}\n", encoding="utf-8")
-        (worker / "Project").mkdir()
-        (worker / "Project/Worker.lean").write_text(
-            f"def nestedWorker{revision} : Nat := 0\n",
-            encoding="utf-8",
-        )
-
-    clone(0)
-    reclones = 0
-
-    def reclone() -> None:
-        nonlocal reclones
-        reclones += 1
-        shutil.rmtree(worker)
-        clone(reclones)
-
-    _on_checkpoint(monkeypatch, "before-final-verification", reclone)
-
-    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
-
-    assert reclones == 1
-    assert snapshot.index.find("toplevel") is not None
-    assert snapshot.index.find("nestedWorker0") is None
-    assert snapshot.index.find("nestedWorker1") is None
 
 
 @pytest.mark.parametrize(
@@ -3189,116 +2920,6 @@ def test_managed_output_marker_rewrite_is_captured_once(
     assert changed
     assert snapshot.index.find("authored") is not None
     assert snapshot.index.find("generated") is None
-
-
-_PACKETS_MANIFEST = '{"kind":"packets","packets":[],"schema":"autoform-skeleton-packets/v2"}\n'
-
-
-def _packets_output(folder: Path, revision: int) -> None:
-    folder.mkdir()
-    (folder / "manifest.json").write_text(_PACKETS_MANIFEST, encoding="utf-8")
-    (folder / "Packet.lean").write_text(
-        f"def generated{revision} : Nat := 0\n",
-        encoding="utf-8",
-    )
-
-
-def test_skeleton_output_republished_during_capture_is_captured_once(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _require_descriptor_capture()
-    _index(tmp_path, "def authored : Nat := 0\n", "Authored.lean")
-    generated = tmp_path / "review-packets"
-    _packets_output(generated, 0)
-    publications = 0
-
-    def republish() -> None:
-        # Publish as skeleton output does: stage beside the output, move the
-        # old output to a backup, rename the stage into place, drop the backup.
-        nonlocal publications
-        publications += 1
-        stage = tmp_path / f".review-packets.autoform-stage-{publications}"
-        _packets_output(stage, publications)
-        _replace_outputs([(generated, stage, _output_identity(generated))])
-
-    _on_checkpoint(monkeypatch, "before-final-verification", republish)
-
-    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
-
-    assert publications == 1
-    assert snapshot.index.find("authored") is not None
-    assert snapshot.index.find("generated0") is None
-    assert snapshot.index.find("generated1") is None
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["Authored.lean", "review-packets"]
-
-
-@pytest.mark.parametrize("marker", ["manifest", "checkout"])
-def test_marker_folder_removed_during_capture_is_captured_once(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    marker: str,
-) -> None:
-    _require_descriptor_capture()
-    _index(tmp_path, "def authored : Nat := 0\n", "Authored.lean")
-    hidden = tmp_path / "hidden"
-    _packets_output(hidden, 0)
-    if marker == "checkout":
-        (hidden / "manifest.json").unlink()
-        (hidden / ".git").mkdir()
-
-    _on_checkpoint(monkeypatch, "before-final-verification", lambda: shutil.rmtree(hidden, True))
-
-    snapshot = _snapshot_in_one_attempt(monkeypatch, tmp_path)
-
-    assert not hidden.exists()
-    assert snapshot.index.find("authored") is not None
-    assert snapshot.index.find("generated0") is None
-
-
-@pytest.mark.parametrize(
-    ("look", "shape"),
-    [
-        ("verification", "replaced"),
-        ("verification", "unmarked-in-place"),
-        ("relist", "replaced"),
-    ],
-)
-def test_marker_folder_exposing_lean_files_is_caught(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    look: str,
-    shape: str,
-) -> None:
-    _require_descriptor_capture()
-    _index(tmp_path, "def authored : Nat := 0\n", "Authored.lean")
-    generated = tmp_path / "review-packets"
-    _packets_output(generated, 0)
-    held = tmp_path / ".held"
-
-    def expose() -> None:
-        if shape == "unmarked-in-place":
-            (generated / "manifest.json").unlink()
-            return
-        generated.rename(held)
-        generated.mkdir()
-        (generated / "Packet.lean").write_text("def exposed : Nat := 0\n", encoding="utf-8")
-
-    def restore() -> None:
-        shutil.rmtree(generated)
-        held.rename(generated)
-
-    if look == "verification":
-        _on_checkpoint(monkeypatch, "before-final-verification", expose)
-    else:
-        # Exposed only while the root's end-of-scan relist looks, and hidden
-        # again by verification, so only that relist can see it.
-        fired = _before_relist_of(monkeypatch, "", expose)
-        _on_checkpoint(monkeypatch, "before-final-verification", restore)
-
-    assert _changed_path(tmp_path) == "review-packets/Packet.lean"
-    if look == "relist":
-        assert fired == [""]
 
 
 def test_managed_marker_at_requested_root_never_prunes_the_root(tmp_path: Path) -> None:
