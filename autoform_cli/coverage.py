@@ -178,6 +178,7 @@ def validate_coverage_roles(
     issues: list[CoverageRoleIssue] = []
     inventoried: set[str] = set()
     catalog_nodes = {node_id for node_id, node in graph.nodes.items() if node.catalog}
+    by_path = {node.path.resolve(): node_id for node_id, node in graph.nodes.items()}
 
     for entry in coverage.entries:
         role = {
@@ -187,7 +188,7 @@ def validate_coverage_roles(
         if role is None:
             continue
 
-        targets = _coverage_target_nodes(graph, coverage, entry.evidence)
+        targets = _coverage_target_nodes(graph, coverage, entry.evidence, by_path=by_path)
         role_scopes = [
             _leaf_role_nodes(graph, contained, node_id, role=role) for node_id in targets
         ]
@@ -231,11 +232,17 @@ def _coverage_target_nodes(
     graph: Graph,
     coverage: CoverageSummary,
     evidence: str,
+    *,
+    by_path: dict[Path, str],
 ) -> tuple[str, ...]:
-    """Resolve the roadmap nodes visibly linked by one coverage evidence cell."""
+    """Resolve the roadmap nodes visibly linked by one coverage evidence cell.
+
+    *by_path* maps each article's resolved path to its node. The caller builds
+    it once for all rows, since resolving every article's path per row would
+    grow as rows times articles.
+    """
 
     coverage_path = graph.blueprint_dir / coverage.source_path
-    by_path = {node.path.resolve(): node_id for node_id, node in graph.nodes.items()}
     resolved: list[str] = []
     for target in link_targets(evidence):
         split = urlsplit(target)

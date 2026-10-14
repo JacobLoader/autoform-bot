@@ -575,7 +575,8 @@ def _written_blueprint(tmp_path: Path, sections: int = 1) -> Path:
     (blueprint / "coverage").mkdir()
     (blueprint / "coverage" / "README.md").write_text(
         "# Coverage\n\n| Area | Coverage | Evidence |\n| --- | --- | --- |\n"
-        "| Project scope | MAPPED | Source audit pending |\n",
+        "| Project scope | MAPPED | Source audit pending |\n"
+        + "".join(f"| {name} | DECOMPOSED | [A](../roadmap/chapter/{name}/a.md) |\n" for name in names),
         encoding="utf-8",
     )
     for name in names:
@@ -655,6 +656,19 @@ def test_site_rendering_resolves_paths_linearly_in_the_number_of_sections(
 
     # Every section has its own scope map page. Linking every node from every
     # page made doubling the sections multiply the resolves by 2.4.
+    assert large <= 2 * small
+
+
+def test_site_rendering_resolves_paths_linearly_in_the_number_of_coverage_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    small = _path_resolves(tmp_path, monkeypatch, 8)
+    large = _path_resolves(tmp_path, monkeypatch, 16)
+
+    # Every section also has a DECOMPOSED coverage row. Resolving every node's
+    # path again for each row multiplied the resolves by 2.26 from 8 sections,
+    # but only by 1.98 from 4.
     assert large <= 2 * small
 
 
