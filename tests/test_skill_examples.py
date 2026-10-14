@@ -475,7 +475,6 @@ def test_setup_guidance_uses_the_offline_atomic_project_creator(repo_root: Path)
             )
 
 
-
 def test_setup_offers_catalog_libraries_only_to_new_projects_on_a_yes(repo_root: Path) -> None:
     setup = (repo_root / "skills/setup/SKILL.md").read_text(encoding="utf-8")
     normalized = " ".join(setup.split())
@@ -497,10 +496,18 @@ def test_setup_offers_catalog_libraries_only_to_new_projects_on_a_yes(repo_root:
     # What a yes runs and reports.
     assert "run the `project new` command above with `--library <NAME>` and no version flags" in normalized
     assert "Then run `autoform library list` on the project" in normalized
-    assert "Report the pinned commit when it lists the library as usable" in normalized
+    assert "When it lists the library as usable, report the entry's `git` and pinned commit" in normalized
     assert "otherwise report its reason and do not claim the library works" in normalized
     assert "say that the project builds once the fetch succeeds, and give the retry command" in normalized
     assert "Never run a bare `lake update` in such a project" in normalized
+    # A failed fetch resumes the validation sequence where it stopped, so a
+    # failed `lake update repl` is retried as such rather than as a bare update.
+    assert "resume the validation sequence from the step that failed" in normalized
+    assert "`lake update repl` when the REPL require was added" in normalized
+    # The catalog pin is used only when the request names no other source.
+    assert "names no other repository or revision for it" in normalized
+    assert "`<NAME>` is the entry's `name` exactly, such as `atlas`" in normalized
+
 
 def test_setup_asset_is_a_repo_shaped_thesis_vault(repo_root: Path) -> None:
     example = repo_root / _EXAMPLE

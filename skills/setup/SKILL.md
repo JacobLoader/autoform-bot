@@ -79,22 +79,27 @@ release to the library's `release`, its first build needs network access and
 downloads the library and its dependencies (about 270 MB for ATLAS), and the
 library modules the project imports are built locally. A yes may come as the
 answer or in the setup request itself, such as "set up … with ATLAS"; a request
-that names a catalog library uses it even when the entry is not offered.
-Without a yes, add no library, including in a headless run.
+that names a catalog library uses it even when the entry is not offered, as long
+as it names no other repository or revision for it. A request that does is a
+library outside the catalog, below. Without a yes, add no library, including in
+a headless run.
 
 On a yes, run the `project new` command above with `--library <NAME>` and no
-version flags. `--library` selects the library's release and writes its `[[require]]` and a
+version flags; `<NAME>` is the entry's `name` exactly, such as `atlas`.
+`--library` selects the library's release and writes its `[[require]]` and a
 complete `lake-manifest.json`, so the project needs no `lake update`; it refuses
 `--release`, `--lean-toolchain`, and `--mathlib-rev`. Validate as below; the
 REPL require and `lake update repl` follow as for any project. Then run
 `autoform library list` on the project, as the
 [CLI reference](../../autoform_cli/README.md#searching-a-library-the-project-depends-on)
-shows. Report the pinned commit when it lists the library as usable; otherwise report
-its reason and do not claim the library works. If fetching fails, for example
-without network access or because the commit is unreachable, report the error,
-say that the project builds once the fetch succeeds, and give the retry command:
-`lake exe cache get` followed by `lake build`. Never run a bare `lake update` in
-such a project.
+shows. When it lists the library as usable, report the entry's `git` and pinned
+commit; otherwise report its reason and do not claim the library works. If
+fetching fails, for example without network access or because the commit is
+unreachable, report the error, say that the project builds once the fetch
+succeeds, and give the retry command: resume the validation sequence from the
+step that failed, starting with `lake update repl` when the REPL require was
+added, then `lake exe cache get` and `lake build`. Never run a bare
+`lake update` in such a project.
 
 When the user says the project will depend on a Lean library outside the
 catalog, create the project on that library's Lean and Mathlib: Lake builds a
