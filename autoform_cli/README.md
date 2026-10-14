@@ -212,6 +212,7 @@ Create or inspect a Lean project and list Autoform's bundled known-good release 
 autoform project versions
 autoform project new ./FiniteFlat --package FiniteFlat
 autoform project new ./FiniteFlat430 --package FiniteFlat --lean-toolchain v4.30.0
+autoform project new ./Gauss --package Gauss --library atlas
 autoform project inspect .
 autoform project inspect path/inside/project --json
 autoform project versions --json
@@ -280,6 +281,18 @@ warning. With `--json`, such a pair reports `"release": null` and its warnings
 go to the `warnings` array; otherwise warnings go to stderr. Either way the
 exit status stays 0. Successful JSON uses schema
 `autoform-project-creation/v1`.
+
+`--library NAME` names an entry of the bundled library catalog,
+`autoform_cli/project/libraries.json`. Each entry pins a shared Lean library
+to a full commit on a listed release. The project is created on that release,
+its `lakefile.toml` gains the library's `[[require]]` after the existing
+blocks, and its `lake-manifest.json` is the release's bundled manifest plus the
+library's resolved packages, so it needs no `lake update`. The first Lake
+command clones the packages the manifest locks, which needs network access.
+`--library` combines with no version option. An unknown name is
+`project-library-unknown`, and a package name that is one of the library's
+module roots or packages is `project-name-invalid`. The JSON result adds
+`library: {name, git, rev}`.
 
 `project inspect` is local and read-only. It inspects the nearest enclosing Lean
 project without running Lake, Lean, Git, or the network. For automation, use
@@ -1226,6 +1239,10 @@ first 12 characters of the revision, and `usable` or `not usable: REASON`.
 `name`, `type`, `revision`, `index` (whether the checkout holds an index
 file), `usable`, and `reason` (`null` when usable).
 Neither command starts a process or writes a file.
+A search without `--library` whose project locks a package with an index file
+adds one `note:` line on stderr naming the package and the flags that search
+it; stdout, the JSON and the exit status are unchanged. The note only checks
+that the file exists, so `library list` still decides whether it is usable.
 
 The index is the file `autoform-library-index.jsonl` at the package root, or
 the file given as `--library NAME=PATH`. Its format,
