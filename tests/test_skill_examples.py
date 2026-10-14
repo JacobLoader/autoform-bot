@@ -1174,6 +1174,9 @@ def test_cli_reference_documents_only_commands_that_exist(repo_root: Path) -> No
         assert exit_info.value.code == 0, f"reference documents unknown command: {' '.join(invocation)}"
 
 
+_LAUNCHER = 'uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform`'
+
+
 def test_skills_delegate_the_command_line_to_the_reference(repo_root: Path) -> None:
     """Skills state intent and link to the reference; they do not restate flags.
 
@@ -1198,28 +1201,29 @@ def test_skills_delegate_the_command_line_to_the_reference(repo_root: Path) -> N
     assert citing >= 3
 
 
-_LAUNCHER = 'uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform`'
-
-
 def test_skills_that_run_the_cli_state_how_to_launch_it(repo_root: Path) -> None:
     """A consumer project has no `autoform` on `PATH`.
 
     Agents that read a bare `autoform work list` run `which autoform` and then
     guess; in trials every fresh Roadmap and Formalize session did, and some
-    never reached the CLI. So each skill whose instructions or references name
-    a command states the launcher once, says where the plugin root is, and
-    hands both to its subagents.
+    never reached the CLI. So every skill whose instructions or references name
+    a command states the launcher once, names the plugin root without relying
+    on how a host presents the skill, and hands both to its subagents. Setup
+    spells out its own full invocations; Develop Plugin works inside the plugin
+    checkout, where `uv run autoform` already resolves.
     """
-    for name in ("roadmap", "formalize", "agent-review", "human-review"):
-        skill = repo_root / "skills" / name
-        named = " ".join(path.read_text(encoding="utf-8") for path in sorted(skill.rglob("*.md")))
-        assert re.search(r"`autoform [a-z]", named), f"{name} no longer runs the CLI"
-        flat = " ".join((skill / "SKILL.md").read_text(encoding="utf-8").split())
+    running = {
+        skill.name
+        for skill in (repo_root / "skills").iterdir()
+        if any(re.search(r"`autoform[ -][a-z]", path.read_text(encoding="utf-8")) for path in skill.rglob("*.md"))
+    }
+    assert {"roadmap", "formalize", "agent-review", "human-review"} <= running
+    for name in sorted(running - {"setup", "develop-plugin"}):
+        flat = " ".join((repo_root / "skills" / name / "SKILL.md").read_text(encoding="utf-8").split())
         assert f"`{_LAUNCHER}" in flat, f"{name} does not state the launcher"
         assert "no `autoform` on `PATH`" in flat
-        assert "two directories above this skill's base directory" in flat
-        at = flat.index(_LAUNCHER)
-        assert "subagent" in flat[max(0, at - 600) : at + 600]
+        assert "the directory that holds this skill's `skills/` folder, along with `pyproject.toml`" in flat
+        assert "Give a subagent that root and this prefix with its task." in flat
 
 
 def test_skill_links_into_the_cli_reference_land_on_a_section(repo_root: Path) -> None:

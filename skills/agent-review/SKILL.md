@@ -13,9 +13,9 @@ description: >-
 There is no `autoform` on `PATH` in a Lean project. Run every `autoform`
 command, from the project under review, as
 `uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform` followed by its arguments,
-where `<AUTOFORM_PLUGIN_ROOT>` is the absolute plugin root, two directories
-above this skill's base directory. Give a subagent that root and this prefix
-with its task.
+where `<AUTOFORM_PLUGIN_ROOT>` is the absolute plugin root: the directory that
+holds this skill's `skills/` folder, along with `pyproject.toml` and
+`autoform_cli/`. Give a subagent that root and this prefix with its task.
 
 Select the rubric from the artifact under review.
 
