@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from autoform_cli.graph import Graph, GraphValidationError, Node, load_graph
+from autoform_cli.graph import Graph, Node, load_graph
 from autoform_cli.lean import LeanSourceError
 from autoform_cli.runtime import (
     RUNTIME_AUTHORITY,
@@ -243,7 +243,7 @@ def test_rejects_symlinked_roadmap_content_and_ambiguous_input(tmp_path: Path) -
         resolve_runtime_paths(ambiguous)
 
 
-def test_allows_confined_parent_relative_sources_and_rejects_escapes(tmp_path: Path) -> None:
+def test_keeps_confined_parent_relative_sources_and_omits_the_rest(tmp_path: Path) -> None:
     project = _project(tmp_path)
     source = project / "blueprint" / "sources" / "paper.md"
     source.parent.mkdir(parents=True)
@@ -258,26 +258,40 @@ def test_allows_confined_parent_relative_sources_and_rejects_escapes(tmp_path: P
     runtime = load_runtime_graph(project)
     assert runtime.get("chapter/section/result").source_targets == ("../../../sources/paper.md",)  # type: ignore[union-attr]
 
-    result.write_text(text.replace("../../../sources/paper.md", "../../../../outside.md"), encoding="utf-8")
-    with pytest.raises(RuntimeProjectionError, match="source target escapes") as error:
-        load_runtime_graph(project)
-    assert str(tmp_path) not in str(error.value)
+    # The projection leaves out each target it cannot represent and keeps the
+    # rest, instead of refusing the project.
+    mixed = "\n".join(
+        f"- [source]({target})"
+        for target in ("../../../../outside.md", "../../../sources/paper.md", "mailto:author@example.org")
+    )
+    result.write_text(text.replace("- [source](../../../sources/paper.md)", mixed), encoding="utf-8")
+    node = load_runtime_graph(project).get("chapter/section/result")
+    assert node is not None and node.source_targets == ("../../../sources/paper.md",)
 
 
-def test_rejects_nonportable_authored_file_paths(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (r"Mathlib\Result.lean", "Mathlib/Result.lean"),
+        (r"..\outside.lean", None),
+        ("../outside.lean", None),
+        ("/Mathlib/Result.lean", None),
+        ("C:/Mathlib/Result.lean", None),
+        # Neither is absolute on Windows, but neither names a path inside the project.
+        (r"\Mathlib\Result.lean", None),
+        ("C:Mathlib/Result.lean", None),
+    ],
+)
+def test_projects_mathlib_file_only_as_a_portable_relative_path(
+    value: str, expected: str | None, tmp_path: Path
+) -> None:
     project = _project(tmp_path)
     result = project / "blueprint" / "roadmap" / "chapter" / "section" / "result.md"
-    text = result.read_text(encoding="utf-8").replace(
-        "mathlib_file: Mathlib/Result.lean",
-        r"mathlib_file: ..\outside.lean",
-    )
+    text = result.read_text(encoding="utf-8").replace("mathlib_file: Mathlib/Result.lean", f"mathlib_file: {value}")
     result.write_text(text, encoding="utf-8")
 
-    # The graph loader refuses it, so check fails on it before any runtime command.
-    with pytest.raises(GraphValidationError, match="'mathlib_file' must be a portable relative path") as error:
-        load_runtime_graph(project)
-
-    assert str(tmp_path) not in str(error.value)
+    node = load_runtime_graph(project).get("chapter/section/result")
+    assert node is not None and node.mathlib_file == expected
 
 
 @pytest.mark.parametrize(

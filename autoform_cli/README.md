@@ -718,7 +718,8 @@ stated, a definition's also for its proof prerequisites, which its body uses,
 and the proof phase for every prerequisite to be stated. `work
 context` accepts the path-derived node ID (see Articles and containment) or an
 assigned `article_id` and reports the exact article, dependencies, source
-targets, Lean targets, blockers, article and graph source revisions, and claim
+targets (except those the Runtime contract leaves out), Lean targets, blockers,
+article and graph source revisions, and claim
 target. The article revision hashes that article's bytes alone. A Lean target's
 `source_file` is relative to `--lean-root`, and null without one or when the
 local scan does not find the declaration. The scan skips build output and nested
@@ -969,10 +970,12 @@ it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
 `mathlib: true`. An inline `## Sources` link to a local path must name a file
 inside the blueprint, as `audit` also requires: a missing file, a directory, an
-invalid path, or a target outside the blueprint fails. A link with a scheme
-other than http(s), or a network location, fails too, as every runtime command
-refuses it; `audit` alone checks fragments. With `--lean-root`
-it also fails on a `lean:` name
+invalid path, or a target outside the blueprint fails, and `audit` alone checks
+fragments and fails links with other schemes or a network location. Such a link
+passes `check` with a warning, because work and search leave it out; so does a
+`mathlib_file` that is not a portable relative path, which search reports as
+null. With `--lean-root`, `check`
+also fails on a `lean:` name
 absent from the sources, as `leanblueprint checkdecls` does for LaTeX
 blueprints. It validates structure and leaves mathematical correctness to the
 agent and the Lean kernel.
@@ -1240,7 +1243,8 @@ each a list), `limit`, `total_matches`, and
 `node_id`, `article_id`, `article_path`, `article_revision`, `title`,
 `declaration`, `state`, `statement_text` (the authored Markdown),
 `lean_targets` (all of them), `mathlib`, `mathlib_declarations`,
-`mathlib_file`, `source_targets` (as the article writes them), `used_by`,
+`mathlib_file`, `source_targets` (as the article writes them, minus any that is
+neither an http(s) link nor a path inside the blueprint), `used_by`,
 `used_by_count`, `shared_title`, and `matched_fields`; `article_id`,
 `declaration`, and `mathlib_file` may be null. A Lean target has `declaration`,
 `source_file` (relative to `--lean-root`), and `line`; the last two are null
@@ -1816,7 +1820,11 @@ doctor, separate from any future worker fleet or machine-capability preflight.
 deeply immutable in-memory schema `autoform-runtime/v3`. Its declared authority
 is `markdown-articles`: the adapter copies hierarchy, typed statement and proof
 dependencies, authored assertions, derived progress, provenance, and optional
-local Lean source locations, but it provides no persistence or write API.
+local Lean source locations, but it provides no persistence or write API. A
+source target that is neither an http(s) link nor a path inside the blueprint,
+and a `mathlib_file` that is not a portable relative path, are left out rather
+than refused. `check` fails on a local path outside the blueprint and warns
+about the rest.
 `RuntimeGraph.as_dict()` and `to_json()` are deterministic compatibility
 snapshots for consumers, not an authored or generated graph file. Autoform never
 creates, synchronizes, or treats `graph.json` as an authority.
