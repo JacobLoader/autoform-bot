@@ -169,7 +169,6 @@ def test_request_timeout_includes_waiting_for_an_idle_worker(monkeypatch):
 
 
 def test_slot_that_arrives_at_the_deadline_times_out_before_the_call_starts(monkeypatch):
-    calls = []
     clock = {"now": 0.0}
 
     class FakeRepl:
@@ -177,8 +176,7 @@ def test_slot_that_arrives_at_the_deadline_times_out_before_the_call_starts(monk
             pass
 
         def run_disposable(self, code, **kwargs):
-            calls.append(code)
-            return {"messages": []}
+            pytest.fail("a call with no budget left must not start")
 
         def is_clean(self):
             return True
@@ -200,23 +198,13 @@ def test_slot_that_arrives_at_the_deadline_times_out_before_the_call_starts(monk
 
     with pytest.raises(TimeoutError, match=r"timed out after 10 seconds waiting for an idle Lean REPL slot"):
         pool.run("#check Nat", timeout=10)
-    assert calls == []
     pool.shutdown()
 
 
 def test_spent_budget_times_out_before_waiting_for_a_slot(monkeypatch):
-    calls = []
-
     class FakeRepl:
         def __init__(self, config):
             pass
-
-        def run_disposable(self, code, **kwargs):
-            calls.append(code)
-            return {"messages": []}
-
-        def is_clean(self):
-            return True
 
         def close(self):
             pass
@@ -230,7 +218,6 @@ def test_spent_budget_times_out_before_waiting_for_a_slot(monkeypatch):
 
     with pytest.raises(TimeoutError, match=r"timed out after 5 seconds waiting for an idle Lean REPL slot"):
         pool.run("#check Nat", timeout=5)
-    assert calls == []
     assert pool._active_calls == 0
     pool.shutdown()
 
