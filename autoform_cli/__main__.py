@@ -546,17 +546,19 @@ def _byte_order_mark_warnings(graph: Graph) -> list[str]:
 
 
 def _source_link_issues(graph: Graph) -> list[str]:
-    """Name each ``## Sources`` link to a local path that is not a file in the blueprint.
+    """Name each ``## Sources`` link to a local path that is not a file in the blueprint, or is hidden.
 
     The generated workflows run ``check`` but not ``audit``, and render publishes
     a missing or escaping target broken: a page a strict MkDocs build cannot find,
-    a repository URL that 404s, or a path off the site. Fragments and other
-    schemes stay with ``audit``, whose anchor check renders each cited note.
+    a repository URL that 404s, or a path off the site. Render omits hidden files,
+    so a hidden target is refused too. Fragments and other schemes stay with
+    ``audit``, whose anchor check renders each cited note.
     """
     rejected = {
         "source-not-found": "does not resolve to a file",
         "source-escapes-blueprint": "escapes the blueprint directory",
         "malformed-source-link": "contains an invalid path",
+        "hidden-source-target": "names a hidden path, which render omits",
     }
     issues = []
     for node in graph.nodes.values():

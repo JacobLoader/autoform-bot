@@ -389,6 +389,9 @@ def test_local_targets_are_resolved_against_the_boundary(tmp_path: Path) -> None
     source = tmp_path / "coverage" / "README.md"
     source.parent.mkdir()
     source.write_text("# Coverage\n", encoding="utf-8")
+    hidden = tmp_path / ".drafts" / "notes.md"
+    hidden.parent.mkdir()
+    hidden.write_text("# Notes\n", encoding="utf-8")
 
     def issue(target: str) -> str | None:
         problem = local_target_issue(source, target, tmp_path, label="coverage")
@@ -396,12 +399,40 @@ def test_local_targets_are_resolved_against_the_boundary(tmp_path: Path) -> None
 
     assert issue("../roadmap/node.md") is None
     assert issue("../roadmap/node.md#results") is None
+    assert issue("../.x/../roadmap/node.md") is None
     assert issue("https://example.invalid/page") is None
     assert issue("../roadmap/node.md#absent") == "coverage-anchor-not-found"
     assert issue("../roadmap/absent.md") == "coverage-not-found"
     assert issue("../../outside.md") == "coverage-escapes-blueprint"
+    assert issue("../.drafts/notes.md") == "hidden-coverage-target"
+    # Render publishes neither a hidden page nor its links.
+    assert local_target_issue(hidden, "#notes", tmp_path, label="coverage") is None
     assert issue("mailto:someone@example.invalid") == "unsupported-coverage-link"
     assert issue("//example.invalid/page") == "unsupported-coverage-link"
+
+
+def test_a_link_through_a_hidden_symlink_is_hidden(tmp_path: Path) -> None:
+    """Issue #304: render resolves links in a copy of the vault without symlinks.
+
+    `../.link/paper.md` reaches a published file through `.link`, a symlink to
+    `sources`, but render would link `.link/paper.md`, a page it never writes. The
+    hidden folder holding the vault does not count.
+    """
+    root = tmp_path / ".checkout"
+    for name in ("sources/paper.md", "roadmap/result.md"):
+        (root / name).parent.mkdir(parents=True)
+        (root / name).write_text("# Page\n", encoding="utf-8")
+    try:
+        (root / ".link").symlink_to("sources", target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    def issue(target: str) -> str | None:
+        problem = local_target_issue(root / "roadmap" / "result.md", target, root, label="source")
+        return None if problem is None else problem[0]
+
+    assert issue("../sources/paper.md") is None
+    assert issue("../.link/paper.md") == "hidden-source-target"
 
 
 def test_a_statement_runs_from_the_title_to_the_first_h2() -> None:
