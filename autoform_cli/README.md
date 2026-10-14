@@ -1580,15 +1580,17 @@ board, and Git then refuses the updates it guards:
 `refs/autoform-claims/<key>.lock` blocks that claim, `packed-refs.lock` blocks
 every release, and on a board in the reftable ref format
 `reftable/tables.list.lock` blocks every claim update. On a board given as a
-local path, a command whose push such a file still blocks two seconds later
-exits 1 naming the file and when it was modified, instead of reporting a lost
-race. `claim cleanup` leaves a lease whose release a lock file blocks in place
-and still exits 0, and `claim list` and `claim cleanup` warn on stderr about
-each lock file at least two seconds old. Git records no owner for a lock file,
-so Autoform never deletes one: once no Git process is using the board, delete
-the file and retry. A remote board's files are not visible, so there a lock
-file shows up as a lost race or as Git's own error, depending on the file and
-the server's Git version.
+local path or a `file://` URL, a command whose push such a file still blocks
+two seconds later exits 1 naming the file and when it was modified; a lock that
+goes away within those two seconds counts as a lost race. On such a board,
+`claim cleanup` leaves a lease whose release a lock file blocks in place and
+still exits 0, and `claim list` and `claim cleanup` warn on stderr about each
+lock file at least two seconds old. Git records no owner for a lock file, so
+Autoform never deletes one: once no Git process is using the board, delete the
+file and retry. Over any other transport the board's files are not visible, so
+a lock file there shows up as a lost race or as Git's own error, depending on
+the file, the operation and the server's Git version, and Git's error also
+stops `claim cleanup`.
 
 Claims are temporary operational state, never article frontmatter.
 
