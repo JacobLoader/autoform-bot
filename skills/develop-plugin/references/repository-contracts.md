@@ -8,6 +8,8 @@ generated files, or dependency pins.
 Full-viewport knowledge maps use authored mathematical areas and prose to drive
 regions and reading panels. Keep containment and dependency distinct; treat
 provenance folders as facets, never geometry. Never fit the whole repository.
+Run `make test-browser` for any explorer change: `make test` skips the WebKit
+suite, which CI runs with `AUTOFORM_REQUIRE_BROWSER_TESTS=1`.
 
 ## Coordination and local views
 

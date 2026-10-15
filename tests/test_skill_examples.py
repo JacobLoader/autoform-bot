@@ -374,6 +374,7 @@ def test_development_guidance_requires_fail_closed_local_safety(repo_root: Path)
     assert "containment and dependency distinct" in contract_text
     assert "provenance folders as facets, never geometry" in contract_text
     assert "Never fit the whole repository" in contract_text
+    assert "Run `make test-browser` for any explorer change" in contract_text
 
 
 def test_development_guidance_uses_progressive_command_reference(repo_root: Path) -> None:
@@ -400,6 +401,7 @@ def test_development_guidance_routes_repository_contracts(repo_root: Path) -> No
     skill = skill_path.read_text(encoding="utf-8")
 
     assert "[repository contracts](references/repository-contracts.md)" in skill
+    assert "pins/releases/explorers, read" in skill
     assert contracts_path.is_file()
 
 
