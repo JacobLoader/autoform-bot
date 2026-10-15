@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import functools
+import os
 import threading
 from collections.abc import Iterator
+from contextlib import contextmanager
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -11,15 +13,35 @@ import pytest
 from autoform_cli import dag_viewer
 from autoform_cli.graph_views import GraphView, ViewEdge, ViewNode
 
-playwright = pytest.importorskip(
-    "playwright.sync_api",
-    reason="the optional browser extra is required for WebKit regression tests",
-)
+# CI sets this, so a missing browser fails the job instead of skipping every case.
+_REQUIRED = os.environ.get("AUTOFORM_REQUIRE_BROWSER_TESTS") == "1"
+if _REQUIRED:
+    import playwright.sync_api as playwright
+else:
+    playwright = pytest.importorskip(
+        "playwright.sync_api",
+        reason="the optional browser extra is required for WebKit regression tests",
+    )
 
 
 class _QuietHandler(SimpleHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:
         pass
+
+
+@contextmanager
+def _served(directory: Path) -> Iterator[str]:
+    handler = functools.partial(_QuietHandler, directory=str(directory))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    try:
+        yield f"http://{host}:{port}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
 
 
 @pytest.fixture(scope="session")
@@ -28,15 +50,49 @@ def webkit_browser() -> Iterator[object]:
         try:
             browser = runtime.webkit.launch()
         except playwright.Error as error:
-            if "Executable doesn't exist" in str(error):
-                pytest.skip("WebKit is not installed; run `playwright install webkit`")
-            raise
+            if _REQUIRED or "Executable doesn't exist" not in str(error):
+                raise
+            pytest.skip("WebKit is not installed; run `playwright install webkit`")
         yield browser
         browser.close()
 
 
+@contextmanager
+def _page(browser: object, **options: object) -> Iterator[object]:
+    """Open a page in a context of its own, close it, and fail on any uncaught page error."""
+    context = browser.new_context(**options)
+    errors: list[str] = []
+    page = context.new_page()
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    try:
+        yield page
+    finally:
+        context.close()
+    assert errors == []
+
+
 @pytest.fixture()
-def explorer_url(tmp_path: Path) -> Iterator[str]:
+def desktop_page(webkit_browser: object) -> Iterator[object]:
+    with _page(webkit_browser, viewport={"width": 1280, "height": 900}) as page:
+        yield page
+
+
+@pytest.fixture()
+def mobile_page(webkit_browser: object) -> Iterator[object]:
+    # Reduced motion keeps the sheet from sliding while a test measures it.
+    with _page(
+        webkit_browser,
+        viewport={"width": 390, "height": 844},
+        is_mobile=True,
+        has_touch=True,
+        reduced_motion="reduce",
+    ) as page:
+        yield page
+
+
+@pytest.fixture(scope="module")
+def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+    tmp_path = tmp_path_factory.mktemp("explorer")
     core_nodes = (
         ViewNode(
             id="chapter/foundation",
@@ -152,6 +208,11 @@ def explorer_url(tmp_path: Path) -> Iterator[str]:
 </body>
 </html>
 """
+    app_shell = (
+        page_shell.replace('<div class="page-spacer" data-page-spacer="before"></div>', "")
+        .replace('<div class="page-spacer" data-page-spacer="after"></div>', "")
+        .replace('class="fixture"', 'class="fixture" style="max-width:none;padding:0"')
+    )
     (tmp_path / "index.html").write_text(page_shell.replace("{explorer}", explorer), encoding="utf-8")
     (tmp_path / "failure.html").write_text(page_shell.replace("{explorer}", failed_explorer), encoding="utf-8")
     (tmp_path / "duplicate.html").write_text(
@@ -159,13 +220,7 @@ def explorer_url(tmp_path: Path) -> Iterator[str]:
         encoding="utf-8",
     )
     (tmp_path / "other.html").write_text("<!doctype html><title>Remote scope</title>", encoding="utf-8")
-    (tmp_path / "app.html").write_text(
-        page_shell.replace('<div class="page-spacer" data-page-spacer="before"></div>', "")
-        .replace('<div class="page-spacer" data-page-spacer="after"></div>', "")
-        .replace('class="fixture"', 'class="fixture" style="max-width:none;padding:0"')
-        .replace("{explorer}", app_explorer),
-        encoding="utf-8",
-    )
+    (tmp_path / "app.html").write_text(app_shell.replace("{explorer}", app_explorer), encoding="utf-8")
     dense_nodes = tuple(
         ViewNode(
             id=f"dense/chapter-{index}",
@@ -259,11 +314,6 @@ def explorer_url(tmp_path: Path) -> Iterator[str]:
         ),
     )
     dense_views["atlas"] = GraphView(kind="project", title="Knowledge atlas", nodes=atlas_nodes, edges=())
-    app_shell = (
-        page_shell.replace('<div class="page-spacer" data-page-spacer="before"></div>', "")
-        .replace('<div class="page-spacer" data-page-spacer="after"></div>', "")
-        .replace('class="fixture"', 'class="fixture" style="max-width:none;padding:0"')
-    )
     for name, dense_view in dense_views.items():
         links = (
             {node.id: f"other.html#node={node.id}" for node in dense_view.nodes}
@@ -277,17 +327,8 @@ def explorer_url(tmp_path: Path) -> Iterator[str]:
             encoding="utf-8",
         )
 
-    handler = functools.partial(_QuietHandler, directory=str(tmp_path))
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    host, port = server.server_address
-    try:
-        yield f"http://{host}:{port}"
-    finally:
-        server.shutdown()
-        thread.join(timeout=5)
-        server.server_close()
+    with _served(tmp_path) as url:
+        yield url
 
 
 def _open_ready(page: object, explorer_url: str) -> None:
@@ -297,9 +338,16 @@ def _open_ready(page: object, explorer_url: str) -> None:
     playwright.expect(page.locator("main")).to_have_count(1)
 
 
-def test_mobile_node_interaction_and_selected_sheet_collapse(webkit_browser: object, explorer_url: str) -> None:
-    context = webkit_browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
-    page = context.new_page()
+def _load_search_index(page: object) -> object:
+    """Focus the search box and wait until the whole-roadmap index has loaded."""
+    search = page.locator(".bp-dag-search")
+    search.focus()
+    playwright.expect(search).to_have_attribute("placeholder", "Search 64 roadmap entries")
+    return search
+
+
+def test_mobile_node_interaction_and_selected_sheet_collapse(mobile_page: object, explorer_url: str) -> None:
+    page = mobile_page
     _open_ready(page, explorer_url)
 
     node = page.locator('[data-autoform-node-id="chapter/middle"]')
@@ -327,11 +375,11 @@ def test_mobile_node_interaction_and_selected_sheet_collapse(webkit_browser: obj
     assert not page.evaluate(
         "document.querySelector('.bp-dag-inspector-inner').contains(document.activeElement)"
     )
-    context.close()
 
 
-def test_app_layout_fills_the_browser_viewport(webkit_browser: object, explorer_url: str) -> None:
-    page = webkit_browser.new_page(viewport={"width": 1440, "height": 900})
+def test_app_layout_fills_the_browser_viewport(desktop_page: object, explorer_url: str) -> None:
+    page = desktop_page
+    page.set_viewport_size({"width": 1440, "height": 900})
     page.goto(f"{explorer_url}/app.html")
     page.locator(".bp-dag-stage").wait_for()
     viewer = page.locator('.bp-dag-viewer[data-layout="app"]')
@@ -344,14 +392,14 @@ def test_app_layout_fills_the_browser_viewport(webkit_browser: object, explorer_
     stage = page.locator(".bp-dag-stage").bounding_box()
     assert stage is not None
     assert stage["width"] >= 1000
-    page.close()
 
 
 @pytest.mark.parametrize("page_name", ("chain", "star"))
 def test_connected_project_maps_open_at_readable_scale(
-    webkit_browser: object, explorer_url: str, page_name: str
+    desktop_page: object, explorer_url: str, page_name: str
 ) -> None:
-    page = webkit_browser.new_page(viewport={"width": 1440, "height": 900})
+    page = desktop_page
+    page.set_viewport_size({"width": 1440, "height": 900})
     page.goto(f"{explorer_url}/{page_name}.html")
     node = page.locator(".bp-dag-node").first
     node.wait_for()
@@ -359,13 +407,13 @@ def test_connected_project_maps_open_at_readable_scale(
     assert box is not None
     assert box["height"] >= 44
     playwright.expect(page.locator(".bp-dag-density")).to_contain_text("Readable window")
-    page.close()
 
 
 def test_atlas_bubbles_open_authored_mathematical_context(
-    webkit_browser: object, explorer_url: str
+    desktop_page: object, explorer_url: str
 ) -> None:
-    page = webkit_browser.new_page(viewport={"width": 1440, "height": 900})
+    page = desktop_page
+    page.set_viewport_size({"width": 1440, "height": 900})
     page.goto(f"{explorer_url}/atlas.html")
     topic = page.locator('[data-autoform-node-id="atlas/topology"]')
     topic.wait_for()
@@ -385,11 +433,11 @@ def test_atlas_bubbles_open_authored_mathematical_context(
         "continuity, deformation, and invariants"
     )
     playwright.expect(page.get_by_role("link", name="Explore topic")).to_be_visible()
-    page.close()
 
 
-def test_oversized_flat_scope_defaults_to_browse(webkit_browser: object, explorer_url: str) -> None:
-    page = webkit_browser.new_page(viewport={"width": 1440, "height": 900})
+def test_oversized_flat_scope_defaults_to_browse(desktop_page: object, explorer_url: str) -> None:
+    page = desktop_page
+    page.set_viewport_size({"width": 1440, "height": 900})
     page.goto(f"{explorer_url}/flat.html")
     inventory = page.locator(".bp-dag-inventory")
     inventory.wait_for()
@@ -399,14 +447,12 @@ def test_oversized_flat_scope_defaults_to_browse(webkit_browser: object, explore
         "map unavailable above 120 items"
     )
     playwright.expect(page.locator(".bp-dag-node")).to_have_count(0)
-    page.close()
 
 
 def test_mobile_browse_pagination_stays_above_the_collapsed_sheet(
-    webkit_browser: object, explorer_url: str
+    mobile_page: object, explorer_url: str
 ) -> None:
-    context = webkit_browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
-    page = context.new_page()
+    page = mobile_page
     page.goto(f"{explorer_url}/flat.html")
     more = page.locator(".bp-dag-inventory > .bp-dag-load-more")
     more.wait_for()
@@ -417,12 +463,10 @@ def test_mobile_browse_pagination_stays_above_the_collapsed_sheet(
     assert box["y"] + box["height"] <= handle_box["y"]
     more.tap()
     playwright.expect(page.locator(".bp-dag-inventory-summary")).to_contain_text("200 of 1000 listed")
-    context.close()
 
 
-def test_mobile_isolates_do_not_overlap_the_connected_dag(webkit_browser: object, explorer_url: str) -> None:
-    context = webkit_browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
-    page = context.new_page()
+def test_mobile_isolates_do_not_overlap_the_connected_dag(mobile_page: object, explorer_url: str) -> None:
+    page = mobile_page
     page.goto(f"{explorer_url}/mixed.html")
     connected = page.locator('[data-autoform-node-id="mixed/a"]')
     isolated = page.locator('[data-autoform-node-id="mixed/isolate-1"]')
@@ -431,11 +475,11 @@ def test_mobile_isolates_do_not_overlap_the_connected_dag(webkit_browser: object
     a, b = connected.bounding_box(), isolated.bounding_box()
     assert a is not None and b is not None
     assert a["y"] + a["height"] <= b["y"] or b["y"] + b["height"] <= a["y"]
-    context.close()
 
 
-def test_plain_wheel_scrolls_the_page_instead_of_being_trapped(webkit_browser: object, explorer_url: str) -> None:
-    page = webkit_browser.new_page(viewport={"width": 1280, "height": 720})
+def test_plain_wheel_scrolls_the_page_instead_of_being_trapped(desktop_page: object, explorer_url: str) -> None:
+    page = desktop_page
+    page.set_viewport_size({"width": 1280, "height": 720})
     _open_ready(page, explorer_url)
     stage = page.locator(".bp-dag-stage")
     stage.scroll_into_view_if_needed()
@@ -448,13 +492,12 @@ def test_plain_wheel_scrolls_the_page_instead_of_being_trapped(webkit_browser: o
 
     page.wait_for_function("before => window.scrollY > before", arg=before)
     assert page.evaluate("window.scrollY") > before
-    page.close()
 
 
-def test_search_keyboard_navigation_and_focus(webkit_browser: object, explorer_url: str) -> None:
-    page = webkit_browser.new_page(viewport={"width": 1280, "height": 900})
+def test_search_keyboard_navigation_and_focus(desktop_page: object, explorer_url: str) -> None:
+    page = desktop_page
     _open_ready(page, explorer_url)
-    search = page.locator(".bp-dag-search")
+    search = _load_search_index(page)
     search.fill("middle")
     playwright.expect(search).to_have_attribute("aria-expanded", "true")
 
@@ -469,11 +512,10 @@ def test_search_keyboard_navigation_and_focus(webkit_browser: object, explorer_u
     search.press("Enter")
     playwright.expect(page.locator('[data-autoform-node-id="chapter/target"]')).to_be_focused()
     assert "node=chapter%2Ftarget" in page.url
-    page.close()
 
 
-def test_global_search_jumps_to_the_smallest_context(webkit_browser: object, explorer_url: str) -> None:
-    page = webkit_browser.new_page(viewport={"width": 1280, "height": 900})
+def test_global_search_jumps_to_the_smallest_context(desktop_page: object, explorer_url: str) -> None:
+    page = desktop_page
     _open_ready(page, explorer_url)
     search = page.locator(".bp-dag-search")
     search.fill("Remote theorem")
@@ -481,56 +523,58 @@ def test_global_search_jumps_to_the_smallest_context(webkit_browser: object, exp
     result.wait_for()
     result.click()
     page.wait_for_url("**/other.html#node=remote%2Fdeep-theorem")
-    page.close()
 
 
-def test_legacy_node_hash_resolves_through_the_global_index(webkit_browser: object, explorer_url: str) -> None:
-    page = webkit_browser.new_page(viewport={"width": 1280, "height": 900})
+def test_legacy_node_hash_resolves_through_the_global_index(desktop_page: object, explorer_url: str) -> None:
+    page = desktop_page
     page.goto(f"{explorer_url}/app.html#node=remote%2Fdeep-theorem")
     page.wait_for_url("**/other.html#node=remote%2Fdeep-theorem")
 
-    page.goto(f"{explorer_url}/app.html#node=unknown%2Fitem")
-    page.locator(".bp-dag-stage").wait_for()
-    page.wait_for_timeout(100)
+    navigations: list[str] = []
+    page.on("request", lambda request: navigations.append(request.url) if request.is_navigation_request() else None)
+    with page.expect_response("**/search.json"):
+        page.goto(f"{explorer_url}/app.html#node=unknown%2Fitem")
+    # The placeholder changes in the same promise chain, just before the redirect decision.
+    playwright.expect(page.locator(".bp-dag-search")).to_have_attribute("placeholder", "Search 64 roadmap entries")
+    # One more task lets a redirect that decision started reach the network.
+    page.evaluate("() => new Promise(done => setTimeout(done))")
     assert page.url.endswith("app.html#node=unknown%2Fitem")
-    page.close()
+    assert len(navigations) == 1
 
 
 def test_paginated_search_and_arrow_navigation_restore_focus(
-    webkit_browser: object, explorer_url: str
+    desktop_page: object, explorer_url: str
 ) -> None:
-    page = webkit_browser.new_page(viewport={"width": 1280, "height": 900})
+    page = desktop_page
     _open_ready(page, explorer_url)
     foundation = page.locator('[data-autoform-node-id="chapter/foundation"]')
     foundation.focus()
     foundation.press("ArrowRight")
     playwright.expect(page.locator('[data-autoform-node-id="chapter/middle"]')).to_be_focused()
 
-    search = page.locator(".bp-dag-search")
+    search = _load_search_index(page)
     search.fill("auxiliary")
     more = page.locator(".bp-dag-search-results .bp-dag-load-more")
     playwright.expect(more).to_have_text("Show 48 more of 48")
     more.focus()
     more.press("Enter")
     playwright.expect(page.locator(".bp-dag-result").nth(12)).to_be_focused()
-    page.close()
 
 
 def test_direct_list_view_has_current_shown_and_hidden_counts(
-    webkit_browser: object, explorer_url: str
+    desktop_page: object, explorer_url: str
 ) -> None:
-    page = webkit_browser.new_page(viewport={"width": 1280, "height": 900})
+    page = desktop_page
     page.goto(f"{explorer_url}/index.html#view=list&status=fully_proved")
     page.locator(".bp-dag-inventory").wait_for()
     playwright.expect(page.locator(".bp-dag-stats")).to_contain_text("1 of 63 shown")
     playwright.expect(page.locator(".bp-dag-hidden-button")).to_have_text("+62 hidden")
-    page.close()
 
 
 def test_reselect_does_not_duplicate_history_and_back_restores_selection(
-    webkit_browser: object, explorer_url: str
+    desktop_page: object, explorer_url: str
 ) -> None:
-    page = webkit_browser.new_page(viewport={"width": 1280, "height": 900})
+    page = desktop_page
     _open_ready(page, explorer_url)
     foundation = page.locator('[data-autoform-node-id="chapter/foundation"]')
     target = page.locator('[data-autoform-node-id="chapter/target"]')
@@ -547,13 +591,12 @@ def test_reselect_does_not_duplicate_history_and_back_restores_selection(
     page.wait_for_function("location.hash.includes('chapter%2Ffoundation')")
     playwright.expect(page.locator(".bp-dag-inspector h2")).to_have_text("Foundation")
     playwright.expect(foundation).to_have_attribute("data-selected", "true")
-    page.close()
 
 
 def test_hiding_the_selected_status_clears_selection(
-    webkit_browser: object, explorer_url: str
+    desktop_page: object, explorer_url: str
 ) -> None:
-    page = webkit_browser.new_page(viewport={"width": 1280, "height": 900})
+    page = desktop_page
     _open_ready(page, explorer_url)
     page.locator('[data-autoform-node-id="chapter/target"]').click()
     assert "node=chapter%2Ftarget" in page.url
@@ -563,25 +606,22 @@ def test_hiding_the_selected_status_clears_selection(
 
     assert "node=" not in page.url
     assert "bp-dag-has-selection" not in (page.locator(".bp-dag-viewer").get_attribute("class") or "")
-    page.close()
 
 
 def test_no_javascript_keeps_the_linked_fallback(webkit_browser: object, explorer_url: str) -> None:
-    context = webkit_browser.new_context(java_script_enabled=False)
-    page = context.new_page()
-    page.goto(f"{explorer_url}/index.html")
+    with _page(webkit_browser, java_script_enabled=False) as page:
+        page.goto(f"{explorer_url}/index.html")
 
-    fallback = page.locator(".bp-dag-fallback")
-    playwright.expect(fallback).to_be_visible()
-    playwright.expect(fallback.locator("li")).to_have_count(3)
-    playwright.expect(fallback.get_by_role("link", name="Download the complete graph data")).to_have_attribute(
-        "href", "graph.json"
-    )
-    context.close()
+        fallback = page.locator(".bp-dag-fallback")
+        playwright.expect(fallback).to_be_visible()
+        playwright.expect(fallback.locator("li")).to_have_count(3)
+        playwright.expect(fallback.get_by_role("link", name="Download the complete graph data")).to_have_attribute(
+            "href", "graph.json"
+        )
 
 
-def test_fetch_failure_restores_the_linked_fallback(webkit_browser: object, explorer_url: str) -> None:
-    page = webkit_browser.new_page()
+def test_fetch_failure_restores_the_linked_fallback(desktop_page: object, explorer_url: str) -> None:
+    page = desktop_page
     page.goto(f"{explorer_url}/failure.html")
 
     playwright.expect(page.locator(".bp-dag-error")).to_contain_text("HTTP 404")
@@ -590,14 +630,12 @@ def test_fetch_failure_restores_the_linked_fallback(webkit_browser: object, expl
     playwright.expect(fallback.get_by_role("link", name="Middle lemma")).to_have_attribute(
         "href", "articles.html#chapter/middle"
     )
-    page.close()
 
 
 def test_duplicate_script_include_mounts_one_explorer(
-    webkit_browser: object, explorer_url: str
+    desktop_page: object, explorer_url: str
 ) -> None:
-    page = webkit_browser.new_page()
+    page = desktop_page
     page.goto(f"{explorer_url}/duplicate.html")
     page.locator(".bp-dag-stage").wait_for()
     playwright.expect(page.locator(".bp-dag-head")).to_have_count(1)
-    page.close()
