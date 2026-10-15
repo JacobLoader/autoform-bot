@@ -708,10 +708,10 @@ def _update_source_digest(digest, relative: Path, data: bytes) -> None:
 def _select(same: list[Declaration]) -> Declaration | None:
     """The declaration a name means among all of its declarations, if one is sure.
 
-    Lean refuses a private or wanted declaration beside a public one it can
-    see, so they coexist only in modules that do not import each other, and
-    any other module sees the public one. Two public ones, or only private and
-    wanted ones, leave no single answer.
+    A private declaration is local to its file and a wanted command declares
+    nothing, so beside them every other module sees the one public
+    declaration. Two public ones, or only private and wanted ones, leave no
+    single answer.
     """
 
     if len(same) == 1:

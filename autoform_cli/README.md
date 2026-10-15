@@ -1063,9 +1063,8 @@ line or the next nonblank one.
 A name declared once has that declaration, even a private one. A name declared
 more than once has the one declaration among them that is neither written
 `private` nor a wanted command, which Batteries makes a private placeholder:
-Lean refuses a private declaration beside a public one it can see, so the two
-coexist only in modules that do not import each other, and any other module
-sees the public one. With two public declarations, or only private and wanted
+a private declaration is local to its file, so every other module sees the
+public one. With two public declarations, or only private and wanted
 ones, the name has none. Then `check --lean-root` fails with `declaration
 defined more than once`, `render` warns (`--require-declarations` exits 1),
 `audit` reports `lean-target-ambiguous`, `skeleton` and `unused-hypotheses`
