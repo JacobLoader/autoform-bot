@@ -2192,7 +2192,21 @@ def _rewrite_links(
         href = moved_target(match.group("target"))
         if href is None:
             return match.group(0)
-        return f"[{match.group('label')}]({href})" if href else match.group("label")
+        label = match.group("label")
+        if href:
+            return f"[{label}]({href})"
+        # The label pattern lets a match start at an earlier "[" on the line,
+        # such as the one in "$[0,1]$", so drop only the bracket that opens
+        # this link and keep the earlier text as it was.
+        depth = 0
+        for index in range(len(label) - 1, -1, -1):
+            if label[index] == "]":
+                depth += 1
+            elif label[index] == "[":
+                if depth == 0:
+                    return f"[{label[:index]}{label[index + 1:]}"
+                depth -= 1
+        return label
 
     def rewrite(line: str) -> str:
         # A reference definition carries the destination for every `[x][label]`

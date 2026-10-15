@@ -1980,7 +1980,7 @@ def test_a_published_link_out_of_the_blueprint_keeps_only_its_text(
     paper = project / "blueprint" / "sources" / "paper.md"
     paper.write_text(
         paper.read_text(encoding="utf-8")
-        + "\nEvidence: [Top.lean](../../Project/Top.lean#L5) and [`Lean`](../../lean/) for [Top](../roadmap/top.md).\n",
+        + "\nEvidence on $[0,1]$: [Top.lean](../../Project/Top.lean#L5) and [`Lean`](../../lean/) for [Top](../roadmap/top.md).\n",
         encoding="utf-8",
     )
     out = tmp_path / "out"
@@ -1988,7 +1988,7 @@ def test_a_published_link_out_of_the_blueprint_keeps_only_its_text(
     render_site(project / "blueprint", out, lean_root=project, repository_url="", ref="")
 
     published = (out / "sources/paper.md").read_text(encoding="utf-8")
-    assert "Evidence: Top.lean and `Lean` for [Top](" in published
+    assert "Evidence on $[0,1]$: Top.lean and `Lean` for [Top](" in published
     assert "../../Project/Top.lean" not in published
     assert "../../lean/" not in published
 
