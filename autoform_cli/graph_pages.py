@@ -239,6 +239,8 @@ def write_graph_pages(
             ),
             site_root=destination,
             search_href=_search_index_link(search_index, full_page),
+            # It repeats the project page's title, so site search would list both.
+            searchable=False,
             breadcrumbs=(
                 ("Book", _published_link(destination / "README.md", full_page)),
                 (root_title, _published_link(project_page, full_page)),
@@ -288,6 +290,7 @@ def _write_page(
     breadcrumbs: tuple[tuple[str, str | None], ...],
     navigation: str = "",
     extra: str = "",
+    searchable: bool = True,
 ) -> Path:
     # Every projection is one payload and one explorer host, so readers get one
     # interaction model and no second renderer can drift from it.
@@ -313,6 +316,7 @@ def _write_page(
         "---",
         "kind: graph",
         f"graph_view: {view.kind}",
+        *(() if searchable else ("search:", "  exclude: true")),
         "hide:",
         "  - navigation",
         "  - toc",
