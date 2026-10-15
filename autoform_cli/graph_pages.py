@@ -297,7 +297,7 @@ def _write_page(
         breadcrumbs=breadcrumbs,
     )
     explorer = dag_viewer.render_container(
-        payload.name,
+        quote(payload.name),
         script_href=_viewer_script_link(page, site_root),
         fallback_links=(
             (node.title, links[node.id])

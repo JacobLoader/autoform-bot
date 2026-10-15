@@ -399,6 +399,27 @@ def test_payload_rejects_duplicate_nodes_and_unknown_edges() -> None:
         dag_viewer._positions(unknown)
 
 
+def test_an_explorer_page_encodes_a_literal_percent_in_its_payload_name(tmp_path: Path) -> None:
+    """render_container keeps % for hrefs that arrive encoded, so the page encodes the payload's name."""
+    page = tmp_path / "100%25 results.md"
+    node = ViewNode("a", "A", "node", ("a",), (("planned", 1),))
+
+    graph_pages._write_page(
+        page,
+        view=GraphView(kind="chapter", title="Results", nodes=(node,), edges=()),
+        statuses={},
+        links={},
+        heading="Results",
+        lead="One result.",
+        site_root=tmp_path,
+        search_href="index.json",
+        breadcrumbs=(),
+    )
+
+    assert (tmp_path / "100%25 results.json").is_file()
+    assert 'data-graph-src="100%2525%20results.json"' in page.read_text(encoding="utf-8")
+
+
 def test_interactive_graph_urls_encode_authored_path_delimiters() -> None:
     container = dag_viewer.render_container(
         "hash#chapter.json",
