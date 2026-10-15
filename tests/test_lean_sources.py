@@ -3156,7 +3156,7 @@ def test_only_a_complete_publication_manifest_hides_its_folder(
         (tmp_path / folder / "publication.json").write_text(json.dumps(manifest), encoding="utf-8")
         (tmp_path / folder / "Copy" / "Proofs.lean").write_text("theorem stale : True := trivial\n")
     (tmp_path / "Proofs.lean").write_text("theorem renamed : True := trivial\n")
-    monkeypatch.setattr(lean_module, "PUBLICATION_MANIFEST_MAX_BYTES", 64)
+    monkeypatch.setattr(lean_module, "PUBLICATION_MANIFEST_MAX_BYTES", 64, raising=False)
 
     snapshot = snapshot_project_sources(tmp_path)
 

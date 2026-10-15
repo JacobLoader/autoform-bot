@@ -1202,7 +1202,17 @@ def _write_publication_manifest(
         raise PublicationError(
             [f"generated publication manifest exceeds max_file_bytes={PUBLICATION_MANIFEST_MAX_BYTES}"]
         )
-    (destination / PUBLICATION_MANIFEST).write_bytes(encoded)
+    # Replaced, never truncated in place: a Lean capture that read an empty
+    # manifest would index the stage's copies.
+    temporary = destination / f".{PUBLICATION_MANIFEST}.{secrets.token_hex(8)}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    descriptor = os.open(temporary, flags, 0o666)  # the mode write_bytes gives
+    try:
+        with open(descriptor, "wb") as output:
+            output.write(encoded)
+        os.replace(temporary, destination / PUBLICATION_MANIFEST)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _group_nodes(graph: Graph) -> dict[str, list[str]]:

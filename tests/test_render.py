@@ -2546,6 +2546,40 @@ def test_a_capture_during_a_render_skips_the_stage_being_written(
     assert captured == [["Project/Basic.lean", "blueprint/Proofs.lean"]]
 
 
+def test_a_capture_while_render_rewrites_its_manifest_skips_the_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _project(tmp_path)
+    (project / "blueprint/Proofs.lean").write_text("theorem BlueprintProof : True := trivial\n", encoding="utf-8")
+    write_bytes, replace = Path.write_bytes, os.replace
+    captured: list[list[str]] = []
+
+    def capture() -> None:
+        snapshot = lean_module.snapshot_project_sources(project)
+        captured.append(sorted(path.as_posix() for path, _data in snapshot.source_files))
+
+    def truncate_capture_then_write(self: Path, data: bytes) -> int:
+        if self.name == render_module.PUBLICATION_MANIFEST:
+            open(self, "wb").close()  # where an in-place write leaves the file first
+            capture()
+        return write_bytes(self, data)
+
+    def capture_around_replace(source, target, *args, **kwargs) -> None:
+        manifest = Path(target).name == render_module.PUBLICATION_MANIFEST
+        if manifest:
+            capture()
+        replace(source, target, *args, **kwargs)
+        if manifest:
+            capture()
+
+    monkeypatch.setattr(Path, "write_bytes", truncate_capture_then_write)
+    monkeypatch.setattr(render_module.os, "replace", capture_around_replace)
+    render_site(project / "blueprint", project / "site-src", lean_root=project)
+
+    assert captured
+    assert all(files == ["Project/Basic.lean", "blueprint/Proofs.lean"] for files in captured), captured
+
+
 def test_an_edit_during_a_render_publishes_the_captured_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
