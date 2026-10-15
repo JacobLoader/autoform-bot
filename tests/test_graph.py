@@ -581,6 +581,24 @@ def test_check_warns_about_a_mathlib_file_search_reports_as_null(
     ]
 
 
+def test_check_warns_about_an_article_whose_byte_order_mark_hides_its_frontmatter(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    marked = _node(blueprint, "result.md", "# Result\n", lean="Demo.result")
+    marked.write_bytes(b"\xef\xbb\xbf" + marked.read_bytes())
+    _node(blueprint, "kept.md", "# Kept\n", lean="Demo.kept")
+
+    assert main(["check", str(blueprint)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    # Like #325's warnings, it follows the whole summary.
+    assert lines[0].startswith("OK: ")
+    assert [line for line in lines if line.startswith("warning:")] == lines[-1:] == [
+        "warning: result: starts with a byte-order mark, so frontmatter on its first line is read as text "
+        "and its keys are ignored; remove the mark"
+    ]
+
+
 def test_check_prints_its_warnings_after_the_whole_summary(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
