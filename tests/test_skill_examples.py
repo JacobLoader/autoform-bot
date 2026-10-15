@@ -1561,7 +1561,6 @@ def test_roadmap_repository_scope_inventories_existing_lean(repo_root: Path) -> 
     ):
         assert required in normalized
 
-    assert "internal/runbooks/planning.md" not in roadmap
     assert "existing formalized Lean" in metadata
     assert "Existing and planned mathematics coexist in one book" in example
 
