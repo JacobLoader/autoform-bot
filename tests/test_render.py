@@ -717,7 +717,7 @@ def test_module_catalog_is_separate_from_formalization_progress(
     project_payload = json.loads((tmp_path / "out/dependencies.json").read_text(encoding="utf-8"))
     roadmap = project_payload["nodes"][0]
     assert roadmap["member_count"] == 3
-    assert roadmap["status_counts"] == {"fully_proved": 2, "inventory_checked": 1}
+    assert roadmap["status_counts"] == [["fully_proved", 2], ["inventory_checked", 1]]
     chapter = (tmp_path / "out/roadmap/README.md").read_text(encoding="utf-8")
     assert '<span class="bp-thmcaption">Module</span><span class="bp-thmlabel">1</span>' in chapter
     assert "A checked inventory of an existing Lean module." in chapter
@@ -894,7 +894,7 @@ def test_a_topic_of_unchecked_catalogs_counts_each_as_a_pending_inventory(tmp_pa
     ) in overview
     topic = json.loads((out / "dependencies.json").read_text(encoding="utf-8"))["nodes"][0]
     assert topic["id"] == "scope:library"
-    assert topic["status_counts"] == {"inventory_pending": 3}
+    assert topic["status_counts"] == [["inventory_pending", 3]]
     assert topic["member_count"] == 3
     # An inventory never sets a scope's own status.
     assert topic["status"] == "planned"
@@ -985,12 +985,12 @@ def test_the_legends_beside_the_explorer_count_what_its_rings_count(tmp_path: Pa
     render_site(project / "blueprint", out, lean_root=project)
 
     ring = json.loads((out / "dependencies.json").read_text(encoding="utf-8"))["nodes"][0]
-    assert ring["status_counts"] == {
-        "fully_proved": 2,
-        "not_ready": 1,
-        "inventory_checked": 1,
-        "inventory_pending": 1,
-    }
+    assert ring["status_counts"] == [
+        ["fully_proved", 2],
+        ["not_ready", 1],
+        ["inventory_checked", 1],
+        ["inventory_pending", 1],
+    ]
     rows = [
         f'<span class="bp-swatch bp-swatch-{key}"></span>'
         f'<span class="bp-legend-label">{label}</span>'

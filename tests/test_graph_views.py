@@ -239,12 +239,8 @@ def test_a_scope_header_counts_the_items_its_status_rows_list(tmp_path: Path) ->
     scope = json.loads(payload.read_text(encoding="utf-8"))["nodes"][0]
 
     assert scope["id"] == "scope:mixed"
-    assert scope["status_counts"] == {"can_state": 1, "inventory_checked": 1}
-    assert scope["member_count"] == sum(scope["status_counts"].values()) == 2
-    # The inspector titles the rows with member_count and lists status_counts.
-    script = dag_viewer.viewer_script()
-    assert '(node.member_count || 1) + " items in this scope"' in script
-    assert "var counts = node.status_counts || {};" in script
+    assert scope["status_counts"] == [["can_state", 1], ["inventory_checked", 1]]
+    assert scope["member_count"] == sum(count for _, count in scope["status_counts"]) == 2
 
 
 def test_chapter_view_keeps_external_relations_as_boundaries(tmp_path: Path) -> None:

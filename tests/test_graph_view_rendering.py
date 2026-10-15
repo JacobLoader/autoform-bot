@@ -69,7 +69,7 @@ def test_full_view_payload_is_deterministic_layout_ready_and_data_only(tmp_path:
     assert payload["nodes"][0]["member_count"] == 1
     assert payload["nodes"][0]["member_count"] == 1
     assert "members" not in payload["nodes"][0]
-    assert payload["nodes"][0]["status_counts"] == {"inventory_checked": 1}
+    assert payload["nodes"][0]["status_counts"] == [["inventory_checked", 1]]
     assert payload["nodes"][0]["summary"] == "A reader-facing mathematical summary."
     assert payload["nodes"][0]["lean"] == "Project.node"
     assert payload["nodes"][0]["isolated"] is False
@@ -137,6 +137,24 @@ def test_each_inventory_has_a_neutral_colour_of_its_own(tmp_path: Path) -> None:
                 for key, entry in payload["palette"].items()
                 if key != inventory
             )
+
+
+def test_status_counts_keep_the_legend_order(tmp_path: Path) -> None:
+    """Sorted object keys split a ring's finished arcs with grey ones and listed rows out of legend order."""
+    counts = (
+        ("mathlib", 10),
+        ("fully_proved", 50),
+        ("proved", 5),
+        ("can_prove", 4),
+        ("planned", 35),
+        ("inventory_checked", 3),
+    )
+    view = GraphView(kind="project", title="Project", nodes=(ViewNode("scope:a", "A", "scope", (), counts),), edges=())
+    output = tmp_path / "project.json"
+    dag_viewer.write_payload(output, view, links={})
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["nodes"][0]["status_counts"] == [list(entry) for entry in counts]
 
 
 def test_isolated_inventory_does_not_spread_the_connected_dag() -> None:

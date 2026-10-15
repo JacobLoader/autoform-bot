@@ -289,8 +289,8 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
             title="Topology",
             kind="scope",
             members=tuple(f"atlas/topology/item-{index}" for index in range(80)),
-            status_counts=(("fully_proved", 60), ("planned", 20)),
-            status_key="planned",
+            status_counts=(("fully_proved", 60), ("can_prove", 20)),
+            status_key="can_prove",
             summary="Topology studies continuity, deformation, and invariants preserved by continuous maps.",
             area="Geometry & Topology",
         ),
@@ -474,9 +474,15 @@ def test_atlas_bubbles_open_authored_mathematical_context(
         "No cross-topic dependency links are authored"
     )
     assert "50%" in topic.evaluate("element => getComputedStyle(element).borderRadius")
-    assert "conic-gradient" in topic.evaluate("element => getComputedStyle(element).backgroundImage")
+    ring = topic.evaluate("element => getComputedStyle(element).backgroundImage")
+    # The ring follows the legend's state order: finished green before ready-to-prove blue.
+    assert ring.startswith("conic-gradient")
+    assert ring.index("rgb(34, 119, 58)") < ring.index("rgb(0, 100, 224)")
     topic.click()
     playwright.expect(page.locator(".bp-dag-inspector h2")).to_have_text("Topology")
+    playwright.expect(page.locator(".bp-dag-inspector h3", has_text="in this scope")).to_have_text(
+        "80 items in this scope"
+    )
     playwright.expect(page.locator(".bp-dag-summary")).to_contain_text(
         "continuity, deformation, and invariants"
     )
