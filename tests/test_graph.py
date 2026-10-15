@@ -12,6 +12,7 @@ from autoform_cli.__main__ import main
 from autoform_cli.graph import (
     GraphValidationError,
     _containment_cycles,
+    atlas_omissions,
     load_graph,
 )
 from autoform_cli.runtime import RuntimeProjectionError, load_runtime_graph
@@ -158,7 +159,7 @@ def test_authored_atlas_manifest_groups_nodes_independently_of_paths(tmp_path: P
     assert graph.nodes["topology"].area == "Geometry & Topology"
 
 
-def test_atlas_manifest_rejects_unknown_and_duplicate_assignments(tmp_path: Path) -> None:
+def test_atlas_manifest_keeps_the_first_area_and_names_what_it_ignores(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _node(blueprint, "algebra.md", "# Algebra\n")
     (blueprint / "atlas.json").write_text(
@@ -174,11 +175,13 @@ def test_atlas_manifest_rejects_unknown_and_duplicate_assignments(tmp_path: Path
         encoding="utf-8",
     )
 
-    with pytest.raises(GraphValidationError) as error:
-        load_graph(blueprint)
+    graph = load_graph(blueprint)
 
-    assert "unknown roadmap node 'missing'" in str(error.value)
-    assert "belongs to both 'One' and 'Two'" in str(error.value)
+    assert graph.nodes["algebra"].area == "One"
+    assert atlas_omissions(graph) == [
+        "'missing' under 'One' is ignored, since no roadmap node has that id",
+        "'algebra' under 'Two' is ignored, since 'One' already holds it",
+    ]
 
 
 def test_dangling_atlas_manifest_link_is_not_treated_as_absent(tmp_path: Path) -> None:
@@ -189,12 +192,50 @@ def test_dangling_atlas_manifest_link_is_not_treated_as_absent(tmp_path: Path) -
     except OSError:
         pytest.skip("the test filesystem cannot create symbolic links")
 
-    with pytest.raises(GraphValidationError) as error:
-        load_graph(blueprint)
+    assert atlas_omissions(load_graph(blueprint)) == [
+        "ignored, since it is not a regular file inside the blueprint"
+    ]
 
-    assert error.value.issues == (
-        "atlas.json: taxonomy must be a regular file inside the blueprint",
-    )
+
+@pytest.mark.parametrize(
+    ("atlas", "omission"),
+    [
+        pytest.param(b" " * 1_000_001, "ignored, since it exceeds 1000000 bytes", id="oversize"),
+        pytest.param(b"{", "ignored, since it is not valid JSON: ", id="invalid-json"),
+        pytest.param(b"[" * 200_000, "ignored, since it is not valid JSON: ", id="too-deep"),
+        pytest.param(
+            b'{"name": "unrelated tool data", "regions": []}',
+            "ignored, since its schema is not 'autoform-atlas/v1'",
+            id="other-schema",
+        ),
+        pytest.param(
+            b'{"schema": "autoform-atlas/v1", "areas": ["topic"]}',
+            "ignored, since its 'areas' is not an object",
+            id="areas-not-an-object",
+        ),
+        pytest.param(
+            b'{"schema": "autoform-atlas/v1", "areas": {"Algebra": "topic"}}',
+            "area 'Algebra' is ignored; it needs a name and an array of roadmap node ids",
+            id="area-without-an-array",
+        ),
+        pytest.param(
+            b'{"schema": "autoform-atlas/v1", "areas": {"Algebra": ["topic"]}}',
+            "'topic' under 'Algebra' is ignored, since its frontmatter area is 'Topology'",
+            id="frontmatter-wins",
+        ),
+    ],
+)
+def test_atlas_manifest_problems_are_check_warnings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], atlas: bytes, omission: str
+) -> None:
+    """Earlier versions ignored blueprint/atlas.json, so nothing in it may stop a command."""
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "topic.md", "# Topic\n", area="Topology")
+    (blueprint / "atlas.json").write_bytes(atlas)
+
+    assert load_graph(blueprint).nodes["topic"].area == "Topology"
+    assert main(["check", str(blueprint)]) == 0
+    assert capsys.readouterr().out.splitlines()[-1].startswith(f"warning: atlas.json: {omission}")
 
 
 def test_loads_a_non_dispatchable_module_catalog_status(tmp_path: Path) -> None:

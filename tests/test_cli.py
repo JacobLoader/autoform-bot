@@ -213,3 +213,15 @@ def test_coverage_role_mismatch_warns_in_render_and_fails_audit(tmp_path: Path, 
     assert (tmp_path / "site" / "publication.json").is_file()
     assert main(["audit", str(blueprint)]) == 1
     assert "error: coverage/README.md: coverage-role-mismatch:" in capsys.readouterr().out
+
+
+def test_an_unrelated_atlas_json_warns_in_render_and_audit(tmp_path: Path, capsys) -> None:
+    """Earlier versions ignored blueprint/atlas.json, so a file another tool wrote there fails nothing."""
+    blueprint = _clean_blueprint(tmp_path)
+    (blueprint / "atlas.json").write_text('{"name": "unrelated tool data", "regions": []}', encoding="utf-8")
+    omission = "ignored, since its schema is not 'autoform-atlas/v1'"
+
+    assert main(["render", str(blueprint), "--output", str(tmp_path / "site")]) == 0
+    assert f"warning: atlas.json: {omission}" in capsys.readouterr().out.splitlines()
+    assert main(["audit", str(blueprint)]) == 0
+    assert capsys.readouterr().out.splitlines()[-1] == f"warning: atlas.json: atlas-omission: {omission}"

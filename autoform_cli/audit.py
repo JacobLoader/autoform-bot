@@ -23,6 +23,7 @@ from .graph import (
     Graph,
     GraphValidationError,
     Node,
+    atlas_omissions,
     load_graph,
 )
 from .lean import (
@@ -358,7 +359,7 @@ def audit_graph(
     findings.extend(coverage_findings)
     if coverage is not None:
         findings.extend(_coverage_role_findings(graph, coverage))
-    warnings: list[AuditWarning] = []
+    warnings = [AuditWarning("atlas.json", "atlas-omission", omission, ()) for omission in atlas_omissions(graph)]
     if lean_root is not None:
         findings.extend(_lean_findings(graph, lean_root, warnings=warnings))
     return _result(findings, coverage=coverage, warnings=warnings)

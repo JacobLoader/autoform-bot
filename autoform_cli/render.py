@@ -45,7 +45,7 @@ from .coverage import (
     load_coverage,
     validate_coverage_roles,
 )
-from .graph import Graph, GraphValidationError, Node, _implementation_note_issues, load_graph
+from .graph import Graph, GraphValidationError, Node, _implementation_note_issues, atlas_omissions, load_graph
 from .lean import (
     _REPLACEABLE_SCHEMAS,
     PUBLICATION_MANIFEST,
@@ -483,15 +483,17 @@ def _render_pages(
     lean_source_revision: str,
 ) -> RenderReport:
     """Write the site into *destination* from the private copy at *blueprint*."""
-    # Coverage-role issues are audit findings. A valid contract still
-    # publishes with them, as it does with MAPPED rows. An issue without a
-    # line already names the contract in its reason, so it gets no prefix.
+    # Audit reports coverage-role issues and the atlas.json entries the loader
+    # ignored. A valid contract still publishes with them, as it does with
+    # MAPPED rows. An issue without a line already names the contract in its
+    # reason, so it gets no prefix.
     coverage_warnings = [
         f"coverage contract line {issue.line}: {issue.reason}"
         if issue.line
         else issue.reason
         for issue in validate_coverage_roles(graph, coverage)
     ]
+    coverage_warnings += (f"atlas.json: {omission}" for omission in atlas_omissions(graph))
     statuses = status.derive(graph)
     numbers = _number_nodes(graph)
     used_by = _reverse_edges(graph)

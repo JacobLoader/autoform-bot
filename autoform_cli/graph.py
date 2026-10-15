@@ -287,7 +287,8 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
             area=metadata.get("area"),
         )
 
-    _apply_atlas_manifest(blueprint, nodes, issues)
+    for node_id, area in _atlas_assignments(blueprint, nodes)[0].items():
+        nodes[node_id] = replace(nodes[node_id], area=area)
     if not issues:
         issues.extend(_find_cycles(nodes))
     if not issues:
@@ -297,63 +298,57 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
     return Graph(blueprint_dir=blueprint, nodes=nodes, open_statements=open_statements)
 
 
-def _apply_atlas_manifest(
-    blueprint: Path,
-    nodes: dict[str, Node],
-    issues: list[str],
-) -> None:
-    """Apply an optional authored taxonomy without coupling it to file layout."""
+def atlas_omissions(graph: Graph) -> list[str]:
+    """Say what ``blueprint/atlas.json`` asks for that loading ignored, for check, render and audit to warn about."""
+    return _atlas_assignments(graph.blueprint_dir, graph.nodes)[1]
+
+
+def _atlas_assignments(blueprint: Path, nodes: dict[str, Node]) -> tuple[dict[str, str], list[str]]:
+    """Read the optional authored taxonomy: the areas it assigns, and what it leaves out.
+
+    The file only places articles in the explorer's regions, so nothing in it
+    stops a command. An article's own ``area:`` wins, the first area listing a
+    node wins, and a file that is not readable ``autoform-atlas/v1`` JSON is
+    ignored whole.
+    """
     path = blueprint / "atlas.json"
-    if path.is_symlink():
-        issues.append("atlas.json: taxonomy must be a regular file inside the blueprint")
-        return
-    if not path.exists():
-        return
-    if not path.is_file():
-        issues.append("atlas.json: taxonomy must be a regular file inside the blueprint")
-        return
     try:
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            return {}, ["ignored, since it is not a regular file inside the blueprint"]
         raw = path.read_bytes()
+    except FileNotFoundError:
+        return {}, []
     except OSError as error:
-        issues.append(f"atlas.json: cannot read taxonomy: {error}")
-        return
+        return {}, [f"ignored, since it cannot be read: {error.strerror}"]
     if len(raw) > _MAX_ATLAS_BYTES:
-        issues.append(f"atlas.json: exceeds {_MAX_ATLAS_BYTES} bytes")
-        return
+        return {}, [f"ignored, since it exceeds {_MAX_ATLAS_BYTES} bytes"]
     try:
         payload = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        issues.append(f"atlas.json: invalid JSON: {error}")
-        return
+    except (ValueError, RecursionError) as error:
+        return {}, [f"ignored, since it is not valid JSON: {error}"]
     if not isinstance(payload, dict) or payload.get("schema") != ATLAS_SCHEMA:
-        issues.append(f"atlas.json: schema must be {ATLAS_SCHEMA!r}")
-        return
+        return {}, [f"ignored, since its schema is not {ATLAS_SCHEMA!r}"]
     areas = payload.get("areas")
     if not isinstance(areas, dict):
-        issues.append("atlas.json: 'areas' must be an object")
-        return
+        return {}, ["ignored, since its 'areas' is not an object"]
     assigned: dict[str, str] = {}
+    omissions: list[str] = []
     for area, node_ids in areas.items():
-        if not isinstance(area, str) or not area.strip() or not isinstance(node_ids, list):
-            issues.append("atlas.json: each area must be a non-empty string mapped to an array")
+        if not area.strip() or not isinstance(node_ids, list):
+            omissions.append(f"area {area!r} is ignored; it needs a name and an array of roadmap node ids")
             continue
         for node_id in node_ids:
             if not isinstance(node_id, str) or node_id not in nodes:
-                issues.append(f"atlas.json: unknown roadmap node {node_id!r}")
-                continue
-            previous = assigned.get(node_id)
-            if previous is not None:
-                issues.append(f"atlas.json: node {node_id!r} belongs to both {previous!r} and {area!r}")
-                continue
-            authored = nodes[node_id].area
-            if authored is not None and authored != area:
-                issues.append(
-                    f"atlas.json: node {node_id!r} conflicts with its frontmatter area {authored!r}"
+                omissions.append(f"{node_id!r} under {area!r} is ignored, since no roadmap node has that id")
+            elif node_id in assigned:
+                omissions.append(f"{node_id!r} under {area!r} is ignored, since {assigned[node_id]!r} already holds it")
+            elif nodes[node_id].area not in {None, area}:
+                omissions.append(
+                    f"{node_id!r} under {area!r} is ignored, since its frontmatter area is {nodes[node_id].area!r}"
                 )
-                continue
-            assigned[node_id] = area
-    for node_id, area in assigned.items():
-        nodes[node_id] = replace(nodes[node_id], area=area)
+            else:
+                assigned[node_id] = area
+    return assigned, omissions
 
 
 def _catalog_has_local_ledger(node: _ParsedNode, blueprint: Path) -> bool:
@@ -1059,5 +1054,6 @@ __all__ = [
     "Graph",
     "GraphValidationError",
     "Node",
+    "atlas_omissions",
     "load_graph",
 ]

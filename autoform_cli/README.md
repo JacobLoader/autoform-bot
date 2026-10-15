@@ -116,8 +116,12 @@ may assign the same areas without moving pages:
 {"schema":"autoform-atlas/v1","areas":{"Geometry & Topology":["topology","geometry"]}}
 ```
 
-Every listed value is a roadmap node id, each node may appear once, and a
-manifest assignment must agree with any `area:` already authored on that node.
+Every listed value is a roadmap node id. A node takes the first area that
+lists it, and an `area:` authored on the node wins over the file. The file only
+places articles in regions, so it never stops a command: `check` and `render`
+warn about each entry they ignore, or about the whole file when it is not
+readable `autoform-atlas/v1` JSON, and `audit` reports each as an
+`atlas-omission` [warning](#warnings).
 
 A repository-wide inventory may use a narrative leaf to summarize an existing
 Lean module containing several declarations. Such a leaf sets
@@ -1211,18 +1215,18 @@ declaration of the Lean build, as it does for any `private` declaration.
 
 ### Warnings
 
-A finding is a problem the audit fails on. A warning tells the agent about code
-it may decide to leave alone, and never fails the audit: `clean` and the exit
-status depend on findings alone, so a repository that passes keeps passing when
-a warning appears. The text output prints a
+A finding is a problem the audit fails on. A warning never fails the audit:
+`clean` and the exit status depend on findings alone, so a repository that
+passes keeps passing when a warning appears. The text output prints a
 `warning: <path>: <code>: <message>` line for each, after the error lines.
 `--json` lists them after `findings` as `warnings`, sorted by `article_path`
 and `code`. Each also carries a `message` and `declarations`, one object per
 affected declaration and setting with its `name`, `option`, `value`,
 `location` (the `set_option` as `path:line` relative to the Lean root), and
 `scope` (`file`, `section`, `declaration`, or `proof`), sorted by name. The
-catalog limit warnings under [Elaboration limits](#elaboration-limits) are the
-only warnings so far.
+catalog limit warnings under [Elaboration limits](#elaboration-limits) fill
+`declarations`; `atlas-omission`, at `atlas.json`, names what loading ignored
+in that file and has none.
 
 ### Structure
 
