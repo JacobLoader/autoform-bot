@@ -1290,9 +1290,11 @@ proof above it.
 
 A catalog inventories code that already exists, so its declarations get the
 same two checks as [warnings](#warnings), at most one per catalog and code:
-`catalog-unbounded-limit` and `catalog-unscoped-limit`. The message counts the
-affected declarations against all the resolved ones the catalog names, names
-the options involved, and locates the `set_option` of the first by name, for
+`catalog-unbounded-limit` and `catalog-unscoped-limit`. As for a declaration
+article, an alias is read as the declaration it reaches. The message counts the
+affected declarations against all those the catalog's resolved names reach (an
+alias listed beside its target counts once), names the options involved, and
+locates the `set_option` of the first by name, for
 example `2 of 40 catalogued declarations have no maxHeartbeats limit
 (Inv.alpha at Inv.lean:1 and 1 more); existing code: change it only on request,
 and a finite limit must pass a rebuild`. A name that does not resolve is a

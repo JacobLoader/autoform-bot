@@ -574,10 +574,13 @@ def _lean_findings(
 
         # Catalog declarations must resolve like every other asserted Lean
         # target. A catalog inventories code that already exists, so its
-        # limits are only warnings, and declaration-specific policy is
+        # limits are only warnings, read like a declaration article's from
+        # what each alias reaches, and declaration-specific policy is
         # inapplicable to a non-dispatchable inventory container.
         if node.catalog is not None:
-            catalogs[article_path] = tuple(dict.fromkeys(resolved))
+            catalogs[article_path] = tuple(
+                dict.fromkeys(index.reached(declaration) or declaration for declaration in resolved)
+            )
             continue
 
         for declaration in resolved:

@@ -1351,6 +1351,30 @@ def test_audit_warns_once_per_catalog_and_code_about_elaboration_limits(tmp_path
     )
 
 
+def test_a_catalog_reads_an_alias_s_limits_from_its_target(tmp_path: Path) -> None:
+    """An alias has its target's limits, and an alias listed beside its target counts once."""
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    _article(blueprint, "alias.md", catalog="module", lean="P.small")
+    _article(blueprint, "both.md", catalog="module", lean="P.small P.big")
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    (lean_root / "Big.lean").write_text(
+        "namespace P\nset_option maxHeartbeats 0 in\ntheorem big : True := trivial\nalias small := big\nend P\n",
+        encoding="utf-8",
+    )
+    message = (
+        "1 of 1 catalogued declaration has no maxHeartbeats limit (P.big at Big.lean:2); "
+        "existing code: change it only on request, and a finite limit must pass a rebuild"
+    )
+    limit = (DeclarationLimit("P.big", "maxHeartbeats", 0, "Big.lean:2", "declaration"),)
+
+    assert audit_blueprint(blueprint, lean_root=lean_root).warnings == (
+        AuditWarning("roadmap/alias.md", "catalog-unbounded-limit", message, limit),
+        AuditWarning("roadmap/both.md", "catalog-unbounded-limit", message, limit),
+    )
+
+
 def test_audit_reads_deprecation_from_the_captured_source_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
