@@ -52,6 +52,7 @@ from .lean import (
     declaration_names,
     detect_ref,
     detect_repository_url,
+    format_locations,
     index_failure_message,
     resolve_lean_root,
     snapshot_project_sources,
@@ -287,6 +288,7 @@ class RenderReport:
     nodes: int = 0
     linked: int = 0
     unresolved: list[str] = field(default_factory=list)
+    """A message for each published declaration not found, or defined more than once, in the sources."""
     unchecked: bool = False
     """A published declaration was not looked up because the sources were not read."""
     warnings: list[str] = field(default_factory=list)
@@ -2398,9 +2400,15 @@ def _lean_presentation(
         elif location is not None:
             fallback.append(f'{code} <span class="bp-where">{html.escape(location.path.as_posix())}</span>')
             linked += 1
+        elif ambiguous := linker.index.ambiguous(name):
+            fallback.append(f'{code} <span class="bp-missing">defined more than once in the Lean sources</span>')
+            unresolved.append(
+                f"declaration defined more than once in the Lean sources: {node.id}: {name} "
+                f"({format_locations(ambiguous)})"
+            )
         else:
             fallback.append(f'{code} <span class="bp-missing">not found in the Lean sources</span>')
-            unresolved.append(f"{node.id}: {name}")
+            unresolved.append(f"declaration not found in the Lean sources: {node.id}: {name}")
 
     code_links = f'<span class="bp-code-links">{"".join(icons)}</span>' if icons else ""
     rows = [("Lean", " · ".join(fallback))] if fallback else []

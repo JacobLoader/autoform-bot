@@ -560,6 +560,24 @@ def test_audit_checks_the_public_declaration_beside_an_earlier_private_twin(tmp_
     assert "roadmap/result.md" not in _finding_map(blueprint, lean_root=lean_root)
 
 
+def test_audit_reports_a_target_defined_more_than_once_and_checks_nothing_else_of_it(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    _article(blueprint, "result.md", declaration="theorem", statement="formalized", lean="Project.result")
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    (lean_root / "A.lean").write_text("def Project.result : Nat := 1\n", encoding="utf-8")
+    (lean_root / "B.lean").write_text("private def Project.result : Nat := 1\n", encoding="utf-8")
+    (lean_root / "C.lean").write_text("\ndef Project.result : Nat := 1\n", encoding="utf-8")
+
+    assert _finding_map(blueprint, lean_root=lean_root)["roadmap/result.md"] == [
+        (
+            "lean-target-ambiguous",
+            "Lean declaration target is defined more than once: Project.result (A.lean:1, B.lean:1, C.lean:2)",
+        )
+    ]
+
+
 def test_audit_accepts_wanted_targets_as_statements_but_not_proofs(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)

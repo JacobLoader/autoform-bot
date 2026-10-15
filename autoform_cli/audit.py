@@ -33,6 +33,7 @@ from .lean import (
     SourceIndex,
     _without_lean_comments,
     declaration_names,
+    format_locations,
     index_failure_message,
     resolve_lean_root,
     snapshot_project_sources,
@@ -459,7 +460,15 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
         resolved = []
         for name in names:
             declaration = index.find(name)
-            if declaration is None:
+            if ambiguous := index.ambiguous(name):
+                findings.append(
+                    AuditFinding(
+                        article_path,
+                        "lean-target-ambiguous",
+                        f"Lean declaration target is defined more than once: {name} ({format_locations(ambiguous)})",
+                    )
+                )
+            elif declaration is None:
                 findings.append(
                     AuditFinding(
                         article_path,
