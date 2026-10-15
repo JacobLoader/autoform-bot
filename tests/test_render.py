@@ -152,7 +152,7 @@ def test_render_writes_a_derived_tree_and_leaves_the_vault_alone(tmp_path: Path)
     assert "data-search-src" not in project_page  # Material reserves and strips this prefix.
     assert "Explore all nodes" not in project_page
     project_payload = json.loads((out / "dependencies.json").read_text(encoding="utf-8"))
-    assert project_payload["title"] == "Mathematics atlas"
+    assert project_payload["title"] == "Roadmap"
     assert {node["url"] for node in project_payload["nodes"]} == {
         "dependencies/chapters/roadmap.html"
     }
@@ -160,17 +160,33 @@ def test_render_writes_a_derived_tree_and_leaves_the_vault_alone(tmp_path: Path)
         (out / "dependencies/chapters/roadmap.json").read_text(encoding="utf-8")
     )
     assert chapter_payload["title"] == "Roadmap dependencies"
-    assert chapter_payload["view"]["breadcrumbs"][-1] == {"label": "Roadmap", "url": None}
+    assert chapter_payload["view"]["breadcrumbs"][-1] == {"label": "Top level", "url": None}
     full_page = (out / "dependencies/full.md").read_text(encoding="utf-8")
     assert 'data-graph-src="full.json"' in full_page
     payload = json.loads((out / "dependencies/full.json").read_text(encoding="utf-8"))
     assert payload["schema"] == "autoform-dag-view/v2"
-    assert payload["title"] == "Mathematics atlas"
+    assert payload["title"] == "Roadmap"
     assert len(payload["nodes"]) == 1
     assert payload["edge_count"] == 0
     assert all(node["url"] for node in payload["nodes"])
     search_index = json.loads((out / "dependencies/index.json").read_text(encoding="utf-8"))
     assert len(search_index["nodes"]) == 3
+
+
+def test_the_root_explorer_takes_the_roadmap_root_title(tmp_path: Path) -> None:
+    """A two-chapter thesis is not "All mathematics": the root explorer is named for its roadmap."""
+    project = _project(tmp_path)
+    _edit(project / "blueprint/roadmap/README.md", "# Roadmap", "# Learning theory")
+    out = tmp_path / "out"
+
+    render_site(project / "blueprint", out, lean_root=project)
+
+    project_payload = json.loads((out / "dependencies.json").read_text(encoding="utf-8"))
+    chapter_payload = json.loads((out / "dependencies/chapters/roadmap.json").read_text(encoding="utf-8"))
+    assert project_payload["title"] == "Learning theory"
+    crumbs = [crumb["label"] for crumb in chapter_payload["view"]["breadcrumbs"]]
+    assert crumbs == ["Book", "Learning theory", "Top level"]
+    assert '<span class="bp-map-title">Learning theory</span>' in (out / "README.md").read_text(encoding="utf-8")
 
 
 def test_a_graph_page_hides_its_legend_behind_an_icon(tmp_path: Path) -> None:
@@ -919,7 +935,7 @@ def test_the_landing_page_is_the_hero_and_project_explorer_and_nothing_else(
     assert overview.index("bp-hero") < overview.index('class="bp-map"')
     assert "bp-landing-prose" not in overview
     assert "## Contents" not in overview
-    assert '<span class="bp-map-title">Mathematics atlas</span>' in overview
+    assert '<span class="bp-map-title">Roadmap</span>' in overview
     assert 'data-graph-src="dependencies.json"' in overview
     assert '<a href="dependencies.html">open full-page</a>' in overview
     assert "```mermaid" not in overview

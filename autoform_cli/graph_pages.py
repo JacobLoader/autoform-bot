@@ -23,6 +23,7 @@ from .graph_views import (
     chapter_view,
     full_view,
     group_nodes,
+    group_title,
     is_scope_target,
     project_view,
     scope_views,
@@ -47,6 +48,7 @@ def write_graph_pages(
     """
     destination = Path(destination).resolve()
     groups = group_nodes(graph)
+    root_title = group_title(graph, "roadmap")
     project_page = destination / "dependencies.md"
     full_page = destination / "dependencies/full.md"
     search_index = destination / "dependencies/index.json"
@@ -111,7 +113,7 @@ def write_graph_pages(
             view=project,
             statuses=_selected_statuses(graph, statuses, project, containers),
             links=project_links(project_page),
-            heading="Mathematics atlas",
+            heading=root_title,
             lead=(
                 f"{project_item_count} item{'s' if project_item_count != 1 else ''} across "
                 f"{len(groups)} chapter{'s' if len(groups) != 1 else ''}."
@@ -121,7 +123,7 @@ def write_graph_pages(
             search_href=_search_index_link(search_index, project_page),
             breadcrumbs=(
                 ("Book", _published_link(destination / "README.md", project_page)),
-                ("All mathematics", None),
+                (root_title, None),
             ),
         )
     )
@@ -226,7 +228,7 @@ def write_graph_pages(
             view=project,
             statuses=_selected_statuses(graph, statuses, project, containers),
             links=project_links(full_page),
-            heading="Mathematics atlas",
+            heading=root_title,
             lead=(
                 f"Browse {len(graph.nodes)} roadmap entries without flattening them into one canvas. "
                 "Search jumps directly to the relevant chapter or nested scope."
@@ -239,7 +241,7 @@ def write_graph_pages(
             search_href=_search_index_link(search_index, full_page),
             breadcrumbs=(
                 ("Book", _published_link(destination / "README.md", full_page)),
-                ("All mathematics", _published_link(project_page, full_page)),
+                (root_title, _published_link(project_page, full_page)),
                 ("Explorer", None),
             ),
         )
@@ -423,15 +425,15 @@ def _scope_breadcrumbs(
         current = graph.nodes[current].parent if current in graph.nodes else None
     items: list[tuple[str, str | None]] = [
         ("Book", _published_link(project_page.parent / "README.md", page)),
-        ("All mathematics", _published_link(project_page, page)),
+        (group_title(graph, "roadmap"), _published_link(project_page, page)),
     ]
     for node_id in reversed(lineage):
         target = scope_pages.get(node_id)
         label = graph.nodes[node_id].title if node_id in graph.nodes else node_id
         items.append((label, _published_link(target, page) if target and target != page else None))
     if not lineage:
-        label = graph.nodes[scope].title if scope in graph.nodes else scope.replace("-", " ").title()
-        items.append((label, None))
+        # The crumb before already carries the roadmap's title.
+        items.append(("Top level", None))
     return tuple(items)
 
 

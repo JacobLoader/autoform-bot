@@ -1747,7 +1747,7 @@ def _render_landing_page(
             "",
             '<div class="bp-map" markdown="1">',
             '<div class="bp-map-head">',
-            '<span class="bp-map-title">Mathematics atlas</span>',
+            f'<span class="bp-map-title">{html.escape(graph_views.group_title(graph, "roadmap"))}</span>',
             '<span class="bp-map-hint">Explore mathematical regions, topics, and dependencies · '
             '<a href="dependencies.html">open full-page</a></span>',
             "</div>",
