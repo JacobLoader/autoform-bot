@@ -514,6 +514,47 @@ def test_a_view_of_topics_and_results_draws_readable_result_cards(desktop_page: 
     assert title.evaluate("element => element.scrollWidth <= element.clientWidth")
 
 
+def test_a_click_on_empty_map_space_keeps_the_readers_zoom(desktop_page: object, explorer_url: str) -> None:
+    """Every click on empty space re-fitted the camera, with or without a selection to clear."""
+    page = desktop_page
+    page.goto(f"{explorer_url}/mixed.html")
+    page.locator("[data-autoform-node-id]").first.wait_for()
+    page.get_by_role("button", name="Zoom in").click()
+    frames = "() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))"
+    transforms = "() => Array.from(document.querySelectorAll('.bp-dag-node'), node => node.style.transform)"
+
+    def click_empty_space() -> None:
+        empty = page.evaluate(
+            """() => {
+              const stage = document.querySelector(".bp-dag-stage").getBoundingClientRect();
+              for (let y = stage.top + 8; y < stage.bottom; y += 16)
+                for (let x = stage.left + 8; x < stage.right; x += 16)
+                  if (document.elementFromPoint(x, y)?.classList.contains("bp-dag-canvas")) return [x, y];
+              return null;
+            }"""
+        )
+        assert empty is not None
+        page.mouse.click(*empty)
+        page.evaluate(frames)
+        page.evaluate(frames)
+
+    page.evaluate(frames)
+    before = page.evaluate(transforms)
+    click_empty_space()
+    assert page.evaluate(transforms) == before
+
+    # Clearing a selection keeps the zoom too; only clearing a path filter re-fits the map.
+    node = page.locator('[data-autoform-node-id="mixed/b"]')
+    node.click()
+    playwright.expect(node).to_have_attribute("data-selected", "true")
+    page.get_by_role("button", name="Zoom in").click()
+    page.evaluate(frames)
+    before = node.evaluate("node => node.style.transform")
+    click_empty_space()
+    playwright.expect(node).to_have_attribute("data-selected", "false")
+    assert node.evaluate("node => node.style.transform") == before
+
+
 def test_oversized_flat_scope_defaults_to_browse(desktop_page: object, explorer_url: str) -> None:
     page = desktop_page
     page.set_viewport_size({"width": 1440, "height": 900})
