@@ -1809,6 +1809,16 @@ def test_non_utf8_response_is_a_protocol_error(runtime_dir, monkeypatch):
         client.request("repl.run", {"project_dir": "/lean", "code": "#check Nat"})
 
 
+def test_response_split_across_reads_is_reassembled():
+    chunks = [b'{"ok":', b" true}", b"\n"]
+
+    class SplitSocket:
+        def recv(self, size):
+            return chunks.pop(0) if chunks else b""
+
+    assert LeanRuntimeClient._read_line(SplitSocket()) == b'{"ok": true}'
+
+
 def test_response_timeout_is_never_retried(runtime_dir, monkeypatch):
     from servers import lean_client
 
