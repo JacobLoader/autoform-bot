@@ -160,7 +160,8 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         tmp_path / "search.json",
         GraphView(kind="full", title="Search", nodes=(*nodes, remote), edges=()),
         context_links={
-            **{node.id: f"articles.html#{node.id}" for node in nodes},
+            # Index records link explorer contexts, never the articles the view links.
+            **{node.id: f"index.html#node={node.id}" for node in nodes},
             remote.id: "other.html#node=remote%2Fdeep-theorem",
         },
     )
@@ -587,6 +588,31 @@ def test_search_keyboard_navigation_and_focus(desktop_page: object, explorer_url
     search.press("Enter")
     playwright.expect(page.locator('[data-autoform-node-id="chapter/target"]')).to_be_focused()
     assert "node=chapter%2Ftarget" in page.url
+
+
+def test_a_search_result_in_this_view_selects_the_drawn_node(desktop_page: object, explorer_url: str) -> None:
+    """Index records carry no layout, so choosing one blanked the map and linked back to the explorer."""
+    page = desktop_page
+    _open_ready(page, explorer_url)
+    search = _load_search_index(page)
+    for query, node_id in (("target", "chapter/target"), ("middle", "chapter/middle")):
+        search.fill(query)
+        if query == "target":
+            search.press("Enter")
+        else:
+            page.locator(".bp-dag-result", has_text="Middle lemma").click()
+        node = page.locator(f'[data-autoform-node-id="{node_id}"]')
+        playwright.expect(node).to_have_attribute("data-selected", "true")
+        # Focus may scroll the page, so both boxes are read once it has moved.
+        playwright.expect(node).to_be_focused()
+        box, stage = node.bounding_box(), page.locator(".bp-dag-stage").bounding_box()
+        assert box is not None and stage is not None
+        assert stage["x"] <= box["x"] and box["x"] + box["width"] <= stage["x"] + stage["width"]
+        assert stage["y"] <= box["y"] and box["y"] + box["height"] <= stage["y"] + stage["height"]
+        assert page.locator(".bp-dag-node").count() > 1
+        playwright.expect(page.get_by_role("link", name="Open article")).to_have_attribute(
+            "href", f"articles.html#{node_id}"
+        )
 
 
 def test_global_search_jumps_to_the_smallest_context(desktop_page: object, explorer_url: str) -> None:
