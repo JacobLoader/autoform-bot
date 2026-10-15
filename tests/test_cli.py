@@ -145,7 +145,7 @@ def test_audit_cli_passes_with_only_warnings_and_prints_them(tmp_path: Path, cap
     command = ["audit", str(blueprint), "--lean-root", str(lean_root)]
     message = (
         "2 of 2 catalogued declarations have no maxHeartbeats limit (Inv.a at Inv.lean:1 and 1 more); "
-        "set a finite limit"
+        "existing code: change it only on request, and a finite limit must pass a rebuild"
     )
 
     assert main(command) == 0

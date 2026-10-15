@@ -1156,6 +1156,7 @@ def test_roadmap_skill_commits_the_final_checked_pass(repo_root: Path) -> None:
         "After the final edit",
         "`autoform check`",
         "`autoform audit`",
+        "Fix the other `warning:` lines inside the adopted boundary as you would a finding",
         "Commit the vault and refreshed graph only after this final validation",
         "no `MAPPED` rows",
         "latest commit contains every change from the pass",
@@ -1555,6 +1556,14 @@ def test_roadmap_repository_scope_inventories_existing_lean(repo_root: Path) -> 
     assert "internal/runbooks/planning.md" not in roadmap
     assert "existing formalized Lean" in metadata
     assert "Existing and planned mathematics coexist in one book" in example
+
+
+def test_roadmap_and_formalize_leave_code_an_audit_warns_about_to_the_user(repo_root: Path) -> None:
+    """A catalog's limit warning describes code that builds today; a guessed limit can break it."""
+    for skill in ("roadmap", "formalize"):
+        text = " ".join((repo_root / f"skills/{skill}/SKILL.md").read_text(encoding="utf-8").split())
+        assert "`catalog-unscoped-limit` warning describes existing Lean code and never fails the audit" in text, skill
+        assert "change that code only when the user asks" in text, skill
 
 
 def test_roadmap_commits_so_the_published_site_can_catch_up(repo_root: Path) -> None:

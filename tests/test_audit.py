@@ -1320,14 +1320,16 @@ def test_audit_warns_once_per_catalog_and_code_about_elaboration_limits(tmp_path
             "roadmap/inventory-extra.md",
             "catalog-unscoped-limit",
             "1 of 2 catalogued declarations inherits a file- or section-wide raised maxHeartbeats limit "
-            "(Inv.alpha at Inv.lean:1); put `set_option maxHeartbeats N in` on the declarations that need it",
+            "(Inv.alpha at Inv.lean:1); existing code: change it only on request, and "
+            "`set_option maxHeartbeats N in` on the declarations that need it must pass a rebuild",
             (limit("alpha", *file_wide),),
         ),
         AuditWarning(
             "roadmap/inventory.md",
             "catalog-unbounded-limit",
             "2 of 4 catalogued declarations have no maxHeartbeats limit or no synthInstance.maxHeartbeats "
-            "limit (Inv.beta at Inv.lean:4 and 1 more); set a finite limit",
+            "limit (Inv.beta at Inv.lean:4 and 1 more); existing code: change it only on request, and "
+            "a finite limit must pass a rebuild",
             (
                 limit("beta", "synthInstance.maxHeartbeats", 0, 4, "declaration"),
                 limit("delta", "maxHeartbeats", 0, 11, "proof"),
@@ -1337,7 +1339,8 @@ def test_audit_warns_once_per_catalog_and_code_about_elaboration_limits(tmp_path
             "roadmap/inventory.md",
             "catalog-unscoped-limit",
             f"3 of 4 {inherit} maxHeartbeats or maxRecDepth limit (Inv.alpha at Inv.lean:1 and 2 more); "
-            "put `set_option maxHeartbeats N in` or `set_option maxRecDepth N in` on the declarations that need it",
+            "existing code: change it only on request, and `set_option maxHeartbeats N in` or "
+            "`set_option maxRecDepth N in` on the declarations that need it must pass a rebuild",
             (
                 limit("alpha", *file_wide),
                 limit("beta", *file_wide),

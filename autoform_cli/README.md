@@ -1294,8 +1294,9 @@ same two checks as [warnings](#warnings), at most one per catalog and code:
 affected declarations against all the resolved ones the catalog names, names
 the options involved, and locates the `set_option` of the first by name, for
 example `2 of 40 catalogued declarations have no maxHeartbeats limit
-(Inv.alpha at Inv.lean:1 and 1 more); set a finite limit`. A name that does not
-resolve is a `lean-target-not-found` finding and is not counted.
+(Inv.alpha at Inv.lean:1 and 1 more); existing code: change it only on request,
+and a finite limit must pass a rebuild`. A name that does not resolve is a
+`lean-target-not-found` finding and is not counted.
 
 ATLAS v1, built with Autoform, shows what accumulates without this check: 901
 raised `maxHeartbeats` settings, 497 of them file- or section-wide and 9 of them

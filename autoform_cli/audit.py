@@ -769,16 +769,21 @@ def _catalog_limit_warnings(
             count = len({entry.name for entry in entries})
             options = sorted({entry.option for entry in entries})
             example = f"{entries[0].name} at {entries[0].location}" + (f" and {count - 1} more" if count > 1 else "")
+            # A catalog lists code that builds today, so the warning informs:
+            # a guessed limit can stop a declaration from elaborating.
             if problem == "unbounded":
                 verb = "has" if count == 1 else "have"
                 summary = f"{verb} " + " or ".join(f"no {option} limit" for option in options)
-                action = "set a finite limit"
+                change = "a finite limit"
             else:
                 verb = "inherits" if count == 1 else "inherit"
                 summary = f"{verb} a file- or section-wide raised {' or '.join(options)} limit"
                 wrappers = " or ".join(f"`set_option {option} N in`" for option in options)
-                action = f"put {wrappers} on the declarations that need it"
-            message = f"{count} of {len(declarations)} catalogued {noun} {summary} ({example}); {action}"
+                change = f"{wrappers} on the declarations that need it"
+            message = (
+                f"{count} of {len(declarations)} catalogued {noun} {summary} ({example}); "
+                f"existing code: change it only on request, and {change} must pass a rebuild"
+            )
             warnings.append(AuditWarning(article_path, f"catalog-{problem}-limit", message, tuple(entries)))
     return warnings
 
