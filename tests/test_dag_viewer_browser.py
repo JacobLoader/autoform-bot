@@ -493,8 +493,11 @@ def test_atlas_bubbles_open_authored_mathematical_context(
     # The ring follows the legend's state order: finished green before ready-to-prove blue.
     assert ring.startswith("conic-gradient")
     assert ring.index("rgb(34, 119, 58)") < ring.index("rgb(0, 100, 224)")
+    # The region is canvas text, which assistive technology never reads.
+    assert "Geometry & Topology" in (topic.get_attribute("aria-label") or "")
     topic.click()
     playwright.expect(page.locator(".bp-dag-inspector h2")).to_have_text("Topology")
+    playwright.expect(page.locator(".bp-dag-inspector .bp-dag-kicker")).to_have_text("Scope · Geometry & Topology")
     playwright.expect(page.locator(".bp-dag-inspector h3", has_text="in this scope")).to_have_text(
         "80 items in this scope"
     )
