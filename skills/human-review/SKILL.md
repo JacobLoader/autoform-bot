@@ -24,10 +24,9 @@ this skill's `skills/` folder, along with `pyproject.toml` and `autoform_cli/`.
 Give a subagent that root and this prefix with its task.
 
 Regenerate the review views from `<PROJECT>`: validate the blueprint, refresh
-the bounded Mermaid project graph with `autoform-visualize` so Obsidian shows
-current high-level dependencies, render the site source, then strict-build the
-site. Follow the publication sequence in the
-[CLI reference](../../autoform_cli/README.md#commands),
+the Mermaid graph with `autoform-visualize` so Obsidian shows current
+dependencies, render the site source, then strict-build the site. Follow the
+publication sequence in the [CLI reference](../../autoform_cli/README.md#commands),
 but omit `--require-declarations`: review happens while statements are still
 unformalized, and a missing declaration is something for the reviewer to see
 rather than a reason to refuse to render.
@@ -41,10 +40,9 @@ the overview, including its progress summary, plus the relevant project,
 chapter, nested-scope, and statement-context links. Every generated site route
 uses the same Canvas plus semantic-DOM viewer. Open its full-page route and move
 from project clusters to a chapter, a nested scope, then a searched statement
-and its immediate dependencies. Never begin with a
-fitted all-repository node cloud: global search enters the statement's smallest
-useful scope, while breadcrumbs and Back return to the project overview. The authored vault graph remains Mermaid;
-never raise Mermaid's text or edge limits to publish scale.
+and its immediate dependencies. Never begin with a fitted all-repository node
+cloud: global search enters the statement's smallest useful scope, while
+breadcrumbs and Back return to the project overview.
 
 Judge the explorer as a mathematical knowledge map, not navigation chrome.
 Authored mathematical regions and prose should control the atlas and reading
@@ -54,8 +52,8 @@ dependency edges says so instead of fabricating relations.
 
 Guide the review from coarse to fine: declared scope and exclusions, milestone
 book, landing-page progress summary, cross-chapter graph, chapter graph, then
-individual node and Lean-source links. Record each human decision as `approve`,
-`revise`, or `block`, with the exact page or node and rationale. Separate validator output
+individual node and Lean-source links. Record each human decision as `approve`, `revise`, or
+`block`, with the exact page or node and rationale. Separate validator output
 from the person's judgment. Do not silently apply requested revisions: hand
 mathematical-plan changes and Lean implementation changes to Roadmap, which
 records the decision and retracts the affected article so Formalize takes it up

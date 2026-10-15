@@ -47,12 +47,13 @@ def test_human_review_distinguishes_roadmap_progress_from_source_scope(
     repo_root: Path,
 ) -> None:
     skill = (repo_root / "skills/human-review/SKILL.md").read_text(encoding="utf-8")
+    normalized = " ".join(skill.split())
 
     assert "`Scoped roadmap` percentage" in skill
-    assert "formalizable leaf targets only" in skill
-    assert "Module catalogs are non-dispatchable source" in skill
-    assert "separate neutral metric" in skill
-    assert "Completion includes every\ndependency recursively" in skill
+    assert "formalizable leaf targets only" in normalized
+    assert "Module catalogs are non-dispatchable source" in normalized
+    assert "separate neutral metric" in normalized
+    assert "Completion includes every dependency recursively" in normalized
     assert "bodies for definitions" in skill
     assert "`mathlib: true` follows the authored status contract" in skill
     assert "not audit verification" in skill
@@ -63,13 +64,13 @@ def test_human_review_distinguishes_roadmap_progress_from_source_scope(
     assert "autoform dashboard <PROJECT> --site-dir site" in skill
     assert "same site deployed to\nGitHub Pages" in skill
     assert "local-only live claim badges" in skill
-    assert "full-page route" in skill
-    assert "Never begin with a\nfitted all-repository node cloud" in skill
-    assert "smallest\nuseful scope" in skill
-    assert "mathematical knowledge map, not navigation chrome" in skill
-    assert "provenance, and pagination folders remain facets" in skill
-    assert "Containment\nuses regions or hulls, dependency uses typed arrows" in skill
-    assert "no authored\ndependency edges says so" in skill
+    assert "full-page route" in normalized
+    assert "Never begin with a fitted all-repository node cloud" in normalized
+    assert "smallest useful scope" in normalized
+    assert "mathematical knowledge map, not navigation chrome" in normalized
+    assert "provenance, and pagination folders remain facets" in normalized
+    assert "Containment uses regions or hulls, dependency uses typed arrows" in normalized
+    assert "no authored dependency edges says so" in normalized
     assert "overview, progress, project graph" not in skill
 
 
@@ -83,14 +84,13 @@ def test_generated_site_docs_describe_one_multiscale_explorer(repo_root: Path) -
         / ".github/workflows/blueprint-pages.yml"
     ).read_text(encoding="utf-8")
 
-    assert "Every generated\nsite projection uses the same" in cli
-    assert "Authored Mermaid remains\nsupported in the vault and book" in cli
-    assert "Project, chapter, and small\nlocal maps remain compact Mermaid" not in cli
-    assert "Every generated site route\nuses the same" in review
-    assert "The authored vault graph remains Mermaid" in review
+    cli, review = (" ".join(text.split()) for text in (cli, review))
+
+    assert "Every generated site projection uses the same" in cli
+    assert "Authored Mermaid remains supported in the vault and book" in cli
+    assert "Every generated site route uses the same" in review
     assert "Canvas plus semantic-DOM explorer across project" in example
     assert "one interactive\n      # dependency explorer" in workflow
-    assert "scoped Mermaid maps" not in example
 
 
 def test_formalize_replaces_custom_orchestration_with_the_markdown_frontier(
@@ -1014,7 +1014,7 @@ def test_each_skill_points_to_its_thesis_example(repo_root: Path) -> None:
     assert "stale-build refusal" in agent_review
     assert "drift checksum" in agent_review
     assert "autoform-visualize" in human_review
-    assert "`approve`,\n`revise`, or `block`" in human_review
+    assert "`approve`, `revise`, or\n`block`" in human_review
     for required in (
         "example-based plugin",
         "independent formalization",

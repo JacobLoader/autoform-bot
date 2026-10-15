@@ -231,7 +231,7 @@ contract, `blueprint/README.md`, and the repository `README.md`.
 ## Finish
 
 After the final edit, use the CLI reference to run `autoform check` and
-`autoform audit`, refresh the bounded vault graph, and resolve every finding
+`autoform audit`, refresh the Mermaid graph, and resolve every finding
 introduced by this work or inside the adopted boundary. Report unrelated
 pre-existing findings instead of silently widening scope. A
 `catalog-unbounded-limit` or `catalog-unscoped-limit` warning describes
