@@ -972,3 +972,27 @@ def test_a_published_chapter_explorer_links_its_textbook_chapter_and_keeps_its_h
     playwright.expect(page.locator(".bp-dag-book")).to_have_attribute("href", "../../roadmap/algebra/index.html")
     playwright.expect(page.locator(".bp-dag-book")).to_be_visible()
     playwright.expect(page.get_by_role("heading", level=1)).to_have_text("Algebra dependencies")
+
+
+def test_slash_on_the_published_landing_page_opens_site_search(desktop_page: object, site_url: str) -> None:
+    """The embedded explorer answers its shortcuts only while it has focus, so "/" stays Material's."""
+    page = _offline(desktop_page, site_url)
+    page.goto(f"{site_url}/index.html")
+    page.locator(".bp-dag-node").first.wait_for()
+    page.keyboard.press("/")
+    playwright.expect(page.locator("input.md-search__input")).to_be_focused()
+
+
+def test_slash_inside_the_explorer_opens_its_search_but_an_input_keeps_its_keys(
+    desktop_page: object, explorer_url: str
+) -> None:
+    """Focus inside the explorer lets "/" open its search, but no shortcut takes a key from an input."""
+    page = desktop_page
+    _open_ready(page, explorer_url)
+    page.locator("[data-autoform-node-id]").first.focus()
+    page.keyboard.press("/")
+    playwright.expect(page.locator(".bp-dag-search")).to_be_focused()
+    isolates = page.get_by_role("checkbox", name="Show items without edges")
+    isolates.focus()
+    page.keyboard.press("Control+K")
+    playwright.expect(isolates).to_be_focused()
