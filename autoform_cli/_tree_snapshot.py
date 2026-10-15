@@ -22,7 +22,6 @@ import errno
 import hashlib
 import os
 import stat
-import threading
 import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -52,10 +51,9 @@ _FILE_FLAGS = (
 )
 _READ_CHUNK_BYTES = 1024 * 1024
 _DESCRIPTOR_CAPTURE_SUPPORTED = (
-    os.listdir in getattr(os, "supports_fd", ())
+    os.scandir in getattr(os, "supports_fd", ())
     and os.readlink in getattr(os, "supports_dir_fd", ())
 )
-_DESCRIPTOR_SCANDIR_SUPPORTED = os.scandir in getattr(os, "supports_fd", ())
 _WINDOWS_STAT_VIEWS = os.name == "nt"
 
 
@@ -93,23 +91,18 @@ def _invalid_limit(value: object) -> bool:
 class TreeCaptureLimits:
     """Optional bounds on observed entries and captured regular-file bytes.
 
-    The retained root has depth zero. Every observed child counts as an entry,
-    including omitted and placeholder entries.  With
+    Every observed child counts as an entry, including omitted entries.  With
     ``TreeSelection.unselected_may_change`` the scan, its end-of-folder
     relists and the final verification each have their own budget under the
     same limits.
     """
 
     max_entries: int | None = None
-    max_depth: int | None = None
-    max_file_bytes: int | None = None
     max_total_bytes: int | None = None
 
     def __post_init__(self) -> None:
         for name in (
             "max_entries",
-            "max_depth",
-            "max_file_bytes",
             "max_total_bytes",
         ):
             value = getattr(self, name)
@@ -127,22 +120,19 @@ class TreeSelection:
     presence-only marker).
 
     With ``unselected_may_change`` it proves stable only what it selected: the
-    entries ``include`` or ``placeholder`` capture and the folders that
-    contain them.  Any other descended folder, including one hidden by a
-    recognized marker, may change, vanish or be rebuilt during the capture,
-    provided that whatever is at its path when it is rechecked is hidden by a
-    recognized marker or holds no selected entry.  Such folders leave no trace
-    in the snapshot or its revisions, and ``opaque_directories`` stays empty.
-    The end-of-folder recheck skips an unselected entry that keeps the
-    ``(dev, ino, file type)`` the scan saw, so ``include`` and ``placeholder``
-    must not depend on other mode bits.  This mode needs directory-descriptor
-    traversal and does not record omitted entries.
+    entries ``include`` captures and the folders that contain them.  Any other
+    descended folder, including one hidden by a recognized marker, may change,
+    vanish or be rebuilt during the capture, provided that whatever is at its
+    path when it is rechecked is hidden by a recognized marker or holds no
+    selected entry.  Such folders leave no trace in the snapshot or its
+    revisions, and ``opaque_directories`` stays empty.  The end-of-folder
+    recheck skips an unselected entry that keeps the ``(dev, ino, file type)``
+    the scan saw, so ``include`` must not depend on other mode bits.  This mode
+    needs directory-descriptor traversal and does not record omitted entries.
     """
 
     include: Callable[[PurePosixPath, int], bool]
     descend: Callable[[PurePosixPath], bool]
-    placeholder: Callable[[PurePosixPath, int], bool] = lambda _path, _mode: False
-    byte_limit: Callable[[PurePosixPath], int | None] = lambda _path: None
     record_omitted: bool = True
     limits: TreeCaptureLimits = TreeCaptureLimits()
     opaque_markers: tuple["OpaqueDirectoryMarker", ...] = ()
@@ -189,12 +179,10 @@ ALL_ENTRIES = TreeSelection(
 class TreeSnapshot:
     """Immutable names, types, and bytes captured below one directory root."""
 
-    root_identity: tuple[int, int]
     directories: tuple[str, ...]
     files: tuple[tuple[str, bytes], ...]
     symlinks: tuple[tuple[str, str], ...]
     special: tuple[tuple[str, int], ...]
-    placeholders: tuple[str, ...]
     omitted: tuple[tuple[str, str], ...]
     identities: tuple[tuple[str, tuple[int, ...]], ...]
     opaque_directories: tuple[str, ...] = ()
@@ -212,8 +200,6 @@ class TreeSnapshot:
             _update_digest(digest, b"symlink", relative, os.fsencode(target))
         for relative, mode in self.special:
             _update_digest(digest, b"special", relative, str(mode).encode("ascii"))
-        for relative in self.placeholders:
-            _update_digest(digest, b"placeholder", relative, b"")
         for relative, kind in self.omitted:
             _update_digest(digest, b"omitted", relative, kind.encode("ascii"))
         for relative in self.opaque_directories:
@@ -282,60 +268,30 @@ class _CaptureBudget:
     entries: int = 0
     total_bytes: int = 0
 
-    def add_entries(self, count: int, *, depth: int) -> None:
-        if (
-            count
-            and self.limits.max_depth is not None
-            and depth > self.limits.max_depth
-        ):
-            raise TreeCaptureLimitError("max_depth", self.limits.max_depth)
-        self.entries += count
+    def add_entry(self) -> None:
+        self.entries += 1
         if (
             self.limits.max_entries is not None
             and self.entries > self.limits.max_entries
         ):
             raise TreeCaptureLimitError("max_entries", self.limits.max_entries)
 
-    def file_read_limit(self, size: int, selected_limit: int | None) -> int | None:
-        if selected_limit is not None and _invalid_limit(selected_limit):
-            raise TreeSnapshotError(
-                "tree selection byte limit must be a non-negative integer or None"
-            )
-        selected_bytes = (
-            size if selected_limit is None else min(size, selected_limit + 1)
-        )
-        if (
-            self.limits.max_file_bytes is not None
-            and selected_bytes > self.limits.max_file_bytes
-        ):
-            raise TreeCaptureLimitError(
-                "max_file_bytes",
-                self.limits.max_file_bytes,
-            )
+    def file_read_limit(self, size: int, max_bytes: int | None = None) -> int | None:
+        needed = size if max_bytes is None else min(size, max_bytes + 1)
         if (
             self.limits.max_total_bytes is not None
-            and self.total_bytes + selected_bytes > self.limits.max_total_bytes
+            and self.total_bytes + needed > self.limits.max_total_bytes
         ):
             raise TreeCaptureLimitError(
                 "max_total_bytes",
                 self.limits.max_total_bytes,
             )
-        limits = [selected_limit] if selected_limit is not None else []
-        if self.limits.max_file_bytes is not None:
-            limits.append(self.limits.max_file_bytes)
+        limits = [max_bytes] if max_bytes is not None else []
         if self.limits.max_total_bytes is not None:
             limits.append(self.limits.max_total_bytes - self.total_bytes)
         return min(limits) if limits else None
 
     def add_file_bytes(self, count: int) -> None:
-        if (
-            self.limits.max_file_bytes is not None
-            and count > self.limits.max_file_bytes
-        ):
-            raise TreeCaptureLimitError(
-                "max_file_bytes",
-                self.limits.max_file_bytes,
-            )
         self.total_bytes += count
         if (
             self.limits.max_total_bytes is not None
@@ -347,48 +303,17 @@ class _CaptureBudget:
             )
 
 
-def _requires_bounded_enumeration(limits: TreeCaptureLimits) -> bool:
-    return limits.max_entries is not None or limits.max_depth is not None
-
-
 def _capture_directory_names(
-    descriptor: int,
+    directory: int | Path,
     *,
     budget: _CaptureBudget,
-    depth: int,
-) -> tuple[str, ...]:
-    if _DESCRIPTOR_SCANDIR_SUPPORTED:
-        names: list[str] = []
-        with os.scandir(descriptor) as iterator:
-            for entry in iterator:
-                if not _valid_name(entry.name):
-                    raise TreeSnapshotError("directory tree contains an unsupported entry name")
-                budget.add_entries(1, depth=depth)
-                names.append(entry.name)
-        return tuple(sorted(names))
-    if _requires_bounded_enumeration(budget.limits):
-        raise TreeSnapshotError(
-            "bounded directory enumeration is unavailable on this platform"
-        )
-    names = tuple(sorted(os.listdir(descriptor)))
-    if any(not _valid_name(name) for name in names):
-        raise TreeSnapshotError("directory tree contains an unsupported entry name")
-    budget.add_entries(len(names), depth=depth)
-    return names
-
-
-def _capture_path_names(
-    path: Path,
-    *,
-    budget: _CaptureBudget,
-    depth: int,
 ) -> tuple[str, ...]:
     names: list[str] = []
-    with os.scandir(path) as iterator:
+    with os.scandir(directory) as iterator:
         for entry in iterator:
             if not _valid_name(entry.name):
                 raise TreeSnapshotError("directory tree contains an unsupported entry name")
-            budget.add_entries(1, depth=depth)
+            budget.add_entry()
             names.append(entry.name)
     return tuple(sorted(names))
 
@@ -396,22 +321,14 @@ def _capture_path_names(
 def _directory_names_match(
     descriptor: int,
     expected: tuple[str, ...],
-    *,
-    limits: TreeCaptureLimits,
 ) -> bool:
-    if _DESCRIPTOR_SCANDIR_SUPPORTED:
-        names: list[str] = []
-        with os.scandir(descriptor) as iterator:
-            for entry in iterator:
-                if len(names) == len(expected):
-                    return False
-                names.append(entry.name)
-        return tuple(sorted(names)) == expected
-    if _requires_bounded_enumeration(limits):
-        raise TreeSnapshotError(
-            "bounded directory enumeration is unavailable on this platform"
-        )
-    return tuple(sorted(os.listdir(descriptor))) == expected
+    names: list[str] = []
+    with os.scandir(descriptor) as iterator:
+        for entry in iterator:
+            if len(names) == len(expected):
+                return False
+            names.append(entry.name)
+    return tuple(sorted(names)) == expected
 
 
 def descriptor_capture_supported() -> bool:
@@ -431,9 +348,7 @@ class BoundDirectoryTree:
         selection: TreeSelection = ALL_ENTRIES,
         require_descriptor: bool = False,
     ) -> None:
-        self._lock = threading.RLock()
         self.root = lexical_absolute_path(root)
-        self.expected_identity = expected_identity
         self.selection = selection
         self._binding: RetainedDirectory | None = None
         self._portable_identity: tuple[int, int] | None = None
@@ -470,80 +385,60 @@ class BoundDirectoryTree:
 
     @property
     def identity(self) -> tuple[int, int]:
-        with self._lock:
-            if self._closed:
-                raise TreeSnapshotError("directory tree binding is closed")
-            if self._binding is not None:
-                return self._binding.identity
-            assert self._portable_identity is not None
-            return self._portable_identity
-
-    @property
-    def descriptor(self) -> int:
-        """Return the retained root descriptor or fail at the capability boundary."""
-
-        with self._lock:
-            if self._closed:
-                raise TreeSnapshotError("directory tree binding is closed")
-            if self._binding is None:
-                raise TreeSnapshotError(
-                    "safe directory traversal is unavailable on this platform"
-                )
-            return self._binding.descriptor
+        if self._closed:
+            raise TreeSnapshotError("directory tree binding is closed")
+        if self._binding is not None:
+            return self._binding.identity
+        assert self._portable_identity is not None
+        return self._portable_identity
 
     def verify(self) -> None:
         """Verify the retained generation is still selected by its public path."""
 
-        with self._lock:
-            if self._closed:
-                raise TreeSnapshotError("directory tree binding is closed")
-            try:
-                if self._binding is not None:
-                    self._binding.verify()
-                    return
-                if (
-                    self._portable_path_identities is None
-                    or _portable_directory_identities(self.root)
-                    != self._portable_path_identities
-                ):
-                    raise TreeChangedError("directory tree changed while it was in use")
-                metadata = os.lstat(self.root)
-                if not stat.S_ISDIR(metadata.st_mode) or (
-                    metadata.st_dev,
-                    metadata.st_ino,
-                ) != self.identity:
-                    raise TreeChangedError("directory tree changed while it was in use")
-            except OSError as error:
-                raise TreeChangedError("directory tree changed while it was in use") from error
+        if self._closed:
+            raise TreeSnapshotError("directory tree binding is closed")
+        try:
+            if self._binding is not None:
+                self._binding.verify()
+                return
+            if (
+                self._portable_path_identities is None
+                or _portable_directory_identities(self.root)
+                != self._portable_path_identities
+            ):
+                raise TreeChangedError("directory tree changed while it was in use")
+            metadata = os.lstat(self.root)
+            if not stat.S_ISDIR(metadata.st_mode) or (
+                metadata.st_dev,
+                metadata.st_ino,
+            ) != self.identity:
+                raise TreeChangedError("directory tree changed while it was in use")
+        except OSError as error:
+            raise TreeChangedError("directory tree changed while it was in use") from error
 
-    def capture(self, *, selection: TreeSelection | None = None) -> TreeSnapshot:
+    def capture(self) -> TreeSnapshot:
         """Capture one stable tree through the retained directory generation."""
 
-        with self._lock:
-            return self._capture_locked(selection)
-
-    def _capture_locked(self, selection: TreeSelection | None) -> TreeSnapshot:
-        active_selection = self.selection if selection is None else selection
         self.verify()
         try:
             if self._binding is not None:
                 snapshot = capture_directory_descriptor(
                     self._binding.descriptor,
                     expected_identity=self.identity,
-                    selection=active_selection,
+                    selection=self.selection,
                 )
             else:
                 first = _capture_portable(
                     self.root,
                     expected_identity=self.identity,
-                    selection=active_selection,
+                    selection=self.selection,
                 )
                 _tree_snapshot_checkpoint("between-portable-captures", "")
                 _tree_snapshot_checkpoint("before-final-verification", "")
                 snapshot = _capture_portable(
                     self.root,
                     expected_identity=self.identity,
-                    selection=active_selection,
+                    selection=self.selection,
                 )
                 if first != snapshot:
                     raise TreeChangedError(
@@ -555,13 +450,12 @@ class BoundDirectoryTree:
         return snapshot
 
     def close(self) -> None:
-        with self._lock:
-            if self._closed:
-                return
-            if self._binding is not None:
-                self._binding.close()
-                self._binding = None
-            self._closed = True
+        if self._closed:
+            return
+        if self._binding is not None:
+            self._binding.close()
+            self._binding = None
+        self._closed = True
 
 
 @contextmanager
@@ -570,7 +464,6 @@ def bind_directory_tree(
     *,
     expected_identity: tuple[int, int] | None = None,
     selection: TreeSelection = ALL_ENTRIES,
-    require_descriptor: bool = False,
 ) -> Iterator[BoundDirectoryTree]:
     """Retain *root* while callers capture and verify its content generation."""
 
@@ -578,7 +471,6 @@ def bind_directory_tree(
         root,
         expected_identity=expected_identity,
         selection=selection,
-        require_descriptor=require_descriptor,
     )
     try:
         yield bound
@@ -608,13 +500,12 @@ def capture_directory_descriptor(
     files: list[tuple[str, bytes]] = []
     symlinks: list[tuple[str, str]] = []
     special: list[tuple[str, int]] = []
-    placeholders: list[str] = []
     omitted: list[tuple[str, str]] = []
     opaque_directories: list[str] = []
     budget = _CaptureBudget(selection.limits)
     recheck_budget = _CaptureBudget(selection.limits)
 
-    def scan(descriptor: int, relative: str, depth: int, identity: tuple[int, ...]) -> bool:
+    def scan(descriptor: int, relative: str, identity: tuple[int, ...]) -> bool:
         """Record one folder and its descendants; return whether it was recorded.
 
         By default every descended folder is recorded.  In selected-entry mode
@@ -632,7 +523,6 @@ def capture_directory_descriptor(
                 relative,
                 selection,
                 budget=budget,
-                depth=depth,
             )
         else:
             marker = None
@@ -640,7 +530,6 @@ def capture_directory_descriptor(
             names = _capture_directory_names(
                 descriptor,
                 budget=budget,
-                depth=depth + 1,
             )
         if marker is not None:
             if selected_only:
@@ -709,7 +598,7 @@ def capture_directory_descriptor(
                     # Selected mode records a folder by the identity it opened,
                     # and the lookup below checks that its name still leads there;
                     # a folder it does not record is examined again where it is now.
-                    if not scan(child_descriptor, child_relative, depth + 1, opened_identity):
+                    if not scan(child_descriptor, child_relative, opened_identity):
                         unkept[name] = _stable_entry_identity(opened_identity)
                         continue
                     final_identity = _stat_signature(_lookup(descriptor, name, relative))
@@ -723,14 +612,6 @@ def capture_directory_descriptor(
                         _close_descriptor(child_descriptor)
                 continue
             if not selection.include(relative_path, metadata.st_mode):
-                if stat.S_ISREG(metadata.st_mode) and selection.placeholder(
-                    relative_path,
-                    metadata.st_mode,
-                ):
-                    entries.append(_EntryRecord(child_relative, child_identity))
-                    placeholders.append(child_relative)
-                    relevant_names.append(name)
-                    continue
                 if selected_only:
                     unkept[name] = _stable_entry_identity(child_identity)
                     continue
@@ -746,10 +627,7 @@ def capture_directory_descriptor(
                     omitted.append((child_relative, kind))
                 continue
             if stat.S_ISREG(metadata.st_mode):
-                max_bytes = budget.file_read_limit(
-                    metadata.st_size,
-                    selection.byte_limit(relative_path),
-                )
+                max_bytes = budget.file_read_limit(metadata.st_size)
                 try:
                     data = _read_file(
                         descriptor,
@@ -793,7 +671,6 @@ def capture_directory_descriptor(
             _recheck_scanned_directory(
                 descriptor,
                 relative=relative,
-                depth=depth,
                 kept=relevant_names,
                 unkept=unkept,
                 selection=selection,
@@ -809,14 +686,13 @@ def capture_directory_descriptor(
             or not _directory_names_match(
                 descriptor,
                 names,
-                limits=budget.limits,
             )
         ):
             raise _TreeChanged(relative)
         return True
 
     try:
-        scan(descriptor, "", 0, _stat_signature(root))
+        scan(descriptor, "", _stat_signature(root))
         _tree_snapshot_checkpoint("before-final-verification", "")
         _verify_snapshot(
             descriptor,
@@ -831,12 +707,10 @@ def capture_directory_descriptor(
         # reference counting free the captured bytes along with the snapshot.
         scan = None  # type: ignore[assignment]
     return TreeSnapshot(
-        root_identity=(root.st_dev, root.st_ino),
         directories=tuple(sorted(record.relative for record in directories)),
         files=tuple(sorted(files)),
         symlinks=tuple(sorted(symlinks)),
         special=tuple(sorted(special)),
-        placeholders=tuple(sorted(placeholders)),
         omitted=tuple(sorted(omitted)),
         identities=tuple(
             sorted(
@@ -1012,14 +886,12 @@ def _opaque_marker(
     selection: TreeSelection,
     *,
     budget: _CaptureBudget,
-    depth: int,
 ) -> tuple[_OpaqueMarkerRecord | None, bytes | None, tuple[str, ...]]:
     """Recognize one bounded marker without reading any sibling descendants."""
 
     names = _capture_directory_names(
         descriptor,
         budget=budget,
-        depth=depth + 1,
     )
     by_folded_name: dict[str, list[str]] = {}
     for name in names:
@@ -1073,7 +945,6 @@ def _recheck_scanned_directory(
     descriptor: int,
     *,
     relative: str,
-    depth: int,
     kept: Sequence[str],
     unkept: dict[str, tuple[int, int, int]],
     selection: TreeSelection,
@@ -1095,7 +966,6 @@ def _recheck_scanned_directory(
     names = _relist_directory(
         descriptor,
         relative,
-        depth=depth,
         selection=selection,
         budget=budget,
     )
@@ -1127,7 +997,6 @@ def _recheck_scanned_directory(
             descriptor,
             name,
             relative=relative,
-            depth=depth,
             selection=selection,
             budget=budget,
         )
@@ -1137,7 +1006,6 @@ def _relist_directory(
     descriptor: int,
     relative: str,
     *,
-    depth: int,
     selection: TreeSelection,
     budget: _CaptureBudget,
 ) -> tuple[str, ...] | None:
@@ -1154,12 +1022,11 @@ def _relist_directory(
                 relative,
                 selection,
                 budget=budget,
-                depth=depth,
             )
             if marker is not None:
                 return None
             return names
-        return _capture_directory_names(descriptor, budget=budget, depth=depth + 1)
+        return _capture_directory_names(descriptor, budget=budget)
     except _PermissionDenied as error:
         raise _TreeChanged(error.relative) from error
     except (TreeSnapshotError, PermissionError) as error:
@@ -1171,7 +1038,6 @@ def _require_no_inputs(
     name: str,
     *,
     relative: str,
-    depth: int,
     selection: TreeSelection,
     budget: _CaptureBudget,
 ) -> None:
@@ -1193,7 +1059,7 @@ def _require_no_inputs(
         except PermissionError as error:
             raise _TreeChanged(child_relative) from error
         if not stat.S_ISDIR(metadata.st_mode):
-            if _selected(selection, relative_path, metadata.st_mode):
+            if selection.include(relative_path, metadata.st_mode):
                 raise _TreeChanged(child_relative)
             return
         if not selection.descend(relative_path):
@@ -1214,7 +1080,6 @@ def _require_no_inputs(
         names = _relist_directory(
             child_descriptor,
             child_relative,
-            depth=depth + 1,
             selection=selection,
             budget=budget,
         )
@@ -1225,20 +1090,11 @@ def _require_no_inputs(
                 child_descriptor,
                 child_name,
                 relative=child_relative,
-                depth=depth + 1,
                 selection=selection,
                 budget=budget,
             )
     finally:
         _close_descriptor(child_descriptor)
-
-
-def _selected(selection: TreeSelection, relative: PurePosixPath, mode: int) -> bool:
-    """Whether the scan records a non-directory entry: the scan's include and placeholder branches."""
-
-    return selection.include(relative, mode) or (
-        stat.S_ISREG(mode) and selection.placeholder(relative, mode)
-    )
 
 
 def _read_file(
@@ -1297,14 +1153,13 @@ def _verify_snapshot(
     *,
     selection: TreeSelection,
 ) -> None:
-    limits = selection.limits
     expected_directories = {record.relative: record for record in directories}
     expected_entries = {record.relative: record for record in entries}
     visited_directories: set[str] = set()
     visited_entries: set[str] = set()
     # Selected mode lists every recorded folder and walks every unrecorded
     # child, charged once against the capture limits for the whole pass.
-    budget = _CaptureBudget(limits)
+    budget = _CaptureBudget(selection.limits)
 
     def verify_marker(
         descriptor: int,
@@ -1355,21 +1210,19 @@ def _verify_snapshot(
             _recheck_scanned_directory(
                 descriptor,
                 relative=relative,
-                depth=relative.count("/") + 1 if relative else 0,
                 kept=expected.names,
                 unkept={},
                 selection=selection,
                 budget=budget,
                 # Passed as it is, not wrapped in a lambda or a partial, so each
                 # folder level costs three Python frames and no C-level call,
-                # which bounds how deep a tree without max_depth can be.
+                # which bounds how deep a tree can be.
                 verify_kept=verify_recorded,
             )
             return
         names_match = _directory_names_match(
             descriptor,
             expected.names,
-            limits=limits,
         )
         names = expected.names
         if (
@@ -1387,7 +1240,6 @@ def _verify_snapshot(
             or not _directory_names_match(
                 descriptor,
                 expected.names,
-                limits=limits,
             )
         ):
             raise _TreeChanged(relative)
@@ -1481,18 +1333,16 @@ def _capture_portable(
     files: list[tuple[str, bytes]] = []
     symlinks: list[tuple[str, str]] = []
     special: list[tuple[str, int]] = []
-    placeholders: list[str] = []
     omitted: list[tuple[str, str]] = []
     opaque_directories: list[str] = []
     identities: list[tuple[str, tuple[int, ...]]] = [("", _stat_signature(root_before))]
     budget = _CaptureBudget(selection.limits)
 
-    def visit(directory: Path, relative: str, depth: int) -> None:
+    def visit(directory: Path, relative: str) -> None:
         try:
-            names = _capture_path_names(
+            names = _capture_directory_names(
                 directory,
                 budget=budget,
-                depth=depth + 1,
             )
         except PermissionError as error:
             raise _PermissionDenied(relative or ".") from error
@@ -1543,7 +1393,7 @@ def _capture_portable(
                     continue
                 directories.append(child_relative)
                 identities.append((child_relative, _stat_signature(metadata)))
-                visit(path, child_relative, depth + 1)
+                visit(path, child_relative)
                 final = os.lstat(path)
                 if (
                     not stat.S_ISDIR(final.st_mode)
@@ -1555,18 +1405,11 @@ def _capture_portable(
                     )
             elif stat.S_ISREG(metadata.st_mode) and not _is_reparse_point(metadata):
                 if not selection.include(relative_path, metadata.st_mode):
-                    if selection.placeholder(relative_path, metadata.st_mode):
-                        placeholders.append(child_relative)
-                        identities.append((child_relative, _stat_signature(metadata)))
-                    else:
-                        if selection.record_omitted:
-                            omitted.append((child_relative, "file"))
+                    if selection.record_omitted:
+                        omitted.append((child_relative, "file"))
                     continue
                 before = _stat_signature(metadata)
-                max_bytes = budget.file_read_limit(
-                    metadata.st_size,
-                    selection.byte_limit(relative_path),
-                )
+                max_bytes = budget.file_read_limit(metadata.st_size)
                 try:
                     data = _read_portable_file(
                         path,
@@ -1600,7 +1443,7 @@ def _capture_portable(
                         omitted.append((child_relative, "special"))
 
     try:
-        visit(root, "", 0)
+        visit(root, "")
     finally:
         # visit holds itself through its closure. Breaking that cycle lets
         # reference counting free the capture state along with the snapshot.
@@ -1612,12 +1455,10 @@ def _capture_portable(
     ):
         raise TreeChangedError("directory tree changed while it was captured")
     return TreeSnapshot(
-        root_identity=(root_after.st_dev, root_after.st_ino),
         directories=tuple(sorted(directories)),
         files=tuple(sorted(files)),
         symlinks=tuple(sorted(symlinks)),
         special=tuple(sorted(special)),
-        placeholders=tuple(sorted(placeholders)),
         omitted=tuple(sorted(omitted)),
         identities=tuple(sorted(identities)),
         opaque_directories=tuple(sorted(opaque_directories)),

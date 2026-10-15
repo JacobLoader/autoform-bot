@@ -1476,7 +1476,7 @@ def test_selected_verification_recurses_in_three_frames_per_folder(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Lean capture sets no max_depth, so the frames verification spends per
+    # Capture has no depth limit, so the frames verification spends per
     # folder level decide how deep a tree fits under the recursion limit.
     _require_descriptor_capture()
     folder = tmp_path / "d" / "d" / "d" / "d"
@@ -1854,7 +1854,7 @@ def test_portable_capture_rejects_a_restored_nested_directory_redirection(
             displaced.rename(nested)
             restored += 1
 
-    original_names = tree_snapshot_module._capture_path_names
+    original_names = tree_snapshot_module._capture_directory_names
     original_read = tree_snapshot_module._read_portable_file
     original_signature = tree_snapshot_module._stat_signature
 
@@ -1878,7 +1878,7 @@ def test_portable_capture_rejects_a_restored_nested_directory_redirection(
         return signature
 
     _use_portable_capture(monkeypatch)
-    monkeypatch.setattr(tree_snapshot_module, "_capture_path_names", redirect_then_list)
+    monkeypatch.setattr(tree_snapshot_module, "_capture_directory_names", redirect_then_list)
     monkeypatch.setattr(tree_snapshot_module, "_read_portable_file", read_then_restore)
     monkeypatch.setattr(tree_snapshot_module, "_stat_signature", coarse_directory_signature)
     bound = BoundDirectoryTree(

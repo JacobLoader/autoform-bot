@@ -4,7 +4,6 @@ import gc
 import os
 import stat
 import sys
-import threading
 import weakref
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -13,7 +12,6 @@ import pytest
 
 from autoform_cli import _tree_snapshot as tree_snapshot_module
 from autoform_cli._tree_snapshot import (
-    BoundDirectoryTree,
     OpaqueDirectoryMarker,
     TreeCaptureLimitError,
     TreeCaptureLimits,
@@ -24,16 +22,6 @@ from autoform_cli._tree_snapshot import (
     bind_directory_tree,
 )
 from tests.test_lean_sources import _require_descriptor_capture, _use_portable_capture
-
-
-def _forbid_unbounded_listdir(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Disable streaming enumeration and fail if the capture falls back to `os.listdir`."""
-
-    def unexpected_listdir(*_args, **_kwargs):
-        raise AssertionError("unexpected unbounded os.listdir call")
-
-    monkeypatch.setattr(tree_snapshot_module, "_DESCRIPTOR_SCANDIR_SUPPORTED", False)
-    monkeypatch.setattr(tree_snapshot_module.os, "listdir", unexpected_listdir)
 
 
 def _capture(
@@ -113,8 +101,8 @@ def test_presence_marker_makes_a_nested_directory_opaque(
     ("field", "value"),
     [
         ("max_entries", -1),
-        ("max_depth", True),
-        ("max_file_bytes", 1.5),
+        ("max_entries", True),
+        ("max_total_bytes", 1.5),
         ("max_total_bytes", "1"),
     ],
 )
@@ -136,68 +124,6 @@ def test_capture_limit_error_exposes_a_stable_discriminator() -> None:
     assert error.limit == "max_entries"
     assert error.maximum == 3
     assert str(error) == "directory tree exceeds max_entries=3"
-
-
-@pytest.mark.parametrize("portable", [False, True])
-def test_capture_and_close_are_serialized(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    portable: bool,
-) -> None:
-    if portable:
-        _use_portable_capture(monkeypatch)
-    else:
-        _require_descriptor_capture()
-    root = tmp_path / "tree"
-    root.mkdir()
-    (root / "payload").write_bytes(b"payload")
-    entered = threading.Event()
-    release = threading.Event()
-    close_started = threading.Event()
-    closed = threading.Event()
-    captured: list[TreeSnapshot] = []
-    failures: list[BaseException] = []
-    original_checkpoint = tree_snapshot_module._tree_snapshot_checkpoint
-
-    def checkpoint(event: str, relative: str) -> None:
-        original_checkpoint(event, relative)
-        if event == "after-directory-list" and relative == "":
-            entered.set()
-            if not release.wait(5):
-                raise AssertionError("capture test did not release its checkpoint")
-
-    monkeypatch.setattr(tree_snapshot_module, "_tree_snapshot_checkpoint", checkpoint)
-    bound = BoundDirectoryTree(root)
-
-    def capture() -> None:
-        try:
-            captured.append(bound.capture())
-        except BaseException as error:
-            failures.append(error)
-
-    def close() -> None:
-        close_started.set()
-        bound.close()
-        closed.set()
-
-    capture_thread = threading.Thread(target=capture)
-    close_thread = threading.Thread(target=close)
-    capture_thread.start()
-    assert entered.wait(5)
-    close_thread.start()
-    try:
-        assert close_started.wait(5)
-        assert not closed.wait(0.1)
-    finally:
-        release.set()
-        capture_thread.join(5)
-        close_thread.join(5)
-
-    assert failures == []
-    assert len(captured) == 1
-    assert not capture_thread.is_alive()
-    assert not close_thread.is_alive()
-    assert closed.is_set()
 
 
 def test_portable_file_capture_accepts_windows_path_and_handle_stat_views(
@@ -258,32 +184,7 @@ def test_portable_file_capture_accepts_windows_path_and_handle_stat_views(
 
 
 @pytest.mark.parametrize("portable", [False, True])
-def test_invalid_selection_byte_limit_cannot_bypass_total_limit(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    portable: bool,
-) -> None:
-    root = tmp_path / "tree"
-    root.mkdir()
-    (root / "payload").write_bytes(b"payload")
-    selection = TreeSelection(
-        include=lambda _path, _mode: True,
-        descend=lambda _path: True,
-        byte_limit=lambda _path: -2,
-        limits=TreeCaptureLimits(max_total_bytes=1),
-    )
-
-    with pytest.raises(TreeSnapshotError, match="selection byte limit"):
-        _capture(
-            root,
-            selection,
-            portable=portable,
-            monkeypatch=monkeypatch,
-        )
-
-
-@pytest.mark.parametrize("portable", [False, True])
-def test_entry_limit_counts_ignored_and_placeholder_entries(
+def test_entry_limit_counts_ignored_entries(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     portable: bool,
@@ -291,16 +192,14 @@ def test_entry_limit_counts_ignored_and_placeholder_entries(
     root = tmp_path / "tree"
     root.mkdir()
     (root / "ignored.bin").write_bytes(b"ignored")
-    (root / "placeholder.bin").write_bytes(b"placeholder")
+    (root / "other.bin").write_bytes(b"other")
 
     def selection(max_entries: int) -> TreeSelection:
         return TreeSelection(
             include=lambda _path, _mode: False,
             descend=lambda _path: True,
-            placeholder=lambda path, _mode: path.name == "placeholder.bin",
             limits=TreeCaptureLimits(
                 max_entries=max_entries,
-                max_file_bytes=0,
                 max_total_bytes=0,
             ),
         )
@@ -313,8 +212,7 @@ def test_entry_limit_counts_ignored_and_placeholder_entries(
     )
 
     assert snapshot.files == ()
-    assert snapshot.placeholders == ("placeholder.bin",)
-    assert snapshot.omitted == (("ignored.bin", "file"),)
+    assert snapshot.omitted == (("ignored.bin", "file"), ("other.bin", "file"))
 
     with pytest.raises(TreeCaptureLimitError, match="max_entries=1") as captured:
         _capture(
@@ -328,72 +226,7 @@ def test_entry_limit_counts_ignored_and_placeholder_entries(
 
 
 @pytest.mark.parametrize("portable", [False, True])
-def test_depth_limit_accepts_the_boundary_and_rejects_the_next_level(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    portable: bool,
-) -> None:
-    root = tmp_path / "tree"
-    leaf = root / "one" / "two" / "leaf"
-    leaf.parent.mkdir(parents=True)
-    leaf.write_bytes(b"")
-
-    snapshot = _capture(
-        root,
-        _all_entries(TreeCaptureLimits(max_depth=3)),
-        portable=portable,
-        monkeypatch=monkeypatch,
-    )
-
-    assert snapshot.files == (("one/two/leaf", b""),)
-
-    with pytest.raises(TreeCaptureLimitError, match="max_depth=2") as captured:
-        _capture(
-            root,
-            _all_entries(TreeCaptureLimits(max_depth=2)),
-            portable=portable,
-            monkeypatch=monkeypatch,
-        )
-    assert captured.value.limit == "max_depth"
-    assert captured.value.maximum == 2
-
-
-@pytest.mark.parametrize("portable", [False, True])
-def test_file_byte_limit_accepts_the_boundary_and_rejects_one_more_byte(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    portable: bool,
-) -> None:
-    root = tmp_path / "tree"
-    root.mkdir()
-    payload = b"x" * (64 * 1024)
-    (root / "payload").write_bytes(payload)
-
-    snapshot = _capture(
-        root,
-        _all_entries(TreeCaptureLimits(max_file_bytes=len(payload))),
-        portable=portable,
-        monkeypatch=monkeypatch,
-    )
-
-    assert snapshot.files == (("payload", payload),)
-
-    with pytest.raises(
-        TreeCaptureLimitError,
-        match=f"max_file_bytes={len(payload) - 1}",
-    ) as captured:
-        _capture(
-            root,
-            _all_entries(TreeCaptureLimits(max_file_bytes=len(payload) - 1)),
-            portable=portable,
-            monkeypatch=monkeypatch,
-        )
-    assert captured.value.limit == "max_file_bytes"
-    assert captured.value.maximum == len(payload) - 1
-
-
-@pytest.mark.parametrize("portable", [False, True])
-def test_maximum_python_file_limit_does_not_overflow_the_reader(
+def test_maximum_python_byte_limit_does_not_overflow_the_reader(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     portable: bool,
@@ -404,7 +237,7 @@ def test_maximum_python_file_limit_does_not_overflow_the_reader(
 
     snapshot = _capture(
         root,
-        _all_entries(TreeCaptureLimits(max_file_bytes=sys.maxsize)),
+        _all_entries(TreeCaptureLimits(max_total_bytes=sys.maxsize)),
         portable=portable,
         monkeypatch=monkeypatch,
     )
@@ -455,101 +288,11 @@ def test_total_byte_limit_accepts_the_boundary_and_rejects_one_more_byte(
     assert captured.value.maximum == 4
 
 
-@pytest.mark.parametrize("portable", [False, True])
-def test_selection_and_capture_byte_limits_compose_on_retained_bytes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    portable: bool,
-) -> None:
-    root = tmp_path / "tree"
-    root.mkdir()
-    (root / "payload").write_bytes(b"0123456789")
-
-    def selection(max_file_bytes: int) -> TreeSelection:
-        return TreeSelection(
-            include=lambda _path, _mode: True,
-            descend=lambda _path: True,
-            byte_limit=lambda _path: 2,
-            limits=TreeCaptureLimits(max_file_bytes=max_file_bytes),
-        )
-
-    snapshot = _capture(
-        root,
-        selection(3),
-        portable=portable,
-        monkeypatch=monkeypatch,
-    )
-
-    assert snapshot.files == (("payload", b"012"),)
-
-    with pytest.raises(TreeCaptureLimitError) as captured:
-        _capture(
-            root,
-            selection(2),
-            portable=portable,
-            monkeypatch=monkeypatch,
-        )
-    assert captured.value.limit == "max_file_bytes"
-    assert captured.value.maximum == 2
-
-
 def test_file_read_cap_does_not_trust_an_underreported_size() -> None:
     budget = tree_snapshot_module._CaptureBudget(TreeCaptureLimits())
 
     assert budget.file_read_limit(0, None) is None
     assert budget.file_read_limit(0, 10) == 10
-
-
-@pytest.mark.parametrize("portable", [False, True])
-def test_oversized_file_is_rejected_before_its_reader_runs(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    portable: bool,
-) -> None:
-    root = tmp_path / "tree"
-    root.mkdir()
-    (root / "payload").write_bytes(b"1234")
-    reader_name = "_read_portable_file" if portable else "_read_file"
-
-    def unexpected_read(*_args, **_kwargs):
-        raise AssertionError("an oversized file must not be opened for reading")
-
-    monkeypatch.setattr(tree_snapshot_module, reader_name, unexpected_read)
-
-    with pytest.raises(TreeSnapshotError, match="max_file_bytes=3"):
-        _capture(
-            root,
-            _all_entries(TreeCaptureLimits(max_file_bytes=3)),
-            portable=portable,
-            monkeypatch=monkeypatch,
-        )
-
-
-@pytest.mark.parametrize(
-    "limits",
-    [
-        TreeCaptureLimits(max_entries=1),
-        TreeCaptureLimits(max_depth=1),
-    ],
-)
-def test_descriptor_fallback_fails_before_unbounded_listdir(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    limits: TreeCaptureLimits,
-) -> None:
-    _require_descriptor_capture()
-    root = tmp_path / "tree"
-    root.mkdir()
-    (root / "payload").write_bytes(b"payload")
-    _forbid_unbounded_listdir(monkeypatch)
-
-    with pytest.raises(TreeSnapshotError, match="bounded directory enumeration"):
-        _capture(
-            root,
-            _all_entries(limits),
-            portable=False,
-            monkeypatch=monkeypatch,
-        )
 
 
 def test_descriptor_and_portable_limits_capture_the_same_snapshot(
@@ -561,17 +304,13 @@ def test_descriptor_and_portable_limits_capture_the_same_snapshot(
     (root / "nested").mkdir(parents=True)
     (root / "nested" / "included").write_bytes(b"data")
     (root / "ignored").write_bytes(b"ignored")
-    (root / "placeholder").write_bytes(b"placeholder")
     limits = TreeCaptureLimits(
-        max_entries=4,
-        max_depth=2,
-        max_file_bytes=4,
+        max_entries=3,
         max_total_bytes=4,
     )
     selection = TreeSelection(
         include=lambda path, _mode: path.name == "included",
         descend=lambda _path: True,
-        placeholder=lambda path, _mode: path.name == "placeholder",
         limits=limits,
     )
 
