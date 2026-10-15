@@ -1099,6 +1099,21 @@ def test_audit_measures_an_alias_by_its_target_s_span(tmp_path: Path) -> None:
     }
 
 
+def test_a_source_span_does_not_depend_on_the_names_a_filter_admits(tmp_path: Path) -> None:
+    # X.foo bounds X.bar in B.lean even when A.lean, whose X.foo the index keeps, is also read.
+    root = tmp_path / "lean"
+    root.mkdir()
+    (root / "A.lean").write_text("theorem X.foo : True := trivial\ntheorem A.other : True := trivial\n", encoding="utf-8")
+    (root / "B.lean").write_text(
+        "theorem X.bar : True := trivial\n" + "\n" * 8 + "theorem X.foo : True := trivial\n" + "\n" * 9
+        + "theorem X.baz : True := trivial\n",
+        encoding="utf-8",
+    )
+
+    for names in (("X.bar",), ("X.bar", "A.other"), None):
+        assert audit_module._source_spans(index_project(root, names=names))["X.bar"] == 9, names
+
+
 def test_an_alias_ends_the_source_span_of_the_declaration_above_it(tmp_path: Path) -> None:
     lean_root = tmp_path / "lean"
     lean_root.mkdir()

@@ -135,6 +135,10 @@ class SourceIndex:
     #: For a name more than one file declares, the files after the one
     #: ``find`` returns.
     elsewhere: dict[str, tuple[Path, ...]] = field(default_factory=dict)
+    #: The sorted lines of every declaration each scanned file holds, a name
+    #: another file also declares included, so a source span ends at the next
+    #: one whichever files a name filter admitted.
+    declaration_lines: dict[Path, tuple[int, ...]] = field(default_factory=dict)
 
     def find(self, name: str) -> Declaration | None:
         return self.declarations.get(name)
@@ -643,6 +647,7 @@ def _indexed_source_snapshot(
     declarations: dict[str, Declaration] = {}
     elsewhere: dict[str, tuple[Path, ...]] = {}
     line_counts: dict[Path, int] = {}
+    declaration_lines: dict[Path, tuple[int, ...]] = {}
     source_files: list[tuple[Path, bytes]] = []
     digest = hashlib.sha256(b"autoform-lean-source-index/v1\0")
     wanted_short = (
@@ -667,6 +672,7 @@ def _indexed_source_snapshot(
             )
             continue
         found, line_counts[relative_path] = _scan(lines, relative_path)
+        declaration_lines[relative_path] = tuple(sorted({declaration.line for declaration in found}))
         for declaration in found:
             first = declarations.setdefault(declaration.name, declaration)
             if first.path != relative_path and relative_path not in elsewhere.get(declaration.name, ()):
@@ -679,6 +685,7 @@ def _indexed_source_snapshot(
             source_digest=source_digest,
             line_counts=line_counts,
             elsewhere=elsewhere,
+            declaration_lines=declaration_lines,
         ),
         source_digest,
         snapshot.generation_revision,

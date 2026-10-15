@@ -788,25 +788,17 @@ def _catalog_limit_warnings(
 
 
 def _source_spans(index: SourceIndex) -> dict[str, int]:
-    """Measure each declaration's source span, up to the next declaration.
+    """Measure each declaration's source span, up to the next declaration in its file.
 
     This is the retrospective size signal: unlike anything authored in the
     article, it is what the node actually cost once it was formalized.
     """
 
-    starts: dict[Path, list[int]] = {}
-    for declaration in index.declarations.values():
-        starts.setdefault(declaration.path, []).append(declaration.line)
-    tails: dict[Path, int] = {}
-    for path, lines in starts.items():
-        lines.sort()
-        tails[path] = index.line_counts.get(path, 0)
-
     spans: dict[str, int] = {}
     for declaration in index.declarations.values():
-        lines = starts[declaration.path]
+        lines = index.declaration_lines[declaration.path]
         following = bisect_right(lines, declaration.line)
-        end = lines[following] - 1 if following < len(lines) else tails[declaration.path]
+        end = lines[following] - 1 if following < len(lines) else index.line_counts.get(declaration.path, 0)
         spans[declaration.name] = max(1, end - declaration.line + 1)
     return spans
 
