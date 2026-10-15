@@ -137,6 +137,18 @@ def test_summary_skips_a_block_the_page_shows_as_indented_code(tmp_path: Path) -
     )
 
 
+def test_summary_clips_a_long_paragraph_at_a_word(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    words = " ".join(f"word{index}" for index in range(200))
+    _node(blueprint, "topic.md", f"# Topic\n\n{words}\n")
+
+    summary = load_graph(blueprint).nodes["topic"].summary
+
+    assert summary is not None and len(summary) <= 420
+    assert summary.endswith("…")
+    assert words.startswith(summary.removesuffix("…") + " ")
+
+
 def test_authored_atlas_manifest_groups_nodes_independently_of_paths(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _node(blueprint, "algebra.md", "# Algebra\n")
