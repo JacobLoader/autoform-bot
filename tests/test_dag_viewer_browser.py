@@ -12,6 +12,8 @@ import pytest
 
 from autoform_cli import dag_viewer
 from autoform_cli.graph_views import GraphView, ViewEdge, ViewNode
+from autoform_cli.render import render_site
+from autoform_cli.scaffold import scaffold_project
 
 # CI sets this, so a missing browser fails the job instead of skipping every case.
 _REQUIRED = os.environ.get("AUTOFORM_REQUIRE_BROWSER_TESTS") == "1"
@@ -331,6 +333,46 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         yield url
 
 
+@pytest.fixture(scope="module")
+def site_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+    """Serve a blueprint as render and MkDocs publish it, under Material's styles and scripts."""
+    from mkdocs.commands.build import build
+    from mkdocs.config import load_config
+
+    project = tmp_path_factory.mktemp("site") / "project"
+    scaffold_project(project, title="Explorer fixture")
+    roadmap = project / "blueprint/roadmap"
+    (roadmap / "README.md").write_text(
+        "# Fixture roadmap\n\n- [Algebra](algebra/README.md)\n- [Topology](topology/README.md)\n",
+        encoding="utf-8",
+    )
+    for chapter in ("Algebra", "Topology"):
+        folder = roadmap / chapter.lower()
+        folder.mkdir()
+        (folder / "README.md").write_text(
+            f"# {chapter}\n\n- [Base](base.md)\n- [Result](result.md)\n",
+            encoding="utf-8",
+        )
+        (folder / "base.md").write_text(
+            "---\ndeclaration: def\n---\n\n# Base\n\nThe base object.\n\n## Depends on\n\nNo prerequisites.\n",
+            encoding="utf-8",
+        )
+        (folder / "result.md").write_text(
+            "---\ndeclaration: theorem\n---\n\n# Result\n\nThe main result.\n\n## Depends on\n\n- [Base](base.md)\n",
+            encoding="utf-8",
+        )
+    render_site(project / "blueprint", project / "site-src")
+    build(load_config(config_file=str(project / "mkdocs.yml")))
+    with _served(project / "site") as url:
+        yield url
+
+
+def _offline(page: object, site_url: str) -> object:
+    """Keep a built site's CDN scripts and web fonts off the network."""
+    page.route(lambda url: not url.startswith(site_url), lambda route: route.abort())
+    return page
+
+
 def _open_ready(page: object, explorer_url: str) -> None:
     page.goto(f"{explorer_url}/index.html")
     page.locator(".bp-dag-stage").wait_for()
@@ -639,3 +681,29 @@ def test_duplicate_script_include_mounts_one_explorer(
     page.goto(f"{explorer_url}/duplicate.html")
     page.locator(".bp-dag-stage").wait_for()
     playwright.expect(page.locator(".bp-dag-head")).to_have_count(1)
+
+
+@pytest.mark.parametrize("viewport", ({"width": 390, "height": 844}, {"width": 844, "height": 390}))
+def test_a_published_canvas_covers_exactly_its_stage(
+    desktop_page: object, site_url: str, viewport: dict[str, int]
+) -> None:
+    """Site CSS once gave the canvas a 30rem floor, stretching drawings away from short stages' nodes."""
+    page = _offline(desktop_page, site_url)
+    page.set_viewport_size(viewport)
+    page.goto(f"{site_url}/dependencies.html")
+    page.locator(".bp-dag-node").first.wait_for()
+    canvas = page.locator(".bp-dag-canvas").bounding_box()
+    stage = page.locator(".bp-dag-stage").bounding_box()
+    assert canvas is not None and stage is not None
+    assert abs(canvas["height"] - stage["height"]) < 1
+    assert abs(canvas["width"] - stage["width"]) < 1
+
+
+def test_the_published_landing_map_leaves_one_finger_scrolling_to_the_page(
+    mobile_page: object, site_url: str
+) -> None:
+    page = _offline(mobile_page, site_url)
+    page.goto(f"{site_url}/index.html")
+    canvas = page.locator(".bp-dag-canvas")
+    canvas.wait_for()
+    assert canvas.evaluate("element => getComputedStyle(element).touchAction") != "none"
