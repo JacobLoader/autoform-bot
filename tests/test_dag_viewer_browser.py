@@ -463,6 +463,8 @@ def test_atlas_bubbles_open_authored_mathematical_context(
         "element => element.classList.contains('bp-dag-atlas')"
     )
     playwright.expect(page.locator(".bp-dag-inspector h2")).to_have_text("Knowledge atlas")
+    # Every topic of an edgeless atlas is isolated, so hiding them would empty the map.
+    playwright.expect(page.locator(".bp-dag-isolated")).to_be_hidden()
     playwright.expect(page.locator(".bp-dag-inspector")).to_contain_text("Geometry & Topology")
     playwright.expect(page.locator(".bp-dag-inspector")).to_contain_text(
         "No cross-topic dependency links are authored"
@@ -517,6 +519,7 @@ def test_mobile_isolates_do_not_overlap_the_connected_dag(mobile_page: object, e
     a, b = connected.bounding_box(), isolated.bounding_box()
     assert a is not None and b is not None
     assert a["y"] + a["height"] <= b["y"] or b["y"] + b["height"] <= a["y"]
+    playwright.expect(page.locator(".bp-dag-isolated")).to_be_visible()
 
 
 def test_plain_wheel_scrolls_the_page_instead_of_being_trapped(desktop_page: object, explorer_url: str) -> None:
@@ -707,3 +710,10 @@ def test_the_published_landing_map_leaves_one_finger_scrolling_to_the_page(
     canvas = page.locator(".bp-dag-canvas")
     canvas.wait_for()
     assert canvas.evaluate("element => getComputedStyle(element).touchAction") != "none"
+
+
+def test_the_published_atlas_hides_the_isolate_toggle(desktop_page: object, site_url: str) -> None:
+    page = _offline(desktop_page, site_url)
+    page.goto(f"{site_url}/dependencies.html")
+    page.locator(".bp-dag-node").first.wait_for()
+    playwright.expect(page.locator(".bp-dag-isolated")).to_be_hidden()
