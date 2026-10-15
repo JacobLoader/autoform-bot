@@ -89,7 +89,7 @@ def write_graph_pages(
 
     project = project_view(graph, statuses)
     project_item_count = sum(node.item_count for node in project.nodes)
-    # Like the project lead, chapter leads count formalization targets, so notes are left out.
+    # Chapter leads count what the rings count: scope targets plus module inventories.
     chapter_item_counts = {node.id: node.item_count for node in project.nodes}
 
     def project_links(page: Path) -> dict[str, str]:
@@ -146,7 +146,12 @@ def write_graph_pages(
             ("Dependency explorer", _markdown_link(project_page, chapter_page)),
             ("Open textbook chapter", _markdown_link(book_page, chapter_page)),
         )
-        item_count = chapter_item_counts[f"scope:{group or 'roadmap'}"]
+        # The root's map draws every chapter beside the root's own articles.
+        item_count = (
+            project_item_count
+            if group == "roadmap" and group in scope_maps
+            else chapter_item_counts[f"scope:{group or 'roadmap'}"]
+        )
         written.append(
             _write_page(
                 chapter_page,

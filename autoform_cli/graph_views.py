@@ -124,9 +124,8 @@ def group_title(graph: Graph, group: str) -> str:
 def project_view(graph: Graph, statuses: dict[str, NodeStatus]) -> GraphView:
     """Collapse every publication chapter to one project-map node."""
     children = _containment_children(graph)
-    internal_counts = _internal_dependency_counts(graph, children)
     grouped = _group_nodes(graph, children)
-    edges = _project_edges(graph, children)
+    edges, internal_counts = _project_edges(graph, children)
     required_scopes = {endpoint.removeprefix("scope:") for edge in edges for endpoint in (edge.source, edge.target)}
     scopes = [*grouped, *(scope for scope in sorted(required_scopes) if scope not in grouped)]
     nodes = tuple(
@@ -138,11 +137,7 @@ def project_view(graph: Graph, statuses: dict[str, NodeStatus]) -> GraphView:
             grouped.get(group, ()),
             summary=graph.nodes[group].summary if group in graph.nodes else None,
             area=graph.nodes[group].area if group in graph.nodes else None,
-            internal_dependency_count=(
-                internal_counts[group]
-                if group in internal_counts
-                else _dependency_count_within(graph, grouped.get(group, ()))
-            ),
+            internal_dependency_count=internal_counts[group],
         )
         for group in scopes
     )
@@ -402,16 +397,26 @@ def _node_view(
     return GraphView(kind="full", title="", nodes=nodes, edges=_edges(edge_counts))
 
 
-def _project_edges(graph: Graph, children: dict[str, tuple[str, ...]]) -> tuple[ViewEdge, ...]:
+def _project_edges(
+    graph: Graph,
+    children: dict[str, tuple[str, ...]],
+) -> tuple[tuple[ViewEdge, ...], dict[str, int]]:
+    """Return the relations between top-level scopes and the count inside each one.
+
+    The root scope holds only the articles directly under roadmap/, so the
+    relations inside a chapter are that chapter's, never the root's too.
+    """
     edge_counts: dict[tuple[str, str], list[int]] = defaultdict(lambda: [0, 0])
+    internal_counts: dict[str, int] = defaultdict(int)
     for source, target, proof_only in _relations(graph):
         source_group = _top_scope(graph, source, children)
         target_group = _top_scope(graph, target, children)
         if source_group == target_group:
+            internal_counts[source_group] += 1
             continue
         key = (_scope_node_id(source_group), _scope_node_id(target_group))
         edge_counts[key][1 if proof_only else 0] += 1
-    return _edges(edge_counts)
+    return _edges(edge_counts), internal_counts
 
 
 def _relations(graph: Graph):
@@ -607,15 +612,6 @@ def _internal_dependency_counts(
         for scope in enclosing[source].intersection(enclosing[target]):
             counts[scope] += 1
     return counts
-
-
-def _dependency_count_within(graph: Graph, node_ids: Iterable[str]) -> int:
-    selected = frozenset(node_ids)
-    return sum(
-        dependency in selected
-        for node_id in selected
-        for dependency in graph.nodes[node_id].dependencies
-    )
 
 
 def _rollup_status_key(
