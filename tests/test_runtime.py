@@ -346,8 +346,10 @@ def test_runtime_translates_source_index_io_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reason: str | None, message: str
 ) -> None:
     project = _project(tmp_path)
+    requested = []
 
-    def fail_index(root: Path, **_kwargs):
+    def fail_index(root: Path, **kwargs):
+        requested.append(kwargs)
         if reason is not None:
             raise LeanSourceError(reason)
         raise OSError(f"private host detail: {root}")
@@ -359,6 +361,8 @@ def test_runtime_translates_source_index_io_failure(
 
     assert error.value.issues == (message,)
     assert str(tmp_path) not in str(error.value)
+    # Only the names the projection looks up are indexed.
+    assert requested == [{"names": ("Project.base", "Project.result", "Project.result_aux")}]
 
 
 def test_adapter_rejects_inconsistent_hand_built_graph_without_host_paths(tmp_path: Path) -> None:

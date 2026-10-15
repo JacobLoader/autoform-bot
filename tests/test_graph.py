@@ -1091,8 +1091,10 @@ def test_check_cli_reports_source_index_io_failure_before_success(
 ) -> None:
     blueprint = tmp_path / "blueprint"
     _node(blueprint, "base.md", "# Base\n", lean="Project.base")
+    requested = []
 
-    def fail_index(root: Path, **_kwargs):
+    def fail_index(root: Path, **kwargs):
+        requested.append(kwargs)
         raise OSError(f"private host detail: {root}")
 
     monkeypatch.setattr("autoform_cli.__main__.index_project", fail_index)
@@ -1102,6 +1104,8 @@ def test_check_cli_reports_source_index_io_failure_before_success(
     assert captured.out == "error: Lean sources could not be indexed\n"
     assert captured.err == ""
     assert str(tmp_path) not in captured.out
+    # Only the names check looks up are indexed.
+    assert requested == [{"names": ("Project.base",)}]
 
 
 def test_check_cli_names_an_unsafe_lean_source_without_host_paths(

@@ -1396,8 +1396,10 @@ def test_audit_reads_deprecation_from_the_captured_source_generation(
         encoding="utf-8",
     )
     real_snapshot_project_sources = audit_module.snapshot_project_sources
+    requested = []
 
     def snapshot_then_rewrite(root: Path, **kwargs):
+        requested.append(kwargs)
         snapshot = real_snapshot_project_sources(root, **kwargs)
         source.write_text("theorem Project.result : True := trivial\n", encoding="utf-8")
         return snapshot
@@ -1412,6 +1414,8 @@ def test_audit_reads_deprecation_from_the_captured_source_generation(
             "lean target Project.result is deprecated; point lean: at its replacement",
         )
     ]
+    # Only the names the audit looks up are indexed.
+    assert requested == [{"names": ("Project.result",)}]
 
 
 def test_audit_checks_irreducible_def_kinds(tmp_path: Path) -> None:
