@@ -219,6 +219,8 @@ def test_commented_out_code_is_not_indexed(tmp_path: Path) -> None:
     index = _index(tmp_path)
 
     assert index.find("Ghost.commented_out") is None
+    # The comment's newlines are kept, so the lines below it keep their numbers.
+    assert index.find("toplevel").line == 31
 
 
 def test_nothing_after_exit_is_indexed(tmp_path: Path) -> None:
@@ -3298,6 +3300,50 @@ def test_double_brace_in_interpolation_opens_a_structure_instance(tmp_path: Path
 
     assert strip_lean_comments(line + " -- remove me") == line
     assert index.find("t") is not None
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("/- a /- b -/ c -/\ndef d : Nat := 6", "def d : Nat := 6"),
+        ('def s := "a\\"--b" -- x', 'def s := "a\\"--b"'),
+        ('def s := r#"a"--b"# -- x', 'def s := r#"a"--b"#'),
+        ("def c : Char := '\"' -- x", "def c : Char := '\"'"),
+        ('def s := s!"{ {a := 1}.a ++ "--" }" -- x', 'def s := s!"{ {a := 1}.a ++ "--" }"'),
+        ('def s := s!"{«a--b»}" -- x', 'def s := s!"{«a--b»}"'),
+        ('def s := s!"{a /- c -/}" -- x', 'def s := s!"{a  }"'),
+    ],
+)
+def test_comment_stripping_follows_every_lexer_state(source: str, expected: str) -> None:
+    assert strip_lean_comments(source) == expected
+
+
+def test_comment_stripping_events_cover_every_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The stripper copies the text between two event matches unread. Matching
+    # every position makes it read each character, so its output changes
+    # wherever an event pattern misses a position some branch reacts to.
+    texts = [
+        'x := "a\\"--b" -- c',
+        'x := r#"a"--b"# -- c',
+        'x := r#"a\\"# -- c',
+        "c := '\"' -- c",
+        "«a--b» -- c",
+        's!"{\'{\'}" -- c',
+        's!"{"a--b"}" -- c',
+        "a /- b /- c -/ d -/ e",
+        "/-- d -/ x -- y",
+        's!"{{ a := 1 }.a ++ "--"}" -- c',
+        's!"{r#"a"--b"#}" -- c',
+        's!"{«a}"--b»}" -- c',
+        's!"{x /- } -/ }" -- c',
+        's!"{x -- }\n}" -- c',
+    ]
+    expected = [lean_module._without_lean_comments(text) for text in texts]
+    everywhere = re.compile(r"(?s).")
+    for name in ("_CODE_EVENT", "_INTERPOLATION_EVENT", "_LITERAL_EVENT"):
+        monkeypatch.setattr(lean_module, name, everywhere)
+
+    assert [lean_module._without_lean_comments(text) for text in texts] == expected
 
 
 def test_permalink_pins_the_commit(tmp_path: Path) -> None:
