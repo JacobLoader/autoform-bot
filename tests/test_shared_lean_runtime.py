@@ -1973,6 +1973,17 @@ def test_response_budget_reserves_nothing_for_cold_repl_slots(monkeypatch):
         LeanRuntimeConfig.from_environment()
 
 
+def test_response_budget_leaves_a_cold_hover_admission_time(monkeypatch):
+    # 900 - 745 - 30 leaves a cold hover at the cap exactly its 125-second
+    # start-and-close reserve, so any time spent before the check refuses it.
+    monkeypatch.setenv("AUTOFORM_MAX_LSP_REQUEST_SECONDS", "744")
+    assert LeanRuntimeConfig.from_environment().max_lsp_request_seconds == 744.0
+
+    monkeypatch.setenv("AUTOFORM_MAX_LSP_REQUEST_SECONDS", "745")
+    with pytest.raises(ValueError, match="too small for AUTOFORM_MAX_LSP_REQUEST_SECONDS"):
+        LeanRuntimeConfig.from_environment()
+
+
 def test_repl_admission_reserves_no_time_to_create_cold_slots(tmp_path):
     project = make_lake_project(tmp_path, "cold-slot-admission")
     # 900 - 861 - 30 leaves 9 seconds to admit the call below, enough because
@@ -1988,6 +1999,28 @@ def test_repl_admission_reserves_no_time_to_create_cold_slots(tmp_path):
             "repl.run",
             {"project_dir": str(project), "code": "#check Nat", "timeout": 861},
         ) == "Compiles successfully"
+    finally:
+        services.close()
+
+
+def test_a_cold_hover_at_the_largest_lsp_cap_is_admitted(tmp_path):
+    project = make_lake_project(tmp_path, "cold-hover-admission")
+    (project / "Main.lean").write_text("def main : IO Unit := pure ()\n", encoding="utf-8")
+
+    class Session(FakeLsp):
+        def hover(self, file_path, line, character):
+            return None
+
+    # 900 - 744 - 30 leaves one second beyond the 125-second start-and-close reserve.
+    services = LeanRuntimeServices(
+        runtime_config(lsp_timeout=744.0, max_lsp_request_seconds=744.0),
+        repl_factory=FakePool,
+        lsp_factory=Session,
+        start_sweepers=False,
+    )
+    try:
+        params = {"project_dir": str(project), "file_path": "Main.lean", "line": 0, "character": 0}
+        assert services.dispatch("lsp.hover", params).startswith("No hover information")
     finally:
         services.close()
 
