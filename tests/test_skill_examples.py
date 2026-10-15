@@ -68,8 +68,9 @@ def test_human_review_distinguishes_roadmap_progress_from_source_scope(
     assert "Never begin with a fitted all-repository node cloud" in normalized
     assert "smallest useful scope" in normalized
     assert "mathematical knowledge map, not navigation chrome" in normalized
-    assert "provenance, and pagination folders remain facets" in normalized
-    assert "Containment uses regions or hulls, dependency uses typed arrows" in normalized
+    assert "Regions come only from authored `area:` or `blueprint/atlas.json`" in normalized
+    assert "folders that only file or paginate pages never become regions" in normalized
+    assert "Containment shows as regions and dependency as arrows" in normalized
     assert "no authored dependency edges says so" in normalized
     assert "overview, progress, project graph" not in skill
 

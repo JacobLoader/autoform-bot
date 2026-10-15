@@ -46,8 +46,9 @@ breadcrumbs and Back return to the project overview.
 
 Judge the explorer as a mathematical knowledge map, not navigation chrome.
 Authored mathematical regions and prose should control the atlas and reading
-panel; repository, provenance, and pagination folders remain facets. Containment
-uses regions or hulls, dependency uses typed arrows, and a level with no authored
+panel. Regions come only from authored `area:` or `blueprint/atlas.json`;
+folders that only file or paginate pages never become regions. Containment
+shows as regions and dependency as arrows, and a level with no authored
 dependency edges says so instead of fabricating relations.
 
 Guide the review from coarse to fine: declared scope and exclusions, milestone
