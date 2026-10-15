@@ -139,8 +139,9 @@ structure fields, derived or unnamed instances, and `@[ext]`, `@[simps]`, or
 supporting entries, never in `lean:`; a `private` name never goes in `lean:`.
 A completed catalog may assert `statement: formalized` and `proof: formalized`
 when the complete module has been checked. It contributes to the neutral
-inventory metric and graph status while remaining a readable catalog page, but
-stays outside the mathematical `Scoped roadmap` completion percentage.
+inventory metric and graph status while remaining a readable page in the vault
+and a section of its parent chapter on the site, but stays outside the
+mathematical `Scoped roadmap` completion percentage.
 
 `check --lean-root` and `audit --lean-root` resolve every name the catalog
 lists, and say for a catalog's unresolved name that a generated name belongs in
@@ -427,10 +428,12 @@ that reaches no declaration leaf, such as one to prose or to leaves marked
 earlier versions accepted it. `DEFERRED` and `OUT` record an explicit later
 milestone or exclusion. Audit JSON includes canonical rows, counts, and the
 exact coverage source hash, while `publication.json` records aggregate counts
-without duplicating the authored rows.
+without duplicating the authored rows. The `counts` object always includes an
+integer `INVENTORIED` key, zero when no row uses it.
 
 One row carries one disposition, so represent both axes with distinct,
-axis-qualified `Area` labels. For example, `Repository inventory / MathlibExt`
+axis-qualified `Area` labels; these name source areas and are unrelated to an
+article's `area:` field. For example, `Repository inventory / MathlibExt`
 may be `INVENTORIED` while `Mathematical exposition / MathlibExt` remains
 `MAPPED` and later becomes `DECOMPOSED`; duplicate exact area labels are
 invalid. A broad inventory row may link a container and classify every catalog
@@ -550,15 +553,9 @@ counts toward none of them. A scope's status ring and item count, and the
 legend beside each dependency map, also count a leaf marked `not_ready` that
 declares nothing yet, so deferred work holds its scope open. All three also
 count every catalog, under a neutral status: `inventory checked` once the
-catalog is fully proved, `inventory pending` until then. Neither status changes
-a scope's rolled-up status or completion.
-The coverage `counts` object always includes an integer
-`INVENTORIED` key, including zero when no row uses it. Status assertions on a
-catalog remain accepted. The presentation calls a fully checked catalog
-`inventory checked`, not a completed definition or result, and any other
-catalog `inventory pending`, whatever its derived state. The rendered site and
-`autoform check` show the module-inventory count separately from those target
-metrics.
+catalog is fully proved, which records inspection rather than a completed
+result, and `inventory pending` until then, whatever its derived state. Neither
+status changes a scope's rolled-up status or completion.
 
 For an existing blueprint, migrate a catalog-only `DECOMPOSED` row to
 `INVENTORIED`. If the same source also has declaration articles, keep that
@@ -1079,12 +1076,13 @@ statement links to the smallest explorer scope containing that item. Point
 `pymdownx.superfences` mermaid fence; see the [repository
 example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml).
 
-This shared-explorer layout is recorded as `autoform-publication/v3`; it
-replaces the `dependencies/nodes/*.html` focus pages of earlier sites. Legacy
-`dependencies/full.html#node=<id>` links use the global index to redirect to the
-smallest bounded scope containing that node. Render replaces a v2 site as it
-replaces a v3 one, while a v1 output must be deleted once by hand; the
-[publication contract](#publication-contract) gives the rules.
+This shared-explorer layout replaces the `dependencies/nodes/*.html` focus
+pages of earlier sites: a statement's dependency link is now
+`<scope>.html#node=<id>`, and an old focus-page link no longer resolves. Only a
+legacy `dependencies/full.html#node=<id>` link redirects, through the global
+index, to the smallest bounded scope containing that node. The [publication
+contract](#publication-contract) gives the schema and when render replaces an
+earlier site.
 
 ## Validation
 
