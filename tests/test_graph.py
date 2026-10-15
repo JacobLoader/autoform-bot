@@ -373,8 +373,6 @@ def test_splits_statement_and_proof_dependencies(tmp_path: Path) -> None:
         ({"mathlib": "maybe"}, "accepts only true or false"),
         ({"not_ready": "1"}, "accepts only true or false"),
         ({"origin": "unknown"}, "accepts cited, bridged, or background"),
-        ({"mathlib_file": "../Outside.lean"}, "'mathlib_file' must be a portable relative path"),
-        ({"mathlib_file": "C:/Mathlib/Basic.lean"}, "'mathlib_file' must be a portable relative path"),
     ],
 )
 def test_rejects_invalid_assertions(tmp_path: Path, metadata: dict[str, str], message: str) -> None:
@@ -543,7 +541,8 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
     strict MkDocs failure naming the chapter page that absorbed the article; with
     the directory, a missing note became a repository link that 404s. Check now
     applies audit's rule that a Sources path names a file in the blueprint, and
-    refuses other schemes as every runtime command does; fragments stay with audit.
+    leaves fragments and other schemes to audit; it only warns that work and
+    search omit a link with another scheme.
     """
     blueprint = tmp_path / "blueprint"
     sources = "# Result\n\n## Sources\n\n- [Paper](../sources/paper.md#lemma-3)\n"
@@ -556,17 +555,18 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
 
     (blueprint / "sources").mkdir()
     (blueprint / "sources" / "paper.md").write_text("# Paper\n", encoding="utf-8")
-    sources += "- [Book](https://example.org/book)\n"
+    sources += "- [Book](https://example.org/book)\n- [Author](mailto:author@example.org)\n"
     _node(blueprint, "result.md", sources)
 
     assert main(["check", str(blueprint)]) == 0
-    capsys.readouterr()
+    # The note, its fragment and the https link stay in the projection.
+    assert [line for line in capsys.readouterr().out.splitlines() if line.startswith("warning:")] == [
+        "warning: result: work and search omit this source target, which is neither an http(s) link "
+        "nor a path inside the blueprint: 'mailto:author@example.org'"
+    ]
 
     (tmp_path / "slides.pdf").write_bytes(b"%PDF-1.4\n")
-    rejected = (
-        "- [Notes](../sources/)\n- [Slides](../../slides.pdf)\n- [Bad](../sources/%00.md)\n"
-        "- [Author](mailto:author@example.org)\n"
-    )
+    rejected = "- [Notes](../sources/)\n- [Slides](../../slides.pdf)\n- [Bad](../sources/%00.md)\n"
     _node(blueprint, "result.md", sources + rejected)
 
     assert main(["check", str(blueprint)]) == 1
@@ -574,8 +574,40 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
         "error: result: source target does not resolve to a file: '../sources/'\n"
         "error: result: source target escapes the blueprint directory: '../../slides.pdf'\n"
         "error: result: source target contains an invalid path: '../sources/%00.md'\n"
-        "error: result: source target is not a local file or an http(s) link: 'mailto:author@example.org'\n"
     )
+
+
+def test_check_warns_about_a_mathlib_file_search_reports_as_null(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "result.md", "# Result\n", mathlib_file="../Outside.lean")
+    _node(blueprint, "kept.md", "# Kept\n", mathlib_file="Mathlib\\Kept.lean")
+
+    assert main(["check", str(blueprint)]) == 0
+    assert [line for line in capsys.readouterr().out.splitlines() if line.startswith("warning:")] == [
+        "warning: result: search reports mathlib_file as null, since it is not a portable relative path: "
+        "'../Outside.lean'"
+    ]
+
+
+def test_check_prints_its_warnings_after_the_whole_summary(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "base.md", "# Base\n\n## Sources\n\n- [Author](mailto:author@example.org)\n", lean="Project.base")
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    (lean_root / "Base.lean").write_text("def Project.base : Nat := 0\n", encoding="utf-8")
+
+    assert main(["check", str(blueprint), "--lean-root", str(lean_root)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert sum(line.startswith("warning:") for line in lines) == 1
+    assert lines[-2:] == [
+        "    1 declaration(s) resolved in the Lean sources",
+        "warning: base: work and search omit this source target, which is neither an http(s) link "
+        "nor a path inside the blueprint: 'mailto:author@example.org'",
+    ]
 
 
 def test_check_refuses_a_symlinked_readme_instead_of_hanging(tmp_path: Path) -> None:

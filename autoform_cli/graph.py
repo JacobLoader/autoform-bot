@@ -14,7 +14,7 @@ import os
 import re
 import stat
 from dataclasses import dataclass
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .lean import declaration_names
@@ -658,20 +658,7 @@ def _normalize_value(node_id: str, line_number: int, key: str, value: str) -> tu
         if folded not in {"allowed", "forbidden"}:
             return value, f"{location}: 'open_statements' accepts allowed or forbidden"
         return folded, None
-    if key == "mathlib_file" and not _is_portable_relative_path(value):
-        return value, f"{location}: 'mathlib_file' must be a portable relative path"
     return value, None
-
-
-def _is_portable_relative_path(value: str) -> bool:
-    path = Path(value)
-    windows = PureWindowsPath(value)
-    return (
-        not path.is_absolute()
-        and not windows.is_absolute()
-        and ".." not in path.parts
-        and ".." not in windows.parts
-    )
 
 
 def _unquote_scalar(value: str) -> str:

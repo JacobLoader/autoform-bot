@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote, urlsplit
 
-from .graph import Graph, _is_portable_relative_path, load_graph, roadmap_symlink_issues
+from .graph import Graph, load_graph, roadmap_symlink_issues
 from .lean import LeanSourceError, declaration_names, index_failure_message, index_project, resolve_lean_root
 from .status import derive, is_definition
 
@@ -316,10 +316,6 @@ def build_runtime_graph(
         revision_paths[node.id] = relative_blueprint.as_posix()
         article_bytes[node.id] = content
 
-        for target in node.sources:
-            if not _source_target_is_confined(node.path, target, blueprint):
-                issues.append(f"{node.id}: source target escapes the blueprint or uses an unsupported location")
-
     _validate_depths(graph, issues)
     if issues:
         raise RuntimeProjectionError(issues)
@@ -345,8 +341,6 @@ def build_runtime_graph(
         for name in declaration_names(node.lean or ""):
             declaration = lean_index.find(name) if lean_index is not None else None
             source_file = declaration.path.as_posix() if declaration is not None else None
-            if source_file is not None and not _is_portable_relative_path(source_file):
-                raise RuntimeProjectionError([f"{node.id}: Lean source file escapes the Lean root"])
             lean_targets.append(RuntimeLeanTarget(name, source_file))
         runtime_nodes.append(
             RuntimeNode(
@@ -381,11 +375,15 @@ def build_runtime_graph(
                     waiting_on=node_status.waiting_on,
                 ),
                 origin=node.origin,
-                source_targets=node.sources,
+                # Leave out a value the projection cannot represent instead of
+                # refusing the whole project.
+                source_targets=tuple(
+                    target for target in node.sources if _source_target_is_confined(node.path, target, blueprint)
+                ),
                 lean_targets=tuple(lean_targets),
                 mathlib=node.mathlib,
                 mathlib_declarations=tuple(declaration_names(node.mathlib_declaration or "")),
-                mathlib_file=node.mathlib_file.replace("\\", "/") if node.mathlib_file else None,
+                mathlib_file=_portable_mathlib_file(node.mathlib_file),
             )
         )
 
@@ -452,6 +450,35 @@ def _source_target_is_confined(article: Path, target: str, blueprint: Path) -> b
     except (OSError, ValueError):
         return False
     return True
+
+
+def _portable_mathlib_file(value: str | None) -> str | None:
+    # A Windows anchor covers POSIX absolute paths too, and also the
+    # drive-relative C:x and rooted \x, which are not absolute but do not name
+    # a path inside the project either.
+    windows = PureWindowsPath(value or "")
+    if not value or windows.anchor or ".." in windows.parts:
+        return None
+    return value.replace("\\", "/")
+
+
+def projection_omissions(graph: Graph) -> list[str]:
+    """Name each value work and search leave out of the projection, for check to warn about."""
+    blueprint = graph.blueprint_dir.resolve()
+    omissions = []
+    for node in graph.nodes.values():
+        for target in node.sources:
+            if not _source_target_is_confined(node.path, target, blueprint):
+                omissions.append(
+                    f"{node.id}: work and search omit this source target, which is neither an http(s) link "
+                    f"nor a path inside the blueprint: {target!r}"
+                )
+        if node.mathlib_file and _portable_mathlib_file(node.mathlib_file) is None:
+            omissions.append(
+                f"{node.id}: search reports mathlib_file as null, since it is not a portable relative path: "
+                f"{node.mathlib_file!r}"
+            )
+    return omissions
 
 
 def _validate_depths(graph: Graph, issues: list[str]) -> None:
@@ -556,5 +583,6 @@ __all__ = [
     "RuntimeStatus",
     "build_runtime_graph",
     "load_runtime_graph",
+    "projection_omissions",
     "resolve_runtime_paths",
 ]
