@@ -844,7 +844,8 @@ def _destination_state(path: Path) -> _State | None:
                 "inventory to check before deleting it; delete it once by hand and render again"
             ]
         )
-    if not isinstance(manifest, dict) or manifest.get("schema") not in _REPLACEABLE_SCHEMAS:
+    schema = manifest.get("schema") if isinstance(manifest, dict) else None
+    if not (isinstance(schema, str) and schema in _REPLACEABLE_SCHEMAS):
         raise PublicationError(
             [
                 "refusing to overwrite a non-Autoform output directory or legacy "

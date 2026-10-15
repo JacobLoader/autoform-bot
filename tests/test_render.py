@@ -1720,6 +1720,7 @@ def _edit(path: Path, old: str, new: str) -> None:
         (lambda out: _manifest(out, _V2), "file inventory"),
         (lambda out: _manifest(out, _V2.replace("v2", "v3")), "file inventory"),
         (lambda out: _manifest(out, _V2.replace("v2", "v1")), "legacy autoform-publication/v1 site at .* once"),
+        (lambda out: _manifest(out, '{"complete": true, "schema": {"$ref": "v3"}}'), "non-Autoform output"),
     ],
 )
 def test_render_replaces_only_an_exact_owned_publication(tmp_path: Path, tamper, message: str) -> None:
