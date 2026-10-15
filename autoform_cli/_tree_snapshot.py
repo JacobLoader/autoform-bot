@@ -12,8 +12,8 @@ examined the entry) and before verification reached it is not seen, and
 verification lists each directory once, before it walks that directory's
 children, so an entry that appears in a directory after that listing is not
 seen either.  Coordinated moves across directories between those checks can
-therefore yield a set of entries that no single state had.  With
-``unselected_may_change`` a recognized marker is subject to the same windows.
+therefore yield a set of entries that no single state had.  A recognized
+marker is subject to the same windows.
 """
 
 from __future__ import annotations
@@ -115,9 +115,7 @@ class TreeSelection:
     """Select which paths are descended into and captured as bytes.
 
     By default a capture proves the whole descended tree stable: every
-    descended folder keeps its identity and full list of names, and a
-    recognized marker keeps its signature and bytes (its entry kind, for a
-    presence-only marker).
+    descended folder keeps its identity and full list of names.
 
     With ``unselected_may_change`` it proves stable only what it selected: the
     entries ``include`` captures and the folders that contain them.  Any other
@@ -125,10 +123,11 @@ class TreeSelection:
     vanish or be rebuilt during the capture, provided that whatever is at its
     path when it is rechecked is hidden by a recognized marker or holds no
     selected entry.  Such folders leave no trace in the snapshot or its
-    revisions, and ``opaque_directories`` stays empty.  The end-of-folder
-    recheck skips an unselected entry that keeps the ``(dev, ino, file type)``
-    the scan saw, so ``include`` must not depend on other mode bits.  This mode
-    needs directory-descriptor traversal and does not record omitted entries.
+    revisions.  The end-of-folder recheck skips an unselected entry that keeps
+    the ``(dev, ino, file type)`` the scan saw, so ``include`` must not depend
+    on other mode bits.  This mode needs directory-descriptor traversal, does
+    not record omitted entries, and is the only one that takes
+    ``opaque_markers``.
     """
 
     include: Callable[[PurePosixPath, int], bool]
@@ -141,17 +140,17 @@ class TreeSelection:
     def __post_init__(self) -> None:
         if self.unselected_may_change and self.record_omitted:
             raise ValueError("unselected_may_change requires record_omitted=False")
+        if self.opaque_markers and not self.unselected_may_change:
+            raise ValueError("opaque_markers require unselected_may_change=True")
 
 
 @dataclass(frozen=True, slots=True)
 class OpaqueDirectoryMarker:
     """A bounded marker that makes its containing directory opaque.
 
-    The capture engine reads this small, immutable surface before it visits any
-    descendants.  By default a recognized marker is then verified by identity,
-    without replaying ``recognizes`` or depending on churn elsewhere in that
-    output directory; with ``TreeSelection.unselected_may_change`` it is not
-    kept, and each later look recognizes it afresh.  A presence-only marker accepts any entry kind without reading
+    The capture engine reads this small, bounded surface before it visits any
+    descendants.  A recognized marker is not kept: each later look recognizes
+    it afresh.  A presence-only marker accepts any entry kind without reading
     it; this is for directory sentinels such as a nested checkout's ``.git``.
     """
 
@@ -185,7 +184,6 @@ class TreeSnapshot:
     special: tuple[tuple[str, int], ...]
     omitted: tuple[tuple[str, str], ...]
     identities: tuple[tuple[str, tuple[int, ...]], ...]
-    opaque_directories: tuple[str, ...] = ()
 
     @property
     def revision(self) -> str:
@@ -202,8 +200,6 @@ class TreeSnapshot:
             _update_digest(digest, b"special", relative, str(mode).encode("ascii"))
         for relative, kind in self.omitted:
             _update_digest(digest, b"omitted", relative, kind.encode("ascii"))
-        for relative in self.opaque_directories:
-            _update_digest(digest, b"opaque-directory", relative, b"")
         return digest.hexdigest()
 
     @property
@@ -244,15 +240,6 @@ class _DirectoryRecord:
     relative: str
     identity: tuple[int, ...]
     names: tuple[str, ...]
-    marker: "_OpaqueMarkerRecord | None" = None
-
-
-@dataclass(frozen=True, slots=True)
-class _OpaqueMarkerRecord:
-    name: str
-    identity: tuple[int, ...]
-    data: bytes | None
-    max_bytes: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -501,7 +488,6 @@ def capture_directory_descriptor(
     symlinks: list[tuple[str, str]] = []
     special: list[tuple[str, int]] = []
     omitted: list[tuple[str, str]] = []
-    opaque_directories: list[str] = []
     budget = _CaptureBudget(selection.limits)
     recheck_budget = _CaptureBudget(selection.limits)
 
@@ -518,38 +504,22 @@ def capture_directory_descriptor(
         # marker name in that directory must not turn the entire requested input
         # into generated output.
         if relative and selection.opaque_markers:
-            marker, marker_data, names = _opaque_marker(
+            names = _opaque_marker(
                 descriptor,
                 relative,
                 selection,
                 budget=budget,
             )
-        else:
-            marker = None
-            marker_data = None
-            names = _capture_directory_names(
-                descriptor,
-                budget=budget,
-            )
-        if marker is not None:
-            if selected_only:
+            if names is None:
                 # A folder hidden by a recognized marker contributes no input, so
                 # nothing about it is kept; the rechecks only require whatever
                 # is at its path to be hidden by a marker or to hold no input.
                 return False
-            directories.append(_DirectoryRecord(relative, identity, (), marker))
-            marker_relative = f"{relative}/{marker.name}"
-            entries.append(
-                _EntryRecord(
-                    marker_relative,
-                    marker.identity,
-                    ignored=marker_data is None,
-                )
+        else:
+            names = _capture_directory_names(
+                descriptor,
+                budget=budget,
             )
-            if marker_data is not None:
-                files.append((marker_relative, marker_data))
-            opaque_directories.append(relative)
-            return True
         if not selected_only:
             directories.append(_DirectoryRecord(relative, identity, names))
         _tree_snapshot_checkpoint("after-directory-list", relative)
@@ -718,7 +688,6 @@ def capture_directory_descriptor(
                 + [(record.relative, record.identity) for record in entries if not record.ignored]
             )
         ),
-        opaque_directories=tuple(sorted(opaque_directories)),
     )
 
 
@@ -886,8 +855,8 @@ def _opaque_marker(
     selection: TreeSelection,
     *,
     budget: _CaptureBudget,
-) -> tuple[_OpaqueMarkerRecord | None, bytes | None, tuple[str, ...]]:
-    """Recognize one bounded marker without reading any sibling descendants."""
+) -> tuple[str, ...] | None:
+    """List a folder, or return ``None`` if a bounded marker hides it."""
 
     names = _capture_directory_names(
         descriptor,
@@ -907,13 +876,8 @@ def _opaque_marker(
             if _vanished_in_selected_capture(error, selection):
                 continue
             raise
-        identity = _stat_signature(metadata)
         if marker.presence_only:
-            return (
-                _OpaqueMarkerRecord(name, identity, None, marker.max_bytes),
-                None,
-                names,
-            )
+            return None
         if not stat.S_ISREG(metadata.st_mode):
             continue
         max_bytes = budget.file_read_limit(metadata.st_size, marker.max_bytes)
@@ -921,7 +885,7 @@ def _opaque_marker(
             data = _read_file(
                 descriptor,
                 name,
-                identity,
+                _stat_signature(metadata),
                 relative=relative,
                 max_bytes=max_bytes,
             )
@@ -933,12 +897,8 @@ def _opaque_marker(
             raise
         if len(data) <= marker.max_bytes and marker.recognizes(data):
             budget.add_file_bytes(len(data))
-            return (
-                _OpaqueMarkerRecord(name, identity, data, marker.max_bytes),
-                data,
-                names,
-            )
-    return None, None, names
+            return None
+    return names
 
 
 def _recheck_scanned_directory(
@@ -1017,15 +977,12 @@ def _relist_directory(
 
     try:
         if relative and selection.opaque_markers:
-            marker, _marker_data, names = _opaque_marker(
+            return _opaque_marker(
                 descriptor,
                 relative,
                 selection,
                 budget=budget,
             )
-            if marker is not None:
-                return None
-            return names
         return _capture_directory_names(descriptor, budget=budget)
     except _PermissionDenied as error:
         raise _TreeChanged(error.relative) from error
@@ -1161,51 +1118,11 @@ def _verify_snapshot(
     # child, charged once against the capture limits for the whole pass.
     budget = _CaptureBudget(selection.limits)
 
-    def verify_marker(
-        descriptor: int,
-        relative: str,
-        marker: _OpaqueMarkerRecord,
-    ) -> None:
-        marker_relative = f"{relative}/{marker.name}" if relative else marker.name
-        metadata = _lookup(descriptor, marker.name, relative)
-        observed = _stat_signature(metadata)
-        if marker.data is None:
-            if _entry_kind(observed[2]) != _entry_kind(marker.identity[2]):
-                raise _TreeChanged(marker_relative)
-        else:
-            if observed != marker.identity:
-                raise _TreeChanged(marker_relative)
-            try:
-                data = _read_file(
-                    descriptor,
-                    marker.name,
-                    marker.identity,
-                    relative=relative,
-                    max_bytes=marker.max_bytes,
-                )
-            except PermissionError as error:
-                raise _access_denied(descriptor, marker.name, relative) from error
-            if data != marker.data:
-                raise _TreeChanged(marker_relative)
-        expected_entry = expected_entries.get(marker_relative)
-        if expected_entry is None or (
-            not expected_entry.ignored and expected_entry.identity != marker.identity
-        ):
-            raise _TreeChanged(marker_relative)
-        visited_entries.add(marker_relative)
-
     def verify_directory(descriptor: int, relative: str) -> None:
         expected = expected_directories.get(relative)
         if expected is None:
             raise _TreeChanged(relative)
         visited_directories.add(relative)
-        if expected.marker is not None:
-            if _stable_entry_identity(
-                _stat_signature(os.fstat(descriptor))
-            ) != _stable_entry_identity(expected.identity):
-                raise _TreeChanged(relative)
-            verify_marker(descriptor, relative, expected.marker)
-            return
         if selection.unselected_may_change:
             _recheck_scanned_directory(
                 descriptor,
@@ -1254,9 +1171,7 @@ def _verify_snapshot(
                 not entry.ignored and _stat_signature(metadata) != entry.identity
             ):
                 raise _TreeChanged(child_relative)
-            if entry.ignored and _entry_kind(metadata.st_mode) != _entry_kind(
-                entry.identity[2]
-            ):
+            if entry.ignored and stat.S_IFMT(metadata.st_mode) != stat.S_IFMT(entry.identity[2]):
                 raise _TreeChanged(child_relative)
             visited_entries.add(child_relative)
             return
@@ -1334,7 +1249,6 @@ def _capture_portable(
     symlinks: list[tuple[str, str]] = []
     special: list[tuple[str, int]] = []
     omitted: list[tuple[str, str]] = []
-    opaque_directories: list[str] = []
     identities: list[tuple[str, tuple[int, ...]]] = [("", _stat_signature(root_before))]
     budget = _CaptureBudget(selection.limits)
 
@@ -1347,40 +1261,6 @@ def _capture_portable(
         except PermissionError as error:
             raise _PermissionDenied(relative or ".") from error
         _tree_snapshot_checkpoint("after-directory-list", relative)
-        if relative and selection.opaque_markers:
-            by_folded_name: dict[str, list[str]] = {}
-            for name in names:
-                by_folded_name.setdefault(_normalized_name(name), []).append(name)
-            for marker in selection.opaque_markers:
-                matches = by_folded_name.get(_normalized_name(marker.name), [])
-                if len(matches) != 1:
-                    continue
-                name = matches[0]
-                marker_path = directory / name
-                metadata = os.lstat(marker_path)
-                before = _stat_signature(metadata)
-                if marker.presence_only:
-                    opaque_directories.append(relative)
-                    return
-                if not stat.S_ISREG(metadata.st_mode) or _is_reparse_point(metadata):
-                    continue
-                max_bytes = budget.file_read_limit(metadata.st_size, marker.max_bytes)
-                try:
-                    data = _read_portable_file(
-                        marker_path,
-                        before,
-                        max_bytes=max_bytes,
-                    )
-                except PermissionError as error:
-                    marker_relative = f"{relative}/{name}"
-                    raise _PermissionDenied(marker_relative) from error
-                if len(data) <= marker.max_bytes and marker.recognizes(data):
-                    budget.add_file_bytes(len(data))
-                    marker_relative = f"{relative}/{name}"
-                    files.append((marker_relative, data))
-                    identities.append((marker_relative, before))
-                    opaque_directories.append(relative)
-                    return
         for name in names:
             child_relative = f"{relative}/{name}" if relative else name
             path = directory / name
@@ -1461,7 +1341,6 @@ def _capture_portable(
         special=tuple(sorted(special)),
         omitted=tuple(sorted(omitted)),
         identities=tuple(sorted(identities)),
-        opaque_directories=tuple(sorted(opaque_directories)),
     )
 
 
@@ -1546,10 +1425,6 @@ def _special_file_kind(mode: int) -> str:
     if stat.S_ISCHR(mode):
         return "character device"
     return "special filesystem entry"
-
-
-def _entry_kind(mode: int) -> int:
-    return stat.S_IFMT(mode)
 
 
 def _update_digest(digest, kind: bytes, relative: str, data: bytes) -> None:
