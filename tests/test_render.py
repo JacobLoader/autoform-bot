@@ -1433,36 +1433,6 @@ def test_render_verifies_one_stable_revision_for_both_manifest_states(
     assert published["source_revision"] == revision
 
 
-def test_render_completes_from_its_capture_when_authored_sources_change_mid_render(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project = _project(tmp_path)
-    blueprint = project / "blueprint"
-    output = tmp_path / "out"
-    original_write = render_module._write_publication_manifest
-    changed = False
-
-    def write_manifest(*args, **kwargs) -> None:
-        nonlocal changed
-        original_write(*args, **kwargs)
-        if not changed:  # the first write, before any page exists
-            changed = True
-            with (blueprint / "README.md").open("a", encoding="utf-8") as stream:
-                stream.write("\nChanged during publication.\n")
-
-    monkeypatch.setattr(render_module, "_write_publication_manifest", write_manifest)
-
-    render_site(blueprint, output, lean_root=project)
-
-    manifest = json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))
-    assert manifest["complete"] is True
-    assert manifest["source_revision"] != publication_source_revision(blueprint)
-    assert "Changed during publication." not in (output / "README.md").read_text(
-        encoding="utf-8"
-    )
-
-
 def test_render_uses_one_capture_when_authored_sources_change_and_restore(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3422,6 +3392,9 @@ def test_an_edit_during_a_render_publishes_the_captured_generation(
 
     chapter = (tmp_path / "out/roadmap/README.md").read_text(encoding="utf-8")
     assert "The main result." in chapter and "Edited mid-render." not in chapter
+    manifest = json.loads((tmp_path / "out" / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))
+    assert manifest["complete"] is True
+    assert manifest["source_revision"] != publication_source_revision(project / "blueprint")
 
 
 def test_a_heading_shown_as_code_is_not_a_page_title() -> None:
