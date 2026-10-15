@@ -1757,11 +1757,11 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
    Formalize subagent has its lead confirm the set instead. With or without
    claims, after rebasing onto the current shared branch and rebuilding, re-run
    `work impact` once more; if the set grew, repair the new targets before
-   landing, first acquiring the whole larger set in one command under the
-   no-hold-and-wait rule of the [claim contract](#claim-contract) when using
-   claims, or having the lead confirm the new targets without them. Under the
-   open policy, reproduce the CI audit as [open statements](#open-statements)
-   shows before landing. Land one commit, then release any claims.
+   landing, after acquiring the whole larger set in one command under the
+   no-hold-and-wait rule of the [claim contract](#claim-contract) or, without
+   claims, after the lead confirms them. Under the open policy, reproduce the CI
+   audit as [open statements](#open-statements) shows before landing. Land one
+   commit, then release any claims.
 4. Contract: delete a deprecated X once it appears in `deprecated_unused` of
    `work impact R . --lean-root .`, meaning no declaration uses it and no
    other article's `lean:` names it, and drop it from R's `lean:` in the same

@@ -46,7 +46,7 @@ and `revision` it is dispatched for. A new worktree has no `.lake`: in a Mathlib
 project, run `lake exe cache get` once in the lead's checkout before creating
 worktrees, rerunning it there if it fails, then in each worktree before its
 first build or Lean tool call, so the worktrees unpack from a full cache instead
-of downloading into it together. If it still fails, tell the user before
+of downloading into it together. If the rerun fails too, ask the user before
 creating worktrees, since each would then fetch or build Mathlib on its own.
 Builds take no claim, so workers on one machine may build at the same time:
 dispatch no more at once than its memory can build for.
@@ -59,20 +59,21 @@ handoff keeps them. A subagent that must edit beyond what it holds, for an
 import edit, a revision, a revision's grown `claim_targets`, or an article its
 import edit broke, reports the new targets to the lead before editing, and goes
 ahead only once the lead confirms that no other worker holds them. A subagent
-that cannot wait for the lead's answer commits its work, stops and reports
-instead, and the lead answers when it dispatches the leaf again from that
-commit. A worker does not hold its import edit's `affected_claim_targets`, but
-the lead checks them when it confirms the edit's new targets and again before
-the edit lands; one that another worker holds is an active conflict. If workers
-would wait on each other, the lead has one of them give up what it holds.
+that cannot wait for the lead's answer commits its work, stops, and reports
+instead; the lead answers when it dispatches the leaf again from that commit. A
+worker does not hold its import edit's `affected_claim_targets`, but the lead
+checks them when it confirms the edit's new targets and again before the edit
+lands; one that another worker holds is an active conflict. If workers would
+wait on each other, the lead has one of them give up what it holds.
 
 Use claims only when other people or sessions may work on the same project at
 the same time, or when the user asks for them. Before choosing none, run
 `autoform claim list` once, with any `--worker-id`: an unexpired claim on the
-board means another session uses them. A claim excludes only workers that also
-claim, and `work list` does not read the board, so on such a project every
-worker uses them. When the run uses claims, tell each subagent so, and follow
-the [claim rules](references/claims.md) at each step.
+board means another session uses them, and if the command fails, as it does in a
+checkout without an `origin`, tell the user and go on without claims. A claim
+excludes only workers that also claim, and `work list` does not read the board,
+so on such a project every worker uses them. When the run uses claims, tell each
+subagent so, and follow the [claim rules](references/claims.md) at each step.
 
 ### Import edits
 
@@ -81,8 +82,8 @@ an effective module header or import change, run `autoform work import-impact`
 as documented in the CLI reference. When the run uses claims, follow the [import
 claims](references/claims.md#import-edits) from then on; otherwise send the lead
 the report's `claim_targets` and `affected_claim_targets` and wait for its
-answer, as above. Capture baseline skeleton evidence for its currently built,
-named affected articles. The report covers added imports, so when an edit
+answer, as above. Capture baseline skeleton evidence for the report's currently
+built, named affected articles. The report covers added imports, so when an edit
 removes an import, also baseline the articles of modules only that import kept
 in the build. The report's affected articles are not a lock. Do not acquire or
 edit them merely because they are listed; treat reported unresolved declarations
@@ -230,15 +231,14 @@ integration changed the candidate, repeat the review, check, and audit. For an
 import edit, also re-run `autoform work import-impact` on the result; if
 integration brought in a change to an article it lists as affected, that changed
 the candidate too, so capture a fresh baseline of that article on the shared
-branch. Then send the lead that report's `affected_claim_targets`, and land the
-edit only once the lead confirms that no other worker holds them; a subagent
-that cannot wait reports the branch and commit for handoff instead. For a
-revision, also re-run `autoform work impact` on the rebuilt result and repair
-any new targets before landing. Without authority to update or push the shared
-branch, or when integration fails, report the branch and commit for handoff.
-When the run uses claims, the [claim
-rules](references/claims.md#integration-and-handoff) say how to renew, keep,
-hand off, and release the claim set.
+branch. In a run without claims, send the lead that report's
+`affected_claim_targets` and land the edit only once the lead confirms that no
+other worker holds them. For a revision, also re-run `autoform work impact` on
+the rebuilt result and repair any new targets before landing. Without authority
+to update or push the shared branch, without the lead's answer, or when
+integration fails, report the branch and commit for handoff. When the run uses
+claims, the [claim rules](references/claims.md#integration-and-handoff) say how
+to renew, keep, hand off, and release the claim set.
 
 Re-read the work frontier from the updated shared branch and repeat while
 independent ready leaves and authorized capacity remain. Stop when the frontier

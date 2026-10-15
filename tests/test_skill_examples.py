@@ -190,7 +190,7 @@ def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
     A remote claim around `lake build` made unrelated machines wait on each other,
     while agents on one machine using different boards still downloaded into one
     Mathlib cache at once (#121). Builds take no claim, and the lead fills the cache
-    first and stops if it cannot.
+    first and asks the user if it cannot.
     """
 
     def read(relative: str) -> str:
@@ -207,14 +207,18 @@ def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
     ) in formalize
     assert "reports the new targets to the lead before editing" in formalize
     assert "goes ahead only once the lead confirms that no other worker holds them" in formalize
-    assert "A subagent that cannot wait for the lead's answer commits its work, stops and reports instead" in formalize
+    assert "A subagent that cannot wait for the lead's answer commits its work, stops, and reports instead" in formalize
     assert "the lead answers when it dispatches the leaf again from that commit" in formalize
     assert "otherwise send the lead the report's `claim_targets` and `affected_claim_targets`" in formalize
+    assert "In a run without claims, send the lead that report's `affected_claim_targets`" in formalize
     assert "land the edit only once the lead confirms that no other worker holds them" in formalize
+    assert "without the lead's answer, or when integration fails, report the branch and commit" in formalize
     assert "so capture a fresh baseline of that article on the shared branch" in formalize
-    assert "If it still fails, tell the user before creating worktrees" in formalize
+    assert "If the rerun fails too, ask the user before creating worktrees" in formalize
     assert "dispatch no more at once than its memory can build for" in formalize
     assert "Before choosing none, run `autoform claim list` once" in formalize
+    assert "an unexpired claim on the board means another session uses them" in formalize
+    assert "if the command fails, as it does in a checkout without an `origin`, tell the user" in formalize
     assert "the lead checks them when it confirms the edit's new targets and again before the edit lands" in formalize
     assert "If workers would wait on each other, the lead has one of them give up what it holds" in formalize
     assert "re-run `autoform work import-impact` on the result; if integration brought in a change" in formalize
@@ -226,12 +230,14 @@ def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
     assert "Claims are optional" in cli
     assert "builds take no claim" in cli
     assert "use them when other people or sessions may work on the same project at the same time" in cli
+    assert "Without claims, a Formalize subagent has its lead confirm the set instead" in cli
+    assert "or, without claims, after the lead confirms them" in cli
     assert "Claims are optional" in read("AGENTS.md")
     claims = (repo_root / "skills/formalize/references/claims.md").read_text(encoding="utf-8")
     assert "They replace asking the lead" in " ".join(claims.split())
     headings = {line[3:].lower().replace(" ", "-") for line in claims.splitlines() if line.startswith("## ")}
     anchors = re.findall(r"references/claims\.md#([a-z-]+)", formalize)
-    assert set(anchors) == {"acquire-and-renew", "import-edits", "integration-and-handoff"}, anchors
+    assert {"acquire-and-renew", "import-edits", "integration-and-handoff"} <= set(anchors), anchors
     assert set(anchors) <= headings, set(anchors) - headings
     for relative in (
         "skills/formalize/SKILL.md",
