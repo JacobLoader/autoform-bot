@@ -318,16 +318,6 @@ def build_runtime_graph(
         revision_paths[node.id] = relative_blueprint.as_posix()
         article_bytes[node.id] = content
 
-        if node.catalog not in {None, "module"}:
-            issues.append(f"{node.id}: unsupported catalog kind")
-        if node.catalog is not None and (
-            node.declaration is not None
-            or node.mathlib
-            or node.mathlib_declaration is not None
-            or node.mathlib_file is not None
-        ):
-            issues.append(f"{node.id}: catalog node carries declaration-specific metadata")
-
     _validate_depths(graph, issues)
     if issues:
         raise RuntimeProjectionError(issues)

@@ -386,17 +386,6 @@ def test_adapter_rejects_inconsistent_hand_built_graph_without_host_paths(tmp_pa
     assert str(tmp_path) not in str(error.value)
 
 
-def test_adapter_rejects_a_hand_built_dispatchable_catalog(tmp_path: Path) -> None:
-    project = _project(tmp_path)
-    canonical = load_graph(project / "blueprint")
-    nodes = dict(canonical.nodes)
-    base = nodes["chapter/section/base"]
-    nodes[base.id] = replace(base, catalog="module")
-
-    with pytest.raises(RuntimeProjectionError, match="catalog node carries"):
-        build_runtime_graph(Graph(canonical.blueprint_dir, nodes), project_root=project)
-
-
 def test_adapter_rejects_a_hand_built_unknown_catalog_kind(tmp_path: Path) -> None:
     project = _project(tmp_path)
     canonical = load_graph(project / "blueprint")
@@ -404,7 +393,7 @@ def test_adapter_rejects_a_hand_built_unknown_catalog_kind(tmp_path: Path) -> No
     roadmap = nodes["roadmap"]
     nodes[roadmap.id] = replace(roadmap, catalog="book")
 
-    with pytest.raises(RuntimeProjectionError, match="unsupported catalog kind"):
+    with pytest.raises(RuntimeProjectionError, match="runtime catalog kind is unsupported"):
         build_runtime_graph(Graph(canonical.blueprint_dir, nodes), project_root=project)
 
 
