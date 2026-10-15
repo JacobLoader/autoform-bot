@@ -672,6 +672,48 @@ def test_paginated_search_and_arrow_navigation_restore_focus(
     playwright.expect(page.locator(".bp-dag-result").nth(12)).to_be_focused()
 
 
+def _release(page: object, held: list[object]) -> None:
+    """Let the oldest held request through once Playwright has delivered it."""
+    for _ in range(100):
+        if held:
+            held.pop(0).continue_()
+            return
+        page.evaluate("0")
+    raise AssertionError("the held request never arrived")
+
+
+def test_a_late_search_index_keeps_focus_and_leaves_a_closed_panel_closed(
+    desktop_page: object, explorer_url: str
+) -> None:
+    """The index callback rebuilt the dropdown, dropping focus to the page and reopening a closed panel."""
+    page = desktop_page
+    held: list[object] = []
+    page.route("**/search.json", lambda route: held.append(route))
+    _open_ready(page, explorer_url)
+    search = page.locator(".bp-dag-search")
+    results = page.locator(".bp-dag-search-results")
+    search.fill("auxiliary")
+    more = results.locator(".bp-dag-load-more")
+    more.focus()
+    more.press("Enter")
+    thirteenth = page.locator(".bp-dag-result").nth(12)
+    playwright.expect(thirteenth).to_be_focused()
+    _release(page, held)
+    playwright.expect(search).to_have_attribute("placeholder", "Search 64 roadmap entries")
+    playwright.expect(thirteenth).to_be_focused()
+    page.mouse.click(2, 2)
+    playwright.expect(results).to_be_hidden()
+
+    page.reload()
+    page.locator("[data-autoform-node-id]").first.wait_for()
+    search.fill("auxiliary")
+    search.press("Escape")
+    playwright.expect(results).to_be_hidden()
+    _release(page, held)
+    playwright.expect(search).to_have_attribute("placeholder", "Search 64 roadmap entries")
+    playwright.expect(results).to_be_hidden()
+
+
 def test_direct_list_view_has_current_shown_and_hidden_counts(
     desktop_page: object, explorer_url: str
 ) -> None:
