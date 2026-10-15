@@ -2062,8 +2062,8 @@ def test_cli_warnings_follow_the_created_line_on_a_shared_pipe(tmp_path: Path) -
 
 
 _ATLAS_RELEASE = "lean-v4.34.1-mathlib-v4.34.1"
-_ATLAS_GIT = "https://github.com/zibo-yang/atlas-lean"
-_ATLAS_COMMIT = "0ca59c787215c3638311b0a14af59aaae3208f6b"
+_ATLAS_GIT = "https://github.com/facebookresearch/atlas-lean"
+_ATLAS_COMMIT = "d2d6fc8d34f246eb9acdcca2c1c4085800db6d74"
 _ATLAS_ENTRY = {
     "url": _ATLAS_GIT, "type": "git", "subDir": None, "scope": "", "rev": _ATLAS_COMMIT, "name": "atlas",
     "manifestFile": "lake-manifest.json", "inputRev": _ATLAS_COMMIT, "inherited": False,
