@@ -2302,21 +2302,16 @@ def test_unselected_source_with_a_quoted_module_name_stays_local(tmp_path: Path,
     assert helpers["Demo.greek"] == "Demo/α.lean"
 
 
-def _rewrite_base(project: Path) -> None:
-    metadata = [f"article_id: {_BASE_ID}", "declaration: definition", "statement: formalized", "lean: Demo.base"]
-    _write_article(project, "base.md", metadata=metadata, title="Base, revised")
-
-
 def test_revision_impact_reads_the_roadmap_once_before_the_probe(tmp_path: Path, monkeypatch) -> None:
     project = _blueprint_project(tmp_path, "Demo")
     lean_root = _stub_lean_root(tmp_path)
     calls = _stub_probe(monkeypatch)
-    build = runtime.build_runtime_graph
+    original = runtime.build_runtime_graph
     probes_before_each_read = []
 
     def counted(*args, **kwargs):
         probes_before_each_read.append(len(calls))
-        return build(*args, **kwargs)
+        return original(*args, **kwargs)
 
     monkeypatch.setattr(runtime, "build_runtime_graph", counted)
 
@@ -2326,8 +2321,18 @@ def test_revision_impact_reads_the_roadmap_once_before_the_probe(tmp_path: Path,
     assert probes_before_each_read == [0, 1]
 
 
+def _rewrite_base(project: Path) -> None:
+    metadata = [f"article_id: {_BASE_ID}", "declaration: definition", "statement: formalized", "lean: Demo.base"]
+    _write_article(project, "base.md", metadata=metadata, title="Base, revised")
+
+
+def _delete_empty(project: Path) -> None:
+    (project / "blueprint/roadmap/chapter/empty.md").unlink()
+
+
+@pytest.mark.parametrize("change", [_rewrite_base, _delete_empty])
 def test_revision_impact_refuses_a_roadmap_that_changes_during_the_probe(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change
 ) -> None:
     project = _blueprint_project(tmp_path, "Demo")
     lean_root = _stub_lean_root(tmp_path)
@@ -2336,7 +2341,7 @@ def test_revision_impact_refuses_a_roadmap_that_changes_during_the_probe(
 
     def run_then_change(*args, **kwargs):
         output = original(*args, **kwargs)
-        _rewrite_base(project)
+        change(project)
         return output
 
     monkeypatch.setattr("autoform_cli.skeleton.run_probe", run_then_change)
