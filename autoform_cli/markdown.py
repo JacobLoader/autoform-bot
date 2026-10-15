@@ -27,6 +27,7 @@ itself, so the two cannot drift apart unnoticed.
 from __future__ import annotations
 
 import html
+import os
 import re
 from dataclasses import dataclass
 from functools import lru_cache
@@ -616,7 +617,10 @@ def local_target_issue(
     reported as fine. A fragment on a Markdown target must name a real heading.
     """
 
-    split = urlsplit(target)
+    try:
+        split = urlsplit(target)
+    except ValueError:
+        return f"malformed-{label}-link", f"{label} link is not a valid URL: {target!r}"
     scheme = split.scheme.casefold()
     if scheme in EXTERNAL_SCHEMES:
         return None
@@ -629,21 +633,25 @@ def local_target_issue(
     if "\x00" in raw_path:
         return f"malformed-{label}-link", f"{label} link contains an invalid path: {target!r}"
     if not raw_path:
-        candidate = source_path.resolve()
+        candidate = source_path
     else:
         relative = Path(raw_path)
         if relative.is_absolute():
             return f"{label}-escapes-blueprint", f"{label} link escapes the blueprint: {target!r}"
-        candidate = (source_path.parent / relative).resolve()
+        candidate = source_path.parent / relative
+    try:
+        candidate = candidate.resolve()
+    except (OSError, RuntimeError, ValueError):
+        # Before Python 3.13 a symlink loop raises RuntimeError here. From 3.13 resolve
+        # returns the looping path, so the lexical one stands in, and the checks below
+        # report it as on 3.13.
+        candidate = Path(os.path.abspath(candidate))
 
     boundary = boundary.resolve()
     if not _is_within(candidate, boundary):
         return f"{label}-escapes-blueprint", f"{label} link escapes the blueprint: {target!r}"
-    try:
-        is_file = candidate.is_file()
-    except (OSError, ValueError):
-        return f"malformed-{label}-link", f"{label} link contains an invalid path: {target!r}"
-    if not is_file:
+    # Before Python 3.14, `Path.is_file` raises under an unreadable directory.
+    if not os.path.isfile(candidate):
         return f"{label}-not-found", f"{label} link does not resolve to a file: {target!r}"
     if split.fragment and candidate.suffix.casefold() == ".md":
         fragment = unquote(split.fragment)
