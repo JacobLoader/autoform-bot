@@ -1061,10 +1061,10 @@ def test_check_cli_reports_source_index_io_failure_before_success(
     blueprint = tmp_path / "blueprint"
     _node(blueprint, "base.md", "# Base\n", lean="Project.base")
 
-    def fail_linker(root: Path, **_kwargs):
+    def fail_index(root: Path, **_kwargs):
         raise OSError(f"private host detail: {root}")
 
-    monkeypatch.setattr("autoform_cli.__main__.build_linker", fail_linker)
+    monkeypatch.setattr("autoform_cli.__main__.index_project", fail_index)
 
     assert main(["check", str(blueprint), "--lean-root", str(tmp_path)]) == 1
     captured = capsys.readouterr()

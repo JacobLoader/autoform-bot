@@ -28,7 +28,7 @@ from .impact import (
     module_import_impact,
     revision_impact,
 )
-from .lean import build_linker, declaration_names, index_failure_message
+from .lean import declaration_names, index_failure_message, index_project
 from .library.generate import GenerateError, check_index, generate_index, write_index
 from .library.index import INDEX_FILE
 from .library.listing import indexed_packages, list_libraries
@@ -579,10 +579,12 @@ def _check(args: argparse.Namespace) -> int:
             print(f"error: {issue}")
         return 1
 
-    linker = None
+    # Check reads only where each name is declared, never a permalink, so it
+    # skips the Git work a linker does.
+    index = None
     if args.lean_root is not None:
         try:
-            linker = build_linker(args.lean_root, names=graph.lean_names())
+            index = index_project(args.lean_root, names=graph.lean_names())
         except OSError as error:
             print(f"error: {index_failure_message(error)}")
             return 1
@@ -610,12 +612,12 @@ def _check(args: argparse.Namespace) -> int:
         label = "module inventory" if inventories == 1 else "module inventories"
         print(f"    {inventories} {label}")
 
-    if linker is not None:
+    if index is not None:
         missing = [
             f"{node.id}: declaration not found in {args.lean_root}: {name}"
             for node in graph.nodes.values()
             for name in declaration_names(node.lean or "")
-            if linker.location(name) is None
+            if index.find(name) is None
         ]
         for issue in missing:
             print(f"error: {issue}")

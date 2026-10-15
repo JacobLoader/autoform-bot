@@ -1036,17 +1036,10 @@ class SourceLinker:
         return f"{self.repository_url}/blob/{encoded_ref}/{path}#L{declaration.line}"
 
 
-def build_linker(
-    lean_root: str | Path,
-    *,
-    names: Iterable[str] | None = None,
-) -> SourceLinker:
+def build_linker(lean_root: str | Path) -> SourceLinker:
     """Index *lean_root* and resolve repository coordinates."""
     resolved_root = resolve_lean_root(lean_root)
-    snapshot, repository_url, ref, linkable_paths = _capture_link_state(
-        resolved_root,
-        names=names,
-    )
+    snapshot, repository_url, ref, linkable_paths = _capture_link_state(resolved_root)
     if repository_url is None:
         repository_url = detect_repository_url(resolved_root)
     return SourceLinker(
@@ -1059,8 +1052,6 @@ def build_linker(
 
 def _capture_link_state(
     root: Path,
-    *,
-    names: Iterable[str] | None = None,
 ) -> tuple[
     IndexedSourceSnapshot,
     str | None,
@@ -1069,7 +1060,6 @@ def _capture_link_state(
 ]:
     """Capture source bytes and prove which ones belong to one stable commit."""
 
-    requested_names = None if names is None else tuple(names)
     last_snapshot: IndexedSourceSnapshot | None = None
     last_url: str | None = None
     for attempt in range(_SNAPSHOT_ATTEMPTS):
@@ -1077,7 +1067,7 @@ def _capture_link_state(
             time.sleep(_SNAPSHOT_RETRY_DELAY_SECONDS * attempt)
         before_url = detect_repository_url(root)
         before_ref = detect_ref(root)
-        snapshot = snapshot_project_sources(root, names=requested_names)
+        snapshot = snapshot_project_sources(root)
         last_snapshot = snapshot
         last_url = before_url
         after_url = detect_repository_url(root)
