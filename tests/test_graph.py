@@ -13,6 +13,7 @@ from autoform_cli.graph import (
     GraphValidationError,
     _containment_cycles,
     atlas_omissions,
+    catalogs_without_ledger,
     load_graph,
 )
 from autoform_cli.runtime import RuntimeProjectionError, load_runtime_graph
@@ -260,22 +261,42 @@ def test_loads_a_non_dispatchable_module_catalog_status(tmp_path: Path) -> None:
     assert node.proof_formalized
 
 
-def test_module_catalog_requires_exact_names_and_a_local_ledger(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("link", "status", "last_line"),
+    [
+        pytest.param("../sources/module.md", 0, "    1 module inventory", id="ledger"),
+        pytest.param(
+            "../notes/ledger.md",
+            0,
+            "warning: module: module catalog links no declaration ledger under blueprint/sources/ from '## Sources'",
+            id="outside-sources",
+        ),
+        pytest.param(
+            "https://example.com/ledger.md",
+            0,
+            "warning: module: module catalog links no declaration ledger under blueprint/sources/ from '## Sources'",
+            id="external",
+        ),
+        pytest.param(
+            "../sources/missing.md",
+            1,
+            "error: module: source target does not resolve to a file: '../sources/missing.md'",
+            id="missing",
+        ),
+    ],
+)
+def test_check_warns_about_a_catalog_that_links_no_ledger_under_sources(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], link: str, status: int, last_line: str
+) -> None:
+    """A catalog's ledger is a source link: only a dead one fails check, as for any article."""
     blueprint = tmp_path / "blueprint"
-    _node(
-        blueprint,
-        "module.md",
-        "# Existing module\n",
-        catalog="module",
-        statement="formalized",
-        proof="formalized",
-    )
+    for ledger in ("sources/module.md", "notes/ledger.md"):
+        (blueprint / ledger).parent.mkdir(parents=True)
+        (blueprint / ledger).write_text("# Module declarations\n", encoding="utf-8")
+    _node(blueprint, "module.md", f"# Existing module\n\n## Sources\n\n- [Ledger]({link})\n", catalog="module")
 
-    with pytest.raises(GraphValidationError) as error:
-        load_graph(blueprint)
-
-    assert "must list exact compiled names" in str(error.value)
-    assert "must link a declaration ledger" in str(error.value)
+    assert main(["check", str(blueprint)]) == status
+    assert capsys.readouterr().out.splitlines()[-1] == last_line
 
 
 @pytest.mark.parametrize(
@@ -286,12 +307,12 @@ def test_module_catalog_requires_exact_names_and_a_local_ledger(tmp_path: Path) 
         pytest.param("../sources/loop.md", id="symlink-loop"),
     ],
 )
-def test_a_catalog_ledger_listed_after_a_link_that_cannot_be_resolved_still_loads(
+def test_a_catalog_ledger_listed_after_a_link_that_cannot_be_resolved_still_counts(
     tmp_path: Path, link: str
 ) -> None:
-    # Without #337's guards each link stops the load: urlsplit rejects the first,
-    # Path.is_file raises on the long name before Python 3.14, and resolve raises on
-    # the loop before 3.13. Skipped, they leave the ledger after them to be found.
+    # Each link once crashed the ledger rule: urlsplit rejects the first, Path.is_file
+    # raises on the long name before Python 3.14, and resolve raises on the loop
+    # before 3.13. The rule now reads links without touching files.
     blueprint = tmp_path / "blueprint"
     ledger = blueprint / "sources/module.md"
     ledger.parent.mkdir(parents=True)
@@ -308,7 +329,7 @@ def test_a_catalog_ledger_listed_after_a_link_that_cannot_be_resolved_still_load
         catalog="module",
     )
 
-    assert load_graph(blueprint).nodes["module"].catalog == "module"
+    assert catalogs_without_ledger(load_graph(blueprint)) == []
 
 
 def test_formalized_module_catalog_rejects_an_empty_lean_name_list(tmp_path: Path) -> None:

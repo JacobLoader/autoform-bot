@@ -126,17 +126,18 @@ readable `autoform-atlas/v1` JSON, and `audit` reports each as an
 A repository-wide inventory may use a narrative leaf to summarize an existing
 Lean module containing several declarations. Such a leaf sets
 `catalog: module` and omits `declaration`, so it is never dispatched as one
-proof task. A completed catalog records every exact compiled public name in
-`lean:` and links a declaration ledger under `blueprint/sources/` from its exact
-`## Sources` section; it may assert
+proof task. Every catalog links a declaration ledger under `blueprint/sources/`
+from its `## Sources` section: `check` warns about a catalog that links none
+and `audit` reports it as `catalog-missing-ledger`, while a link to a missing
+ledger fails both, as any dead source link does. A completed catalog also
+records every exact compiled public name in `lean:`; it may assert
 `statement: formalized` and `proof: formalized` when the complete module has
 been checked. It contributes to the neutral inventory metric and graph status
 while remaining a readable catalog page, but stays outside the mathematical
 `Scoped roadmap` completion percentage.
 
 `check --lean-root` and `audit --lean-root` resolve every compiled name the
-catalog lists, and every command that loads the blueprint validates the local
-ledger link. They cannot prove that the list omitted no newly added public
+catalog lists. They cannot prove that the list omitted no newly added public
 declaration; completeness remains an authored assertion pending
 repository-inventory reconciliation. `audit --lean-root` also reads the
 [elaboration limits](#elaboration-limits) of the declarations a catalog
@@ -171,7 +172,7 @@ An article asserts only facts a human or agent verified:
 | Key | Meaning |
 | --- | --- |
 | `area: Geometry & Topology` | Authored mathematical region for atlas grouping. |
-| `catalog: module` | A non-dispatchable leaf cataloging one existing Lean module. |
+| `catalog: module` | A non-dispatchable leaf cataloging one existing Lean module. Links its declaration ledger under `blueprint/sources/` from `## Sources`; cannot be combined with `declaration` or the `mathlib*` keys. |
 | `statement: formalized` | The Lean statement exists and compiles. Requires `lean:`. |
 | `statement: retracted` | A revision retracted the statement while `lean:` still names the old declaration, which stays in the build until Formalize restates the article and records `statement: formalized` in its place. Requires `lean:`; invalid with `proof: formalized` or `mathlib: true`. CI's `autoform check` at an older `AUTOFORM_REF` rejects the marker, so move the pin first; until then, retract by removing `statement` and `proof` and keeping `lean:`. |
 | `proof: formalized` | The Lean proof compiles. Requires `statement: formalized` and `lean:`. Under the open policy it may rest on open statements, and the article is then conditional; only the derived `fully_proved` means complete and `sorry`-free. |

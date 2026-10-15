@@ -24,6 +24,7 @@ from .graph import (
     GraphValidationError,
     Node,
     atlas_omissions,
+    catalogs_without_ledger,
     load_graph,
 )
 from .lean import (
@@ -354,6 +355,14 @@ def audit_graph(
 
         findings.extend(_source_findings(graph, node, article_path))
 
+    findings.extend(
+        AuditFinding(
+            _relative_path(graph.nodes[node_id].path, graph.blueprint_dir),
+            "catalog-missing-ledger",
+            "module catalog links no declaration ledger under blueprint/sources/ from '## Sources'",
+        )
+        for node_id in catalogs_without_ledger(graph)
+    )
     if coverage_findings is None:
         coverage, coverage_findings = _coverage_findings(graph.blueprint_dir)
     findings.extend(coverage_findings)

@@ -799,8 +799,8 @@ def load_publication_source(blueprint_dir: str | Path) -> tuple[str, Graph]:
     """Read the blueprint once; return its publication revision and the graph of those bytes."""
     blueprint = Path(blueprint_dir).expanduser().resolve()
     snapshot = _capture_blueprint(blueprint)
-    # The graph reads the articles, the ledgers that catalogs link, and the atlas.
-    with _private_copy(snapshot, prefix=("roadmap/", f"{SOURCES_DIR}/", "atlas.json")) as (_root, copy):
+    # The graph reads the articles and the atlas.
+    with _private_copy(snapshot, prefix=("roadmap/", "atlas.json")) as (_root, copy):
         return _source_revision(snapshot), _load_graph(copy, blueprint)
 
 

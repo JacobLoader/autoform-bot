@@ -554,7 +554,19 @@ def test_audit_surfaces_invalid_module_catalog_evidence(
     assert {code for code, _reason in findings} == {"invalid-graph"}
     reasons = {reason for _code, reason in findings}
     assert any("must list exact compiled names" in reason for reason in reasons)
-    assert any("must link a declaration ledger" in reason for reason in reasons)
+
+
+def test_audit_reports_a_catalog_that_links_no_ledger_under_sources(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    _article(blueprint, "existing-module.md", catalog="module", sources=("https://example.com/ledger.md",))
+
+    assert _finding_map(blueprint)["roadmap/existing-module.md"] == [
+        (
+            "catalog-missing-ledger",
+            "module catalog links no declaration ledger under blueprint/sources/ from '## Sources'",
+        )
+    ]
 
 
 def test_audit_reports_a_catalog_container_once(tmp_path: Path) -> None:

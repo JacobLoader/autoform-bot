@@ -1858,12 +1858,11 @@ def test_an_orphaned_implementation_note_stops_the_render(tmp_path: Path) -> Non
     assert not (tmp_path / "out").exists()
 
 
-def test_the_dashboard_copy_holds_the_ledgers_and_atlas_the_graph_reads(tmp_path: Path) -> None:
-    """The dashboard loads its graph from a partial copy of the capture.
+def test_the_dashboard_copy_holds_the_atlas_the_graph_reads(tmp_path: Path) -> None:
+    """The dashboard loads its graph from a copy of the articles and atlas.json.
 
-    A copy of the roadmap alone failed every catalog's ledger check, so the
-    live overlay reported an error for any blueprint with a catalog, and it
-    lost the areas that atlas.json assigns.
+    A copy of the roadmap alone lost the areas that atlas.json assigns. The
+    catalog's ledger stays out of the copy, since the graph never reads it.
     """
     project = _project(tmp_path)
     blueprint = project / "blueprint"

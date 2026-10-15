@@ -253,11 +253,6 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
                     f"{parsed_node.id}: formalized module catalog must list exact "
                     "compiled names in 'lean'"
                 )
-            if not _catalog_has_local_ledger(parsed_node, blueprint):
-                issues.append(
-                    f"{parsed_node.id}: module catalog must link a declaration ledger "
-                    "under blueprint/sources from its '## Sources' section"
-                )
         nodes[parsed_node.id] = Node(
             id=parsed_node.id,
             title=parsed_node.title,
@@ -351,28 +346,30 @@ def _atlas_assignments(blueprint: Path, nodes: dict[str, Node]) -> tuple[dict[st
     return assigned, omissions
 
 
-def _catalog_has_local_ledger(node: _ParsedNode, blueprint: Path) -> bool:
-    sources = (blueprint / "sources").resolve()
-    for target in node.source_targets:
-        try:
-            split = urlsplit(target)
-        except ValueError:
-            continue
-        if split.scheme or split.netloc or split.query or not split.path:
-            continue
-        path = Path(unquote(split.path))
-        if path.is_absolute():
-            continue
-        try:
-            candidate = (node.path.parent / path).resolve()
-            candidate.relative_to(sources)
-        except (OSError, RuntimeError, ValueError):
-            # Before Python 3.13 a symlink loop raises RuntimeError here; a loop is never a ledger.
-            continue
-        # Before Python 3.14, `Path.is_file` raises under an unreadable directory.
-        if os.path.isfile(candidate):
-            return True
-    return False
+def catalogs_without_ledger(graph: Graph) -> list[str]:
+    """Name each module catalog with no ``## Sources`` link into ``blueprint/sources/``.
+
+    The catalog contract asks for a declaration ledger there. A link that points
+    there at no file is a dead source link, which check and audit report for
+    every article, so this reads the links alone and touches no file.
+    """
+    sources = graph.blueprint_dir / "sources"
+    return [
+        node.id
+        for node in graph.nodes.values()
+        if node.catalog is not None and not any(_links_into(node.path, target, sources) for target in node.sources)
+    ]
+
+
+def _links_into(article: Path, target: str, directory: Path) -> bool:
+    """Whether the local link ``target`` in ``article`` points beneath ``directory``."""
+    try:
+        split = urlsplit(target)
+    except ValueError:
+        return False
+    if split.scheme or split.netloc or not split.path:
+        return False
+    return directory in Path(os.path.normpath(article.parent / unquote(split.path))).parents
 
 
 def _discover_nodes(blueprint: Path) -> tuple[list[_NodeSource], list[str]]:
@@ -1055,5 +1052,6 @@ __all__ = [
     "GraphValidationError",
     "Node",
     "atlas_omissions",
+    "catalogs_without_ledger",
     "load_graph",
 ]

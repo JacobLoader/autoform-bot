@@ -20,7 +20,7 @@ from .audit import audit_blueprint
 from .claims import CLAIM_TTL_S, ClaimBoard, ClaimTransportError, author_claim_key
 from .doctor import diagnose_project
 from .dashboard import publication_bound_live_state, serve_dashboard
-from .graph import Graph, GraphValidationError, atlas_omissions, load_graph
+from .graph import Graph, GraphValidationError, atlas_omissions, catalogs_without_ledger, load_graph
 from .impact import (
     ImpactError,
     format_impact,
@@ -634,6 +634,10 @@ def _check(args: argparse.Namespace) -> int:
         print(f"warning: {omission}")
     for omission in atlas_omissions(graph):
         print(f"warning: atlas.json: {omission}")
+    for node_id in catalogs_without_ledger(graph):
+        print(
+            f"warning: {node_id}: module catalog links no declaration ledger under blueprint/sources/ from '## Sources'"
+        )
     for warning in _byte_order_mark_warnings(graph):
         print(f"warning: {warning}")
     return 0
