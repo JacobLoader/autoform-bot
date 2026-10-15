@@ -1528,6 +1528,18 @@ def test_roadmap_reconciles_the_pages_setup_wrote(repo_root: Path) -> None:
         assert required in roadmap, f"Roadmap never reconciles {required}"
 
 
+def test_roadmap_retracts_against_the_branch_formalize_works_from(repo_root: Path) -> None:
+    """A Formalize run without claims never sees Roadmap's claim.
+
+    If Roadmap looks for `lean:` only on its own branch, an article Formalize
+    formalized meanwhile keeps `statement: formalized` through a clean rebase
+    although the revision changed its statement, and check and audit both pass.
+    """
+
+    roadmap = " ".join((repo_root / "skills/roadmap/SKILL.md").read_text(encoding="utf-8").split())
+    assert "whose article has `lean:` once rebased onto the branch Formalize works from, retract it" in roadmap
+
+
 def test_roadmap_repository_scope_inventories_existing_lean(repo_root: Path) -> None:
     """A global blueprint is a catalog, not merely a future-work backlog.
 

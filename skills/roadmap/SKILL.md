@@ -167,8 +167,9 @@ editing and release it once the committed revision is on the branch Formalize
 works from. A refused acquire means another agent owns the article: leave it and
 report it. Claims write refs to the board's remote, which is outward-facing, so
 make sure the request covers them. When a revision changes a statement whose
-article has `lean:`, retract it: replace `statement: formalized` with
-`statement: retracted`, remove `proof: formalized`, and keep `lean:`, which
+article has `lean:` once rebased onto the branch Formalize works from, retract
+it: replace `statement: formalized` with `statement: retracted`, remove
+`proof: formalized`, and keep `lean:`, which
 Formalize needs to run `autoform work impact`; an article without `lean:` just
 loses `statement` and `proof`. When the project's CI pins an `AUTOFORM_REF`
 older than the marker, its `autoform check` rejects `statement: retracted`:
