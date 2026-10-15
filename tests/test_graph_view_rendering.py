@@ -56,6 +56,7 @@ def test_full_view_payload_is_deterministic_layout_ready_and_data_only(tmp_path:
     assert len(payload["nodes"]) == 170
     assert payload["edge_count"] == 169
     assert payload["view"] == {
+        "book": None,
         "breadcrumbs": [],
         "kind": "full",
         "presentation": "dag",
@@ -74,7 +75,6 @@ def test_full_view_payload_is_deterministic_layout_ready_and_data_only(tmp_path:
     assert payload["nodes"][0]["isolated"] is False
     assert payload["palette"]["inventory_checked"]["label"] == "inventory checked"
     assert payload["palette"]["inventory_checked"]["neutral"] is True
-    assert payload["palette"]["inventory_checked"]["light"] == payload["palette"]["planned"]["light"]
     assert max(node["layout"]["row"] for node in payload["nodes"]) < dag_viewer.MAX_LAYOUT_ROWS
     assert max(node["layout"]["column"] for node in payload["nodes"]) > 0
     positions = {(node["layout"]["x"], node["layout"]["y"]) for node in payload["nodes"]}
@@ -96,11 +96,12 @@ def test_full_view_payload_is_deterministic_layout_ready_and_data_only(tmp_path:
     assert '"Inventory statuses are neutral:' in script
 
 
-def test_a_pending_inventory_has_a_neutral_colour_of_its_own(tmp_path: Path) -> None:
-    """A catalog not yet checked is drawn apart from the checked ones and from every state.
+def test_each_inventory_has_a_neutral_colour_of_its_own(tmp_path: Path) -> None:
+    """Checked and pending catalogs are drawn apart from each other and from every state.
 
-    It is neutral like a checked inventory, but a ring holding both kinds
-    needs two greys, and borrowing a state's colour would read as target work.
+    Both are neutral, but a ring holding planned targets and both kinds of
+    inventory needs three greys, and borrowing a state's colour would read as
+    target work.
     """
     statuses = ("planned", "inventory_pending", "inventory_checked")
     view = GraphView(
@@ -129,12 +130,13 @@ def test_a_pending_inventory_has_a_neutral_colour_of_its_own(tmp_path: Path) -> 
     pending = payload["palette"]["inventory_pending"]
     assert pending["label"] == "inventory pending"
     assert pending["neutral"] is True
-    for scheme in ("light", "dark"):
-        assert all(
-            entry[scheme]["stroke"] != pending[scheme]["stroke"]
-            for key, entry in payload["palette"].items()
-            if key != "inventory_pending"
-        )
+    for inventory in ("inventory_checked", "inventory_pending"):
+        for scheme in ("light", "dark"):
+            assert all(
+                entry[scheme]["stroke"] != payload["palette"][inventory][scheme]["stroke"]
+                for key, entry in payload["palette"].items()
+                if key != inventory
+            )
 
 
 def test_isolated_inventory_does_not_spread_the_connected_dag() -> None:

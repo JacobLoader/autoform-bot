@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from .graph_views import INVENTORY_STATUSES, GraphView, ViewNode
-from .status import INVENTORY_STATES, STATES
+from .status import INVENTORY_STATES, MEANINGS, STATES
 
 SCHEMA = "autoform-dag-view/v2"
 SEARCH_SCHEMA = "autoform-dag-search/v1"
@@ -244,22 +244,17 @@ def _atlas_regions(view: GraphView, positions: Mapping[str, Mapping[str, int]]) 
 
 
 def _palette() -> dict[str, dict[str, object]]:
-    palette: dict[str, dict[str, object]] = {
+    """Name, explain and colour every status, so the explorer's swatches are its legend."""
+    return {
         state.key: {
             "label": state.label,
+            "meaning": MEANINGS[state.key],
+            **({"neutral": True} if state in INVENTORY_STATES else {}),
             "light": {"fill": state.fill, "stroke": state.stroke, "text": state.text},
             "dark": {"fill": state.dark_fill, "stroke": state.dark_stroke, "text": state.dark_text},
         }
-        for state in STATES
+        for state in (*STATES, *INVENTORY_STATES)
     }
-    for state in INVENTORY_STATES:
-        palette[state.key] = {
-            "label": state.label,
-            "neutral": True,
-            "light": {"fill": state.fill, "stroke": state.stroke, "text": state.text},
-            "dark": {"fill": state.dark_fill, "stroke": state.dark_stroke, "text": state.dark_text},
-        }
-    return palette
 
 
 def _display_status(node: ViewNode) -> str:
@@ -288,8 +283,12 @@ def write_payload(
     *,
     links: Mapping[str, str],
     breadcrumbs: Iterable[tuple[str, str | None]] = (),
+    book: str | None = None,
 ) -> Path:
-    """Write the deterministic layout and data one explorer page draws."""
+    """Write the deterministic layout and data one explorer page draws.
+
+    *book* links a chapter's explorer to the chapter's textbook page.
+    """
     positions = _positions(view)
     degrees: dict[str, int] = {node.id: 0 for node in view.nodes}
     for edge in view.edges:
@@ -345,6 +344,7 @@ def write_payload(
                 {"label": label, "url": url}
                 for label, url in breadcrumbs
             ],
+            "book": book,
             "kind": view.kind,
             "presentation": "atlas" if _uses_atlas(view) else "dag",
             "summary": view.summary,
@@ -472,7 +472,6 @@ body.bp-dag-app-page .md-main__inner { width: 100%; max-width: none; margin: 0; 
 body.bp-dag-app-page .md-content { max-width: none; }
 body.bp-dag-app-page .md-content__inner { margin: 0; padding: 0; }
 body.bp-dag-app-page .md-content__inner::before,
-body.bp-dag-app-page .md-content__inner > h1,
 body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-viewer *, .bp-dag-viewer *::before, .bp-dag-viewer *::after { box-sizing: border-box; }
 .bp-dag-viewer [hidden] { display: none !important; }
@@ -483,6 +482,9 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-viewer.bp-dag-viewer .bp-dag-breadcrumb li { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bp-dag-breadcrumb li + li::before { content: "/"; margin-right: .35rem; color: var(--dag-border); }
 .bp-dag-breadcrumb [aria-current=page] { color: var(--dag-fg); font-weight: 650; }
+.bp-dag-book { flex: none; color: var(--dag-link); font-size: .72rem; font-weight: 650; text-decoration: none; }
+.bp-dag-swatch { flex: none; width: .7rem; height: .7rem; border: 2px solid var(--dag-swatch-light-stroke); border-radius: 50%; background: var(--dag-swatch-light-fill); }
+[data-md-color-scheme=slate] .bp-dag-swatch { border-color: var(--dag-swatch-dark-stroke); background: var(--dag-swatch-dark-fill); }
 .bp-dag-view-kind { flex: none; padding: .18rem .45rem; border: 1px solid var(--dag-border); border-radius: 999px; color: var(--dag-muted); font-size: .64rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
 .bp-dag-toolbar { display: flex; align-items: center; gap: .42rem; min-height: 3.35rem; padding: .35rem .65rem .6rem; font-size: .76rem; }
 .bp-dag-search-wrap { position: relative; flex: 1 1 17rem; min-width: 10rem; max-width: 31rem; }
@@ -581,13 +583,14 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-relation-button:hover { text-decoration: underline; }
 .bp-dag-distribution { display: grid; gap: .3rem; margin: .4rem 0 0; }
 .bp-dag-distribution-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .4rem; color: var(--dag-muted); font-size: .68rem; }
+.bp-dag-distribution-label { display: flex; align-items: center; gap: .4rem; min-width: 0; }
 .bp-dag-loading, .bp-dag-error { margin: 0; padding: 1rem; }
 .bp-dag-error { color: #b42318; }
 .bp-dag-fallback { min-height: 0; overflow: auto; padding: 0 1rem 1rem; color: var(--dag-muted); }
 .bp-dag-fallback p { max-width: 48rem; }
 .bp-dag-fallback-list { display: grid; gap: .3rem; margin: .8rem 0; padding-left: 1.4rem; }
 .bp-dag-viewer.bp-dag-enhancing .bp-dag-fallback { display: none; }
-.bp-dag-sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
+.bp-dag-sr-only, body.bp-dag-app-page .md-content__inner > h1 { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
 @media (max-width: 900px) {
   .bp-dag-viewer:not([data-layout=app]) { height: max(40rem, calc(100svh - 4.5rem)); }
   .bp-dag-viewer.bp-dag-has-selection .bp-dag-body { grid-template-columns: minmax(0, 1fr) 17rem; }
@@ -763,6 +766,8 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
         crumbList.appendChild(item);
       });
       crumbs.appendChild(crumbList); context.appendChild(crumbs);
+      var book = safeHref(view.book);
+      if (book) { var bookLink = element("a", "bp-dag-book", "Open textbook chapter"); bookLink.href = book; context.appendChild(bookLink); }
       context.appendChild(element("span", "bp-dag-view-kind", atlas ? "knowledge atlas" : view.kind || "graph")); head.appendChild(context);
 
       var toolbar = element("div", "bp-dag-toolbar");
@@ -787,7 +792,8 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       presentStatuses.forEach(function (key) {
         var label = element("label", "bp-dag-check"), input = element("input");
         input.type = "checkbox"; input.checked = true; input.value = key; input.addEventListener("change", onStatusChange);
-        refs.statusInputs.set(key, input); label.appendChild(input); label.appendChild(document.createTextNode(statusLabel(key)));
+        refs.statusInputs.set(key, input); label.appendChild(input); label.appendChild(swatch(key));
+        label.appendChild(document.createTextNode(statusLabel(key)));
         label.appendChild(element("span", "bp-dag-check-count", String(statusCounts.get(key) || 0))); fieldset.appendChild(label);
       });
       refs.filterPopover.appendChild(fieldset); refs.filters.appendChild(refs.filterSummary); refs.filters.appendChild(refs.filterPopover);
@@ -903,6 +909,27 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
     }
 
     function statusLabel(key) { return palette[key] && palette[key].label ? palette[key].label : key.replace(/_/g, " "); }
+    function swatch(key) {
+      var entry = palette[key] || palette.planned || {}, mark = element("span", "bp-dag-swatch");
+      mark.title = entry.meaning || statusLabel(key);
+      ["light", "dark"].forEach(function (scheme) {
+        var color = entry[scheme] || {};
+        mark.style.setProperty("--dag-swatch-" + scheme + "-fill", color.fill || "transparent");
+        mark.style.setProperty("--dag-swatch-" + scheme + "-stroke", color.stroke || "#9ca3af");
+      });
+      return mark;
+    }
+    function distribution(title, rows) {
+      var section = element("section", "bp-dag-section"), list = element("div", "bp-dag-distribution");
+      section.appendChild(element("h3", "", title));
+      rows.forEach(function (row) {
+        var line = element("div", "bp-dag-distribution-row"), name = element("span", "bp-dag-distribution-label");
+        if (row[2]) name.appendChild(swatch(row[2]));
+        name.appendChild(document.createTextNode(row[0])); line.appendChild(name);
+        line.appendChild(element("span", "", String(row[1]))); list.appendChild(line);
+      });
+      section.appendChild(list); refs.inspectorInner.appendChild(section);
+    }
     function isDark() { return document.body.getAttribute("data-md-color-scheme") === "slate"; }
     function colors(node) {
       var entry = palette[node.status] || palette.planned || {};
@@ -1415,21 +1442,11 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
         if (atlas && !data.edges.length) refs.inspectorInner.appendChild(element("p", "bp-dag-overview",
           "No cross-topic dependency links are authored at this level. Bubble size shows scope; rings show formalization status. Select a topic to read its mathematical overview."));
         if (atlas && (data.regions || []).length) {
-          var regionSection = element("section", "bp-dag-section"); regionSection.appendChild(element("h3", "", "Mathematical regions"));
-          var regionRows = element("div", "bp-dag-distribution");
-          data.regions.forEach(function (region) {
-            var regionRow = element("div", "bp-dag-distribution-row"); regionRow.appendChild(element("span", "", region.label));
-            regionRow.appendChild(element("span", "", String(region.count))); regionRows.appendChild(regionRow);
-          });
-          regionSection.appendChild(regionRows); refs.inspectorInner.appendChild(regionSection);
+          distribution("Mathematical regions", data.regions.map(function (region) { return [region.label, region.count]; }));
         }
-        var statusSection = element("section", "bp-dag-section"); statusSection.appendChild(element("h3", "", "Status at this level"));
-        var statusRows = element("div", "bp-dag-distribution");
-        statusCounts.forEach(function (count, key) {
-          var statusRow = element("div", "bp-dag-distribution-row"); statusRow.appendChild(element("span", "", statusLabel(key)));
-          statusRow.appendChild(element("span", "", String(count))); statusRows.appendChild(statusRow);
-        });
-        statusSection.appendChild(statusRows); refs.inspectorInner.appendChild(statusSection);
+        distribution("Status at this level", Array.from(statusCounts, function (entry) {
+          return [statusLabel(entry[0]), entry[1], entry[0]];
+        }));
         if (statusCounts.has("inventory_checked") || statusCounts.has("inventory_pending")) refs.inspectorInner.appendChild(element("p", "bp-dag-overview",
           "Inventory statuses are neutral: an inventory records inspection, not a mathematical proof."));
         refs.inspectorInner.appendChild(element("p", "bp-dag-overview",
@@ -1474,14 +1491,9 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       var counts = node.status_counts || {};
       var entries = Array.isArray(counts) ? counts : Object.keys(counts).map(function (key) { return [key, counts[key]]; });
       if (entries.length > 1 || (node.member_count || 1) > 1) {
-        var distribution = element("section", "bp-dag-section");
-        distribution.appendChild(element("h3", "", (node.member_count || 1) + " items in this scope"));
-        var rows = element("div", "bp-dag-distribution");
-        entries.forEach(function (entry) {
-          var row = element("div", "bp-dag-distribution-row"); row.appendChild(element("span", "", statusLabel(entry[0])));
-          row.appendChild(element("span", "", String(entry[1]))); rows.appendChild(row);
-        });
-        distribution.appendChild(rows); refs.inspectorInner.appendChild(distribution);
+        distribution((node.member_count || 1) + " items in this scope", entries.map(function (entry) {
+          return [statusLabel(entry[0]), entry[1], entry[0]];
+        }));
       }
     }
     function appendRelations(label, ids) {

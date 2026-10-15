@@ -466,6 +466,10 @@ def test_atlas_bubbles_open_authored_mathematical_context(
     # Every topic of an edgeless atlas is isolated, so hiding them would empty the map.
     playwright.expect(page.locator(".bp-dag-isolated")).to_be_hidden()
     playwright.expect(page.locator(".bp-dag-inspector")).to_contain_text("Geometry & Topology")
+    # Each status row carries the swatch and meaning the hidden page legend held.
+    playwright.expect(
+        page.locator('.bp-dag-inspector .bp-dag-swatch[title="Proved, and every prerequisite is fully proved too."]')
+    ).to_have_count(1)
     playwright.expect(page.locator(".bp-dag-inspector")).to_contain_text(
         "No cross-topic dependency links are authored"
     )
@@ -773,3 +777,15 @@ def test_a_published_app_page_restores_the_site_chrome_when_its_data_fails(
     playwright.expect(page.locator(".bp-dag-error")).to_contain_text("HTTP 404")
     _assert_site_chrome_is_reachable(page)
     assert "bp-dag-app-page" not in (page.locator("body").get_attribute("class") or "")
+
+
+def test_a_published_chapter_explorer_links_its_textbook_chapter_and_keeps_its_heading(
+    desktop_page: object, site_url: str
+) -> None:
+    """Script hides the page heading and navigation behind the explorer, so the explorer carries them."""
+    page = _offline(desktop_page, site_url)
+    page.goto(f"{site_url}/dependencies/chapters/algebra.html")
+    page.locator(".bp-dag-node").first.wait_for()
+    playwright.expect(page.locator(".bp-dag-book")).to_have_attribute("href", "../../roadmap/algebra/index.html")
+    playwright.expect(page.locator(".bp-dag-book")).to_be_visible()
+    playwright.expect(page.get_by_role("heading", level=1)).to_have_text("Algebra dependencies")

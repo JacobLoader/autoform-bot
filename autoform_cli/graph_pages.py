@@ -158,6 +158,8 @@ def write_graph_pages(
             _write_page(
                 chapter_page,
                 view=view,
+                # Script hides the navigation that carries this link, so the explorer carries it.
+                book=_published_link(book_page, chapter_page),
                 statuses=_selected_statuses(graph, statuses, view, containers),
                 links=links,
                 heading=_dependency_heading(view),
@@ -281,6 +283,7 @@ def _write_page(
     page: Path,
     *,
     view: GraphView,
+    book: str | None = None,
     statuses: dict[str, NodeStatus],
     links: Mapping[str, str],
     heading: str,
@@ -300,6 +303,7 @@ def _write_page(
         replace(view, title=heading),
         links=links,
         breadcrumbs=breadcrumbs,
+        book=book,
     )
     explorer = dag_viewer.render_container(
         quote(payload.name),

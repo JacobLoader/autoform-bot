@@ -17,7 +17,7 @@ from urllib.parse import quote
 from typing import TYPE_CHECKING
 
 from .graph_views import container_nodes, display_status_key, inventory_counts, inventory_state, scope_target_statuses
-from .status import INVENTORY_STATES, STATES, State, is_definition
+from .status import INVENTORY_STATES, MEANINGS, STATES, State, is_definition
 
 if TYPE_CHECKING:
     from .graph import Graph, Node
@@ -197,7 +197,7 @@ def render_legend(
             f'<span class="bp-swatch bp-swatch-{state.key}"></span>'
             f'<span class="bp-legend-label">{html.escape(state.label)}</span>'
             f'<span class="bp-legend-count">{counts[state.key]}</span>'
-            f'<span class="bp-legend-meaning">{html.escape(_MEANINGS[state.key])}</span>'
+            f'<span class="bp-legend-meaning">{html.escape(MEANINGS[state.key])}</span>'
         )
     return f'<div class="bp-legend-grid">{"".join(cells)}</div>'
 
@@ -236,21 +236,6 @@ def render_legend_tip(
         "</span>"
     )
 
-
-_MEANINGS = {
-    "mathlib": "Upstreamed into Mathlib.",
-    "fully_proved": "Proved, and every prerequisite is fully proved too.",
-    "proved": "Proof compiles, but something it rests on is not finished.",
-    "defined": "Definition is written in Lean.",
-    "conditional": "Proof compiles, but rests on an open statement without a recorded Lean proof.",
-    "can_prove": "Statement is in Lean and nothing it needs is blocked, so the proof can start.",
-    "stated": "Statement is in Lean; the proof is not.",
-    "can_state": "Nothing it needs is blocked, so the statement can be written in Lean.",
-    "not_ready": "Needs more blueprint work before it can be attempted.",
-    "planned": "Described in the blueprint only.",
-    "inventory_checked": "Module inventory checked in full; it records inspection, not a mathematical proof.",
-    "inventory_pending": "Module inventory not yet checked in full; it records inspection, not a mathematical proof.",
-}
 
 _STATE_LABELS = {state.key: state.label for state in (*STATES, *INVENTORY_STATES)}
 
