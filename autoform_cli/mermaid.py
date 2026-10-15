@@ -20,7 +20,7 @@ from .status import INVENTORY_STATES, STATES, State, is_definition
 
 if TYPE_CHECKING:
     from .graph import Graph, Node
-    from .graph_views import GraphView, ViewEdge, ViewNode
+    from .graph_views import ViewNode
     from .status import NodeStatus
 
 
@@ -117,54 +117,8 @@ def render_diagram(
     return "\n".join(lines)
 
 
-def render_view_diagram(
-    view: GraphView,
-    *,
-    links: dict[str, str] | None = None,
-    include_classdefs: bool = True,
-) -> str:
-    """Return a Mermaid diagram for a project, chapter, focus, or full view."""
-    if not view.nodes:
-        return '```mermaid\ngraph LR\n  empty["No nodes in this view"]\n```'
-    links = links or {}
-    handles = {node.id: f"n{index}" for index, node in enumerate(view.nodes)}
-    lines = ["```mermaid", "graph LR"]
-
-    for node in view.nodes:
-        handle = handles[node.id]
-        label = _view_label(node)
-        if node.kind == "node":
-            shape = f'["{label}"]' if is_definition(node) else f'("{label}")'
-            class_name = node.status_key or "planned"
-        else:
-            shape = f'["{label}"]'
-            class_name = _scope_class(node.complete) if node.kind == "scope" else "boundary"
-        lines.append(f"  {handle}{shape}:::{class_name}")
-
-    for edge in view.edges:
-        lines.extend(_view_edge_lines(edge, handles))
-
-    for node in view.nodes:
-        handle = handles[node.id]
-        if node.focus:
-            lines.append(f"  class {handle} focus")
-        href = links.get(node.id)
-        if href is not None:
-            tooltip = _escape(f"{node.title} — {_view_summary(node)}")
-            lines.append(f'  click {handle} "{href}" "{tooltip}"')
-
-    if include_classdefs:
-        lines.extend(f"  {line}" for line in classdef_lines())
-    lines.append("```")
-    return "\n".join(lines)
-
-
 def _view_label(node: ViewNode) -> str:
-    title = _escape(node.title)
-    if node.kind == "node":
-        return title
-    prefix = "External chapter: " if node.kind == "boundary" else ""
-    return f"{prefix}{title}<br/><small>{_escape(_view_summary(node))}</small>"
+    return f"{_escape(node.title)}<br/><small>{_escape(_view_summary(node))}</small>"
 
 
 def _view_summary(node: ViewNode) -> str:
@@ -174,21 +128,6 @@ def _view_summary(node: ViewNode) -> str:
         for key, count in node.status_counts
     )
     return f"{node.item_count} {item}" + (f" · {counts}" if counts else "")
-
-
-def _view_edge_lines(edge: ViewEdge, handles: dict[str, str]) -> list[str]:
-    source = handles[edge.source]
-    target = handles[edge.target]
-    lines = []
-    if edge.statement_count:
-        label = f"|{edge.statement_count}|" if edge.statement_count > 1 else ""
-        lines.append(f"  {source} -->{label} {target}")
-    if edge.proof_count:
-        if edge.proof_count > 1:
-            lines.append(f"  {source} -. {edge.proof_count} .-> {target}")
-        else:
-            lines.append(f"  {source} -.-> {target}")
-    return lines
 
 
 def _scope_class(complete: bool) -> str:
@@ -374,6 +313,5 @@ __all__ = [
     "render_legend",
     "render_legend_tip",
     "render_page",
-    "render_view_diagram",
     "source_links",
 ]

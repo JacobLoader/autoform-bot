@@ -16,7 +16,7 @@ from .graph import Graph, Node
 from .status import INVENTORY_STATES, STATES, NodeStatus, State, topological_order
 
 
-ViewKind = Literal["project", "chapter", "focus", "full"]
+ViewKind = Literal["project", "chapter", "full"]
 NodeKind = Literal["scope", "boundary", "node"]
 
 # source, target, proof-only, then each endpoint's direct child of the viewed
@@ -38,7 +38,6 @@ class ViewNode:
     status_counts: tuple[tuple[str, int], ...]
     declaration: str | None = None
     status_key: str | None = None
-    focus: bool = False
     complete: bool = False
     catalog: str | None = None
     summary: str | None = None
@@ -74,8 +73,6 @@ class GraphView:
     nodes: tuple[ViewNode, ...]
     edges: tuple[ViewEdge, ...]
     scope: str | None = None
-    focus: str | None = None
-    radius: int | None = None
     summary: str | None = None
 
     @property
@@ -364,127 +361,9 @@ def _scope_view(
     )
 
 
-def focus_view(
-    graph: Graph,
-    statuses: dict[str, NodeStatus],
-    node_id: str,
-    *,
-    radius: int = 1,
-) -> GraphView:
-    """Show *node_id* and the undirected dependency neighborhood around it."""
-    if node_id not in graph.nodes:
-        raise KeyError(f"unknown blueprint node: {node_id}")
-    if radius < 0:
-        raise ValueError("focus radius must be non-negative")
-    return _focus_view(
-        graph,
-        statuses,
-        node_id,
-        radius=radius,
-        adjacency=_adjacency(graph),
-        order_index={candidate: index for index, candidate in enumerate(topological_order(graph))},
-        containers=container_nodes(graph, statuses),
-    )
-
-
-def focus_views(
-    graph: Graph,
-    statuses: dict[str, NodeStatus],
-    *,
-    radius: int = 1,
-    containers: dict[str, ViewNode] | None = None,
-) -> dict[str, GraphView]:
-    """Build every local view while sharing the graph-wide indexes.
-
-    Programmatic consumers that need all local views can avoid recomputing
-    adjacency and topological order for every node. Static publication uses the
-    shared hash-addressable explorer instead of emitting one HTML page per node.
-    """
-    if radius < 0:
-        raise ValueError("focus radius must be non-negative")
-    adjacency = _adjacency(graph)
-    order_index = {candidate: index for index, candidate in enumerate(topological_order(graph))}
-    if containers is None:
-        containers = container_nodes(graph, statuses)
-    return {
-        node_id: _focus_view(
-            graph,
-            statuses,
-            node_id,
-            radius=radius,
-            adjacency=adjacency,
-            order_index=order_index,
-            containers=containers,
-        )
-        for node_id in graph.nodes
-    }
-
-
-def _focus_view(
-    graph: Graph,
-    statuses: dict[str, NodeStatus],
-    node_id: str,
-    *,
-    radius: int,
-    adjacency: dict[str, set[str]],
-    order_index: dict[str, int],
-    containers: dict[str, ViewNode],
-) -> GraphView:
-    selected = {node_id}
-    frontier = {node_id}
-    for _ in range(radius):
-        frontier = set().union(*(adjacency[candidate] for candidate in frontier)) - selected
-        selected.update(frontier)
-        if not frontier:
-            break
-
-    view = _node_view(
-        graph,
-        statuses,
-        sorted(selected, key=order_index.__getitem__),
-        ordered=True,
-        containers=containers,
-    )
-    nodes = tuple(
-        ViewNode(
-            id=node.id,
-            title=node.title,
-            kind=node.kind,
-            members=node.members,
-            status_counts=node.status_counts,
-            declaration=node.declaration,
-            catalog=node.catalog,
-            status_key=node.status_key,
-            focus=node.id == node_id,
-            complete=node.complete,
-            summary=node.summary,
-            lean=node.lean,
-            area=node.area,
-            internal_dependency_count=node.internal_dependency_count,
-        )
-        for node in view.nodes
-    )
-    return GraphView(
-        kind="focus",
-        title=f"{graph.nodes[node_id].title}: local context",
-        nodes=nodes,
-        edges=view.edges,
-        focus=node_id,
-        radius=radius,
-        summary=graph.nodes[node_id].summary,
-    )
-
-
-def full_view(
-    graph: Graph,
-    statuses: dict[str, NodeStatus],
-    *,
-    containers: dict[str, ViewNode] | None = None,
-) -> GraphView:
+def full_view(graph: Graph, statuses: dict[str, NodeStatus]) -> GraphView:
     """Present every article and dependency, with container status rolled up."""
-    if containers is None:
-        containers = container_nodes(graph, statuses)
-    view = _node_view(graph, statuses, graph.nodes, containers=containers)
+    view = _node_view(graph, statuses, graph.nodes, containers=container_nodes(graph, statuses))
     return GraphView(
         kind="full",
         title="Full dependency graph",
@@ -499,14 +378,11 @@ def _node_view(
     statuses: dict[str, NodeStatus],
     selected: Iterable[str],
     *,
-    ordered: bool = False,
     containers: dict[str, ViewNode],
 ) -> GraphView:
-    ordered_ids = list(selected)
+    order_index = {node_id: index for index, node_id in enumerate(topological_order(graph))}
+    ordered_ids = sorted(selected, key=order_index.__getitem__)
     selected_ids = frozenset(ordered_ids)
-    if not ordered:
-        order_index = {node_id: index for index, node_id in enumerate(topological_order(graph))}
-        ordered_ids.sort(key=order_index.__getitem__)
     # A container is a chapter or section page, not a result: drawing it as a
     # theorem gave it the "ready to state" status of an empty statement.
     nodes = tuple(
@@ -524,14 +400,6 @@ def _node_view(
             if source in selected_ids and source not in statement:
                 edge_counts[(source, target)][1] += 1
     return GraphView(kind="full", title="", nodes=nodes, edges=_edges(edge_counts))
-
-
-def _adjacency(graph: Graph) -> dict[str, set[str]]:
-    adjacency: dict[str, set[str]] = {candidate: set() for candidate in graph.nodes}
-    for source, target, _ in _relations(graph):
-        adjacency[source].add(target)
-        adjacency[target].add(source)
-    return adjacency
 
 
 def _project_edges(graph: Graph, children: dict[str, tuple[str, ...]]) -> tuple[ViewEdge, ...]:
@@ -644,12 +512,7 @@ def _scope_node(
 
 
 def container_nodes(graph: Graph, statuses: dict[str, NodeStatus]) -> dict[str, ViewNode]:
-    """Every container as it appears in a node-level view.
-
-    A caller that builds several node-level views can build this once and pass
-    it to ``focus_views`` and ``full_view``, so the containment index is not
-    rebuilt per view.
-    """
+    """Every container as it appears in a node-level view."""
     children = _containment_children(graph)
     internal_counts = _internal_dependency_counts(graph, children)
     return {
@@ -833,8 +696,6 @@ __all__ = [
     "ViewNode",
     "chapter_view",
     "container_nodes",
-    "focus_view",
-    "focus_views",
     "full_view",
     "group_id",
     "group_nodes",
