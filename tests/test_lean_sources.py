@@ -2874,6 +2874,38 @@ def test_oversized_managed_manifest_leaves_its_directory_indexed_at_its_read_bou
     assert index.find("oversizedPacket") is not None
 
 
+def test_only_a_complete_publication_manifest_hides_its_folder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Render copies a blueprint's Lean files into its site and mkdocs copies the
+    # site again, manifest included; both copies go stale when the source changes.
+    complete = {"complete": True, "schema": "autoform-publication/v2"}
+    manifests = {
+        "site-src": complete,
+        "site": complete,
+        "legacy": {**complete, "schema": "autoform-publication/v1"},
+        "unfinished": {**complete, "complete": False},
+        "web": {"name": "web app"},
+        "padded": {**complete, "padding": "x" * 64},
+    }
+    for folder, manifest in manifests.items():
+        (tmp_path / folder / "Copy").mkdir(parents=True)
+        (tmp_path / folder / "publication.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (tmp_path / folder / "Copy" / "Proofs.lean").write_text("theorem stale : True := trivial\n")
+    (tmp_path / "Proofs.lean").write_text("theorem renamed : True := trivial\n")
+    monkeypatch.setattr(lean_module, "PUBLICATION_MANIFEST_MAX_BYTES", 64, raising=False)
+
+    snapshot = snapshot_project_sources(tmp_path)
+
+    assert sorted(path.as_posix() for path, _data in snapshot.source_files) == [
+        "Proofs.lean",
+        "padded/Copy/Proofs.lean",
+        "unfinished/Copy/Proofs.lean",
+        "web/Copy/Proofs.lean",
+    ]
+
+
 def test_irreducible_definitions_are_indexed(tmp_path: Path) -> None:
     index = _index(tmp_path, "namespace A\nirreducible_def b : Nat := 1\nend A\n")
 

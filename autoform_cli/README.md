@@ -1002,19 +1002,26 @@ rather than indexing what it could, when an entry it must read cannot be read
 safely: a `.lean` file that cannot be read, a folder that cannot be listed or
 searched, a `.lean` entry that is a symbolic link or a special file (editor
 lock links named `.#*.lean` are skipped), or an unreadable `manifest.json`
-below the root, which is read to recognize skeleton output folders. `render`
-also stops at an unreadable `publication.json` below the root, which it reads
-to recognize rendered sites. These stops apply in every folder the walk
+below the root, which is read to recognize skeleton output folders, or an
+unreadable `publication.json` below the root, which is read to recognize
+rendered sites. These stops apply in every folder the walk
 enters, so an unreadable folder of unrelated files inside the Lean root stops
 indexing too; other files are never read. `render` without `--lean-root` uses
 the blueprint's parent folder as the Lean root. To clear a stop, fix the
 permissions, or move the entry out of the Lean root or into a folder the walk
 skips: `.direnv`, `.git`, `.lake`, `.obsidian`, `.trash`, `.venv`,
 `build`, a folder below the root that holds a `.git` entry, a
-recognized skeleton output folder, or, for `render`, a rendered site. There is
-no command-line option to exclude other folders. The skipped folder names and
-the `manifest.json`, `publication.json` and `.git` names match in any letter
-case, except `build`, which must be lowercase. The `.lean` suffix must match
+recognized skeleton output folder, or a folder below the root that holds a
+complete `publication.json`, such as a rendered site or the `mkdocs` copy of
+one. Every command skips these folders, so `render` and the other commands
+index the same files. `render` marks the site it is writing before it copies
+any file into it, so a command that indexes during a render skips it too.
+`mkdocs build` empties `site/` and then copies files in name order, so `site/`
+can hold copies before its `publication.json`; a command that indexes during
+the build can read them, so run it again once the build is done. There is no
+command-line option to exclude other folders. The skipped folder names and the
+`manifest.json`, `publication.json` and `.git` names match in any letter case,
+except `build`, which must be lowercase. The `.lean` suffix must match
 exactly, so `A.LEAN` is not indexed.
 
 A capture rechecks only what the index uses: each captured `.lean` file must
