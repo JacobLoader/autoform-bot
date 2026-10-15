@@ -798,11 +798,24 @@ def test_reselect_does_not_duplicate_history_and_back_restores_selection(
     assert page.evaluate("history.length") == after_first_selection == initial_length + 1
 
     target.click()
+    # Focus follows the click two frames later; waiting for it keeps it from
+    # landing during the arrow keys below.
+    playwright.expect(target).to_be_focused()
     assert page.evaluate("history.length") == initial_length + 2
     page.evaluate("history.back()")
     page.wait_for_function("location.hash.includes('chapter%2Ffoundation')")
     playwright.expect(page.locator(".bp-dag-inspector h2")).to_have_text("Foundation")
     playwright.expect(foundation).to_have_attribute("data-selected", "true")
+
+    # Arrow keys browse without a history entry per step, so one Back undoes them all.
+    middle = page.locator('[data-autoform-node-id="chapter/middle"]')
+    foundation.focus()
+    foundation.press("ArrowRight")
+    playwright.expect(middle).to_be_focused()
+    middle.press("ArrowRight")
+    playwright.expect(target).to_be_focused()
+    page.evaluate("history.back()")
+    page.wait_for_function("!location.hash.includes('node=')")
 
 
 def test_hiding_the_selected_status_clears_selection(
