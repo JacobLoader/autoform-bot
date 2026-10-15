@@ -200,6 +200,7 @@ class BoundProjectSources:
         *,
         names: Iterable[str] | None = None,
     ) -> IndexedSourceSnapshot:
+        """Capture the bound sources; *names* filters the index as for :func:`index_project`."""
         snapshot = self.tree.capture()
         return _indexed_source_snapshot(self.root, snapshot, names=names)
 
@@ -265,6 +266,11 @@ def index_project(
     names: Iterable[str] | None = None,
 ) -> SourceIndex:
     """Scan ``*.lean`` beneath *root* and index declarations by full name.
+
+    With *names*, only files that may declare one of their last components are
+    scanned, so :meth:`SourceIndex.find` answers only for the requested names.
+    Every declaration of a scanned file is still indexed, same-file alias
+    targets included, and the line counts and digest still cover every file.
 
     Raises :class:`LeanSourceError` when the root cannot be used or its
     sources cannot be read.
@@ -355,7 +361,8 @@ def snapshot_project_sources(
     """Read each Lean source once and derive its index and revision together.
 
     A bind or capture that races a concurrent edit is retried a bounded number
-    of times.
+    of times. *names* filters the index as for :func:`index_project`; the
+    source files and both revisions still cover every file.
     """
 
     requested_names = None if names is None else tuple(names)
