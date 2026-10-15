@@ -294,7 +294,7 @@ def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path
     assert "Delete it when the article is proved or marked `mathlib: true`" in roadmap
     assert (
         "delete a container's note when every formalizable descendant, and every leaf marked `not_ready` "
-        "beneath it, is proved and there is at least one"
+        "beneath it, is proved and there is at least one; a module catalog never counts"
         in roadmap
     )
     assert "an orphaned note blocks every command that loads the graph" in roadmap
@@ -313,7 +313,7 @@ def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path
     assert "Versioned implementation notes live outside the mathematical roadmap" in reference
     assert (
         "delete it once every formalizable descendant, and every leaf marked `not_ready` beneath it, "
-        "is proved and there is at least one" in reference
+        "is proved and there is at least one; a module catalog never counts" in reference
     )
     assert "Record what happened in the revision commit and report" in reference
     assert (

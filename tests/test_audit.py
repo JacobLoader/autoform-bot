@@ -326,6 +326,39 @@ def test_a_container_note_counts_a_leaf_marked_not_ready_as_the_site_does(tmp_pa
     assert findings == (set() if layout == "deferred-leaf" else stale)
 
 
+@pytest.mark.parametrize("proved", [False, True])
+def test_a_container_note_never_counts_a_catalog_marked_not_ready(tmp_path: Path, proved: bool) -> None:
+    # The site counts no catalog as a target, so a catalog neither holds a note nor makes it stale.
+    blueprint = tmp_path / "blueprint"
+    _coverage(
+        blueprint,
+        "| Area | Coverage | Evidence |\n| --- | --- | --- |\n"
+        "| Inventory | INVENTORIED | [Chapter](../roadmap/chapter/README.md) |",
+    )
+    (blueprint / "sources").mkdir()
+    (blueprint / "sources/ledger.md").write_text("# Ledger\n", encoding="utf-8")
+    container_id = "af_0123456789abcdef01234567"
+    _article(blueprint, "chapter/README.md", article_id=container_id)
+    checked = {"statement": "formalized", "proof": "formalized"}
+    _article(
+        blueprint,
+        "chapter/inventory.md",
+        sources=("../../sources/ledger.md",),
+        catalog="module",
+        not_ready="true",
+        **({"lean": "Project.inventory", **checked} if proved else {}),
+    )
+    if not proved:
+        _article(blueprint, "chapter/done.md", declaration="theorem", lean="Project.done", **checked)
+    notes = blueprint / ".implementation-notes"
+    notes.mkdir()
+    (notes / f"{container_id}.md").write_text("chapter route\n", encoding="utf-8")
+
+    findings = {(finding.article_path, finding.code) for finding in audit_blueprint(blueprint).findings}
+
+    assert findings == (set() if proved else {("roadmap/chapter/README.md", "stale-implementation-note")})
+
+
 def test_container_note_without_formalizable_descendants_is_not_stale(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)
