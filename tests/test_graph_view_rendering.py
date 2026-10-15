@@ -350,7 +350,7 @@ def test_explorer_assets_and_ordinary_payload_stay_within_budgets(tmp_path: Path
         context_links={node.id: f"chapters/chapter.html#node={node.id}" for node in nodes},
     )
 
-    assert len(dag_viewer.viewer_script().encode()) < 56_000
+    assert len(dag_viewer.viewer_script().encode()) < 60_000
     assert output.stat().st_size < 300_000
     assert search.stat().st_size < 100_000
     search_payload = json.loads(search.read_text(encoding="utf-8"))

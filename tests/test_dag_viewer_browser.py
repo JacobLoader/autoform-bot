@@ -717,3 +717,25 @@ def test_the_published_atlas_hides_the_isolate_toggle(desktop_page: object, site
     page.goto(f"{site_url}/dependencies.html")
     page.locator(".bp-dag-node").first.wait_for()
     playwright.expect(page.locator(".bp-dag-isolated")).to_be_hidden()
+
+
+def test_published_explorer_controls_keep_their_own_styles_under_material(
+    desktop_page: object, site_url: str
+) -> None:
+    """Material's typeset rules stacked the breadcrumb and drew the status filter as an admonition."""
+    page = _offline(desktop_page, site_url)
+    page.goto(f"{site_url}/dependencies/chapters/algebra.html")
+    page.locator(".bp-dag-node").first.wait_for()
+
+    crumbs = page.locator(".bp-dag-breadcrumb li")
+    playwright.expect(crumbs).to_have_count(3)
+    assert len({round(crumbs.nth(index).bounding_box()["y"]) for index in range(3)}) == 1
+    summary = page.locator(".bp-dag-filter-summary")
+    background = page.locator(".bp-dag-viewer").evaluate("element => getComputedStyle(element).backgroundColor")
+    assert summary.evaluate("element => getComputedStyle(element).backgroundColor") == background
+    assert summary.evaluate("element => getComputedStyle(element).borderLeftStyle") == "solid"
+    page.locator(".bp-dag-search").fill("Result")
+    results = page.locator(".bp-dag-results")
+    results.wait_for()
+    assert results.evaluate("element => getComputedStyle(element).listStyleType") == "none"
+    assert results.locator("li").first.evaluate("element => getComputedStyle(element).marginLeft") == "0px"
