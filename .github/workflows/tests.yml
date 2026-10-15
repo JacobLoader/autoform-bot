@@ -222,7 +222,7 @@ jobs:
           AUTOFORM_RUN_REAL_REPL_TESTS: "1"
 
   windows-hardening:
-    name: Windows capability, inspection, subprocess, and publication hardening
+    name: Windows inspection, subprocess, and publication hardening
     runs-on: windows-latest
     timeout-minutes: 15
     steps:

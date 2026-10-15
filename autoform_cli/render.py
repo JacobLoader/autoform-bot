@@ -521,11 +521,6 @@ def _render_pages(
                 "sources safely (directory-descriptor traversal is unavailable); "
                 "render on Linux or macOS to link declarations"
             )
-    # An inventory-only chapter still needs its authored landing page decorated
-    # with the neutral inventory metric, even though it has no theorem
-    # environments to consolidate.
-    for node_id in _module_inventories(graph, containers=containers):
-        groups.setdefault(graph.nodes[node_id].parent or "roadmap", [])
     anchors = {
         node_id: _anchor(node_id, group)
         for group, node_ids in groups.items()
@@ -561,8 +556,8 @@ def _render_pages(
         # nothing but absorbed nodes leaves no empty shell behind.
         if source.is_dir():
             continue
-        # Narrative articles remain book pages. Only formalizable leaves are
-        # consolidated into their containing article with stable anchors.
+        # Narrative articles remain book pages. Formalizable leaves and module
+        # catalogs are consolidated into their containing article with stable anchors.
         article = node_paths.get(source.resolve())
         if (
             article is not None
@@ -1265,7 +1260,7 @@ def _write_publication_manifest(
 
 
 def _group_nodes(graph: Graph) -> dict[str, list[str]]:
-    """Group formalizable leaves under their nearest containing article.
+    """Group formalizable leaves and module catalogs under their nearest containing article.
 
     Graph views deliberately roll a subtree up to its top-level scope. Book
     publication is different: a statement belongs where the author placed its
@@ -1786,12 +1781,14 @@ _COVERAGE_SUMMARY_ORDER = tuple(
 def _is_countable(graph: Graph, node_id: str, containers: frozenset[str]) -> bool:
     """Whether *node_id* is a formalization target the dashboards should count.
 
-    Declaration leaves are targets. Module catalogs are inventory evidence,
-    not mathematical formalization targets. Bare navigation and prose leaves
-    do not count either.
+    A leaf, and a leaf that declares something. Counting every leaf made a
+    freshly scaffolded vault report "0 of 1 targets complete, 1 ready now": the
+    roadmap landing page has no children yet, so it counted as an unstarted
+    result, and the site claimed work existed before any had been planned. A
+    module catalog declares nothing, so it never counts.
     """
-    node = graph.nodes[node_id]
-    return node_id not in containers and node.formalizable
+
+    return node_id not in containers and graph.nodes[node_id].formalizable
 
 
 def _countable(graph: Graph) -> list[str]:
@@ -1858,15 +1855,8 @@ def _render_hero(
     # ``proved`` alone covers its own proof, definition body, or authored
     # Mathlib marker; ``fully_proved`` also closes the dependency chain.
     done = sum(node_status.fully_proved for node_status in selected.values())
-    dispatchable = {
-        node_id: statuses[node_id]
-        for node_id in leaves
-        if graph.nodes[node_id].formalizable
-    }
     actionable = sum(
-        count
-        for state, count in status.summarize(dispatchable)
-        if state.key in _ACTIONABLE_STATES
+        count for state, count in status.summarize(selected) if state.key in _ACTIONABLE_STATES
     )
     total = len(leaves)
     inventory_count = len(_module_inventories(graph))
@@ -2333,23 +2323,11 @@ def _render_chapter(
         linked += node_linked
         unresolved.extend(node_unresolved)
 
-    summary_node_ids = list(
-        dict.fromkeys(
-            (
-                *node_ids,
-                *(
-                    node_id
-                    for node_id, node in graph.nodes.items()
-                    if node.catalog == "module" and (node.parent or "roadmap") == group
-                ),
-            )
-        )
-    )
     chapter_summary = _render_overview_summary(
         graph,
         statuses,
         containers=containers,
-        node_ids=summary_node_ids,
+        node_ids=node_ids,
     )
     if narrative is None:
         title = graph.nodes[group].title if group in graph.nodes else group.replace("-", " ").capitalize()
