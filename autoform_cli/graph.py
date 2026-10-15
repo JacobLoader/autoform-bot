@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .lean import declaration_names
-from .markdown import link_definitions, link_targets, mask_code_and_comments
+from .markdown import link_definitions, link_targets, mask_code_and_comments, resolved_path
 
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
@@ -681,13 +681,7 @@ def _resolve_target(
     if relative.is_absolute() or relative.suffix != ".md":
         return None, f"{node.id}: dependency target must be a relative .md file: {target!r}"
 
-    try:
-        resolved = (node.path.parent / relative).resolve()
-    except (OSError, RuntimeError, ValueError):
-        # Before Python 3.13 a symlink loop raises RuntimeError here. From 3.13 resolve
-        # returns the looping path, so the lexical one stands in, and the checks below
-        # report it as on 3.13.
-        resolved = Path(os.path.abspath(node.path.parent / relative))
+    resolved = resolved_path(node.path.parent / relative)
     if not _is_within(resolved, blueprint):
         return None, f"{node.id}: dependency target escapes the blueprint directory: {target!r}"
     # Before Python 3.14, `Path.is_file` raises under an unreadable directory.

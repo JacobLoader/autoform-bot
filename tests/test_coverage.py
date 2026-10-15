@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import pytest
+
 from autoform_cli.coverage import COVERAGE_SCHEMA, load_coverage
 
 
@@ -807,6 +809,25 @@ def test_a_comment_that_leaves_the_columns_alone_is_accepted(tmp_path: Path) -> 
     assert issues == ()
     assert summary is not None
     assert summary.entries[0].evidence == "narrative only"
+
+
+def test_a_roadmap_link_through_a_symlink_to_another_folder_is_not_a_roadmap_article(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    (blueprint / "sources").mkdir(parents=True)
+    (blueprint / "sources" / "note.md").write_text("# Note\n", encoding="utf-8")
+    (blueprint / "roadmap").mkdir()
+    try:
+        (blueprint / "roadmap" / "alias.md").symlink_to("../sources/note.md")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+    _contract(blueprint, "| Aliased | DECOMPOSED | [Alias](../roadmap/alias.md) |\n")
+
+    summary, issues = load_coverage(blueprint)
+
+    assert summary is None
+    assert [issue.reason for issue in issues] == [
+        "DECOMPOSED coverage evidence has no link to an existing roadmap article"
+    ]
 
 
 def test_malformed_evidence_paths_are_reported_without_raising(tmp_path: Path) -> None:

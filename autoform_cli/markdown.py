@@ -710,6 +710,30 @@ def _anchors_from_body(body: str) -> frozenset[str]:
     return frozenset(html.unescape(found) for found in _HEADING_ID.findall(rendered))
 
 
+def resolved_path(path: Path) -> Path:
+    """``path`` with its symbolic links resolved as far as they lead.
+
+    `os.path.realpath` leaves a symlink loop in place instead of raising, as
+    `Path.resolve` does before Python 3.13, but before 3.13 it also stops there
+    and keeps the rest of the path as written, a link that leaves the blueprint
+    included. Repeating it resolves past the loop, as 3.13 does, so a link gets
+    the same verdict on every supported version: callers still check where it
+    points and whether it is a file.
+    """
+
+    try:
+        resolved = os.path.realpath(path)
+        for _ in range(40):
+            again = os.path.realpath(resolved)
+            if again == resolved:
+                break
+            resolved = again
+        return Path(resolved)
+    except ValueError:
+        # A NUL in the path; callers check for one first.
+        return Path(os.path.abspath(path))
+
+
 def local_target_issue(
     source_path: Path,
     target: str,
@@ -727,7 +751,7 @@ def local_target_issue(
     try:
         split = urlsplit(target)
     except ValueError:
-        return f"malformed-{label}-link", f"{label} link is not a valid URL: {target!r}"
+        return f"malformed-{label}-url", f"{label} link is not a valid URL: {target!r}"
     scheme = split.scheme.casefold()
     if scheme in EXTERNAL_SCHEMES:
         return None
@@ -746,13 +770,7 @@ def local_target_issue(
         if relative.is_absolute():
             return f"{label}-escapes-blueprint", f"{label} link escapes the blueprint: {target!r}"
         candidate = source_path.parent / relative
-    try:
-        candidate = candidate.resolve()
-    except (OSError, RuntimeError, ValueError):
-        # Before Python 3.13 a symlink loop raises RuntimeError here. From 3.13 resolve
-        # returns the looping path, so the lexical one stands in, and the checks below
-        # report it as on 3.13.
-        candidate = Path(os.path.abspath(candidate))
+    candidate = resolved_path(candidate)
 
     boundary = boundary.resolve()
     if not _is_within(candidate, boundary):
@@ -958,6 +976,7 @@ __all__ = [
     "render_html",
     "render_tree",
     "rendered_visible_text",
+    "resolved_path",
     "site_converter",
     "strip_line_comments",
     "first_unclosed_fence",

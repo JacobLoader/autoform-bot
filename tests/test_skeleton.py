@@ -1812,12 +1812,17 @@ def test_probe_comment_ranges_must_cover_comments(tmp_path: Path, ranges: object
         ("../../sources/book.tex#L0-L1", "names no lines of its file"),
         ("../../sources/empty.tex#L1-L1", "names no lines of its file"),
         ("../../sources/missing.tex#L1-L1", "names a missing file"),
+        ("../../sources/book.tex/inside.tex#L1-L1", "names a missing file"),
+        ("../../sources/chapter#L1-L1", "names something other than a regular file"),
         ("../../sources/binary.tex#L1-L1", "not readable UTF-8 text"),
         ("../../../outside.tex#L1-L1", "points outside the blueprint"),
         ("../../sources/loop.txt#L1-L1", "names a path that cannot be resolved"),
         ("../../sources/loopdir/book.tex#L1-L1", "names a path that cannot be resolved"),
+        ("../../sources/away/loop.tex#L1-L1", "points outside the blueprint"),
+        ("../../sources/loop.txt/../away/secret.tex#L1-L1", "points outside the blueprint"),
         pytest.param("../../sources/" + "a" * 300 + ".tex#L1-L1", "names a path that cannot be resolved", id="long-name"),
         ("../../sources/bo\x00ok.tex#L1-L1", "contains an invalid path"),
+        ("../../sources/bo%00ok.tex#L1-L1", "contains an invalid path"),
         pytest.param("../../sources/book.tex#L" + "1" * 5000, "names no lines of its file", id="5000-digits"),
     ],
 )
@@ -1829,9 +1834,15 @@ def test_extraction_reports_a_locator_that_names_no_passage(tmp_path: Path, link
     (sources / "book.tex").write_text("one\ntwo\nthree\n", encoding="utf-8")
     (sources / "empty.tex").write_text("", encoding="utf-8")
     (sources / "binary.tex").write_bytes(b"\xff\xfe\n")
+    (sources / "chapter").mkdir()
+    (tmp_path / "away").mkdir()
+    (tmp_path / "away" / "secret.tex").write_text("secret\n", encoding="utf-8")
     try:
         (sources / "loop.txt").symlink_to("loop.txt")
         (sources / "loopdir").symlink_to("loopdir")
+        # A loop behind a symbolic link that leaves the blueprint.
+        (sources / "away").symlink_to(tmp_path / "away")
+        (tmp_path / "away" / "loop.tex").symlink_to("loop.tex")
     except OSError:
         if "loop" in link:
             pytest.skip("symlinks are unavailable")
@@ -1850,6 +1861,89 @@ def test_extraction_reports_a_locator_that_names_no_passage(tmp_path: Path, link
     report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
     assert report.clean
     assert report.nodes[0].passage == "two\nthree"
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")
+@pytest.mark.parametrize("locked", ["locked", "locked/book.tex"], ids=["unreadable-directory", "unreadable-file"])
+def test_extraction_reports_a_locator_it_cannot_read_without_stopping(tmp_path: Path, locked: str) -> None:
+    project = _project(tmp_path)
+    blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
+    (blueprint / "sources" / "locked").mkdir(parents=True)
+    (blueprint / "sources" / "locked" / "book.tex").write_text("one\n", encoding="utf-8")
+    article = blueprint / "roadmap" / "basics" / "determined.md"
+    link = "../../sources/locked/book.tex#L1-L1"
+    _replace_source(article, "## Depends on", f"## Sources\n\n- [book]({link})\n\n## Depends on")
+    path = blueprint / "sources" / locked
+    mode = path.stat().st_mode
+    path.chmod(0)
+    try:
+        report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+    finally:
+        path.chmod(mode)
+
+    # The article is unresolved and the report is still built, as for any other broken locator.
+    assert not report.clean and report.nodes[0].declarations == ()
+    [unresolved] = report.unresolved
+    assert unresolved.declaration == "Skel.observation_determined"
+    assert unresolved.reason == f"source locator {link} names a file that cannot be read"
+
+
+def test_extraction_reports_a_locator_over_the_size_limit_without_stopping(tmp_path: Path, monkeypatch) -> None:
+    project = _project(tmp_path)
+    blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
+    (blueprint / "sources").mkdir()
+    (blueprint / "sources" / "book.tex").write_text("line\n" * 1000, encoding="utf-8")
+    article = blueprint / "roadmap" / "basics" / "determined.md"
+    _replace_source(article, "## Depends on", "## Sources\n\n- [book](../../sources/book.tex#L1-L1)\n\n## Depends on")
+    # Above the project's own small input files, below the cited source.
+    monkeypatch.setattr("autoform_cli.skeleton._SNAPSHOT_FILE_LIMIT", 4096)
+
+    report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+
+    [unresolved] = report.unresolved
+    assert unresolved.reason == "source locator ../../sources/book.tex#L1-L1 names a file over the 4096-byte limit"
+
+
+def test_extraction_reads_a_locator_as_check_and_audit_read_it(tmp_path: Path) -> None:
+    # Decoded, and with a Markdown note in any letter case left to audit, whose
+    # fragment names a heading.
+    project = _project(tmp_path)
+    blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
+    sources = blueprint / "sources"
+    sources.mkdir()
+    (sources / "NOTES.MD").write_text("# Notes\n", encoding="utf-8")
+    (sources / "my book.tex").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    article = blueprint / "roadmap" / "basics" / "determined.md"
+    links = "- [notes](../../sources/NOTES.MD#L1-L1)\n- [book](../../sources/my%20book.tex#L2-L3)"
+    _replace_source(article, "## Depends on", f"## Sources\n\n{links}\n\n## Depends on")
+
+    report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+
+    assert report.clean
+    assert (report.nodes[0].passage, report.nodes[0].passage_locator) == ("two\nthree", "sources/my book.tex#L2-L3")
+
+
+def test_extraction_tells_a_note_by_the_file_a_link_resolves_to(tmp_path: Path) -> None:
+    # As audit does: a `.tex` link to a Markdown file is a note; a `.MD` link to `book.tex` is a locator.
+    project = _project(tmp_path)
+    blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
+    sources = blueprint / "sources"
+    sources.mkdir()
+    (sources / "book.tex").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    (sources / "notes.md").write_text("# Notes\n", encoding="utf-8")
+    try:
+        (sources / "notes.tex").symlink_to("notes.md")
+        (sources / "book.MD").symlink_to("book.tex")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+    article = blueprint / "roadmap" / "basics" / "determined.md"
+    links = "- [notes](../../sources/notes.tex#L1-L1)\n- [book](../../sources/book.MD#L2-L3)"
+    _replace_source(article, "## Depends on", f"## Sources\n\n{links}\n\n## Depends on")
+
+    report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+
+    assert report.clean
+    assert (report.nodes[0].passage, report.nodes[0].passage_locator) == ("two\nthree", "sources/book.tex#L2-L3")
 
 
 def test_extraction_skips_a_sources_link_it_cannot_parse(tmp_path: Path) -> None:

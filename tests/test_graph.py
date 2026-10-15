@@ -144,10 +144,16 @@ def test_rejects_invalid_nodes(tmp_path: Path, body: str, message: str) -> None:
 def test_a_dependency_through_a_symlink_loop_is_reported_alike_on_every_python(tmp_path: Path) -> None:
     # Before Python 3.13 resolving a loop raises; from 3.13 it returns the looping path.
     blueprint = tmp_path / "blueprint"
-    _node(blueprint, "result.md", "# Result\n## Depends on\n[x](../loop.md)\n[y](../../outer.md)\n")
+    links = "[x](../loop.md)\n[y](../../outer.md)\n[z](../away/loop.md)\n[w](../loop.md/../away/note.md)\n"
+    _node(blueprint, "result.md", f"# Result\n## Depends on\n{links}")
+    (tmp_path / "away").mkdir()
+    (tmp_path / "away" / "note.md").write_text("# Note\n", encoding="utf-8")
     try:
         (blueprint / "loop.md").symlink_to("loop.md")
         (tmp_path / "outer.md").symlink_to("outer.md")
+        # A loop behind a symbolic link that leaves the blueprint, and one before it.
+        (blueprint / "away").symlink_to(tmp_path / "away")
+        (tmp_path / "away" / "loop.md").symlink_to("loop.md")
     except OSError:
         pytest.skip("symlinks are unavailable")
 
@@ -157,6 +163,8 @@ def test_a_dependency_through_a_symlink_loop_is_reported_alike_on_every_python(t
     assert caught.value.issues == (
         "result: dependency target does not exist: '../loop.md'",
         "result: dependency target escapes the blueprint directory: '../../outer.md'",
+        "result: dependency target escapes the blueprint directory: '../away/loop.md'",
+        "result: dependency target escapes the blueprint directory: '../loop.md/../away/note.md'",
     )
 
 
@@ -658,7 +666,7 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
         "error: result: source target does not resolve to a file: '../sources/'\n"
         "error: result: source target escapes the blueprint directory: '../../slides.pdf'\n"
         "error: result: source target contains an invalid path: '../sources/%00.md'\n"
-        "error: result: source target contains an invalid path: 'http://[oops/paper.md'\n"
+        "error: result: source target is not a valid URL: 'http://[oops/paper.md'\n"
     )
 
 
