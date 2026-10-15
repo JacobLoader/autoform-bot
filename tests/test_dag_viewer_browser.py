@@ -615,6 +615,16 @@ def test_a_search_result_in_this_view_selects_the_drawn_node(desktop_page: objec
         )
 
 
+def test_a_browse_query_lists_only_this_scope(desktop_page: object, explorer_url: str) -> None:
+    """Whole-roadmap matches belong to the search dropdown, not under "Browse this scope"."""
+    page = desktop_page
+    _open_ready(page, explorer_url)
+    search = _load_search_index(page)
+    page.get_by_role("button", name="Browse").click()
+    search.fill("theorem")
+    playwright.expect(page.locator(".bp-dag-inventory-title")).to_have_text(["Target theorem"])
+
+
 def test_global_search_jumps_to_the_smallest_context(desktop_page: object, explorer_url: str) -> None:
     page = desktop_page
     _open_ready(page, explorer_url)
