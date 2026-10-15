@@ -195,6 +195,15 @@ def test_a_graph_page_hides_its_legend_behind_an_icon(tmp_path: Path) -> None:
     assert ".bp-legend-tip:focus-within .bp-legend-note" in css
 
 
+def test_the_site_stylesheet_leaves_the_explorer_to_its_own_rules() -> None:
+    """The explorer carries its own CSS, and site rules for it filled in what that CSS left unset.
+
+    A leftover canvas rule took one-finger scrolling from the landing map and
+    stretched the drawing away from the node buttons on short screens.
+    """
+    assert ".bp-dag-" not in render_module._stylesheet()
+
+
 @pytest.mark.parametrize("node_count", (2, 502), ids=("small", "large"))
 def test_small_and_large_chapters_use_the_same_json_explorer(
     tmp_path: Path,

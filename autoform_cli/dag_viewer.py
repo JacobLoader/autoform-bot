@@ -521,7 +521,7 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-viewer[data-layout=app] .bp-dag-stage { touch-action: none; }
 .bp-dag-stage[data-dragging=true] { cursor: grabbing; }
 .bp-dag-canvas, .bp-dag-node-layer { position: absolute; inset: 0; width: 100%; height: 100%; }
-.bp-dag-canvas { display: block; }
+.bp-dag-canvas { display: block; min-height: 0; touch-action: auto; background: transparent; }
 .bp-dag-node-layer { overflow: hidden; pointer-events: none; }
 .bp-dag-node { position: absolute; top: 0; left: 0; display: grid; align-content: center; width: 196px; height: 56px; padding: 6px 10px; overflow: hidden; border: 1.5px solid var(--dag-node-stroke); border-radius: 8px; background: var(--dag-node-fill); color: var(--dag-node-text); box-shadow: 0 2px 5px rgba(15, 23, 42, .08); text-align: left; transform-origin: 0 0; pointer-events: auto; cursor: pointer; will-change: transform; }
 .bp-dag-node-title { overflow: hidden; font-size: 14px; font-weight: 680; line-height: 1.18; text-overflow: ellipsis; white-space: nowrap; }
