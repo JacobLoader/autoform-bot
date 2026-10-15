@@ -126,12 +126,12 @@ given, so the owner of global consistency repeats it for what parallel agents
 added.
 
 Enumerate the entire adopted boundary in `blueprint/coverage/README.md`.
-`MAPPED` is unfinished, `DECOMPOSED` links mathematical exposition,
-`INVENTORIED` links exact module catalogs, `DEFERRED` records an explicit user
-decision or concrete external blocker, and `OUT` explains an exclusion. Treat
-every other `DEFERRED` row as queued work; never defer merely to shorten the
-run. Because `coverage.complete` only checks declared rows, compare the table
-with the source structure yourself.
+`MAPPED` is unfinished, `DECOMPOSED` links source-grounded declaration
+articles, `INVENTORIED` links exact module catalogs, `DEFERRED` records an
+explicit user decision or concrete external blocker, and `OUT` explains an
+exclusion. Treat every other `DEFERRED` row as queued work; never defer merely
+to shorten the run. Because `coverage.complete` only checks declared rows,
+compare the table with the source structure yourself.
 
 Write milestone pages under `blueprint/roadmap/` by mathematical significance,
 then one fine article per coherent unit with one unique main result. For an
@@ -242,7 +242,7 @@ would a finding. Commit the vault and refreshed graph only after this final
 validation; pushing is outward-facing and requires a user request.
 
 Finish only when the adopted boundary has no `MAPPED` rows, every `DECOMPOSED`
-area links source-grounded expositional articles, every `INVENTORIED` area links
+area links source-grounded declaration articles, every `INVENTORIED` area links
 exact catalogs, every in-scope declaration is reconciled, affected pages and
 the graph agree, and the latest commit contains every change from the pass. Do
 not stop after discovery, a coarse proposal, one chapter, or unchanged
