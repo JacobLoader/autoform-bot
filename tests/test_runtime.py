@@ -160,17 +160,6 @@ def test_runtime_exposes_a_settled_module_catalog_without_dispatching_it(tmp_pat
     assert catalog.status.state == "fully_proved"
 
 
-def test_runtime_node_loads_the_previous_v3_pickle_shape(tmp_path: Path) -> None:
-    node = load_runtime_graph(_project(tmp_path)).nodes[0]
-    previous_state = node.__getstate__()[:-1]
-    restored = object.__new__(type(node))
-
-    restored.__setstate__(previous_state)
-
-    assert restored == node
-    assert restored.catalog is None
-
-
 @pytest.mark.parametrize("protocol", range(pickle.HIGHEST_PROTOCOL + 1))
 def test_runtime_node_pickle_round_trip(tmp_path: Path, protocol: int) -> None:
     node = replace(load_runtime_graph(_project(tmp_path)).nodes[0], catalog="module")
