@@ -1409,14 +1409,16 @@ than answered with no hits.
 each a list), `limit`, `total_matches`, and
 `hits`, with no timestamp and no path outside the project. A hit carries
 `node_id`, `article_id`, `article_path`, `article_revision`, `title`,
-`declaration`, `state`, `statement_text` (the authored Markdown),
+`declaration`, `catalog` (`module` for a module inventory), `state`,
+`statement_text` (the authored Markdown),
 `lean_targets` (all of them), `mathlib`, `mathlib_declarations`,
 `mathlib_file`, `source_targets` (as the article writes them, minus any that is
 neither an http(s) link nor a path inside the blueprint), `used_by`,
 `used_by_count`, `shared_title`, and `matched_fields`; `article_id`,
-`declaration`, and `mathlib_file` may be null. A Lean target has `declaration`,
-`source_file` (relative to `--lean-root`), and `line`; the last two are null
-without `--lean-root` or when the lexical scan does not find the name.
+`declaration`, `catalog`, and `mathlib_file` may be null. A Lean target has
+`declaration`, `source_file` (relative to `--lean-root`), and `line`; the last
+two are null without `--lean-root` or when the lexical scan does not find the
+name.
 `used_by` holds the first ten dependents by node ID, through statement or
 proof; `used_by_count` counts all. `shared_title` marks a title another article
 repeats and is advisory. `matched_fields` lists, best first and once each, the

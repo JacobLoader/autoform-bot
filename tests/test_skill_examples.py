@@ -1367,6 +1367,17 @@ def test_skills_search_the_blueprint_before_adding_a_result(repo_root: Path) -> 
     assert "duplicate" in rubric and "not proof" in rubric
 
 
+def test_agent_review_judges_a_catalog_as_an_inventory(repo_root: Path) -> None:
+    """A catalog lists peer declarations by design, which the rubric scored as a defect."""
+    rubric = " ".join(
+        (repo_root / "skills/agent-review/references/roadmap-quality.md").read_text(encoding="utf-8").split()
+    )
+
+    assert "`DECOMPOSED`, `INVENTORIED`, `DEFERRED`, and `OUT`" in rubric
+    assert "not a duplicate of the article that expounds it" in rubric
+    assert "The pull-request-unit and unique-main-result rules do not apply to it" in rubric
+
+
 def test_roadmap_states_the_library_search_without_the_link(repo_root: Path) -> None:
     """Roadmap carries the library flags itself, not only behind the link to the rules.
 
