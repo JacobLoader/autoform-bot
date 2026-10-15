@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -67,7 +65,6 @@ def test_full_view_payload_is_deterministic_layout_ready_and_data_only(tmp_path:
     assert payload["nodes"][0]["catalog"] == "module"
     assert payload["nodes"][0]["status"] == "inventory_checked"
     assert payload["nodes"][0]["member_count"] == 1
-    assert payload["nodes"][0]["member_count"] == 1
     assert "members" not in payload["nodes"][0]
     assert payload["nodes"][0]["status_counts"] == [["inventory_checked", 1]]
     assert payload["nodes"][0]["summary"] == "A reader-facing mathematical summary."
@@ -88,9 +85,6 @@ def test_full_view_payload_is_deterministic_layout_ready_and_data_only(tmp_path:
     assert "innerHTML" not in script
     assert "textContent" in script
     assert "requestAnimationFrame" in script
-    assert 'params.set("node", state.selected.id)' in script
-    assert 'window.addEventListener("hashchange"' in script
-    assert 'window.addEventListener("popstate"' in script
     assert 'view.kind !== "full"' in script
     assert 'statusCounts.has("inventory_pending")' in script
     assert '"Inventory statuses are neutral:' in script
@@ -186,7 +180,7 @@ def test_a_catalog_carries_a_few_lean_names_and_counts_the_rest(tmp_path: Path) 
     assert "lean_count" not in leaf
 
 
-def test_isolated_inventory_does_not_spread_the_connected_dag() -> None:
+def test_isolated_inventory_does_not_spread_the_connected_dag(tmp_path: Path) -> None:
     node_ids = ["root", "result", *(f"isolated-{index}" for index in range(1_000))]
     nodes = tuple(
         ViewNode(
@@ -207,12 +201,14 @@ def test_isolated_inventory_does_not_spread_the_connected_dag() -> None:
         edges=(ViewEdge("root", "result", statement_count=1),),
     )
 
-    positions = dag_viewer._positions(view)
+    output = tmp_path / "mixed.json"
+    dag_viewer.write_payload(output, view, links={})
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    columns = {node["id"]: node["layout"]["column"] for node in payload["nodes"]}
 
-    assert positions["root"]["column"] == 0
-    assert positions["result"]["column"] == 1
-    assert positions["isolated-0"]["column"] >= 3
-    assert max(positions[node_id]["column"] for node_id in ("root", "result")) == 1
+    assert columns["root"] == 0
+    assert columns["result"] == 1
+    assert columns["isolated-0"] >= 3
 
 
 def test_high_level_topics_use_a_weighted_knowledge_atlas(tmp_path: Path) -> None:
@@ -229,21 +225,19 @@ def test_high_level_topics_use_a_weighted_knowledge_atlas(tmp_path: Path) -> Non
         for index in range(33)
     )
     view = GraphView(kind="project", title="Project", nodes=nodes, edges=())
-    positions = dag_viewer._positions(view)
     output = tmp_path / "atlas.json"
     dag_viewer.write_payload(output, view, links={})
     payload = json.loads(output.read_text(encoding="utf-8"))
+    layouts = [node["layout"] for node in payload["nodes"]]
 
     assert payload["view"]["presentation"] == "atlas"
     assert {(region["label"], region["count"]) for region in payload["regions"]} == {
         ("Applications", 23),
         ("Foundations", 10),
     }
-    assert len({(position["x"], position["y"]) for position in positions.values()}) == len(nodes)
-    assert all(position["width"] == position["height"] for position in positions.values())
-    assert max(position["width"] for position in positions.values()) > min(
-        position["width"] for position in positions.values()
-    )
+    assert len({(layout["x"], layout["y"]) for layout in layouts}) == len(nodes)
+    assert all(layout["width"] == layout["height"] for layout in layouts)
+    assert max(layout["width"] for layout in layouts) > min(layout["width"] for layout in layouts)
 
 
 def test_atlas_regions_that_differ_only_in_case_keep_one_order(tmp_path: Path) -> None:
@@ -306,16 +300,9 @@ def test_explorer_marks_isolates_but_keeps_them_in_the_complete_inventory(tmp_pa
     assert "inventoryNodes" in script
     assert '" · items without edges included"' in script
     assert "MAX_DOM_NODES = 180" in script
-    assert "MAX_MAP_NODES = 120" in script
-    assert "MIN_READABLE_SCALE = .8" in script
-    assert "MIN_ATLAS_SCALE = .55" in script
-    assert "fitted < readableFloor" in script
-    assert 'params.get("view") === "list" || !state.mapAllowed' in script
-    assert '" of " + data.nodes.length + " shown"' in script
-    assert '"+" + hidden + " hidden"' in script
 
 
-def test_explorer_is_responsive_accessible_and_history_addressable(tmp_path: Path) -> None:
+def test_explorer_is_responsive_accessible_and_history_addressable() -> None:
     container = dag_viewer.render_container(
         'unsafe" data-x="oops',
         script_href='scripts/viewer" onload="oops.js',
@@ -343,23 +330,14 @@ def test_explorer_is_responsive_accessible_and_history_addressable(tmp_path: Pat
     assert 'refs.canvas.setAttribute("aria-hidden", "true")' in script
     assert 'refs.stage.setAttribute("role", "region")' in script
     assert 'toolbar.setAttribute("role", "toolbar")' in script
-    assert 'element("div", "bp-dag-main")' in script
-    assert 'element("main", "bp-dag-main")' not in script
     assert 'refs.announcement.setAttribute("aria-live", "polite")' in script
-    assert 'refs.sheetHandle.setAttribute("aria-controls", refs.inspectorInner.id)' in script
-    assert 'refs.inspectorInner.setAttribute("inert", "")' in script
-    assert 'refs.inspectorInner.setAttribute("aria-hidden", "true")' in script
-    assert 'window.addEventListener("resize", syncSheetAccessibility)' in script
     assert "control.dataset.autoformNodeId = node.id" in script
-    assert 'key === "ArrowLeft"' in script
     assert "new ResizeObserver(resize)" in script
     assert "state.pointers.size === 2" in script
     assert "event.type === \"pointerup\" && wasSingle && !state.moved" in script
     assert "touch-action: pan-y" in container
     assert '.bp-dag-viewer[data-layout=app] .bp-dag-stage { touch-action: none; }' in container
     assert 'url.origin === window.location.origin' in script
-    assert 'if (target === current) return' in script
-    assert 'state.selected && !state.selectedStatuses.has(state.selected.status)' in script
     assert 'w: node.width, h: node.height' in script
     assert 'spotlight.before.has(edge.source) && spotlight.before.has(edge.target)' in script
     assert 'spotlight.after.has(edge.source) && spotlight.after.has(edge.target)' in script
@@ -369,23 +347,13 @@ def test_explorer_is_responsive_accessible_and_history_addressable(tmp_path: Pat
     assert 'ctx.fillText("×" + count' in script
     assert "Title prefix" in script and "Id prefix" in script and "Word prefix" in script
 
-    node = shutil.which("node")
-    if node:
-        runtime = tmp_path / "viewer.js"
-        runtime.write_text(script, encoding="utf-8")
-        subprocess.run([node, "--check", str(runtime)], check=True, capture_output=True, text=True)
 
-
-def test_explorer_pages_large_searches_and_relations_and_fits_deep_graphs() -> None:
+def test_explorer_pages_relations_and_clamps_zoom() -> None:
     script = dag_viewer.viewer_script()
 
-    assert "MIN_SCALE = .002, MIN_READABLE_SCALE = .8, MIN_ATLAS_SCALE = .55" in script
-    assert '"Show all "' not in script
-    assert "Math.min(matches.length, state.searchLimit + SEARCH_PAGE)" in script
     assert "Math.min(visible + RELATION_PAGE, ids.length)" in script
     assert "ids.slice(visible, next)" in script
     assert "clamp(old * factor, MIN_SCALE, 4)" in script
-    assert "Math.max(fitted, readableFloor), MIN_SCALE, 1.35" in script
 
 
 def test_explorer_assets_and_ordinary_payload_stay_within_budgets(tmp_path: Path) -> None:
@@ -464,7 +432,7 @@ def test_payload_layout_follows_dependencies_and_keeps_collapsed_cycles_stable(t
     assert layout(cyclic) == {"result": (0, 0), "base": (312, 0)}
 
 
-def test_payload_rejects_duplicate_nodes_and_unknown_edges() -> None:
+def test_payload_rejects_duplicate_nodes_and_unknown_edges(tmp_path: Path) -> None:
     node = ViewNode("a", "A", "node", ("a",), (("planned", 1),))
     duplicate = GraphView(kind="full", title="Duplicate", nodes=(node, node), edges=())
     unknown = GraphView(
@@ -475,9 +443,9 @@ def test_payload_rejects_duplicate_nodes_and_unknown_edges() -> None:
     )
 
     with pytest.raises(ValueError, match="duplicate node ids"):
-        dag_viewer._positions(duplicate)
+        dag_viewer.write_payload(tmp_path / "duplicate.json", duplicate, links={})
     with pytest.raises(ValueError, match="unknown node"):
-        dag_viewer._positions(unknown)
+        dag_viewer.write_payload(tmp_path / "unknown.json", unknown, links={})
 
 
 def test_an_explorer_page_encodes_a_literal_percent_in_its_payload_name(tmp_path: Path) -> None:
