@@ -308,7 +308,7 @@ def test_write_refuses_a_byte_order_mark(tmp_path: Path) -> None:
     (blueprint / "roadmap/chapter/result.md").write_bytes(b"\xef\xbb\xbf---\nnot_ready: true\n---\n\n# Result\n")
     before = _bytes(blueprint)
 
-    with pytest.raises(GraphValidationError, match="chapter/result.md: starts with a byte-order mark"):
+    with pytest.raises(article_identity.ArticleIdWriteError, match="byte-order mark"):
         write_article_ids(blueprint)
 
     assert _bytes(blueprint) == before

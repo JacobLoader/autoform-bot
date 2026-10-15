@@ -309,16 +309,6 @@ def test_rejects_noncanonical_readme_case_with_actionable_error(tmp_path: Path, 
     assert "must be named exactly README.md" in message
 
 
-def test_rejects_an_article_that_starts_with_a_byte_order_mark(tmp_path: Path) -> None:
-    blueprint = tmp_path / "blueprint"
-    _roadmap_page(blueprint, "README.md", "# Roadmap\n")
-    _roadmap_page(blueprint, "result.md", "\ufeff" + _node_text("\n# Result\n", lean="Demo.result"))
-
-    # Read past the mark, the frontmatter would not open the first line and every key would be lost.
-    with pytest.raises(GraphValidationError, match="^result.md: starts with a byte-order mark; remove it$"):
-        load_graph(blueprint)
-
-
 @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")
 @pytest.mark.parametrize("relative", ["", "chapter"], ids=["roadmap", "chapter"])
 def test_a_roadmap_directory_that_cannot_be_listed_is_refused(tmp_path: Path, relative: str) -> None:
@@ -588,6 +578,24 @@ def test_check_warns_about_a_mathlib_file_search_reports_as_null(
     assert [line for line in capsys.readouterr().out.splitlines() if line.startswith("warning:")] == [
         "warning: result: search reports mathlib_file as null, since it is not a portable relative path: "
         "'../Outside.lean'"
+    ]
+
+
+def test_check_warns_about_an_article_whose_byte_order_mark_hides_its_frontmatter(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    marked = _node(blueprint, "result.md", "# Result\n", lean="Demo.result")
+    marked.write_bytes(b"\xef\xbb\xbf" + marked.read_bytes())
+    _node(blueprint, "kept.md", "# Kept\n", lean="Demo.kept")
+
+    assert main(["check", str(blueprint)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    # Like #325's warnings, it follows the whole summary.
+    assert lines[0].startswith("OK: ")
+    assert [line for line in lines if line.startswith("warning:")] == lines[-1:] == [
+        "warning: result: starts with a byte-order mark, so frontmatter on its first line is read as text "
+        "and its keys are ignored; remove the mark"
     ]
 
 

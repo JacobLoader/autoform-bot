@@ -131,6 +131,9 @@ def write_article_ids(blueprint_dir: str | Path) -> tuple[ArticleIdentityEntry, 
         if hashlib.sha256(content).hexdigest() != entry.source_sha256:
             issues.append(f"{entry.article_path}: changed while the plan was made; run the command again")
             continue
+        if content.startswith(b"\xef\xbb\xbf"):
+            issues.append(f"{entry.article_path}: starts with a byte-order mark; remove it and run again")
+            continue
         prepared.append((entry, path, _with_article_id(content, entry.article_id), mode))
     if issues:
         raise ArticleIdWriteError(issues)

@@ -966,8 +966,7 @@ example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml).
 links anywhere under `roadmap/`, self-dependencies, cycles introduced at any
 rolled-up containment level,
 missing or multiple H1 titles, unsupported frontmatter keys, assertion values
-it does not recognize, an article that starts with a byte-order mark (which
-would hide its frontmatter), and assertions the Lean cannot back: `proof: formalized`
+it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
 `mathlib: true`. An inline `## Sources` link to a local path must name a file
 inside the blueprint, as `audit` also requires: a missing file, a directory, an
@@ -975,7 +974,11 @@ invalid path, or a target outside the blueprint fails, and `audit` alone checks
 fragments and fails links with other schemes or a network location. Such a link
 passes `check` with a warning, because work and search leave it out; so does a
 `mathlib_file` that is not a portable relative path, which search reports as
-null. With `--lean-root`, `check`
+null. A byte-order mark at the start of an article hides whatever opens its
+first line: frontmatter there is read as text, so its keys are ignored, and
+`check` warns about the mark when the article otherwise loads; an H1 title
+there is missed, and `check` fails the article as missing one.
+With `--lean-root`, `check`
 also fails on a `lean:` name
 absent from the sources, as `leanblueprint checkdecls` does for LaTeX
 blueprints. It validates structure and leaves mathematical correctness to the
