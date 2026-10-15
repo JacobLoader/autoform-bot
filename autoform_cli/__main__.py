@@ -37,7 +37,7 @@ from .library.search import LibraryResult, library_argument, search_with_librari
 from .markdown import local_target_issue
 from .project import ProjectCatalogError, ProjectCreateError, create_project, inspect_project, load_release_catalog
 from .render import PublicationError, render_site
-from .runtime import RuntimeProjectionError, resolve_runtime_paths
+from .runtime import RuntimeProjectionError, projection_omissions, resolve_runtime_paths
 from .scaffold import ScaffoldError, scaffold_project
 from .search import SearchError, search_blueprint, statement_preview
 from .skeleton import (
@@ -529,19 +529,17 @@ def _init(args: argparse.Namespace) -> int:
 
 
 def _source_link_issues(graph: Graph) -> list[str]:
-    """Name each ``## Sources`` link that is neither an http(s) link nor a file in the blueprint.
+    """Name each ``## Sources`` link to a local path that is not a file in the blueprint.
 
     The generated workflows run ``check`` but not ``audit``, and render publishes
     a missing or escaping target broken: a page a strict MkDocs build cannot find,
-    a repository URL that 404s, or a path off the site. Every runtime command
-    refuses other schemes and network locations, so ``check`` does too. Fragments
-    stay with ``audit``, whose anchor check renders each cited note.
+    a repository URL that 404s, or a path off the site. Fragments and other
+    schemes stay with ``audit``, whose anchor check renders each cited note.
     """
     rejected = {
         "source-not-found": "does not resolve to a file",
         "source-escapes-blueprint": "escapes the blueprint directory",
         "malformed-source-link": "contains an invalid path",
-        "unsupported-source-link": "is not a local file or an http(s) link",
     }
     issues = []
     for node in graph.nodes.values():
@@ -602,21 +600,21 @@ def _check(args: argparse.Namespace) -> int:
         label = "module inventory" if inventories == 1 else "module inventories"
         print(f"    {inventories} {label}")
 
-    if linker is None:
-        return 0
-
-    missing = [
-        f"{node.id}: declaration not found in {args.lean_root}: {name}"
-        for node in graph.nodes.values()
-        for name in declaration_names(node.lean or "")
-        if linker.location(name) is None
-    ]
-    for issue in missing:
-        print(f"error: {issue}")
-    if missing:
-        return 1
-    declared = sum(1 for node in graph.nodes.values() if node.lean)
-    print(f"    {declared} declaration(s) resolved in the Lean sources")
+    if linker is not None:
+        missing = [
+            f"{node.id}: declaration not found in {args.lean_root}: {name}"
+            for node in graph.nodes.values()
+            for name in declaration_names(node.lean or "")
+            if linker.location(name) is None
+        ]
+        for issue in missing:
+            print(f"error: {issue}")
+        if missing:
+            return 1
+        declared = sum(1 for node in graph.nodes.values() if node.lean)
+        print(f"    {declared} declaration(s) resolved in the Lean sources")
+    for omission in projection_omissions(graph):
+        print(f"warning: {omission}")
     return 0
 
 
