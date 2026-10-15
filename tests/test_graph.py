@@ -854,6 +854,37 @@ def test_check_cli_separates_module_inventories_from_target_statuses(tmp_path: P
     assert "fully proved" not in result.stdout
 
 
+def test_check_counts_declaration_targets_and_every_lean_name_it_resolves(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A chapter page and a prose leaf are no targets, and a catalog's names each count."""
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "chapter/result.md", "# Result\n", declaration="theorem")
+    _node(blueprint, "chapter/notes.md", "# Notes\n")
+    (blueprint / "sources").mkdir()
+    (blueprint / "sources/catalog.md").write_text("# Catalog declarations\n", encoding="utf-8")
+    _node(
+        blueprint,
+        "catalog.md",
+        "# Existing module\n\n## Sources\n\n- [Ledger](../sources/catalog.md)\n",
+        catalog="module",
+        lean="Inv.a Inv.b Inv.c",
+    )
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    (lean_root / "Inv.lean").write_text(
+        "".join(f"theorem Inv.{name} : True := trivial\n" for name in "abc"), encoding="utf-8"
+    )
+
+    assert main(["check", str(blueprint), "--lean-root", str(lean_root)]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "OK: 4 articles, 0 dependencies",
+        "    1 ready to state",
+        "    1 module inventory",
+        "    3 declaration name(s) resolved in the Lean sources",
+    ]
+
+
 def test_check_cli_reports_validation_errors(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _node(blueprint, "bad.md", "no heading\n")
@@ -962,7 +993,7 @@ def test_check_prints_its_warnings_after_the_whole_summary(
     lines = capsys.readouterr().out.splitlines()
     assert sum(line.startswith("warning:") for line in lines) == 1
     assert lines[-2:] == [
-        "    1 declaration(s) resolved in the Lean sources",
+        "    1 declaration name(s) resolved in the Lean sources",
         "warning: base: work and search omit this source target, which is neither an http(s) link "
         "nor a path inside the blueprint: 'mailto:author@example.org'",
     ]

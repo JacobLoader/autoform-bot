@@ -623,8 +623,7 @@ def _check(args: argparse.Namespace) -> int:
             print(f"error: {issue}")
         if missing:
             return 1
-        declared = sum(1 for node in graph.nodes.values() if node.lean)
-        print(f"    {declared} declaration(s) resolved in the Lean sources")
+        print(f"    {len(graph.lean_names())} declaration name(s) resolved in the Lean sources")
     for omission in projection_omissions(graph):
         print(f"warning: {omission}")
     for omission in atlas_omissions(graph):
