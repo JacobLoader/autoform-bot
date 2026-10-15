@@ -244,15 +244,6 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
             dependency for dependency in proof_dependencies if dependency not in dependencies
         )
         metadata = parsed_node.metadata
-        if metadata.get("catalog") is not None:
-            if (
-                metadata.get("statement") == _FORMALIZED
-                or metadata.get("proof") == _FORMALIZED
-            ) and not declaration_names(metadata.get("lean", "")):
-                issues.append(
-                    f"{parsed_node.id}: formalized module catalog must list exact "
-                    "compiled names in 'lean'"
-                )
         nodes[parsed_node.id] = Node(
             id=parsed_node.id,
             title=parsed_node.title,
@@ -775,12 +766,11 @@ def _parse_frontmatter(node_id: str, lines: list[str]) -> tuple[dict[str, str], 
     if metadata.get("proof") == _FORMALIZED and metadata.get("statement") not in {_FORMALIZED, _RETRACTED}:
         issues.append(f"{node_id}: proof: formalized needs statement: formalized")
     formalized = [key for key in ("statement", "proof") if metadata.get(key) == _FORMALIZED]
-    if (
-        formalized
-        and metadata.get("catalog") is None
-        and not declaration_names(metadata.get("lean", ""))
-    ):
-        issues.append(f"{node_id}: {formalized[0]}: formalized needs the lean: declaration that formalizes it")
+    if formalized and not declaration_names(metadata.get("lean", "")):
+        if metadata.get("catalog") is not None:
+            issues.append(f"{node_id}: formalized module catalog must list exact compiled names in 'lean'")
+        else:
+            issues.append(f"{node_id}: {formalized[0]}: formalized needs the lean: declaration that formalizes it")
     return metadata, end + 1, issues
 
 
