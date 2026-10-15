@@ -222,7 +222,8 @@ def _atlas_positions(view: GraphView) -> dict[str, dict[str, int]]:
 
 def _atlas_regions(view: GraphView, positions: Mapping[str, Mapping[str, int]]) -> list[dict[str, object]]:
     regions: list[dict[str, object]] = []
-    areas = sorted({node.area for node in view.nodes if node.area}, key=str.casefold)
+    # Areas that differ only in case would otherwise keep the set's hash-seeded order.
+    areas = sorted({node.area for node in view.nodes if node.area}, key=lambda area: (area.casefold(), area))
     for area in areas:
         members = [node for node in view.nodes if node.area == area]
         min_x = min(positions[node.id]["x"] for node in members)

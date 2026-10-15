@@ -197,6 +197,22 @@ def test_high_level_topics_use_a_weighted_knowledge_atlas(tmp_path: Path) -> Non
     )
 
 
+def test_atlas_regions_that_differ_only_in_case_keep_one_order(tmp_path: Path) -> None:
+    """Identical inputs publish identical bytes, whatever the hash seed of the render."""
+    areas = ("algebra", "Algebra", "ALGEBRA", "aLGEBRA", "AlgebrA", "alGEBRA")
+    view = GraphView(
+        kind="project",
+        title="Project",
+        nodes=tuple(ViewNode(f"scope:{area}", area, "scope", (), (("planned", 1),), area=area) for area in areas),
+        edges=(),
+    )
+    output = tmp_path / "atlas.json"
+    dag_viewer.write_payload(output, view, links={})
+
+    regions = json.loads(output.read_text(encoding="utf-8"))["regions"]
+    assert [region["label"] for region in regions] == sorted(areas)
+
+
 def test_explorer_marks_isolates_but_keeps_them_in_the_complete_inventory(tmp_path: Path) -> None:
     nodes = tuple(
         ViewNode(
