@@ -1731,13 +1731,10 @@ def _render_landing_page(
     # The legend sits under the map, so it counts what the map's rings count,
     # deferred work and module inventories included, rather than the hero's
     # declaration targets.
-    containers = _containers(graph)
-    target_statuses = {
-        node_id: statuses[node_id]
-        for node_id, node in graph.nodes.items()
-        if node_id not in containers and graph_views.is_scope_target(node)
-    }
-    breakdown = mermaid.render_legend(target_statuses, graph_views.inventory_counts(graph, statuses))
+    breakdown = mermaid.render_legend(
+        graph_views.scope_target_statuses(graph, statuses),
+        graph_views.inventory_counts(graph, statuses),
+    )
     # dependencies.json is the project projection written by graph_pages. The
     # landing page deliberately mounts that exact payload and host instead of
     # maintaining a second, Mermaid-only preview of the same graph.
@@ -2479,7 +2476,7 @@ def _render_environment(
     # amsthm distinguishes the two: a proposition is set in italics, a
     # definition upright. leanblueprint keeps that distinction on the web.
     inventory = graph_views.inventory_state(node, node_status)
-    display_key = "planned" if inventory else node_status.key
+    display_key = graph_views.display_status_key(node, node_status)
     display_label = inventory.label if inventory else node_status.label
     style = (
         "theorem-style-definition"
@@ -2657,7 +2654,7 @@ def _node_references(
     for other_id in node_ids:
         other = graph.nodes[other_id]
         label = html.escape(f"{numbers[other_id]} ({other.title})")
-        key = "planned" if graph_views.inventory_state(other, statuses[other_id]) else statuses[other_id].key
+        key = graph_views.display_status_key(other, statuses[other_id])
         rendered.append(
             f'<a class="bp-ref bp-ref-{key}" '
             f'href="{html.escape(links[other_id], quote=True)}">{label}</a>'

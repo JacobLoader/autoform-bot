@@ -16,7 +16,7 @@ from pathlib import Path
 from urllib.parse import quote
 from typing import TYPE_CHECKING
 
-from .graph_views import container_nodes, inventory_counts, inventory_state, is_scope_target
+from .graph_views import container_nodes, display_status_key, inventory_counts, inventory_state, scope_target_statuses
 from .status import INVENTORY_STATES, STATES, State, is_definition
 
 if TYPE_CHECKING:
@@ -92,9 +92,7 @@ def render_diagram(
             continue
         # Rectangles introduce data, rounded boxes assert something.
         shape = f'["{label}"]' if is_definition(node) else f'("{label}")'
-        # A catalog takes the neutral planned colours, checked or not.
-        state_key = "planned" if inventory_state(node, statuses[node.id]) else statuses[node.id].key
-        lines.append(f"  {handle}{shape}:::{state_key}")
+        lines.append(f"  {handle}{shape}:::{display_status_key(node, statuses[node.id])}")
 
     for node in ordered:
         for dependency in node.statement_dependencies:
@@ -277,18 +275,7 @@ def render_page(
         links=links,
         include_classdefs=include_classdefs,
     )
-    # Containers are drawn as scope boxes, so they have no row in the legend,
-    # and a leaf has one only if the boxes count it, as a target by state or as
-    # a catalog by inventory status.
-    boxes = container_nodes(graph, statuses)
-    legend = render_legend(
-        {
-            node_id: state
-            for node_id, state in statuses.items()
-            if node_id not in boxes and is_scope_target(graph.nodes[node_id])
-        },
-        inventory_counts(graph, statuses),
-    )
+    legend = render_legend(scope_target_statuses(graph, statuses), inventory_counts(graph, statuses))
     sections = [
         "---",
         "kind: graph",

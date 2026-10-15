@@ -434,18 +434,15 @@ def _edges(counts: dict[tuple[str, str], list[int]]) -> tuple[ViewEdge, ...]:
 
 def _theorem_node(node: Node, node_status: NodeStatus) -> ViewNode:
     inventory = inventory_state(node, node_status)
-    display_status = inventory.key if inventory else node_status.key
     return ViewNode(
         id=node.id,
         title=node.title,
         kind="node",
         members=(node.id,),
-        status_counts=((display_status, 1),),
+        status_counts=((inventory.key if inventory else node_status.key, 1),),
         declaration=node.declaration,
         catalog=node.catalog,
-        # An inventory is deliberately neutral, checked or not: it records
-        # source accounting, not progress on a mathematical target.
-        status_key="planned" if inventory else display_status,
+        status_key=display_status_key(node, node_status),
         summary=node.summary,
         lean=node.lean,
         area=node.area,
@@ -473,6 +470,29 @@ def inventory_state(node: Node, node_status: NodeStatus) -> State | None:
         return None
     checked, pending = INVENTORY_STATES
     return checked if node_status.fully_proved else pending
+
+
+def display_status_key(node: Node, node_status: NodeStatus) -> str:
+    """Return the state a node is coloured in: its own, or planned for a catalog.
+
+    An inventory is deliberately neutral, checked or not: it records source
+    accounting, not progress on a mathematical target.
+    """
+    return "planned" if inventory_state(node, node_status) else node_status.key
+
+
+def scope_target_statuses(graph: Graph, statuses: dict[str, NodeStatus]) -> dict[str, NodeStatus]:
+    """Select the leaves a whole-graph map's scope boxes count by state, for its legend.
+
+    Containers are drawn as scopes, so they have no row of their own, and a
+    catalog counts apart as an inventory.
+    """
+    containers = {node.parent for node in graph.nodes.values()}
+    return {
+        node_id: statuses[node_id]
+        for node_id, node in graph.nodes.items()
+        if node_id not in containers and is_scope_target(node)
+    }
 
 
 def _scope_node(
@@ -696,6 +716,7 @@ __all__ = [
     "ViewNode",
     "chapter_view",
     "container_nodes",
+    "display_status_key",
     "full_view",
     "group_id",
     "group_nodes",
@@ -704,6 +725,7 @@ __all__ = [
     "inventory_state",
     "is_scope_target",
     "project_view",
+    "scope_target_statuses",
     "scope_view",
     "scope_views",
 ]
