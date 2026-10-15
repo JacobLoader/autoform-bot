@@ -557,21 +557,6 @@ catalog is fully proved, which records inspection rather than a completed
 result, and `inventory pending` until then, whatever its derived state. Neither
 status changes a scope's rolled-up status or completion.
 
-For an existing blueprint, migrate a catalog-only `DECOMPOSED` row to
-`INVENTORIED`. If the same source also has declaration articles, keep that
-inventory row and add distinct, axis-qualified `DECOMPOSED` rows for the
-mathematical scopes; do not overwrite the inventory claim. Existing coverage
-Markdown remains readable, but emitted audit and publication coverage uses
-`autoform-coverage/v2`: `INVENTORIED` is a new disposition, terminal meaning,
-and counts key. The shared-explorer publication manifest uses
-`autoform-publication/v3`, as described below. Until migrated, a catalog-only
-`DECOMPOSED` row
-remains syntactically accepted: `render` warns and still publishes, while audit
-reports `coverage-role-mismatch`. A catalog not reached by any `INVENTORIED`
-evidence is treated the same way and reported as `unclassified-inventory`.
-Target-completion percentages may change because catalog records are no longer
-included in their denominator.
-
 Publication and audit are deliberately different gates. The generated
 `blueprint-pages.yml` runs `check` and `render`; it does not run `audit`. An
 invalid coverage contract fails `render` before any output is written, but a
@@ -1083,6 +1068,32 @@ legacy `dependencies/full.html#node=<id>` link redirects, through the global
 index, to the smallest bounded scope containing that node. The [publication
 contract](#publication-contract) gives the schema and when render replaces an
 earlier site.
+
+### Upgrading from an earlier Autoform
+
+What an existing repository meets when it moves to this version:
+
+1. CI at an older `AUTOFORM_REF` rejects `catalog:` and `area:` as unsupported
+   frontmatter keys and `INVENTORIED` as an unknown coverage disposition, so
+   move the pin before using them. Older refs ignore `blueprint/atlas.json`.
+2. A `DECOMPOSED` link that reaches only prose or leaves marked `not_ready` is
+   now a `decomposed-without-declaration` audit warning, which `render` also
+   prints; neither fails.
+3. Coverage JSON is `autoform-coverage/v2`: `INVENTORIED` is a new terminal
+   disposition, and `counts` always holds an `INVENTORIED` key.
+4. `publication.json` is `autoform-publication/v3`. The first render replaces a
+   v2 site and refuses a v1 one, and the dashboard reports an older site as
+   stale until then; the [publication contract](#publication-contract) gives
+   the rules.
+5. The runtime is `autoform-runtime/v4`, which gives each node a nullable
+   `catalog`.
+6. `audit --json` carries a `warnings` list beside `findings`, and the text
+   output adds `warning:` lines; neither changes the exit status.
+7. Old `dependencies/nodes/*.html` links no longer resolve: only
+   `dependencies/full.html#node=<id>` redirects, and a statement's dependency
+   link is now `<scope>.html#node=<id>`.
+8. Setup leaves an existing `mkdocs.yml` alone. A large site can add Material's
+   `navigation.prune` feature by hand, as the scaffolded configuration does.
 
 ## Validation
 
