@@ -89,6 +89,7 @@ def test_generated_site_docs_describe_one_multiscale_explorer(repo_root: Path) -
 
     assert "Every generated site projection uses the same" in cli
     assert "Authored Mermaid remains supported in the vault and book" in cli
+    assert "`dependencies/index.json`, is internal to the bundled viewer, and its schema may change" in cli
     assert "Every generated site route uses the same" in review
     assert "Canvas plus semantic-DOM explorer across project" in example
     assert "one interactive\n      # dependency explorer" in workflow

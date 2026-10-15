@@ -1066,16 +1066,17 @@ icon when a `lean:` declaration resolves to a repository permalink. Its
 `dependencies.md` opens a full-viewport application and rolls dependencies
 through the article hierarchy, with bounded project, chapter, and nested-scope
 projections. Global search loads a layout-free index and jumps to the smallest
-useful scope; the compatibility `dependencies/full.md` route renders only the
-project shell and never fits the whole repository into one canvas. Every
-generated site projection uses the same deterministic JSON-derived Canvas and
-semantic-DOM explorer with search, filters, pan/zoom, and hash-routed node
-neighborhoods, so none inherits Mermaid's text, edge, or SVG-size ceilings.
-Authored Mermaid remains supported in the vault and book. Breadcrumbs return
-through the explorer hierarchy to the book, and every formal statement links to
-the smallest explorer scope containing that item. Point `mkdocs.yml` at
-`docs_dir: site-src` and enable `md_in_html` plus a `pymdownx.superfences`
-mermaid fence; see the [repository
+useful scope; that index, `dependencies/index.json`, is internal to the bundled
+viewer, and its schema may change. The compatibility `dependencies/full.md`
+route renders only the project shell and never fits the whole repository into
+one canvas. Every generated site projection uses the same deterministic
+JSON-derived Canvas and semantic-DOM explorer with search, filters, pan/zoom,
+and hash-routed node neighborhoods, so none inherits Mermaid's text, edge, or
+SVG-size ceilings. Authored Mermaid remains supported in the vault and book.
+Breadcrumbs return through the explorer hierarchy to the book, and every formal
+statement links to the smallest explorer scope containing that item. Point
+`mkdocs.yml` at `docs_dir: site-src` and enable `md_in_html` plus a
+`pymdownx.superfences` mermaid fence; see the [repository
 example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml).
 
 This shared-explorer layout is recorded as `autoform-publication/v3`; it
