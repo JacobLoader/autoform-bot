@@ -618,7 +618,7 @@ def _lean_findings(
                 )
             )
 
-        if resolved and node.catalog is None:
+        if resolved:
             sizes[node_id] = sum(spans[body.name] for body in bodies)
 
     findings.extend(_size_findings(graph, sizes))
