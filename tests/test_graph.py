@@ -237,6 +237,39 @@ def test_module_catalog_requires_exact_names_and_a_local_ledger(tmp_path: Path) 
     assert "must link a declaration ledger" in str(error.value)
 
 
+@pytest.mark.parametrize(
+    "link",
+    [
+        pytest.param("http://[oops/paper.md", id="invalid-url"),
+        pytest.param("../sources/" + "a" * 300 + ".md", id="long-name"),
+        pytest.param("../sources/loop.md", id="symlink-loop"),
+    ],
+)
+def test_a_catalog_ledger_listed_after_a_link_that_cannot_be_resolved_still_loads(
+    tmp_path: Path, link: str
+) -> None:
+    # Without #337's guards each link stops the load: urlsplit rejects the first,
+    # Path.is_file raises on the long name before Python 3.14, and resolve raises on
+    # the loop before 3.13. Skipped, they leave the ledger after them to be found.
+    blueprint = tmp_path / "blueprint"
+    ledger = blueprint / "sources/module.md"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text("# Module declarations\n", encoding="utf-8")
+    if link.endswith("loop.md"):
+        try:
+            (blueprint / "sources/loop.md").symlink_to("loop.md")
+        except OSError:
+            pytest.skip("symlinks are unavailable")
+    _node(
+        blueprint,
+        "module.md",
+        f"# Existing module\n\n## Sources\n\n- [Other]({link})\n- [Ledger](../sources/module.md)\n",
+        catalog="module",
+    )
+
+    assert load_graph(blueprint).nodes["module"].catalog == "module"
+
+
 def test_formalized_module_catalog_rejects_an_empty_lean_name_list(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     ledger = blueprint / "sources/module.md"
@@ -308,6 +341,9 @@ def test_resolves_links_relative_to_each_node(tmp_path: Path) -> None:
             _node_text("# Result\n## Depends on\n[x](../../outside.md)\n"),
             "escapes the blueprint directory",
         ),
+        (_node_text("# Result\n## Depends on\n[x](http://[oops/a.md)\n"), "relative Markdown path"),
+        (_node_text("# Result\n## Depends on\n[x](%00.md)\n"), "contains an invalid path"),
+        pytest.param(_node_text("# Result\n## Depends on\n[x](" + "a" * 300 + ".md)\n"), "does not exist", id="long-name"),
     ],
 )
 def test_rejects_invalid_nodes(tmp_path: Path, body: str, message: str) -> None:
@@ -317,6 +353,41 @@ def test_rejects_invalid_nodes(tmp_path: Path, body: str, message: str) -> None:
 
     with pytest.raises(GraphValidationError, match=message):
         load_graph(blueprint)
+
+
+def test_a_dependency_through_a_symlink_loop_is_reported_alike_on_every_python(tmp_path: Path) -> None:
+    # Before Python 3.13 resolving a loop raises; from 3.13 it returns the looping path.
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "result.md", "# Result\n## Depends on\n[x](../loop.md)\n[y](../../outer.md)\n")
+    try:
+        (blueprint / "loop.md").symlink_to("loop.md")
+        (tmp_path / "outer.md").symlink_to("outer.md")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    with pytest.raises(GraphValidationError) as caught:
+        load_graph(blueprint)
+
+    assert caught.value.issues == (
+        "result: dependency target does not exist: '../loop.md'",
+        "result: dependency target escapes the blueprint directory: '../../outer.md'",
+    )
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")
+def test_a_dependency_under_an_unreadable_directory_is_an_issue(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "result.md", "# Result\n## Depends on\n[x](../locked/a.md)\n")
+    locked = blueprint / "locked"
+    locked.mkdir()
+    locked.chmod(0)
+    try:
+        with pytest.raises(GraphValidationError) as caught:
+            load_graph(blueprint)
+    finally:
+        locked.chmod(0o755)
+
+    assert caught.value.issues == ("result: dependency target does not exist: '../locked/a.md'",)
 
 
 def test_rejects_self_edge(tmp_path: Path) -> None:
@@ -769,7 +840,10 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
     ]
 
     (tmp_path / "slides.pdf").write_bytes(b"%PDF-1.4\n")
-    rejected = "- [Notes](../sources/)\n- [Slides](../../slides.pdf)\n- [Bad](../sources/%00.md)\n"
+    rejected = (
+        "- [Notes](../sources/)\n- [Slides](../../slides.pdf)\n- [Bad](../sources/%00.md)\n"
+        "- [Host](http://[oops/paper.md)\n"
+    )
     _node(blueprint, "result.md", sources + rejected)
 
     assert main(["check", str(blueprint)]) == 1
@@ -777,6 +851,7 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
         "error: result: source target does not resolve to a file: '../sources/'\n"
         "error: result: source target escapes the blueprint directory: '../../slides.pdf'\n"
         "error: result: source target contains an invalid path: '../sources/%00.md'\n"
+        "error: result: source target contains an invalid path: 'http://[oops/paper.md'\n"
     )
 
 
@@ -791,6 +866,24 @@ def test_check_warns_about_a_mathlib_file_search_reports_as_null(
     assert [line for line in capsys.readouterr().out.splitlines() if line.startswith("warning:")] == [
         "warning: result: search reports mathlib_file as null, since it is not a portable relative path: "
         "'../Outside.lean'"
+    ]
+
+
+def test_check_warns_about_an_article_whose_byte_order_mark_hides_its_frontmatter(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    marked = _node(blueprint, "result.md", "# Result\n", lean="Demo.result")
+    marked.write_bytes(b"\xef\xbb\xbf" + marked.read_bytes())
+    _node(blueprint, "kept.md", "# Kept\n", lean="Demo.kept")
+
+    assert main(["check", str(blueprint)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    # Like #325's warnings, it follows the whole summary.
+    assert lines[0].startswith("OK: ")
+    assert [line for line in lines if line.startswith("warning:")] == lines[-1:] == [
+        "warning: result: starts with a byte-order mark, so frontmatter on its first line is read as text "
+        "and its keys are ignored; remove the mark"
     ]
 
 

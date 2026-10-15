@@ -528,6 +528,23 @@ def _init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _byte_order_mark_warnings(graph: Graph) -> list[str]:
+    """Name each article that starts with a byte-order mark, which hides frontmatter on its first line."""
+    warnings = []
+    for node in graph.nodes.values():
+        try:
+            with node.path.open("rb") as article:
+                marked = article.read(3) == b"\xef\xbb\xbf"
+        except OSError:
+            continue
+        if marked:
+            warnings.append(
+                f"{node.id}: starts with a byte-order mark, so frontmatter on its first line is read as text "
+                "and its keys are ignored; remove the mark"
+            )
+    return warnings
+
+
 def _source_link_issues(graph: Graph) -> list[str]:
     """Name each ``## Sources`` link to a local path that is not a file in the blueprint.
 
@@ -615,6 +632,8 @@ def _check(args: argparse.Namespace) -> int:
         print(f"    {declared} declaration(s) resolved in the Lean sources")
     for omission in projection_omissions(graph):
         print(f"warning: {omission}")
+    for warning in _byte_order_mark_warnings(graph):
+        print(f"warning: {warning}")
     return 0
 
 

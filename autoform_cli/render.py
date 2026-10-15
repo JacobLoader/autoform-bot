@@ -31,7 +31,6 @@ from urllib.parse import quote, unquote, urlsplit
 
 from . import dag_viewer, graph_pages, graph_views, mermaid, status
 from ._tree_snapshot import (
-    OpaqueDirectoryMarker,
     TreeChangedError,
     TreeSelection,
     TreeSnapshot,
@@ -48,6 +47,10 @@ from .coverage import (
 )
 from .graph import Graph, GraphValidationError, Node, _implementation_note_issues, load_graph
 from .lean import (
+    _REPLACEABLE_SCHEMAS,
+    PUBLICATION_MANIFEST,
+    PUBLICATION_MANIFEST_MAX_BYTES,
+    PUBLICATION_SCHEMA,
     IndexedSourceSnapshot,
     LeanSourceError,
     SourceIndex,
@@ -89,14 +92,6 @@ _SKIPPED_DIRECTORIES = frozenset({".obsidian", ".trash", ".git"})
 
 #: Transcriptions of the paper being formalised. Vault material, not chapters.
 SOURCES_DIR = "sources"
-PUBLICATION_MANIFEST = "publication.json"
-#: v3 adds the shared dependency explorer to v2's inventoried site and hashes
-#: the blueprint under a label of its own.
-PUBLICATION_SCHEMA = "autoform-publication/v3"
-#: Sites render may replace: each records a file inventory to check first.
-_REPLACEABLE_SCHEMAS = frozenset({"autoform-publication/v2", PUBLICATION_SCHEMA})
-#: Render never writes a larger manifest, so the next render can always read it.
-PUBLICATION_MANIFEST_MAX_BYTES = 8 * 1024 * 1024
 #: Hidden siblings of the output: a site being built, a replaced one, or a backup.
 _STAGE_PREFIX = ".autoform-publication-"
 #: How a filesystem says it lacks an operation (an atomic exchange, a directory sync).
@@ -147,10 +142,6 @@ _PUBLICATION_SELECTION = TreeSelection(
     ),
     descend=lambda path: path.parts[0].casefold() == ".autoform"
     or not (_is_hidden(path) or _is_sensitive(path)),
-)
-#: Every site, stage, and backup carries this, so a Lean walk never indexes their copies.
-_PUBLICATION_MARKER = OpaqueDirectoryMarker(
-    PUBLICATION_MANIFEST, PUBLICATION_MANIFEST_MAX_BYTES, lambda data: _is_complete_publication(data)
 )
 
 #: How a ``declaration:`` value is announced in the statement box.
@@ -395,16 +386,13 @@ def render_site(
         )
         # Without descriptor capture every Lean capture fails closed. The implicit
         # root is then not read and the site has no code links; an explicit Lean
-        # root asks for links, so it still fails.
+        # root asks for links, so it still fails. Like every Lean capture, this one
+        # skips each folder holding a complete publication.json: a finished site,
+        # mkdocs' copy of one, or a replaced site kept as a backup.
         indexed = lean_root is not None or descriptor_capture_supported()
         try:
             lean = (
-                snapshot_project_sources(
-                    repo_root,
-                    exclude_roots=(copy_root,),
-                    opaque_markers=(_PUBLICATION_MARKER,),
-                    names=lean_names,
-                )
+                snapshot_project_sources(repo_root, exclude_roots=(copy_root,), names=lean_names)
                 if indexed
                 else IndexedSourceSnapshot(SourceIndex(repo_root, {}, ""), revision="")
             )
@@ -760,18 +748,6 @@ def _is_sensitive(relative: PurePosixPath) -> bool:
 
 def _is_hidden(relative: Path | PurePosixPath) -> bool:
     return any(part.startswith(".") for part in relative.parts)
-
-
-def _is_complete_publication(data: bytes) -> bool:
-    try:
-        value = json.loads(data)
-    except (ValueError, RecursionError):
-        return False
-    return (
-        isinstance(value, dict)
-        and value.get("schema") in {"autoform-publication/v1", *_REPLACEABLE_SCHEMAS}
-        and value.get("complete") is True
-    )
 
 
 @contextmanager
@@ -1277,7 +1253,17 @@ def _write_publication_manifest(
         raise PublicationError(
             [f"generated publication manifest exceeds max_file_bytes={PUBLICATION_MANIFEST_MAX_BYTES}"]
         )
-    (destination / PUBLICATION_MANIFEST).write_bytes(encoded)
+    # Replaced, never truncated in place: a Lean capture that read an empty
+    # manifest would index the stage's copies.
+    temporary = destination / f".{PUBLICATION_MANIFEST}.{secrets.token_hex(8)}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    descriptor = os.open(temporary, flags, 0o666)  # the mode write_bytes gives
+    try:
+        with open(descriptor, "wb") as output:
+            output.write(encoded)
+        os.replace(temporary, destination / PUBLICATION_MANIFEST)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _group_nodes(graph: Graph) -> dict[str, list[str]]:

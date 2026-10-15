@@ -609,6 +609,7 @@ def test_audit_validates_local_source_links_without_network_access(tmp_path: Pat
             "ftp://example.invalid/paper",
             "//example.invalid/paper",
             "%00",
+            "http://[oops/paper",
         ),
     )
 
@@ -620,11 +621,48 @@ def test_audit_validates_local_source_links_without_network_access(tmp_path: Pat
 
     assert findings == [
         ("malformed-source-link", "source link contains an invalid path: '%00'"),
+        ("malformed-source-link", "source link is not a valid URL: 'http://[oops/paper'"),
         ("source-escapes-blueprint", "source link escapes the blueprint: '../../../outside.md'"),
         ("source-not-found", "source link does not resolve to a file: '../../sources/missing.md'"),
         ("unsupported-source-link", "source link uses a network location: '//example.invalid/paper'"),
         ("unsupported-source-link", "source link uses unsupported scheme: 'ftp://example.invalid/paper'"),
     ]
+
+
+def test_audit_reports_a_source_link_through_a_symlink_loop_alike_on_every_python(tmp_path: Path) -> None:
+    # Before Python 3.13 resolving a loop raises; from 3.13 it returns the looping path.
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    (blueprint / "sources").mkdir()
+    try:
+        (blueprint / "sources" / "loop.md").symlink_to("loop.md")
+        (tmp_path / "outer.md").symlink_to("outer.md")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+    sources = ("../sources/loop.md", "../../outer.md")
+    _article(blueprint, "result.md", declaration="theorem", origin="cited", sources=sources)
+
+    assert _finding_map(blueprint)["roadmap/result.md"] == [
+        ("source-escapes-blueprint", "source link escapes the blueprint: '../../outer.md'"),
+        ("source-not-found", "source link does not resolve to a file: '../sources/loop.md'"),
+    ]
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")
+def test_audit_reports_a_source_link_under_an_unreadable_directory_as_missing(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    sources = ("../sources/locked/paper.txt",)
+    _article(blueprint, "result.md", declaration="theorem", origin="cited", sources=sources)
+    locked = blueprint / "sources" / "locked"
+    locked.mkdir(parents=True)
+    locked.chmod(0)
+    try:
+        findings = _finding_map(blueprint)["roadmap/result.md"]
+    finally:
+        locked.chmod(0o755)
+
+    assert findings == [("source-not-found", "source link does not resolve to a file: '../sources/locked/paper.txt'")]
 
 
 def test_audit_rejects_missing_markdown_source_anchor(tmp_path: Path) -> None:

@@ -63,10 +63,10 @@ spent waiting for a free Lean slot or behind other LSP calls on the same
 project. A call that runs out fails rather than returning partial results, and
 a hover that runs out also restarts the project's Lean server. The value must
 not exceed `AUTOFORM_MAX_LSP_REQUEST_SECONDS` (600 seconds by default) or the
-runtime refuses to start, and raising that maximum past 745 seconds also needs
-`AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` raised. Like the limits below, it is read
-when the runtime starts: run `uv run autoform-lean-runtime stop` after changing
-it.
+runtime refuses to start, and raising that maximum to 745 seconds or more also
+needs `AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` raised. Like the limits below, it is
+read when the runtime starts: run `uv run autoform-lean-runtime stop` after
+changing it.
 
 The private socket lives below `$XDG_RUNTIME_DIR/autoform`, falling back to a
 uid-specific directory in `/tmp`; the rotating runtime log is beside it.

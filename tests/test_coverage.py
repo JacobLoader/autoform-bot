@@ -908,14 +908,16 @@ def test_malformed_evidence_paths_are_reported_without_raising(tmp_path: Path) -
     blueprint = tmp_path / "blueprint"
     _contract(
         blueprint,
-        "| Malformed | DECOMPOSED | [Bad](../roadmap/bad%00path.md) |\n",
+        "| Malformed | DECOMPOSED | [Bad](../roadmap/bad%00path.md) |\n"
+        "| Unparsable | DECOMPOSED | [Host](http://[oops/a.md) |\n",
     )
 
     summary, issues = load_coverage(blueprint)
 
     assert summary is None
     assert [issue.reason for issue in issues] == [
-        "coverage link contains an invalid path: '../roadmap/bad%00path.md'"
+        "coverage link contains an invalid path: '../roadmap/bad%00path.md'",
+        "coverage link is not a valid URL: 'http://[oops/a.md'",
     ]
 
 

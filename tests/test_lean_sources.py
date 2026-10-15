@@ -8,6 +8,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import types
 from collections.abc import Callable
 from pathlib import Path
 
@@ -21,7 +22,6 @@ from autoform_cli._tree_snapshot import (
     TreeCaptureLimits,
     TreeChangedError,
     TreeSelection,
-    TreeSnapshot,
     TreeSnapshotError,
     bind_directory_tree,
 )
@@ -1533,7 +1533,7 @@ def test_selected_verification_recurses_in_three_frames_per_folder(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Lean capture sets no max_depth, so the frames verification spends per
+    # Capture has no depth limit, so the frames verification spends per
     # folder level decide how deep a tree fits under the recursion limit.
     _require_descriptor_capture()
     folder = tmp_path / "d" / "d" / "d" / "d"
@@ -1559,6 +1559,31 @@ def test_selected_verification_recurses_in_three_frames_per_folder(
 
     assert snapshot.index.find("deep") is not None
     assert [frames_at_level[level + 1] - frames_at_level[level] for level in range(4)] == [3, 3, 3, 3]
+
+
+def test_selected_verification_calls_back_through_a_plain_function(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A C-implemented callback such as functools.partial adds no Python frame,
+    # so the frame count above misses it, but it spends CPython's separate C
+    # recursion budget at every folder level of verification.
+    _require_descriptor_capture()
+    (tmp_path / "d").mkdir()
+    (tmp_path / "d" / "Deep.lean").write_text("def deep : Nat := 0\n")
+    callbacks: list[type] = []
+    recheck = tree_snapshot_module._recheck_scanned_directory
+
+    def recording_recheck(*args: object, **kwargs: object) -> object:
+        if kwargs.get("verify_kept") is not None:
+            callbacks.append(type(kwargs["verify_kept"]))
+        return recheck(*args, **kwargs)
+
+    monkeypatch.setattr(tree_snapshot_module, "_recheck_scanned_directory", recording_recheck)
+
+    snapshot_project_sources(tmp_path)
+
+    assert callbacks and set(callbacks) == {types.FunctionType}
 
 
 @pytest.mark.parametrize(
@@ -1911,7 +1936,7 @@ def test_portable_capture_rejects_a_restored_nested_directory_redirection(
             displaced.rename(nested)
             restored += 1
 
-    original_names = tree_snapshot_module._capture_path_names
+    original_names = tree_snapshot_module._capture_directory_names
     original_read = tree_snapshot_module._read_portable_file
     original_signature = tree_snapshot_module._stat_signature
 
@@ -1935,7 +1960,7 @@ def test_portable_capture_rejects_a_restored_nested_directory_redirection(
         return signature
 
     _use_portable_capture(monkeypatch)
-    monkeypatch.setattr(tree_snapshot_module, "_capture_path_names", redirect_then_list)
+    monkeypatch.setattr(tree_snapshot_module, "_capture_directory_names", redirect_then_list)
     monkeypatch.setattr(tree_snapshot_module, "_read_portable_file", read_then_restore)
     monkeypatch.setattr(tree_snapshot_module, "_stat_signature", coarse_directory_signature)
     bound = BoundDirectoryTree(
@@ -2453,267 +2478,6 @@ def test_malformed_manifest_value_does_not_escape_source_indexing(
     assert index.find("visible") is not None
 
 
-def _synthetic_snapshot(
-    *,
-    directories: tuple[str, ...] = ("",),
-    files: tuple[tuple[str, bytes], ...] = (),
-    symlinks: tuple[tuple[str, str], ...] = (),
-) -> TreeSnapshot:
-    """Build a snapshot by hand, with no special entries, placeholders, or identities."""
-    return TreeSnapshot(
-        root_identity=(1, 1),
-        directories=directories,
-        files=files,
-        symlinks=symlinks,
-        special=(),
-        placeholders=(),
-        omitted=(),
-        identities=(),
-    )
-
-
-@pytest.mark.parametrize(
-    "relative",
-    [
-        "../escaped.txt",
-        "C:escaped.txt",
-        "C:/escaped.txt",
-        "NUL",
-        "NUL.txt",
-        "NUL .txt",
-        "trailing.",
-        "trailing ",
-        "invalid?.txt",
-        "control\x01.txt",
-    ],
-)
-def test_snapshot_materialization_rejects_non_relative_paths(
-    tmp_path: Path,
-    relative: str,
-) -> None:
-    snapshot = _synthetic_snapshot(files=((relative, b"escaped\n"),))
-    destination = tmp_path / "destination"
-
-    with pytest.raises(TreeSnapshotError, match="unsafe materialization path"):
-        snapshot.materialize_regular_files(destination)
-
-    assert not destination.exists()
-    assert not (tmp_path / "escaped.txt").exists()
-
-
-@pytest.mark.parametrize(
-    ("files", "directories"),
-    [
-        ((("A.txt", b"first"), ("a.txt", b"second")), ("",)),
-        ((("parent", b"file"), ("parent/child", b"child")), ("",)),
-        ((("a/child", b"child"),), ("", "A")),
-        ((), ("", "a/b")),
-    ],
-)
-def test_snapshot_materialization_rejects_aliases_and_type_conflicts(
-    tmp_path: Path,
-    files: tuple[tuple[str, bytes], ...],
-    directories: tuple[str, ...],
-) -> None:
-    snapshot = _synthetic_snapshot(directories=directories, files=files)
-    destination = tmp_path / "destination"
-
-    with pytest.raises(TreeSnapshotError, match="materialization path"):
-        snapshot.materialize_regular_files(destination)
-
-    assert not destination.exists()
-
-
-def test_snapshot_materialization_orders_valid_directory_records(tmp_path: Path) -> None:
-    snapshot = _synthetic_snapshot(
-        directories=("", "a/b", "a"),
-        files=(("a/b/result.txt", b"result\n"),),
-    )
-    destination = tmp_path / "destination"
-
-    snapshot.materialize_regular_files(destination)
-
-    assert (destination / "a/b/result.txt").read_bytes() == b"result\n"
-
-
-def test_snapshot_materialization_root_swap_never_redirects_bytes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    snapshot = _synthetic_snapshot(directories=("", "nested"), files=(("result.txt", b"captured\n"),))
-    destination = tmp_path / "destination"
-    displaced = tmp_path / "displaced"
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    swapped = False
-
-    def swap_root() -> None:
-        nonlocal swapped
-        destination.rename(displaced)
-        destination.symlink_to(outside, target_is_directory=True)
-        swapped = True
-
-    _on_checkpoint(monkeypatch, "after-materialization-directory-open", swap_root, relative="")
-    try:
-        with pytest.raises(TreeSnapshotError, match="materialization"):
-            snapshot.materialize_regular_files(destination)
-        assert swapped
-        assert not (outside / "result.txt").exists()
-    finally:
-        if destination.is_symlink():
-            destination.unlink()
-        if displaced.exists():
-            for child in displaced.iterdir():
-                child.unlink()
-            displaced.rmdir()
-
-
-def test_snapshot_materialization_nested_swap_never_redirects_bytes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    snapshot = _synthetic_snapshot(
-        directories=("", "nested"),
-        files=(("nested/result.txt", b"captured\n"),),
-    )
-    destination = tmp_path / "destination"
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    displaced = destination / "nested-displaced"
-
-    def swap_nested() -> None:
-        (destination / "nested").rename(displaced)
-        (destination / "nested").symlink_to(outside, target_is_directory=True)
-
-    _on_checkpoint(monkeypatch, "after-materialization-directory-open", swap_nested, relative="nested")
-    try:
-        with pytest.raises(TreeSnapshotError, match="materialization"):
-            snapshot.materialize_regular_files(destination)
-        assert not (outside / "result.txt").exists()
-    finally:
-        linked = destination / "nested"
-        if linked.is_symlink():
-            linked.unlink()
-        if displaced.exists():
-            displaced.rmdir()
-        if destination.exists():
-            destination.rmdir()
-
-
-def test_snapshot_materialization_retries_short_writes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    snapshot = _synthetic_snapshot(files=(("result.txt", b"captured bytes\n"),))
-    destination = tmp_path / "destination"
-    original_write = tree_snapshot_module.os.write
-
-    def short_write(descriptor: int, data) -> int:
-        return original_write(descriptor, bytes(data[:1]))
-
-    monkeypatch.setattr(tree_snapshot_module.os, "write", short_write)
-
-    snapshot.materialize_regular_files(destination)
-
-    assert (destination / "result.txt").read_bytes() == b"captured bytes\n"
-
-
-def test_snapshot_materialization_closes_descriptors_after_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    snapshot = _synthetic_snapshot(
-        directories=("", "nested"),
-        files=(("nested/result.txt", b"captured\n"),),
-    )
-    destination = tmp_path / "destination"
-    original_open = tree_snapshot_module.os.open
-    original_write = tree_snapshot_module.os.write
-    opened: list[int] = []
-    writes = 0
-
-    def tracked_open(*args, **kwargs):
-        descriptor = original_open(*args, **kwargs)
-        opened.append(descriptor)
-        return descriptor
-
-    def fail_second_write(descriptor: int, data) -> int:
-        nonlocal writes
-        writes += 1
-        if writes == 1:
-            return original_write(descriptor, bytes(data[:1]))
-        raise OSError(errno.EIO, "injected materialization failure")
-
-    monkeypatch.setattr(tree_snapshot_module.os, "open", tracked_open)
-    monkeypatch.setattr(tree_snapshot_module.os, "write", fail_second_write)
-
-    with pytest.raises(TreeSnapshotError, match="materialized safely"):
-        snapshot.materialize_regular_files(destination)
-
-    assert opened
-    assert writes == 2
-    for descriptor in opened:
-        with pytest.raises(OSError):
-            os.fstat(descriptor)
-    assert not destination.exists()
-
-
-@pytest.mark.parametrize(
-    "attack",
-    ["replace", "overwrite", "inject", "chmod", "hardlink"],
-)
-def test_snapshot_materialization_rejects_final_tree_tampering(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    attack: str,
-) -> None:
-    snapshot = _synthetic_snapshot(
-        directories=("", "nested"),
-        files=(("first.txt", b"first\n"), ("second.txt", b"second\n")),
-    )
-    destination = tmp_path / "destination"
-    attacked = False
-
-    def tamper_before_second_file() -> None:
-        nonlocal attacked
-        if attacked:
-            return
-        attacked = True
-        first = destination / "first.txt"
-        if attack == "replace":
-            first.unlink()
-            first.write_bytes(b"evil!\n")
-        elif attack == "overwrite":
-            first.write_bytes(b"evil!\n")
-        elif attack == "inject":
-            (destination / "injected.lean").write_text("def injected : Nat := 0\n")
-        elif attack == "chmod":
-            destination.chmod(0o777)
-            (destination / "nested").chmod(0o777)
-            first.chmod(0o666)
-        else:
-            os.link(first, tmp_path / "outside-link")
-
-    _on_checkpoint(
-        monkeypatch,
-        "before-materialization-file-open",
-        tamper_before_second_file,
-        relative="second.txt",
-    )
-    try:
-        with pytest.raises(TreeSnapshotError):
-            snapshot.materialize_regular_files(destination)
-        assert attacked
-    finally:
-        outside_link = tmp_path / "outside-link"
-        if outside_link.exists():
-            outside_link.unlink()
-        if destination.exists():
-            for child in destination.iterdir():
-                child.rmdir() if child.is_dir() else child.unlink()
-            destination.rmdir()
-
-
 def test_outer_managed_marker_hides_everything_below_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3190,6 +2954,38 @@ def test_oversized_managed_manifest_leaves_its_directory_indexed_at_its_read_bou
     # The engine refuses bytes past the bound before it asks the recognizer.
     assert observed_lengths == []
     assert index.find("oversizedPacket") is not None
+
+
+def test_only_a_complete_publication_manifest_hides_its_folder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Render copies a blueprint's Lean files into its site and mkdocs copies the
+    # site again, manifest included; both copies go stale when the source changes.
+    complete = {"complete": True, "schema": "autoform-publication/v2"}
+    manifests = {
+        "site-src": complete,
+        "site": complete,
+        "legacy": {**complete, "schema": "autoform-publication/v1"},
+        "unfinished": {**complete, "complete": False},
+        "web": {"name": "web app"},
+        "padded": {**complete, "padding": "x" * 64},
+    }
+    for folder, manifest in manifests.items():
+        (tmp_path / folder / "Copy").mkdir(parents=True)
+        (tmp_path / folder / "publication.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (tmp_path / folder / "Copy" / "Proofs.lean").write_text("theorem stale : True := trivial\n")
+    (tmp_path / "Proofs.lean").write_text("theorem renamed : True := trivial\n")
+    monkeypatch.setattr(lean_module, "PUBLICATION_MANIFEST_MAX_BYTES", 64, raising=False)
+
+    snapshot = snapshot_project_sources(tmp_path)
+
+    assert sorted(path.as_posix() for path, _data in snapshot.source_files) == [
+        "Proofs.lean",
+        "padded/Copy/Proofs.lean",
+        "unfinished/Copy/Proofs.lean",
+        "web/Copy/Proofs.lean",
+    ]
 
 
 def test_irreducible_definitions_are_indexed(tmp_path: Path) -> None:
