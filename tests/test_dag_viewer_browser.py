@@ -739,3 +739,37 @@ def test_published_explorer_controls_keep_their_own_styles_under_material(
     results.wait_for()
     assert results.evaluate("element => getComputedStyle(element).listStyleType") == "none"
     assert results.locator("li").first.evaluate("element => getComputedStyle(element).marginLeft") == "0px"
+
+
+def _assert_site_chrome_is_reachable(page: object) -> None:
+    """The header, heading and navigation are visible, and each is the element a click would hit."""
+    for chrome in (
+        page.locator(".md-header"),
+        page.get_by_role("heading", level=1),
+        page.get_by_role("link", name="Open textbook chapter").first,
+    ):
+        playwright.expect(chrome).to_be_visible()
+        chrome.click(trial=True, timeout=5_000)
+
+
+def test_a_published_app_page_without_script_keeps_the_site_chrome(webkit_browser: object, site_url: str) -> None:
+    """The full-viewport layout belongs to the script, so it cannot cover the page before it runs."""
+    with _page(webkit_browser, java_script_enabled=False) as page:
+        _offline(page, site_url)
+        page.goto(f"{site_url}/dependencies/chapters/algebra.html")
+        # Checked first: without script, the trial click on the textbook link follows it.
+        loading = page.locator(".bp-dag-loading")
+        playwright.expect(loading).to_be_attached()
+        playwright.expect(loading).to_be_hidden()
+        _assert_site_chrome_is_reachable(page)
+
+
+def test_a_published_app_page_restores_the_site_chrome_when_its_data_fails(
+    desktop_page: object, site_url: str
+) -> None:
+    page = _offline(desktop_page, site_url)
+    page.route("**/algebra.json", lambda route: route.fulfill(status=404, body=""))
+    page.goto(f"{site_url}/dependencies/chapters/algebra.html")
+    playwright.expect(page.locator(".bp-dag-error")).to_contain_text("HTTP 404")
+    _assert_site_chrome_is_reachable(page)
+    assert "bp-dag-app-page" not in (page.locator("body").get_attribute("class") or "")
