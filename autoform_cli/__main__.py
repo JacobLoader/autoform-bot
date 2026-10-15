@@ -581,15 +581,8 @@ def _check(args: argparse.Namespace) -> int:
 
     linker = None
     if args.lean_root is not None:
-        lean_names = tuple(
-            dict.fromkeys(
-                name
-                for node in graph.nodes.values()
-                for name in declaration_names(node.lean or "")
-            )
-        )
         try:
-            linker = build_linker(args.lean_root, names=lean_names)
+            linker = build_linker(args.lean_root, names=graph.lean_names())
         except OSError as error:
             print(f"error: {index_failure_message(error)}")
             return 1

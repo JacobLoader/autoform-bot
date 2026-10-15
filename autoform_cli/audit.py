@@ -510,15 +510,8 @@ def _lean_findings(
         return [AuditFinding(".", "invalid-lean-root", str(error))]
 
     findings: list[AuditFinding] = []
-    names_to_resolve = tuple(
-        dict.fromkeys(
-            name
-            for node in graph.nodes.values()
-            for name in declaration_names(node.lean or "")
-        )
-    )
     try:
-        snapshot = snapshot_project_sources(root, names=names_to_resolve)
+        snapshot = snapshot_project_sources(root, names=graph.lean_names())
     except OSError as error:
         return [
             AuditFinding(

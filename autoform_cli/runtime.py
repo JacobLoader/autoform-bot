@@ -329,15 +329,8 @@ def build_runtime_graph(
             root = resolve_lean_root(lean_root)
         except LeanSourceError as error:
             raise RuntimeProjectionError([str(error)]) from error
-        lean_names = tuple(
-            dict.fromkeys(
-                name
-                for node in graph.nodes.values()
-                for name in declaration_names(node.lean or "")
-            )
-        )
         try:
-            lean_index = index_project(root, names=lean_names)
+            lean_index = index_project(root, names=graph.lean_names())
         except OSError as error:
             raise RuntimeProjectionError([index_failure_message(error)]) from error
 

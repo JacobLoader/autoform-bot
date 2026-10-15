@@ -377,13 +377,7 @@ def render_site(
         expected = _destination_state(destination)
         # The names select which files are scanned for declarations; every Lean
         # file is still read, hashed and checked against the commit.
-        lean_names = tuple(
-            dict.fromkeys(
-                name
-                for node in graph.nodes.values()
-                for name in declaration_names(node.lean or "")
-            )
-        )
+        lean_names = graph.lean_names()
         # Without descriptor capture every Lean capture fails closed. The implicit
         # root is then not read and the site has no code links; an explicit Lean
         # root asks for links, so it still fails. Like every Lean capture, this one
