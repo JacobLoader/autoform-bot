@@ -481,6 +481,10 @@ def test_atlas_bubbles_open_authored_mathematical_context(
     # Every topic of an edgeless atlas is isolated, so hiding them would empty the map.
     playwright.expect(page.locator(".bp-dag-isolated")).to_be_hidden()
     playwright.expect(page.locator(".bp-dag-inspector")).to_contain_text("Geometry & Topology")
+    # Topics count once, by their least-complete item, unlike the rings' items.
+    playwright.expect(page.locator(".bp-dag-inspector h3", has_text="status")).to_have_text(
+        "Topics by least-complete status"
+    )
     # Each status row carries the swatch and meaning the hidden page legend held.
     playwright.expect(
         page.locator('.bp-dag-inspector .bp-dag-swatch[title="Proved, and every prerequisite is fully proved too."]')
