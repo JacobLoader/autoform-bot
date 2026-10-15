@@ -2014,10 +2014,9 @@ inventories. It retains v3's optional durable `article_id` metadata beside the
 graph's path-derived `id`, project `open_statements` policy,
 `statement_retracted` assertions, and each status's `assumes` and `waiting_on`
 fields. Temporary claims and local dashboard hooks may fall back to the path ID,
-but durable queues, reviews, recovery records, PR markers, execution records,
-routes, providers, and logs must require `article_id` until path-move migration
-is complete. Operational state remains private and excluded from runtime
-snapshots and publication.
+but durable execution records and routes must require `article_id` until the
+path-move migration is complete. Operational state remains private and excluded
+from runtime snapshots and publication.
 
 Projection fails when an article's bytes no longer match the digest recorded
 when the graph was loaded, so a source revision never labels node data parsed
