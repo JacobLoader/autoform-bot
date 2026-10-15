@@ -144,7 +144,16 @@ make sure the request covers them. When a revision changes a statement whose
 article has `lean:`, retract it: replace `statement: formalized` with
 `statement: retracted`, remove `proof: formalized`, and keep `lean:`, which
 Formalize needs to run `autoform work impact`; an article without `lean:` just
-loses `statement` and `proof`. When the project's CI pins an `AUTOFORM_REF`
+loses `statement` and `proof`. Formalize may land `lean:` on the branch it works
+from after your checkout, with or without claims. Before the revision lands on
+that branch, and so before releasing any claim, bring it up to date with that
+branch by rebase or merge, retract any revised article that gained `lean:`
+there, repeat the Finish step's final validation, and commit the retraction as a
+new commit. When the revision lands later through a pull request, report the
+revised articles that had no `lean:` on that branch at your last update, and
+list them in the pull request's description if you open it, so whoever merges it
+retracts any that have gained `lean:` by then.
+When the project's CI pins an `AUTOFORM_REF`
 older than the marker, its `autoform check` rejects `statement: retracted`:
 remove `statement` and `proof` and keep `lean:` until the pin moves, and report
 the old pin. Under the open policy a retracted theorem stays
