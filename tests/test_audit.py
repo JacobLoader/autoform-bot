@@ -1349,6 +1349,7 @@ def test_audit_warns_once_per_catalog_and_code_about_elaboration_limits(tmp_path
             ),
         ),
     )
+    assert json.loads(result.to_json()) == result.as_dict()
 
 
 def test_a_catalog_reads_an_alias_s_limits_from_its_target(tmp_path: Path) -> None:

@@ -159,7 +159,10 @@ class AuditResult:
             "clean": self.clean,
             "coverage": self.coverage.as_dict() if self.coverage is not None else None,
             "findings": [asdict(finding) for finding in self.findings],
-            "warnings": [asdict(warning) for warning in self.warnings],
+            "warnings": [
+                {**asdict(warning), "declarations": [asdict(entry) for entry in warning.declarations]}
+                for warning in self.warnings
+            ],
         }
 
     def to_json(self) -> str:
