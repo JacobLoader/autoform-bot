@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Sequence
 
 from . import graph_views, mermaid, status
-from .graph import Graph, GraphValidationError, load_graph
+from .graph import GraphValidationError, load_graph
 
 
 GENERATED_STRUCTURE_MARKER = "---\nkind: structure\nautoform_generated: true\n---"
@@ -17,21 +17,6 @@ GENERATED_STRUCTURE_MARKER = "---\nkind: structure\nautoform_generated: true\n--
 
 class VisualizationError(ValueError):
     """Raised when visualization output would overwrite authored content."""
-
-
-def _target_statuses(
-    graph: Graph,
-    statuses: dict[str, status.NodeStatus],
-) -> dict[str, status.NodeStatus]:
-    """Select the leaves the scope boxes count by state, for the legend."""
-    containers = frozenset(
-        node.parent for node in graph.nodes.values() if node.parent is not None
-    )
-    return {
-        node_id: statuses[node_id]
-        for node_id, node in graph.nodes.items()
-        if node_id not in containers and graph_views.is_scope_target(node)
-    }
 
 
 def _destination(path: Path) -> Path:
@@ -92,46 +77,13 @@ def export_graph(
     destination = _destination(output or blueprint_dir / "dependencies.md")
     graph = load_graph(blueprint_dir)
     statuses = status.derive(graph)
-    view = graph_views.project_view(graph, statuses)
-    # A scope's members are only its formalization targets, so a scope without
-    # a README page links to its first article of any kind instead.
-    groups = graph_views.group_nodes(graph)
-    links = {}
-    for node in view.nodes:
-        scope = node.id.removeprefix("scope:")
-        target = (
-            blueprint_dir / "roadmap/README.md"
-            if scope == "roadmap"
-            else blueprint_dir / "roadmap" / scope / "README.md"
-        )
-        articles = groups.get(scope, ())
-        if not target.is_file() and articles:
-            target = graph.nodes[articles[0]].path
-        links[node.id] = mermaid.relative_link(target, destination, link_extension)
-    diagram = mermaid.render_view_diagram(view, links=links)
-    legend = mermaid.render_legend(
-        _target_statuses(graph, statuses),
-        graph_views.inventory_counts(graph, statuses),
+    page = mermaid.render_page(
+        graph,
+        statuses,
+        destination,
+        link_extension=link_extension,
+        title=title,
     )
-    sections = [
-        "---",
-        "kind: graph",
-        "graph_view: project",
-        "---",
-        "",
-        f"# {title}",
-        "",
-        (
-            f"{len(graph.nodes)} nodes · {graph.edge_count} dependencies, collapsed into "
-            f"{len(view.nodes)} top-level scopes. Open the rendered site for the searchable full DAG."
-        ),
-        "",
-        diagram,
-        "",
-    ]
-    if legend:
-        sections.extend(["## Legend", "", legend, ""])
-    page = "\n".join(sections)
     _atomic_write(destination, page)
     return destination
 
