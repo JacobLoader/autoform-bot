@@ -198,7 +198,10 @@ Use `catalog: module` only as a source inventory for one existing Lean module,
 with an exact declaration ledger and explicit private/supporting exclusions.
 It may accompany exposition, but names, signatures, status tables, and imports
 do not replace reader-facing mathematical prose. A catalog leaf omits
-`declaration` and is never dispatchable proof work.
+`declaration` and is never dispatchable proof work. When the project's CI pins
+an `AUTOFORM_REF` older than catalogs, its `autoform check` rejects `catalog:`
+and `area:`, and its `render` rejects `INVENTORIED`: move the pin, or report
+it, before adding catalogs, areas, or `INVENTORIED` rows.
 
 Assert `statement: formalized`, `proof: formalized`, or `mathlib: true` only
 after exact verification. For declaration leaves, record exact compiled names

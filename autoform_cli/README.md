@@ -121,7 +121,7 @@ lists it, and an `area:` authored on the node wins over the file. The file only
 places articles in regions, so it never stops a command: `check` and `render`
 warn about each entry they ignore, or about the whole file when it is not
 readable `autoform-atlas/v1` JSON, and `audit` reports each as an
-`atlas-omission` [warning](#warnings).
+`atlas-omission` [warning](#warnings). An older `AUTOFORM_REF` ignores the file.
 
 A repository-wide inventory may use a narrative leaf to summarize an existing
 Lean module containing several declarations. Such a leaf sets
@@ -179,8 +179,8 @@ An article asserts only facts a human or agent verified:
 
 | Key | Meaning |
 | --- | --- |
-| `area: Geometry & Topology` | Authored mathematical region for atlas grouping. |
-| `catalog: module` | A non-dispatchable leaf cataloging one existing Lean module. Its `lean:` lists the module's public keyword-declared names, and it links its declaration ledger under `blueprint/sources/` from `## Sources`; cannot be combined with `declaration` or the `mathlib*` keys. |
+| `area: Geometry & Topology` | Authored mathematical region for atlas grouping. CI's `autoform check` at an older `AUTOFORM_REF` rejects the key, so move the pin first, or assign the area in `blueprint/atlas.json`, which older refs ignore. |
+| `catalog: module` | A non-dispatchable leaf cataloging one existing Lean module. Its `lean:` lists the module's public keyword-declared names, and it links its declaration ledger under `blueprint/sources/` from `## Sources`; cannot be combined with `declaration` or the `mathlib*` keys. CI's `autoform check` at an older `AUTOFORM_REF` rejects the key, so move the pin first. |
 | `statement: formalized` | The Lean statement exists and compiles. Requires `lean:`. |
 | `statement: retracted` | A revision retracted the statement while `lean:` still names the old declaration, which stays in the build until Formalize restates the article and records `statement: formalized` in its place. Requires `lean:`; invalid with `proof: formalized` or `mathlib: true`. CI's `autoform check` at an older `AUTOFORM_REF` rejects the marker, so move the pin first; until then, retract by removing `statement` and `proof` and keeping `lean:`. |
 | `proof: formalized` | The Lean proof compiles. Requires `statement: formalized` and `lean:`. Under the open policy it may rest on open statements, and the article is then conditional; only the derived `fully_proved` means complete and `sorry`-free. |
@@ -420,13 +420,15 @@ with `MAPPED`, `INVENTORIED`, `DECOMPOSED`, `DEFERRED`, or `OUT` dispositions.
 source accounting and must link to a `catalog: module` record, directly or
 through a containing roadmap scope: `coverage-role-mismatch` names a link that
 reaches none, and `unclassified-inventory` the first catalogs no such row
-reaches. `DECOMPOSED` is reserved for source-grounded declaration articles and
-links to them, directly or through a containing roadmap scope. A row whose
-links reach nothing but catalogs is a `coverage-role-mismatch`. Any other link
-that reaches no declaration leaf, such as one to prose or to leaves marked
-`not_ready`, is a `decomposed-without-declaration` [warning](#warnings), since
-earlier versions accepted it. `DEFERRED` and `OUT` record an explicit later
-milestone or exclusion. Audit JSON includes canonical rows, counts, and the
+reaches. CI's `render` at an older `AUTOFORM_REF` rejects `INVENTORIED` as an
+unknown disposition, so move the pin first. `DECOMPOSED` is reserved for
+source-grounded declaration articles and links to them, directly or through a
+containing roadmap scope. A row whose links reach nothing but catalogs is a
+`coverage-role-mismatch`. Any other link that reaches no declaration leaf, such
+as one to prose or to leaves marked `not_ready`, is a
+`decomposed-without-declaration` [warning](#warnings), since earlier versions
+accepted it. `DEFERRED` and `OUT` record an explicit later milestone or
+exclusion. Audit JSON includes canonical rows, counts, and the
 exact coverage source hash, while `publication.json` records aggregate counts
 without duplicating the authored rows. The `counts` object always includes an
 integer `INVENTORIED` key, zero when no row uses it.

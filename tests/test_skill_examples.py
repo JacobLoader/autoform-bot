@@ -76,23 +76,36 @@ def test_human_review_distinguishes_roadmap_progress_from_source_scope(
 
 
 def test_generated_site_docs_describe_one_multiscale_explorer(repo_root: Path) -> None:
-    cli = (repo_root / "autoform_cli/README.md").read_text(encoding="utf-8")
-    review = (repo_root / "skills/human-review/SKILL.md").read_text(encoding="utf-8")
-    example = (repo_root / _EXAMPLE / "README.md").read_text(encoding="utf-8")
-    workflow = (
-        repo_root
-        / _EXAMPLE
-        / ".github/workflows/blueprint-pages.yml"
-    ).read_text(encoding="utf-8")
-
-    cli, review = (" ".join(text.split()) for text in (cli, review))
+    cli, review = (
+        " ".join((repo_root / relative).read_text(encoding="utf-8").split())
+        for relative in ("autoform_cli/README.md", "skills/human-review/SKILL.md")
+    )
 
     assert "Every generated site projection uses the same" in cli
     assert "Authored Mermaid remains supported in the vault and book" in cli
     assert "`dependencies/index.json`, is internal to the bundled viewer, and its schema may change" in cli
     assert "Every generated site route uses the same" in review
-    assert "Canvas plus semantic-DOM explorer across project" in example
-    assert "one interactive\n      # dependency explorer" in workflow
+
+
+def test_the_example_uses_nothing_newer_than_its_autoform_pin(repo_root: Path) -> None:
+    """The example's CI runs its pinned AUTOFORM_REF, c994d83f, which predates catalogs.
+
+    That check rejects `catalog:` and `area:` and that render rejects
+    INVENTORIED, while it ignores atlas.json, and its render draws Mermaid maps.
+    Move the pin, here and in the workflow equivalence test, before relaxing this.
+    """
+    example = repo_root / _EXAMPLE
+    for page in (example / "blueprint/roadmap").rglob("*.md"):
+        text = page.read_text(encoding="utf-8")
+        frontmatter = text[4:].split("\n---", 1)[0] if text.startswith("---\n") else ""
+        assert not re.search(r"^(?:area|catalog):", frontmatter, re.MULTILINE), page
+    assert "INVENTORIED" not in (example / "blueprint/coverage/README.md").read_text(encoding="utf-8")
+    assert "dependency maps of the project and each chapter" in " ".join(
+        (example / "README.md").read_text(encoding="utf-8").split()
+    )
+    assert "derived statuses, dependency maps," in (example / ".github/workflows/blueprint-pages.yml").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_formalize_replaces_custom_orchestration_with_the_markdown_frontier(
