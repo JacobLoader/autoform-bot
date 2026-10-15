@@ -1311,8 +1311,10 @@ def test_render_translates_source_index_io_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reason: str | None, message: str
 ) -> None:
     project = _project(tmp_path)
+    captures: list[dict[str, object]] = []
 
     def fail_linker(root: Path, **kwargs: object):
+        captures.append(kwargs)
         if reason is not None:
             raise LeanSourceError(reason)
         raise OSError(f"private host detail: {root}")
@@ -1324,6 +1326,8 @@ def test_render_translates_source_index_io_failure(
 
     assert error.value.issues == (message,)
     assert str(tmp_path) not in str(error.value)
+    # The names keep a large inventory's render from scanning every Lean file for declarations.
+    assert [set(capture["names"]) for capture in captures] == [{"Project.Base", "Project.top"}]
 
 
 def test_render_is_deterministic_and_records_a_path_free_manifest(tmp_path: Path) -> None:
