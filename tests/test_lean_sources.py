@@ -3346,6 +3346,26 @@ def test_comment_stripping_events_cover_every_branch(monkeypatch: pytest.MonkeyP
     assert [lean_module._without_lean_comments(text) for text in texts] == expected
 
 
+def test_a_raw_string_ends_at_its_first_closer(tmp_path: Path) -> None:
+    # Lean reads no escapes in a raw string, so `r"\"` holds one backslash and
+    # the comments after it are comments, not string contents.
+    hidden = _index(
+        tmp_path / "hidden",
+        'def sep : String := r"\\"\n/-\ntheorem hidden : True := trivial\n-/\ndef r : Nat := 1\n',
+    )
+    real = _index(
+        tmp_path / "real",
+        'def sep : String := r"\\"\ndef o : String := "/-"\ntheorem real : True := trivial\ndef c : String := "-/"\n',
+    )
+
+    assert hidden.find("hidden") is None
+    assert hidden.find("r") is not None
+    assert real.find("real") is not None
+    assert real.find("c") is not None
+    # An `r` that ends a name opens no raw string, so this string keeps its escape.
+    assert strip_lean_comments('def x := throwError"a\\"--b" -- c') == 'def x := throwError"a\\"--b"'
+
+
 def test_permalink_pins_the_commit(tmp_path: Path) -> None:
     linker = SourceLinker(
         index=_index(tmp_path),

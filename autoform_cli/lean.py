@@ -863,13 +863,15 @@ def _without_lean_comments(text: str) -> str:
                     break
             out.append(" " + "\n" * text.count("\n", start, index))
             continue
-        raw = _RAW_OPEN.match(text, index)
-        if raw:
-            out.append(raw.group())
-            index = raw.end()
-            stack.append(['"' + raw.group(1), False])
-            continue
         previous = text[index - 1] if index else " "
+        # An `r` inside a name is part of it. Lean reads no escapes in a raw
+        # string, so it ends at the first closer: `r"\"` is one backslash.
+        raw = None if previous.isalnum() or previous in "_'!?.«" else _RAW_OPEN.match(text, index)
+        if raw:
+            close = text.find('"' + raw.group(1), raw.end())
+            index = len(text) if close < 0 else close + 1 + len(raw.group(1))
+            out.append(text[raw.start() : index])
+            continue
         if char == '"':
             interpolated = previous == "!" and index >= 2 and (text[index - 2].isalnum() or text[index - 2] == "_")
             stack.append(['"', interpolated])
