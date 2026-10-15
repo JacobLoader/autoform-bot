@@ -8,6 +8,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import types
 from collections.abc import Callable
 from pathlib import Path
 
@@ -1502,6 +1503,31 @@ def test_selected_verification_recurses_in_three_frames_per_folder(
 
     assert snapshot.index.find("deep") is not None
     assert [frames_at_level[level + 1] - frames_at_level[level] for level in range(4)] == [3, 3, 3, 3]
+
+
+def test_selected_verification_calls_back_through_a_plain_function(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A C-implemented callback such as functools.partial adds no Python frame,
+    # so the frame count above misses it, but it spends CPython's separate C
+    # recursion budget at every folder level of verification.
+    _require_descriptor_capture()
+    (tmp_path / "d").mkdir()
+    (tmp_path / "d" / "Deep.lean").write_text("def deep : Nat := 0\n")
+    callbacks: list[type] = []
+    recheck = tree_snapshot_module._recheck_scanned_directory
+
+    def recording_recheck(*args: object, **kwargs: object) -> object:
+        if kwargs.get("verify_kept") is not None:
+            callbacks.append(type(kwargs["verify_kept"]))
+        return recheck(*args, **kwargs)
+
+    monkeypatch.setattr(tree_snapshot_module, "_recheck_scanned_directory", recording_recheck)
+
+    snapshot_project_sources(tmp_path)
+
+    assert callbacks and set(callbacks) == {types.FunctionType}
 
 
 @pytest.mark.parametrize(
