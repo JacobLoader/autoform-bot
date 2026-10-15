@@ -803,7 +803,7 @@ def _scan(lines: list[str], relative: Path) -> tuple[list[Declaration], int]:
                 continue
             # `_name_token` stops before the `{` in an explicit universe
             # binder, leaving the syntactic separator behind.
-            name = re.sub(r"\.\{[^}\n]+\}$", "", name).removesuffix(".")
+            name = name.removesuffix(".")
             found.append(Declaration(_qualified(namespaces, name), relative, number, keyword, protected))
     return found, len(lines)
 

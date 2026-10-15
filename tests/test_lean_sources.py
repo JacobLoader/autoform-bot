@@ -215,6 +215,43 @@ def test_targeted_index_reads_each_name_of_an_iff_alias(tmp_path: Path) -> None:
         assert index_project(tmp_path, names=(name,)).find(name) is not None, name
 
 
+def test_the_name_prefilter_admits_every_name_the_scan_indexes(tmp_path: Path) -> None:
+    """Each filtered capture (check, audit, render, runtime) loses a name the prefilter misreads."""
+    source = [
+        "universe u v w",
+        "namespace Outer",
+        "def polymorphic.{u} (α : Type u) := α",
+        "theorem «dotted.name» : True := trivial",
+        "theorem _root_.rootLevel.{v} : True := trivial",
+        "protected def guarded.{w} : Nat := 0",
+        "theorem base_iff : True ↔ True := Iff.rfl",
+        "alias ⟨forward, _⟩ := base_iff",
+        "alias later :=",
+        "  base_iff",
+        "@[simp]",
+        "theorem attributed : True := trivial",
+        "/-- A docstring on the declaration's own line. -/ theorem documented : True := trivial",
+        "theorem_wanted wish : True",
+        "proof_wanted proofWish : True",
+        "def_wanted defWish : Nat",
+        "instance_wanted instWish : Inhabited Nat",
+        "@[simp]",
+        "private",
+        "noncomputable def split : Nat := 0",
+        "end Outer",
+    ]
+    index = _index(tmp_path, "\n".join(source) + "\n")
+
+    assert sorted(index.declarations) == [
+        *(f"Outer.{name}" for name in ("attributed", "base_iff", "defWish", "documented", "forward", "guarded")),
+        *(f"Outer.{name}" for name in ("instWish", "later", "polymorphic", "proofWish", "split", "wish")),
+        "Outer.«dotted.name»",
+        "rootLevel",
+    ]
+    for name in index.declarations:
+        assert index_project(tmp_path, names=(name,)).find(name) is not None, name
+
+
 def test_every_scope_closes_at_its_own_end(tmp_path: Path) -> None:
     source = "\n".join(
         [
