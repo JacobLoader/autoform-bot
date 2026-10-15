@@ -651,12 +651,15 @@ def _indexed_source_snapshot(
             text = data.decode("utf-8")
         except UnicodeError:
             continue
-        if wanted_short is not None and not _may_declare(text, wanted_short):
-            # Nothing in this file is indexed, so no declaration is sized
-            # against this count.
-            line_counts[relative_path] = len(text.splitlines())
+        # The stripper keeps newlines, so both passes number lines as the file does.
+        lines = _without_lean_comments(text).splitlines()
+        if wanted_short is not None and not _may_declare(lines, wanted_short):
+            # Nothing in this file is indexed, but its count still stops where Lean stops reading.
+            line_counts[relative_path] = next(
+                (number for number, line in enumerate(lines) if _EXIT.match(line)), len(lines)
+            )
             continue
-        found, line_counts[relative_path] = _scan(text, relative_path)
+        found, line_counts[relative_path] = _scan(lines, relative_path)
         for declaration in found:
             first = declarations.setdefault(declaration.name, declaration)
             if first.path != relative_path and relative_path not in elsewhere.get(declaration.name, ()):
@@ -676,12 +679,15 @@ def _indexed_source_snapshot(
     )
 
 
-def _may_declare(text: str, wanted_short: frozenset[str]) -> bool:
-    """Reject files that cannot contain a requested declaration."""
+def _may_declare(lines: list[str], wanted_short: frozenset[str]) -> bool:
+    """Reject files that cannot contain a requested declaration.
+
+    ``lines`` are the file's lines with comments blanked, as :func:`_scan` reads them.
+    """
 
     if not wanted_short:
         return False
-    for line in _without_lean_comments(text).splitlines():
+    for line in lines:
         match = _DECLARATION.match(line)
         if match is None:
             continue
@@ -743,13 +749,12 @@ def _update_source_digest(digest, relative: Path, data: bytes) -> None:
     digest.update(data)
 
 
-def _scan(text: str, relative: Path) -> tuple[list[Declaration], int]:
-    """The declarations in ``text`` and the number of its lines Lean reads."""
+def _scan(lines: list[str], relative: Path) -> tuple[list[Declaration], int]:
+    """The declarations in a file's comment-blanked ``lines`` and the number of them Lean reads."""
     found: list[Declaration] = []
     namespaces: list[str] = []
     scopes: list[str | None] = []
 
-    lines = _without_lean_comments(text).splitlines()
     for number, line in enumerate(lines, start=1):
         if not line.strip():
             continue

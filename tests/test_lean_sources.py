@@ -185,7 +185,8 @@ def test_targeted_index_prefilters_files_but_preserves_file_context_and_digest(
 ) -> None:
     _index(tmp_path)
     other = tmp_path / "Project/Other.lean"
-    other.write_text("def unrelated : Nat := 0\n", encoding="utf-8")
+    # A skipped file still counts only the lines Lean reads, up to its `#exit`.
+    other.write_text("def unrelated : Nat := 0\n#exit\ndef dead : Nat := 1\n\n\n", encoding="utf-8")
     full = index_project(tmp_path)
 
     targeted = index_project(tmp_path, names=("Outer.alpha",))
@@ -194,7 +195,7 @@ def test_targeted_index_prefilters_files_but_preserves_file_context_and_digest(
     assert targeted.find("Outer.beta") is not None
     assert targeted.find("unrelated") is None
     assert targeted.source_digest == full.source_digest
-    assert set(targeted.line_counts) == set(full.line_counts)
+    assert targeted.line_counts == full.line_counts
 
 
 def test_targeted_index_treats_inline_comments_as_lean_whitespace(
