@@ -157,6 +157,35 @@ def test_status_counts_keep_the_legend_order(tmp_path: Path) -> None:
     assert payload["nodes"][0]["status_counts"] == [list(entry) for entry in counts]
 
 
+def test_a_catalog_carries_a_few_lean_names_and_counts_the_rest(tmp_path: Path) -> None:
+    """A catalog lists every compiled name, which made its payload and inspector line unbounded."""
+    names = [f"Mathlib.Algebra.Module.lemma_{index:03d}" for index in range(150)]
+    nodes = (
+        ViewNode(
+            "catalog",
+            "Catalog",
+            "node",
+            ("catalog",),
+            (("inventory_checked", 1),),
+            catalog="module",
+            lean=", ".join(names),
+        ),
+        ViewNode(
+            "leaf", "Leaf", "node", ("leaf",), (("planned", 1),), declaration="theorem", lean=" ".join(names[:20])
+        ),
+    )
+    output = tmp_path / "inventory.json"
+    dag_viewer.write_payload(output, GraphView(kind="chapter", title="Inventory", nodes=nodes, edges=()), links={})
+
+    catalog, leaf = json.loads(output.read_text(encoding="utf-8"))["nodes"]
+    assert catalog["lean"] == ", ".join(names[:8])
+    assert catalog["lean_count"] == 150
+    assert len(catalog["lean"].encode()) < 400
+    # A declaration leaf names only its own declarations, so it keeps them all.
+    assert leaf["lean"] == " ".join(names[:20])
+    assert "lean_count" not in leaf
+
+
 def test_isolated_inventory_does_not_spread_the_connected_dag() -> None:
     node_ids = ["root", "result", *(f"isolated-{index}" for index in range(1_000))]
     nodes = tuple(
