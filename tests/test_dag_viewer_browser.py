@@ -519,6 +519,8 @@ def test_a_view_of_topics_and_results_draws_readable_result_cards(desktop_page: 
     title.wait_for()
     assert not page.locator(".bp-dag-viewer").evaluate("element => element.classList.contains('bp-dag-atlas')")
     assert title.evaluate("element => element.scrollWidth <= element.clientWidth")
+    meta = page.locator('[data-autoform-node-id="topics/compactness"] .bp-dag-node-meta')
+    playwright.expect(meta).to_have_text("1 item · 0 internal links")
 
 
 def test_a_click_on_empty_map_space_keeps_the_readers_zoom(desktop_page: object, explorer_url: str) -> None:
