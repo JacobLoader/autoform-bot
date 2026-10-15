@@ -40,19 +40,25 @@ def test_full_view_payload_is_deterministic_layout_ready_and_data_only(tmp_path:
     assert outputs[0].read_bytes() == outputs[1].read_bytes()
     payload = json.loads(outputs[0].read_text(encoding="utf-8"))
     assert payload["schema"] == "autoform-dag-view/v2"
-    assert payload["node_count"] == 170
-    assert payload["edge_count"] == 169
-    assert payload["counts"] == {
-        "connected": 170,
-        "dependencies": 169,
-        "isolated": 0,
-        "nodes": 170,
+    # The explorer reads each field once; nothing is duplicated for other readers.
+    assert set(payload) == {
+        "edge_count",
+        "edges",
+        "nodes",
+        "palette",
+        "present_statuses",
+        "regions",
+        "schema",
+        "title",
+        "view",
     }
+    assert set(payload["nodes"][0]["layout"]) == {"column", "height", "row", "width", "x", "y"}
+    assert len(payload["nodes"]) == 170
+    assert payload["edge_count"] == 169
     assert payload["view"] == {
         "breadcrumbs": [],
         "kind": "full",
         "presentation": "dag",
-        "scope": None,
         "summary": None,
     }
     assert payload["present_statuses"] == ["planned", "inventory_checked"]
@@ -69,12 +75,12 @@ def test_full_view_payload_is_deterministic_layout_ready_and_data_only(tmp_path:
     assert payload["palette"]["inventory_checked"]["label"] == "inventory checked"
     assert payload["palette"]["inventory_checked"]["neutral"] is True
     assert payload["palette"]["inventory_checked"]["light"] == payload["palette"]["planned"]["light"]
-    assert max(node["row"] for node in payload["nodes"]) < dag_viewer.MAX_LAYOUT_ROWS
-    assert max(node["column"] for node in payload["nodes"]) > 0
+    assert max(node["layout"]["row"] for node in payload["nodes"]) < dag_viewer.MAX_LAYOUT_ROWS
+    assert max(node["layout"]["column"] for node in payload["nodes"]) > 0
     positions = {(node["layout"]["x"], node["layout"]["y"]) for node in payload["nodes"]}
     assert len(positions) == len(nodes)
     assert all(
-        payload["nodes"][index]["layout"]["rank"] < payload["nodes"][index + 1]["layout"]["rank"]
+        payload["nodes"][index]["layout"]["x"] < payload["nodes"][index + 1]["layout"]["x"]
         for index in range(len(nodes) - 1)
     )
 
@@ -214,7 +220,6 @@ def test_explorer_marks_isolates_but_keeps_them_in_the_complete_inventory(tmp_pa
     dag_viewer.write_payload(output, view, links={})
     payload = json.loads(output.read_text(encoding="utf-8"))
 
-    assert payload["counts"]["isolated"] == 1
     assert {node["id"] for node in payload["nodes"] if node["isolated"]} == {"isolated"}
     script = dag_viewer.viewer_script()
     assert "inventoryNodes" in script
@@ -346,7 +351,7 @@ def test_viewer_script_links_are_relative_to_the_rendered_site_root(tmp_path: Pa
     )
 
 
-def test_payload_layout_follows_dependencies_and_keeps_collapsed_cycles_stable() -> None:
+def test_payload_layout_follows_dependencies_and_keeps_collapsed_cycles_stable(tmp_path: Path) -> None:
     nodes = (
         ViewNode("result", "Result", "node", ("result",), (("planned", 1),)),
         ViewNode("base", "Base", "node", ("base",), (("planned", 1),)),
@@ -367,10 +372,15 @@ def test_payload_layout_follows_dependencies_and_keeps_collapsed_cycles_stable()
         ),
     )
 
-    acyclic_positions = dag_viewer._positions(acyclic)
-    assert acyclic_positions["base"]["rank"] < acyclic_positions["result"]["rank"]
-    assert dag_viewer._positions(cyclic) == dag_viewer._positions(cyclic)
-    assert len({(entry["x"], entry["y"]) for entry in dag_viewer._positions(cyclic).values()}) == 2
+    def layout(view: GraphView) -> dict[str, tuple[int, int]]:
+        output = tmp_path / f"{view.kind}.json"
+        dag_viewer.write_payload(output, view, links={})
+        payload = json.loads(output.read_text(encoding="utf-8"))
+        return {node["id"]: (node["layout"]["x"], node["layout"]["y"]) for node in payload["nodes"]}
+
+    assert layout(acyclic) == {"base": (0, 0), "result": (312, 0)}
+    # A collapsed cycle has no topological order, so it keeps source order.
+    assert layout(cyclic) == {"result": (0, 0), "base": (312, 0)}
 
 
 def test_payload_rejects_duplicate_nodes_and_unknown_edges() -> None:

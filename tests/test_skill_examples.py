@@ -887,7 +887,7 @@ def test_setup_asset_static_site_contract(repo_root: Path, tmp_path: Path) -> No
     assert 'class="bp-dag-viewer"' in full_graph
     assert "```mermaid" not in full_graph
     payload = json.loads((site / "dependencies/full.json").read_text(encoding="utf-8"))
-    assert payload["node_count"] < len(graph.nodes)
+    assert len(payload["nodes"]) < len(graph.nodes)
     search_index = json.loads((site / "dependencies/index.json").read_text(encoding="utf-8"))
     assert {node["id"] for node in search_index["nodes"]} == set(graph.nodes)
     statement_page = (site / "roadmap/infimum-loss/README.md").read_text(encoding="utf-8")

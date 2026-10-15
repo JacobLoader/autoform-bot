@@ -90,27 +90,26 @@ def write_graph_pages(
     project_item_count = sum(node.item_count for node in project.nodes)
     # Like the project lead, chapter leads count formalization targets, so notes are left out.
     chapter_item_counts = {node.id: node.item_count for node in project.nodes}
-    project_book_links = node_links(project_page, _article_link_ids(project))
-    project_links = {
-        view_node.id: (
-            _published_link(
-                chapter_pages.get(
-                    view_node.id.removeprefix("scope:"),
-                    scope_pages[view_node.id.removeprefix("scope:")],
-                ),
-                project_page,
+
+    def project_links(page: Path) -> dict[str, str]:
+        """Link the project view from *page*: chapters to their explorers, articles to the book."""
+        book_links = node_links(page, _article_link_ids(project))
+        links = {}
+        for view_node in project.nodes:
+            scope = view_node.id.removeprefix("scope:")
+            links[view_node.id] = (
+                _published_link(chapter_pages.get(scope) or scope_pages[scope], page)
+                if view_node.kind == "scope"
+                else book_links[view_node.id]
             )
-            if view_node.kind == "scope"
-            else project_book_links[view_node.id]
-        )
-        for view_node in project.nodes
-    }
+        return links
+
     written.append(
         _write_page(
             project_page,
             view=project,
             statuses=_selected_statuses(graph, statuses, project, containers),
-            links=project_links,
+            links=project_links(project_page),
             heading="Mathematics atlas",
             lead=(
                 f"{project_item_count} item{'s' if project_item_count != 1 else ''} across "
@@ -215,27 +214,12 @@ def write_graph_pages(
     # Keep the old full route as a compatibility shell, but never fit every
     # leaf into one unreadable canvas. Its global index redirects legacy
     # ``#node=`` links into the nearest hierarchical scope.
-    full_project_book_links = node_links(full_page, _article_link_ids(project))
-    full_project_links = {
-        view_node.id: (
-            _published_link(
-                chapter_pages.get(
-                    view_node.id.removeprefix("scope:"),
-                    scope_pages[view_node.id.removeprefix("scope:")],
-                ),
-                full_page,
-            )
-            if view_node.kind == "scope"
-            else full_project_book_links[view_node.id]
-        )
-        for view_node in project.nodes
-    }
     written.append(
         _write_page(
             full_page,
             view=project,
             statuses=_selected_statuses(graph, statuses, project, containers),
-            links=full_project_links,
+            links=project_links(full_page),
             heading="Mathematics atlas",
             lead=(
                 f"Browse {len(graph.nodes)} roadmap entries without flattening them into one canvas. "

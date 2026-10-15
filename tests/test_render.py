@@ -166,11 +166,11 @@ def test_render_writes_a_derived_tree_and_leaves_the_vault_alone(tmp_path: Path)
     payload = json.loads((out / "dependencies/full.json").read_text(encoding="utf-8"))
     assert payload["schema"] == "autoform-dag-view/v2"
     assert payload["title"] == "Mathematics atlas"
-    assert payload["node_count"] == 1
+    assert len(payload["nodes"]) == 1
     assert payload["edge_count"] == 0
     assert all(node["url"] for node in payload["nodes"])
     search_index = json.loads((out / "dependencies/index.json").read_text(encoding="utf-8"))
-    assert search_index["node_count"] == 3
+    assert len(search_index["nodes"]) == 3
 
 
 def test_a_graph_page_hides_its_legend_behind_an_icon(tmp_path: Path) -> None:
@@ -232,7 +232,7 @@ def test_small_and_large_chapters_use_the_same_json_explorer(
     assert "```mermaid" not in page
     assert page.count("blueprint-dag.js") == 1
     payload = json.loads((tmp_path / "out/dependencies/chapters/large.json").read_text(encoding="utf-8"))
-    assert payload["node_count"] == node_count
+    assert len(payload["nodes"]) == node_count
     assert payload["edge_count"] == node_count - 1
 
 

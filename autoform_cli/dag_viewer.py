@@ -23,6 +23,7 @@ SCHEMA = "autoform-dag-view/v2"
 SEARCH_SCHEMA = "autoform-dag-search/v1"
 MAX_LAYOUT_ROWS = 160
 
+_PALETTE_KEYS = frozenset(state.key for state in (*STATES, *INVENTORY_STATES))
 _NODE_WIDTH = 196
 _NODE_HEIGHT = 56
 _COLUMN_GAP = 116
@@ -116,8 +117,6 @@ def _positions(view: GraphView) -> dict[str, dict[str, int]]:
             result[node_id] = {
                 "column": column,
                 "height": _NODE_HEIGHT,
-                "order": slot,
-                "rank": rank,
                 "row": row,
                 "width": _NODE_WIDTH,
                 "x": column * (_NODE_WIDTH + _COLUMN_GAP),
@@ -137,8 +136,6 @@ def _positions(view: GraphView) -> dict[str, dict[str, int]]:
         result[node_id] = {
             "column": column,
             "height": _NODE_HEIGHT,
-            "order": slot,
-            "rank": 0,
             "row": row,
             "width": _NODE_WIDTH,
             "x": column * (_NODE_WIDTH + _COLUMN_GAP),
@@ -164,15 +161,15 @@ def _atlas_positions(view: GraphView) -> dict[str, dict[str, int]]:
             return 104
         return 76
 
-    by_area: dict[str, list[tuple[int, ViewNode]]] = defaultdict(list)
-    for index, node in enumerate(view.nodes):
-        by_area[node.area or ""].append((index, node))
+    by_area: dict[str, list[ViewNode]] = defaultdict(list)
+    for node in view.nodes:
+        by_area[node.area or ""].append(node)
 
     blocks: list[tuple[str, dict[str, dict[str, int]], int, int]] = []
-    for area, indexed in sorted(by_area.items(), key=lambda item: (not item[0], item[0].casefold())):
-        indexed.sort(key=lambda item: (-diameter(item[1]), item[1].title.casefold(), item[1].id))
-        dimensions = {node.id: diameter(node) for _, node in indexed}
-        total_area = sum((dimensions[node.id] + gap) ** 2 for _, node in indexed)
+    for area, members in sorted(by_area.items(), key=lambda item: (not item[0], item[0].casefold())):
+        members.sort(key=lambda node: (-diameter(node), node.title.casefold(), node.id))
+        dimensions = {node.id: diameter(node) for node in members}
+        total_area = sum((size + gap) ** 2 for size in dimensions.values())
         target_width = max(
             max(dimensions.values(), default=_NODE_WIDTH),
             round(math.sqrt(total_area * 1.1)),
@@ -183,7 +180,7 @@ def _atlas_positions(view: GraphView) -> dict[str, dict[str, int]]:
         row_height = 0
         row = 0
         widest = 0
-        for order, node in indexed:
+        for node in members:
             size = dimensions[node.id]
             if x and x + size > target_width:
                 x = 0
@@ -193,8 +190,6 @@ def _atlas_positions(view: GraphView) -> dict[str, dict[str, int]]:
             local[node.id] = {
                 "column": x,
                 "height": size,
-                "order": order,
-                "rank": 0,
                 "row": row,
                 "width": size,
                 "x": x,
@@ -266,6 +261,26 @@ def _palette() -> dict[str, dict[str, object]]:
     return palette
 
 
+def _display_status(node: ViewNode) -> str:
+    """Return the palette key a node is drawn in: a catalog's inventory status, else its own."""
+    inventory = node.catalog == "module" and next(
+        (key for key, count in node.status_counts if count and key in INVENTORY_STATUSES),
+        None,
+    )
+    key = inventory or node.status_key or (node.status_counts[0][0] if node.status_counts else "planned")
+    return key if key in _PALETTE_KEYS else "planned"
+
+
+def _write_json(path: Path, payload: Mapping[str, object]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    return path
+
+
 def write_payload(
     path: Path,
     view: GraphView,
@@ -273,7 +288,7 @@ def write_payload(
     links: Mapping[str, str],
     breadcrumbs: Iterable[tuple[str, str | None]] = (),
 ) -> Path:
-    """Write deterministic v2 graph data while preserving the v1 call shape."""
+    """Write the deterministic layout and data one explorer page draws."""
     positions = _positions(view)
     degrees: dict[str, int] = {node.id: 0 for node in view.nodes}
     for edge in view.edges:
@@ -281,40 +296,25 @@ def write_payload(
             degrees[edge.source] += 1
             degrees[edge.target] += 1
 
-    palette = _palette()
     nodes: list[dict[str, object]] = []
     present_statuses: set[str] = set()
     for node in view.nodes:
-        inventory = next(
-            (key for key, count in node.status_counts if count and key in INVENTORY_STATUSES),
-            None,
-        )
-        status_key = (
-            inventory
-            if node.catalog == "module" and inventory
-            else node.status_key or (node.status_counts[0][0] if node.status_counts else "planned")
-        )
-        if status_key not in palette:
-            status_key = "planned"
+        status_key = _display_status(node)
         present_statuses.add(status_key)
-        layout = positions[node.id]
         nodes.append(
             {
                 "area": node.area,
                 "catalog": node.catalog,
-                "column": layout["column"],  # v1 readers can still place nodes.
                 "declaration": node.declaration,
                 "id": node.id,
                 "internal_dependency_count": node.internal_dependency_count,
                 "isolated": degrees[node.id] == 0,
                 "kind": node.kind,
-                "layout": layout,
+                "layout": positions[node.id],
                 "lean": node.lean,
                 # The items the status counts add up to, so a scope's
                 # "N items" header agrees with the rows beneath it.
                 "member_count": node.item_count,
-                "rank": layout["rank"],
-                "row": layout["row"],
                 "status": status_key,
                 "status_counts": {key: count for key, count in node.status_counts},
                 "summary": node.summary,
@@ -327,23 +327,14 @@ def write_payload(
         {"proof": edge.proof_count, "source": edge.source, "statement": edge.statement_count, "target": edge.target}
         for edge in view.edges
     ]
-    dependency_count = sum(edge.dependency_count for edge in view.edges)
-    isolated_count = sum(bool(node["isolated"]) for node in nodes)
     ordered_statuses = [
         state.key for state in (*STATES, *INVENTORY_STATES) if state.key in present_statuses
     ]
     payload = {
-        "counts": {
-            "connected": len(nodes) - isolated_count,
-            "dependencies": dependency_count,
-            "isolated": isolated_count,
-            "nodes": len(nodes),
-        },
-        "edge_count": dependency_count,
+        "edge_count": sum(edge.dependency_count for edge in view.edges),
         "edges": edges,
-        "node_count": len(nodes),
         "nodes": nodes,
-        "palette": palette,
+        "palette": _palette(),
         "present_statuses": ordered_statuses,
         "regions": _atlas_regions(view, positions) if _uses_atlas(view) else [],
         "schema": SCHEMA,
@@ -355,17 +346,10 @@ def write_payload(
             ],
             "kind": view.kind,
             "presentation": "atlas" if _uses_atlas(view) else "dag",
-            "scope": view.scope,
             "summary": view.summary,
         },
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
-    return path
+    return _write_json(path, payload)
 
 
 def write_search_index(
@@ -375,37 +359,17 @@ def write_search_index(
     context_links: Mapping[str, str],
 ) -> Path:
     """Write the small global index used to jump into a hierarchical view."""
-    palette = _palette()
-    nodes: list[dict[str, object]] = []
-    for node in view.nodes:
-        inventory = next(
-            (key for key, count in node.status_counts if count and key in INVENTORY_STATUSES),
-            None,
-        )
-        status_key = (
-            inventory
-            if node.catalog == "module" and inventory
-            else node.status_key or (node.status_counts[0][0] if node.status_counts else "planned")
-        )
-        if status_key not in palette:
-            status_key = "planned"
-        nodes.append(
-            {
-                "id": node.id,
-                "kind": node.kind,
-                "status": status_key,
-                "title": node.title,
-                "url": context_links.get(node.id),
-            }
-        )
-    payload = {"node_count": len(nodes), "nodes": nodes, "schema": SEARCH_SCHEMA}
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
-    return path
+    nodes = [
+        {
+            "id": node.id,
+            "kind": node.kind,
+            "status": _display_status(node),
+            "title": node.title,
+            "url": context_links.get(node.id),
+        }
+        for node in view.nodes
+    ]
+    return _write_json(path, {"nodes": nodes, "schema": SEARCH_SCHEMA})
 
 
 def render_container(
@@ -720,14 +684,14 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
         !Array.isArray(data.nodes) || !Array.isArray(data.edges)) throw new Error("unsupported graph payload");
     host.textContent = "";
     host.classList.remove("bp-dag-enhancing");
-    var view = data.view || {kind: "full", scope: null};
+    var view = data.view || {kind: "full"};
     var atlas = view.presentation === "atlas"; host.classList.toggle("bp-dag-atlas", atlas);
     var palette = data.palette || {};
     var byId = new Map(), prerequisites = new Map(), dependents = new Map(), incident = new Map();
     var statusCounts = new Map(), presentStatuses = [];
     data.nodes.forEach(function (node, index) {
       var layout = node.layout || {};
-      node._index = index;
+      node._index = index; node.column = layout.column; node.row = layout.row;
       node.x = Number.isFinite(layout.x) ? layout.x : (node.column || 0) * 312;
       node.y = Number.isFinite(layout.y) ? layout.y : (node.row || 0) * 66;
       node.width = Number.isFinite(layout.width) ? layout.width : NODE_W;
@@ -773,7 +737,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
 
     buildShell();
     bindEvents();
-    applyLocation(true);
+    applyLocation();
     renderInspector();
     renderInventory(true);
     resize();
@@ -913,8 +877,8 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
         else if (event.key === "-") { zoomAt(.82, refs.stage.clientWidth / 2, refs.stage.clientHeight / 2); event.preventDefault(); }
         else if (event.key === "0") { fit(); event.preventDefault(); }
       });
-      window.addEventListener("hashchange", function () { applyLocation(false); });
-      window.addEventListener("popstate", function () { applyLocation(false); });
+      window.addEventListener("hashchange", applyLocation);
+      window.addEventListener("popstate", applyLocation);
       document.addEventListener("keydown", function (event) {
         var tag = event.target && event.target.tagName;
         if ((event.key === "/" && !/^(INPUT|TEXTAREA|SELECT)$/.test(tag || "")) ||
@@ -1553,7 +1517,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
     }
 
     function locationParams() { return new URLSearchParams(window.location.hash.replace(/^#/, "")); }
-    function applyLocation(initial) {
+    function applyLocation() {
       var params = locationParams(), node = byId.get(params.get("node")) || null, direction = params.get("direction");
       state.selected = node;
       state.direction = node && /^(prerequisites|dependents|both)$/.test(direction || "") ? direction : "both";
@@ -1571,7 +1535,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
         host.classList.add("bp-dag-has-selection"); setSheet(true);
       } else { host.classList.remove("bp-dag-has-selection"); setSheet(false); }
       syncControls(); renderInspector(); renderInventory(true); schedule();
-      if (node) setTimeout(function () { center(node, .82); }, initial ? 0 : 0);
+      if (node) setTimeout(function () { center(node, .82); }, 0);
     }
     function writeLocation(method) {
       var params = new URLSearchParams();
