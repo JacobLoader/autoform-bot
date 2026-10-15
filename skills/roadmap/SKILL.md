@@ -84,15 +84,16 @@ Inspect the repository and existing vault before writing. Preserve accepted
 material and unrelated changes; send missing infrastructure to Setup. Formalize
 owns Lean execution after this skill produces a validated ready frontier.
 
-Before external research, extract module and declaration docstrings and nearby
-source comments alongside the Lean signatures and implementations. Work from
-those exact source passages. Record stable source locations, assumptions, and
-uncovered prerequisites under `blueprint/sources/`; label project-authored
-specifications honestly. Search the pinned Mathlib checkout and every usable
-shared library before planning a replacement. External research is read-only,
-and contacting people requires permission. Do not invent a statement,
-motivation, proof narrative, dependency, citation, or historical attribution
-that the available sources do not support. Read
+Work from exact source passages. When the boundary includes existing Lean,
+first extract module and declaration docstrings and nearby source comments
+alongside the Lean signatures and implementations; they locate and describe
+code but never replace the adopted source. Record stable source locations,
+assumptions, and uncovered prerequisites under `blueprint/sources/`; label
+project-authored specifications honestly. Search the pinned Mathlib checkout
+and every usable shared library before planning a replacement. External
+research is read-only, and contacting people requires permission. Do not invent
+a statement, motivation, proof narrative, dependency, citation, or historical
+attribution that the available sources do not support. Read
 [Setup's Zulip workflow](../setup/references/zulip.md) only for requested
 Zulip work.
 
@@ -243,10 +244,11 @@ validation; pushing is outward-facing and requires a user request.
 
 Finish only when the adopted boundary has no `MAPPED` rows, every `DECOMPOSED`
 area links source-grounded declaration articles, every `INVENTORIED` area links
-exact catalogs, every in-scope declaration is reconciled, affected pages and
-the graph agree, and the latest commit contains every change from the pass. Do
-not stop after discovery, a coarse proposal, one chapter, or unchanged
-validation. Report the material delta, evidence, existing/formalized versus
-wishlist/conjectural/planned counts, reconciliation gaps, remaining blockers,
-and the next execution frontier. Mark an active Goal complete only after these
-conditions hold.
+exact catalogs, affected pages and the graph agree, and the latest commit
+contains every change from the pass; a repository inventory also needs every
+in-scope declaration reconciled. Do not stop after discovery, a coarse
+proposal, one chapter, or unchanged validation. Report the material delta,
+evidence, remaining blockers, and the next execution frontier, and for a
+repository inventory the existing/formalized versus wishlist/conjectural/planned
+counts and the reconciliation gaps. Mark an active Goal complete only after
+these conditions hold.

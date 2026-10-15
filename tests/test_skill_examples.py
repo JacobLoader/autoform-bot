@@ -1552,6 +1552,10 @@ def test_roadmap_repository_scope_inventories_existing_lean(repo_root: Path) -> 
         "project-owned Lean is a primary mathematical source",
         "inventory every in-scope tracked module and public mathematical declaration",
         "future-work slice cannot stand in for a repository-wide inventory",
+        # A docstring describes code; a paper-based pass still works from its source.
+        "Work from exact source passages. When the boundary includes existing Lean",
+        "never replace the adopted source",
+        "a repository inventory also needs every in-scope declaration reconciled",
         "`DECOMPOSED` means represented by roadmap articles, not unfinished",
         "record exact compiled names in `lean`",
         "`proof: formalized` for a theorem or lemma only after checking that its proof is complete",
@@ -1561,7 +1565,7 @@ def test_roadmap_repository_scope_inventories_existing_lean(repo_root: Path) -> 
     ):
         assert required in normalized
 
-    assert "existing formalized Lean" in metadata
+    assert "inventorying existing formalized Lean when the boundary is an existing repository or library" in metadata
     assert "Existing and planned mathematics coexist in one book" in example
 
 
