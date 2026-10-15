@@ -533,13 +533,11 @@ def _lean_findings(
         for name in names:
             declaration = index.find(name)
             if declaration is None:
-                findings.append(
-                    AuditFinding(
-                        article_path,
-                        "lean-target-not-found",
-                        f"Lean declaration target was not found: {name}",
-                    )
-                )
+                reason = f"Lean declaration target was not found: {name}"
+                if node.catalog:
+                    # The index records only names written after a declaration keyword.
+                    reason += "; a name Lean generates is not indexed and belongs in the catalog's ledger"
+                findings.append(AuditFinding(article_path, "lean-target-not-found", reason))
             else:
                 resolved.append(declaration)
 

@@ -178,7 +178,8 @@ def test_audit_cli_passes_with_only_warnings_and_prints_them(tmp_path: Path, cap
     assert main(command) == 1
     assert capsys.readouterr().out.splitlines() == [
         "    coverage: 0 mapped · 0 decomposed · 1 inventoried · 0 deferred · 0 out",
-        "error: roadmap/inventory.md: lean-target-not-found: Lean declaration target was not found: Inv.missing",
+        "error: roadmap/inventory.md: lean-target-not-found: Lean declaration target was not found: Inv.missing; "
+        "a name Lean generates is not indexed and belongs in the catalog's ledger",
         f"warning: roadmap/inventory.md: catalog-unbounded-limit: {message}",
     ]
 

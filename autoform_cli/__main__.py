@@ -615,6 +615,7 @@ def _check(args: argparse.Namespace) -> int:
     if index is not None:
         missing = [
             f"{node.id}: declaration not found in {args.lean_root}: {name}"
+            + ("; a name Lean generates is not indexed and belongs in the catalog's ledger" if node.catalog else "")
             for node in graph.nodes.values()
             for name in declaration_names(node.lean or "")
             if index.find(name) is None

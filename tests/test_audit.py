@@ -564,7 +564,8 @@ def test_audit_requires_module_catalog_lean_targets_to_resolve(tmp_path: Path) -
     assert findings["roadmap/existing-module.md"] == [
         (
             "lean-target-not-found",
-            "Lean declaration target was not found: Missing.noSuchDeclaration",
+            "Lean declaration target was not found: Missing.noSuchDeclaration; "
+            "a name Lean generates is not indexed and belongs in the catalog's ledger",
         )
     ]
 

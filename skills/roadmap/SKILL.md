@@ -212,10 +212,16 @@ Review.
 For a `catalog: module` leaf, assertion keys describe the whole tracked module:
 set `statement: formalized` only when all inventoried public declarations
 exist, and `proof: formalized` only when every included implementation or proof
-is complete under the repository's trust policy. Record every exact compiled
-public name in `lean` and in the declaration ledger linked from the article's
-exact `## Sources` section. A deferred compiled name means the catalog is not
-yet verified and must not carry formalized assertions.
+is complete under the repository's trust policy. Record the full name of every
+public declaration the module writes with a declaration keyword, as the Lean
+source index records them, in `lean` and in the declaration ledger linked from
+the article's `## Sources` section. Names Lean generates
+(constructors, structure fields, derived or unnamed instances, and `@[ext]`,
+`@[simps]`, or `@[to_additive]` results) and declarations the index cannot see
+yet (behind `nonrec` or `meta`, or written `class inductive`) go in the ledger
+as supporting entries, never in `lean`; a `private` name never goes in `lean`.
+A keyword-declared public name left out of `lean` or unresolved means the
+catalog is not yet verified and must not carry formalized assertions.
 
 For a large source, divide independent sections among available agents while
 retaining one owner for global coverage, status semantics, and dependency

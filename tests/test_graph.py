@@ -875,7 +875,7 @@ def test_check_counts_declaration_targets_and_every_lean_name_it_resolves(
     _node(blueprint, "chapter/notes.md", "# Notes\n")
     (blueprint / "sources").mkdir()
     (blueprint / "sources/catalog.md").write_text("# Catalog declarations\n", encoding="utf-8")
-    _node(
+    catalog = _node(
         blueprint,
         "catalog.md",
         "# Existing module\n\n## Sources\n\n- [Ledger](../sources/catalog.md)\n",
@@ -895,6 +895,13 @@ def test_check_counts_declaration_targets_and_every_lean_name_it_resolves(
         "    1 module inventory",
         "    3 declaration name(s) resolved in the Lean sources",
     ]
+    # A catalog's unresolved name may be one Lean generates, which no index records.
+    catalog.write_text(catalog.read_text(encoding="utf-8").replace("Inv.c", "Inv.c Inv.mk"), encoding="utf-8")
+    assert main(["check", str(blueprint), "--lean-root", str(lean_root)]) == 1
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        f"error: catalog: declaration not found in {lean_root}: Inv.mk; "
+        "a name Lean generates is not indexed and belongs in the catalog's ledger"
+    )
 
 
 def test_check_cli_reports_validation_errors(tmp_path: Path) -> None:
