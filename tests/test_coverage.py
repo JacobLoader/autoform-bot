@@ -684,6 +684,29 @@ def test_validate_coverage_roles_accepts_direct_role_leaves(tmp_path: Path) -> N
     assert validate_coverage_roles(load_graph(blueprint), summary) == ()
 
 
+def test_a_link_with_the_role_does_not_excuse_one_without_it(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _role_article(blueprint, "result.md", declaration="theorem")
+    _role_article(blueprint, "module.md", catalog="module")
+    _contract(
+        blueprint,
+        "| Existing module | INVENTORIED | [Module](../roadmap/module.md), [Result](../roadmap/result.md) |\n",
+    )
+    summary, syntax_issues = load_coverage(blueprint)
+
+    assert syntax_issues == ()
+    assert summary is not None
+    assert validate_coverage_roles(load_graph(blueprint), summary) == (
+        CoverageRoleIssue(
+            5,
+            "coverage-role-mismatch",
+            "coverage area 'Existing module' is INVENTORIED, but each roadmap link must "
+            "resolve to a catalog leaf or a container with catalog descendants; "
+            "roadmap/result.md reaches no catalog leaf",
+        ),
+    )
+
+
 def test_validate_coverage_roles_bounds_contract_findings(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     for index in range(5):
