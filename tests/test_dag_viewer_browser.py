@@ -316,6 +316,16 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         ),
     )
     dense_views["atlas"] = GraphView(kind="project", title="Knowledge atlas", nodes=atlas_nodes, edges=())
+    dense_views["topics"] = GraphView(
+        kind="chapter",
+        title="Topics and results",
+        nodes=(
+            ViewNode("topics/compactness", "Compactness", "scope", ("topics/compactness/a",), (("planned", 1),)),
+            ViewNode("topics/heine-borel", "Heine-Borel theorem", "node", ("topics/heine-borel",), (("planned", 1),)),
+            ViewNode("topics/tychonoff", "Tychonoff theorem", "node", ("topics/tychonoff",), (("planned", 1),)),
+        ),
+        edges=(),
+    )
     for name, dense_view in dense_views.items():
         links = (
             {node.id: f"other.html#node={node.id}" for node in dense_view.nodes}
@@ -487,6 +497,16 @@ def test_atlas_bubbles_open_authored_mathematical_context(
         "continuity, deformation, and invariants"
     )
     playwright.expect(page.get_by_role("link", name="Explore topic")).to_be_visible()
+
+
+def test_a_view_of_topics_and_results_draws_readable_result_cards(desktop_page: object, explorer_url: str) -> None:
+    """An edgeless view with a topic drew its results as 76px atlas squares showing a few characters."""
+    page = desktop_page
+    page.goto(f"{explorer_url}/topics.html")
+    title = page.locator('[data-autoform-node-id="topics/heine-borel"] .bp-dag-node-title')
+    title.wait_for()
+    assert not page.locator(".bp-dag-viewer").evaluate("element => element.classList.contains('bp-dag-atlas')")
+    assert title.evaluate("element => element.scrollWidth <= element.clientWidth")
 
 
 def test_oversized_flat_scope_defaults_to_browse(desktop_page: object, explorer_url: str) -> None:

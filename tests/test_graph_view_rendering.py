@@ -262,6 +262,22 @@ def test_atlas_regions_that_differ_only_in_case_keep_one_order(tmp_path: Path) -
     assert [region["label"] for region in regions] == sorted(areas)
 
 
+def test_a_view_of_topics_and_leaves_is_a_dag_not_an_atlas(tmp_path: Path) -> None:
+    """Catalogs carry no edges, so a chapter holding them beside its sections is edgeless but not all topics."""
+    nodes = (
+        ViewNode("scope:section", "Section", "scope", ("section/a",), (("planned", 1),), area="Topology"),
+        ViewNode("heine-borel", "Heine-Borel theorem", "node", ("heine-borel",), (("planned", 1),)),
+        ViewNode("catalog", "Existing module", "node", ("catalog",), (("inventory_checked", 1),), catalog="module"),
+    )
+    output = tmp_path / "chapter.json"
+    dag_viewer.write_payload(output, GraphView(kind="chapter", title="Chapter", nodes=nodes, edges=()), links={})
+    payload = json.loads(output.read_text(encoding="utf-8"))
+
+    assert payload["view"]["presentation"] == "dag"
+    assert payload["regions"] == []
+    assert {node["layout"]["width"] for node in payload["nodes"]} == {196}
+
+
 def test_explorer_marks_isolates_but_keeps_them_in_the_complete_inventory(tmp_path: Path) -> None:
     nodes = tuple(
         ViewNode(

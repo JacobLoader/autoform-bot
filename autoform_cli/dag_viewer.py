@@ -148,8 +148,16 @@ def _positions(view: GraphView) -> dict[str, dict[str, int]]:
 
 
 def _uses_atlas(view: GraphView) -> bool:
-    scopes = [node for node in view.nodes if node.kind == "scope"]
-    return bool(scopes) and (not view.edges or any(node.area for node in scopes))
+    """Draw topic bubbles in regions only when every node is a topic.
+
+    A leaf needs a readable card, so a view holding any leaf, such as a
+    chapter with module catalogs beside its sections, is a DAG.
+    """
+    return (
+        bool(view.nodes)
+        and all(node.kind == "scope" for node in view.nodes)
+        and (not view.edges or any(node.area for node in view.nodes))
+    )
 
 
 def _atlas_positions(view: GraphView) -> dict[str, dict[str, int]]:
@@ -157,12 +165,7 @@ def _atlas_positions(view: GraphView) -> dict[str, dict[str, int]]:
     gap = 14
 
     def diameter(node: ViewNode) -> int:
-        count = max(1, node.item_count)
-        if node.kind == "scope":
-            return max(92, min(164, round(72 + 11 * math.log2(count + 1))))
-        if node.kind == "boundary":
-            return 104
-        return 76
+        return max(92, min(164, round(72 + 11 * math.log2(max(1, node.item_count) + 1))))
 
     by_area: dict[str, list[ViewNode]] = defaultdict(list)
     for node in view.nodes:
@@ -546,10 +549,8 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-node[data-kind=boundary] { border-style: dashed; }
 .bp-dag-viewer.bp-dag-atlas .bp-dag-node[data-kind=scope] { display: block; padding: 6px; border: 0; border-radius: 50%; background: var(--dag-status-ring, var(--dag-node-stroke)); text-align: center; }
 .bp-dag-node-core { display: grid; place-content: center; width: 100%; height: 100%; padding: .8rem; border-radius: 50%; background: var(--dag-node-fill); color: var(--dag-node-text); }
-.bp-dag-viewer.bp-dag-atlas .bp-dag-node[data-kind=scope] .bp-dag-node-title { display: -webkit-box; overflow: hidden; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
-.bp-dag-viewer.bp-dag-atlas .bp-dag-node[data-kind=scope] .bp-dag-node-meta { margin-top: .35rem; white-space: normal; }
-.bp-dag-viewer.bp-dag-atlas .bp-dag-node-title { font-size: 18px; }
-.bp-dag-viewer.bp-dag-atlas .bp-dag-node-meta { font-size: 11px; }
+.bp-dag-viewer.bp-dag-atlas .bp-dag-node[data-kind=scope] .bp-dag-node-title { display: -webkit-box; overflow: hidden; font-size: 18px; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.bp-dag-viewer.bp-dag-atlas .bp-dag-node[data-kind=scope] .bp-dag-node-meta { margin-top: .35rem; font-size: 11px; white-space: normal; }
 .bp-dag-density, .bp-dag-empty { position: absolute; z-index: 4; left: 50%; border: 1px solid var(--dag-border); border-radius: 999px; background: color-mix(in srgb, var(--dag-bg) 92%, transparent); color: var(--dag-muted); box-shadow: 0 3px 12px rgba(15, 23, 42, .08); pointer-events: none; }
 .bp-dag-density { bottom: .7rem; padding: .25rem .55rem; transform: translateX(-50%); font-size: .66rem; }
 .bp-dag-empty { top: 50%; padding: .55rem .8rem; transform: translate(-50%, -50%); font-size: .74rem; }
