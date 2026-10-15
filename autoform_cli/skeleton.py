@@ -45,6 +45,7 @@ from .lean import (
     LeanSourceError,
     SourceIndex,
     declaration_names,
+    format_locations,
     index_failure_message,
     index_project,
     resolve_lean_root,
@@ -2288,13 +2289,9 @@ def locate_declaration(
 
     location = index.find(name)
     if location is None:
+        if ambiguous := index.ambiguous(name):
+            return None, f"defined more than once in the Lean sources: {format_locations(ambiguous)}"
         return None, "declaration not found in the Lean sources"
-    if name in index.elsewhere:
-        # The lexical index cannot tell which of several declarations Lean binds
-        # a name to (one may be private, or in a file no target builds), so the
-        # name fails closed.
-        files = sorted(path.as_posix() for path in (location.path, *index.elsewhere[name]))
-        return None, f"several source files declare it: {', '.join(files)}"
     module = module_of(lean_root / location.path, libraries)
     if module is None:
         return None, f"source {location.path.as_posix()} is not built by any library target"

@@ -525,10 +525,11 @@ environment rather than by the source text: its kernel face is an opaque
 constant, so the body a reader would see is not what Lean checks. The command
 exits nonzero when a `lean:` name is absent from the sources or from the built
 environment, or reaches a refused declaration; that name is unresolved for its article only, other articles still extract, and it writes nothing into the vault.
-A name that several indexed files declare, even when all but one of them
-declare it `private`, is unresolved without a probe, because the index cannot
-tell which one Lean binds; the reason names each of those files in sorted
-order. `unused-hypotheses` looks names up the same way.
+A name the sources define more than once, with no single declaration chosen
+by the rules under Validation, is unresolved without a probe; the reason lists
+the `path:line` of each of its declarations. A name with one public
+declaration beside private ones is probed in the public one's module.
+`unused-hypotheses` looks names up the same way.
 `--output` records the `autoform-skeleton/v4` report, which contains no
 timestamp or absolute path, for a later render or review to consume. The
 report identifies the exact blueprint, its complete target set, and whether
@@ -678,7 +679,7 @@ binder mentions cannot be deleted and is not listed. A proof that itself
 contains `sorry` is not read; a complete proof that uses an open statement is.
 Findings are for a reviewer and never fail the run, since the source may state
 a hypothesis its theorem does not need; the command exits 1 only when a `lean:`
-name cannot be read: it is not found, several source files declare it, or it
+name cannot be read: it is not found, it is defined more than once, or it
 is an alias, whose proof only names its target. `--json` writes the
 `autoform-unused-hypotheses/v1` report.
 
@@ -1057,6 +1058,24 @@ command states a result whose proof or construction is deferred. `alias b :=
 a` records `b`, and `alias ⟨mp, mpr⟩ := a_iff` records each of its two names
 that is not `_`; the `:=` must be on the alias's line, and the target on that
 line or the next nonblank one.
+
+A name declared once has that declaration, even a private one. A name declared
+more than once has the one declaration among them that is neither written
+`private` nor a wanted command, which Batteries makes a private placeholder:
+Lean refuses a private declaration beside a public one it can see, so the two
+coexist only in modules that do not import each other, and any other module
+sees the public one. With two public declarations, or only private and wanted
+ones, the name has none: `skeleton` and `unused-hypotheses` leave it
+unresolved, listing the `path:line` of every declaration of the name by path
+and then line, `check`, `render` and `audit` report it as not found, and work
+and search report no `source_file`. `work impact` locates a compiled constant
+in its own module's file among the declarations of its name. The rule sees
+only indexed declarations: a public one behind an unindexed prefix such as
+`open X in`, or written `«main»` where the article writes `main`, leaves a
+private one as the name's only declaration. In a file that starts with
+`module`, a declaration without `public` is private to Lean but public to the
+index, so such a name may be reported as defined more than once where Lean
+accepts it.
 
 The Markdown files are the source of truth. Graphs and sites are derived views
 that may be regenerated at any time.

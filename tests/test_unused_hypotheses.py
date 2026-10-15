@@ -205,7 +205,7 @@ def test_nothing_placed_reports_without_running_lean(tmp_path: Path) -> None:
 
 def test_a_name_several_files_declare_is_unresolved_without_running_lean(tmp_path: Path) -> None:
     project = _project(tmp_path)
-    for module, prefix in (("Adup", "private "), ("Bdup", "")):
+    for module, prefix in (("Adup", ""), ("Bdup", "private "), ("Cdup", "")):
         (project / "Skel" / f"{module}.lean").write_text(
             f"namespace Skel\n{prefix}theorem dup : True := sorry\nend Skel\n", encoding="utf-8"
         )
@@ -217,8 +217,29 @@ def test_a_name_several_files_declare_is_unresolved_without_running_lean(tmp_pat
     report = find_unused_hypotheses(blueprint, lean_root=project, runner=runner)
 
     assert [(item.declaration, item.reason) for item in report.unresolved] == [
-        ("Skel.dup", "several source files declare it: Skel/Adup.lean, Skel/Bdup.lean")
+        ("Skel.dup", "defined more than once in the Lean sources: Skel/Adup.lean:2, Skel/Bdup.lean:2, Skel/Cdup.lean:2")
     ]
+
+
+def test_a_name_beside_a_private_twin_is_read_from_its_public_module(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    for module, prefix in (("Adup", "private "), ("Bdup", "")):
+        (project / "Skel" / f"{module}.lean").write_text(
+            f"namespace Skel\n{prefix}theorem dup : True := sorry\nend Skel\n", encoding="utf-8"
+        )
+    blueprint = _blueprint(tmp_path, lean={"dup": "Skel.dup"})
+    probes: list[str] = []
+
+    def runner(probe: str, root: Path) -> str:
+        probes.append(probe)
+        return _theorem("Skel.dup")
+
+    report = find_unused_hypotheses(blueprint, lean_root=project, runner=runner)
+
+    assert report.unresolved == ()
+    (probe,) = probes
+    assert "import Skel.Bdup\n" in probe
+    assert "import Skel.Adup" not in probe
 
 
 def test_the_probe_imports_only_the_modules_it_reads_and_narrows_to_the_selection(tmp_path: Path) -> None:

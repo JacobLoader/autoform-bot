@@ -548,6 +548,18 @@ def test_audit_validates_lean_targets_only_when_root_is_supplied(tmp_path: Path)
     ]
 
 
+def test_audit_checks_the_public_declaration_beside_an_earlier_private_twin(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    _article(blueprint, "result.md", declaration="theorem", statement="formalized", lean="Project.result")
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    (lean_root / "A.lean").write_text("private def Project.result : Nat := 1\n", encoding="utf-8")
+    (lean_root / "B.lean").write_text("theorem Project.result : True := trivial\n", encoding="utf-8")
+
+    assert "roadmap/result.md" not in _finding_map(blueprint, lean_root=lean_root)
+
+
 def test_audit_accepts_wanted_targets_as_statements_but_not_proofs(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)
@@ -844,7 +856,32 @@ def test_an_alias_ends_the_source_span_of_the_declaration_above_it(tmp_path: Pat
         "theorem big : True := by\n  trivial\nalias small := big\n\n", encoding="utf-8"
     )
 
-    assert audit_module._source_spans(index_project(lean_root)) == {"big": 2, "small": 2}
+    spans = audit_module._source_spans(index_project(lean_root))
+    assert {declaration.name: span for declaration, span in spans.items()} == {"big": 2, "small": 2}
+
+
+def test_a_private_twin_ends_the_source_span_of_the_declaration_above_it(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    _article(blueprint, "README.md", depends=False)
+    spans = {f"Project.small{index}": 6 for index in range(5)}
+    spans["Project.big"] = 6
+    for name in spans:
+        _article(
+            blueprint,
+            f"{name.rsplit('.', 1)[-1]}.md",
+            declaration="theorem",
+            statement="formalized",
+            proof="formalized",
+            lean=name,
+        )
+    lean_root = _lean_project(tmp_path, spans)
+    with (lean_root / "big.lean").open("a", encoding="utf-8") as source:
+        source.write("private theorem Project.helper : True := by\n" + "  -- step\n" * 420 + "  trivial\n")
+    # The public twin sorts before big.lean.
+    (lean_root / "A.lean").write_text("theorem Project.helper : True := trivial\n", encoding="utf-8")
+
+    assert _finding_map(blueprint, lean_root=lean_root) == {}
 
 
 def test_audit_reports_unbounded_and_inherited_elaboration_limits(tmp_path: Path) -> None:

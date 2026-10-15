@@ -56,6 +56,9 @@ _DECLARATION = re.compile(
     r"(theorem|lemma|def|abbrev|instance|structure|class|inductive|opaque|axiom|irreducible_def"
     r"|theorem_wanted|proof_wanted|def_wanted|instance_wanted|alias)\s+(.+)$"
 )
+#: The wanted commands. Batteries makes each a private placeholder, so none of
+#: them binds its name outside its own module.
+_WANTED_KEYWORDS = frozenset({"theorem_wanted", "proof_wanted", "def_wanted", "instance_wanted"})
 _IGNORED_DIRECTORIES = frozenset(
     {
         ".direnv",
@@ -118,6 +121,8 @@ class Declaration:
     #: Whether ``protected`` is written before the keyword, on its line or above.
     protected: bool = False
     alias: Alias | None = None
+    #: Whether ``private`` is written before the keyword, on its line or above.
+    private: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,15 +130,30 @@ class SourceIndex:
     """Every declaration the scanner found, keyed by fully qualified name."""
 
     root: Path
+    #: The declaration each name selects: its only one, else its only one that
+    #: binds the name outside its module (not private, not wanted). A name
+    #: declared more than once without such a unique one selects nothing.
     declarations: dict[str, Declaration]
     source_digest: str
     line_counts: dict[Path, int] = field(default_factory=dict)
-    #: For a name more than one file declares, the files after the one
-    #: ``find`` returns.
-    elsewhere: dict[str, tuple[Path, ...]] = field(default_factory=dict)
+    #: Every declaration of each name declared more than once, by path and line.
+    duplicates: dict[str, tuple[Declaration, ...]] = field(default_factory=dict)
 
     def find(self, name: str) -> Declaration | None:
         return self.declarations.get(name)
+
+    def occurrences(self, name: str) -> tuple[Declaration, ...]:
+        """Every declaration of ``name``, by path and line."""
+
+        if name in self.duplicates:
+            return self.duplicates[name]
+        found = self.declarations.get(name)
+        return () if found is None else (found,)
+
+    def ambiguous(self, name: str) -> tuple[Declaration, ...]:
+        """Every declaration of ``name`` when it selects none of them, else nothing."""
+
+        return () if name in self.declarations else self.duplicates.get(name, ())
 
     def reached(self, declaration: Declaration) -> Declaration | None:
         """The declaration ``declaration`` stands for: itself, or what an alias names through any chain.
@@ -155,22 +175,24 @@ class SourceIndex:
         Lean takes the first candidate it can see, so a candidate the index
         lacks may be declared outside the project, and one in another file may
         or may not be imported: either way the answer is ``None``. A candidate
-        below the alias in its file is not declared yet, so Lean looks further
-        out. A ``protected`` candidate is skipped for a one-component target,
-        except when it is also private, written or under the module system;
-        not knowing which, the answer is ``None`` again.
+        declared above the alias in its file is the one Lean sees, whatever
+        other files declare, since importing one of them would be a clash. A
+        candidate only below the alias in its file is not declared yet, so Lean
+        looks further out. A ``protected`` candidate is skipped for a
+        one-component target, except when it is also private, written or under
+        the module system; not knowing which, the answer is ``None`` again.
         """
 
         assert declaration.alias is not None
         for candidate in declaration.alias.candidates:
-            found = self.declarations.get(candidate)
-            if found is None or found.path != declaration.path:
+            found = self.occurrences(candidate)
+            above = [other for other in found if other.path == declaration.path and other.line < declaration.line]
+            if above:
+                if above[0].protected and declaration.alias.atomic:
+                    return None
+                return above[0]
+            if not found or any(other.path != declaration.path for other in found):
                 return None
-            if found.line >= declaration.line:
-                continue
-            if found.protected and declaration.alias.atomic:
-                return None
-            return found
         return None
 
 
@@ -612,8 +634,7 @@ def _indexed_source_snapshot(root: Path, snapshot: TreeSnapshot) -> IndexedSourc
         relative, reason = unsupported[0]
         raise LeanSourceError(f"unsafe Lean source {relative}: {reason}")
 
-    declarations: dict[str, Declaration] = {}
-    elsewhere: dict[str, tuple[Path, ...]] = {}
+    by_name: dict[str, list[Declaration]] = {}
     line_counts: dict[Path, int] = {}
     source_files: list[tuple[Path, bytes]] = []
     digest = hashlib.sha256(b"autoform-lean-source-index/v1\0")
@@ -627,17 +648,17 @@ def _indexed_source_snapshot(root: Path, snapshot: TreeSnapshot) -> IndexedSourc
             continue
         found, line_counts[relative_path] = _scan(text, relative_path)
         for declaration in found:
-            first = declarations.setdefault(declaration.name, declaration)
-            if first.path != relative_path and relative_path not in elsewhere.get(declaration.name, ()):
-                elsewhere[declaration.name] = (*elsewhere.get(declaration.name, ()), relative_path)
+            by_name.setdefault(declaration.name, []).append(declaration)
     source_digest = digest.hexdigest()
     return IndexedSourceSnapshot(
         SourceIndex(
             root=root,
-            declarations=declarations,
+            declarations={
+                name: selected for name, same in by_name.items() if (selected := _select(same)) is not None
+            },
             source_digest=source_digest,
             line_counts=line_counts,
-            elsewhere=elsewhere,
+            duplicates={name: tuple(same) for name, same in by_name.items() if len(same) > 1},
         ),
         source_digest,
         snapshot.generation_revision,
@@ -684,6 +705,21 @@ def _update_source_digest(digest, relative: Path, data: bytes) -> None:
     digest.update(data)
 
 
+def _select(same: list[Declaration]) -> Declaration | None:
+    """The declaration a name means among all of its declarations, if one is sure.
+
+    Lean refuses a private or wanted declaration beside a public one it can
+    see, so they coexist only in modules that do not import each other, and
+    any other module sees the public one. Two public ones, or only private and
+    wanted ones, leave no single answer.
+    """
+
+    if len(same) == 1:
+        return same[0]
+    public = [item for item in same if not item.private and item.keyword not in _WANTED_KEYWORDS]
+    return public[0] if len(public) == 1 else None
+
+
 def _scan(text: str, relative: Path) -> tuple[list[Declaration], int]:
     """The declarations in ``text`` and the number of its lines Lean reads."""
     found: list[Declaration] = []
@@ -727,17 +763,21 @@ def _scan(text: str, relative: Path) -> tuple[list[Declaration], int]:
                 if not _MODIFIER_LINE.fullmatch(lines[above]):
                     break
                 header.append(lines[above])
-            protected = "protected" in _ATTRIBUTE_LIST.sub(" ", " ".join(header)).split()
+            modifiers = _ATTRIBUTE_LIST.sub(" ", " ".join(header)).split()
+            protected = "protected" in modifiers
+            private = "private" in modifiers
             if keyword == "alias":
                 following = next((lines[later] for later in range(number, len(lines)) if lines[later].strip()), "")
                 found.extend(
-                    _aliases(declaration_match.group(2), following, namespaces, relative, number, protected)
+                    _aliases(declaration_match.group(2), following, namespaces, relative, number, protected, private)
                 )
                 continue
             name = _name_token(declaration_match.group(2))
             if name is None:
                 continue
-            found.append(Declaration(_qualified(namespaces, name), relative, number, keyword, protected))
+            found.append(
+                Declaration(_qualified(namespaces, name), relative, number, keyword, protected, private=private)
+            )
     return found, len(lines)
 
 
@@ -777,7 +817,7 @@ _ALIAS_TARGET = re.compile(rf"\s*({_ALIAS_NAME})")
 
 
 def _aliases(
-    text: str, following: str, namespaces: list[str], relative: Path, line: int, protected: bool
+    text: str, following: str, namespaces: list[str], relative: Path, line: int, protected: bool, private: bool
 ) -> list[Declaration]:
     """The declarations one ``alias`` command makes.
 
@@ -803,7 +843,7 @@ def _aliases(
     iff = match["name"] is None
     alias = Alias(candidates, atomic, iff)
     return [
-        Declaration(_qualified(namespaces, name), relative, line, "alias", protected, alias)
+        Declaration(_qualified(namespaces, name), relative, line, "alias", protected, alias, private)
         for name in ([match["mp"], match["mpr"]] if iff else [match["name"]])
         if name != "_"
     ]
@@ -932,6 +972,12 @@ def declaration_names(lean: str) -> list[str]:
     """Split a ``lean:`` frontmatter value into individual declaration names."""
 
     return _DECLARATION_NAME.findall(lean)
+
+
+def format_locations(declarations: Iterable[Declaration]) -> str:
+    """Each declaration's ``path:line``, as diagnostics list the declarations of one name."""
+
+    return ", ".join(f"{declaration.path.as_posix()}:{declaration.line}" for declaration in declarations)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1329,6 +1375,7 @@ __all__ = [
     "declaration_names",
     "detect_ref",
     "detect_repository_url",
+    "format_locations",
     "index_failure_message",
     "index_project",
     "project_source_revision",

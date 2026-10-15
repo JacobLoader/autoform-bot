@@ -669,6 +669,17 @@ def test_unresolved_declarations_are_reported_not_linked(tmp_path: Path) -> None
     assert "not found in the Lean sources" in page
 
 
+def test_a_declaration_beside_an_earlier_private_twin_is_located_at_the_public_one(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    (project / "Project" / "A.lean").write_text("private theorem Project.top : True := trivial\n", encoding="utf-8")
+
+    report = render_site(project / "blueprint", tmp_path / "out", lean_root=project)
+
+    assert report.unresolved == []
+    page = (tmp_path / "out/roadmap/README.md").read_text(encoding="utf-8")
+    assert '<code>Project.top</code> <span class="bp-where">Project/Basic.lean</span>' in page
+
+
 def test_stale_generated_files_are_not_republished(tmp_path: Path) -> None:
     project = _project(tmp_path)
     (project / "blueprint/dependencies.html").write_text("stale", encoding="utf-8")
