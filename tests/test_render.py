@@ -1736,6 +1736,25 @@ def test_render_replaces_only_an_exact_owned_publication(tmp_path: Path, tamper,
     assert not _debris(tmp_path)
 
 
+def test_render_says_when_the_explorer_replaces_an_authored_file(tmp_path: Path) -> None:
+    """A blueprint file at a path the explorer writes is not published, and render says so."""
+    project = _project(tmp_path)
+    (project / "blueprint/dependencies.json").write_text('{"authored": true}\n', encoding="utf-8")
+    script = project / "blueprint/javascripts/blueprint-dag.js"
+    script.parent.mkdir()
+    script.write_text("/* authored */\n", encoding="utf-8")
+    out = tmp_path / "out"
+
+    report = render_site(project / "blueprint", out, lean_root=project)
+
+    assert [warning for warning in report.warnings if "dependency explorer" in warning] == [
+        f"{path} is not published: the dependency explorer writes its own file there"
+        for path in ("dependencies.json", "javascripts/blueprint-dag.js")
+    ]
+    assert json.loads((out / "dependencies.json").read_text(encoding="utf-8"))["schema"] == "autoform-dag-view/v2"
+    assert "/* authored */" not in (out / "javascripts/blueprint-dag.js").read_text(encoding="utf-8")
+
+
 def test_render_replaces_an_exact_v2_publication(tmp_path: Path) -> None:
     """A v2 site records the same file inventory, so render checks and replaces it like a v3 one."""
     project, output, _site = _published(tmp_path)

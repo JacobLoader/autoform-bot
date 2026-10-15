@@ -2050,7 +2050,9 @@ from one render writes (`SUMMARY.md`, `dependencies.json`, `dependencies.md`,
 `structure.md`, `publication.json`, `assets/`, `dependencies/`, `javascripts/`,
 `stylesheets/`, and the generated stylesheet, scripts and logo inside them) is
 refused, as are two blueprint paths that differ only in case or Unicode form,
-because they would collide on a case-insensitive filesystem.
+because they would collide on a case-insensitive filesystem. A blueprint file at
+exactly `dependencies.json` or `javascripts/blueprint-dag.js` is left out of the
+site with a warning, because the explorer writes its own file there.
 
 Every render writes `publication.json` with blueprint and Lean-source hashes
 (the Lean-source hash is empty when render reads no Lean sources, as on native

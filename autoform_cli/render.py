@@ -168,6 +168,8 @@ DAG_SCRIPT = "javascripts/blueprint-dag.js"
 LOGO = "assets/autoform.svg"
 #: Paths render writes at fixed places; an authored path differing only in case would collide.
 _GENERATED_PATHS = _GENERATED_ROOT_ENTRIES | {STYLESHEET, MERMAID_SCRIPT, LIVE_SCRIPT, DAG_SCRIPT, LOGO}
+#: The explorer's files at paths a blueprint may already use for files of its own.
+_EXPLORER_PATHS = ("dependencies.json", DAG_SCRIPT)
 _ASSET_DIR = Path(__file__).resolve().parent / "assets"
 
 
@@ -453,6 +455,12 @@ def render_site(
             ),
         )
     report.warnings[:0] = recovered
+    authored = {*dict(snapshot.files), *dict(snapshot.omitted)}
+    report.warnings.extend(
+        f"{path} is not published: the dependency explorer writes its own file there"
+        for path in _EXPLORER_PATHS
+        if path in authored
+    )
     if repository_url and ref and commit is None:
         report.warnings.append(
             "repository links were omitted because the captured Lean inputs "
