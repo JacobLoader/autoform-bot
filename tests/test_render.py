@@ -2272,8 +2272,13 @@ def test_the_hierarchical_explorer_indexes_nodes_without_a_full_graph(tmp_path: 
         requested.append((page, selected))
         return {node_id: f"roadmap.html#{node_id}" for node_id in selected}
 
-    write_graph_pages(graph, derive(graph), destination, node_links=node_links)
+    written = write_graph_pages(graph, derive(graph), destination, node_links=node_links)
 
+    # Each explorer page asks once, and only for the articles its payload draws.
+    assert sorted(page for page, _ids in requested) == sorted(written)
+    for page, ids in requested:
+        payload = json.loads(page.with_suffix(".json").read_text(encoding="utf-8"))
+        assert set(ids) == {node["id"] for node in payload["nodes"] if node["kind"] == "node"}
     pages = {
         node_id: focus_page_path(destination, node_id, parent=graph.nodes[node_id].parent)
         for node_id in ("base", "top")
