@@ -217,15 +217,17 @@ gradientUnits="userSpaceOnUse">
 
 
 def _mermaid_script() -> str:
-    """Render the graph, and re-render it whenever the colour scheme changes.
+    """Draw authored diagrams, and redraw them whenever the colour scheme changes.
 
-    Mermaid injects its own styles with ``!important`` scoped to the SVG id, so
-    a stylesheet cannot recolour a diagram after the fact. The palette has to
-    go in as ``classDef`` at render time, which means owning the render call
-    and repeating it on a theme switch.
+    The site's dependency maps are the explorer, so every diagram this script
+    sees is a fence an author wrote. Mermaid injects its own styles with
+    ``!important`` scoped to the SVG id, so a stylesheet cannot recolour a
+    diagram after the fact. The palette has to go in as ``classDef`` at render
+    time, which means owning the render call and repeating it on a theme switch.
 
-    Loose security is what enables the ``click`` links; the diagram is
-    generated from the project's own blueprint, so nothing third-party is in it.
+    Loose security is what enables ``click`` links in the project's own
+    diagrams. It and the palette stay as they are until authored diagrams get
+    a rule of their own.
     """
     classdefs = json.dumps(
         {scheme: mermaid.classdef_lines(dark=scheme == "dark") for scheme in ("light", "dark")},
@@ -2953,7 +2955,6 @@ a:hover, a:visited:hover {{ color: var(--bp-link-hover); text-decoration: underl
 }}
 .bp-map-title {{ font-size: 0.82rem; font-weight: 700; letter-spacing: -0.01em; }}
 .bp-map-hint {{ font-size: 0.7rem; color: var(--bp-muted); }}
-.bp-map .mermaid {{ margin: 0; padding: 1.75rem 1.25rem; text-align: center; }}
 .bp-map-legend {{
   padding: 1rem 1.25rem;
   border-top: 1px solid var(--bp-rule);

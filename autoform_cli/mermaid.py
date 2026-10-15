@@ -1,9 +1,10 @@
 """Render a blueprint DAG as Mermaid inside a Markdown page.
 
 Mermaid was chosen over a bespoke SVG because the same fenced block renders in
-Obsidian, on GitHub, and on the published site. Colours follow
-:mod:`autoform_cli.status`: fill tracks proof progress, stroke tracks statement
-progress, exactly as ``leanblueprint`` draws its dependency graph.
+Obsidian and on GitHub; the published site draws the dependency explorer
+instead. Colours follow :mod:`autoform_cli.status`: fill tracks proof progress,
+stroke tracks statement progress, exactly as ``leanblueprint`` draws its
+dependency graph.
 """
 
 from __future__ import annotations

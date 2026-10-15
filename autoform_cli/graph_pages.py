@@ -2,9 +2,10 @@
 
 One Markdown DAG supports several reading scales: chapters collapsed into a
 project overview, declarations within one chapter with external chapters
-collapsed to boundaries, nested scopes, and the full graph. Every projection
-uses the same explorer, links back to the same book anchors, and never becomes
-another source of graph state.
+collapsed to boundaries, and nested scopes. A search index over every article
+jumps to the smallest scope that holds it. Every projection uses the same
+explorer, links back to the same book anchors, and never becomes another
+source of graph state.
 """
 
 from __future__ import annotations
@@ -281,9 +282,8 @@ def _write_page(
     navigation: str = "",
     extra: str = "",
 ) -> Path:
-    # Size used to pick between a Mermaid diagram and the Canvas explorer.
-    # Keeping every projection on one payload-and-host path gives readers one
-    # interaction model and prevents the two renderers from drifting apart.
+    # Every projection is one payload and one explorer host, so readers get one
+    # interaction model and no second renderer can drift from it.
     payload = page.with_suffix(".json")
     dag_viewer.write_payload(
         payload,
