@@ -183,12 +183,11 @@ def test_audit_cli_passes_with_only_warnings_and_prints_them(tmp_path: Path, cap
     ]
 
 
-def test_coverage_role_mismatch_warns_in_render_and_fails_audit(tmp_path: Path, capsys) -> None:
-    """Role mismatches are audit findings while a blueprint migrates.
+def test_a_decomposed_link_that_declares_nothing_warns_in_render_and_audit(tmp_path: Path, capsys) -> None:
+    """Earlier audits passed a DECOMPOSED row whatever it linked, so a drafted leaf only warns.
 
-    Render publishes them as warnings, the way it publishes ``MAPPED`` rows;
-    only an invalid contract stops it. A drafted leaf that declares nothing
-    yet is enough to trip the role check under a ``DECOMPOSED`` row.
+    Render publishes the warning, the way it publishes ``MAPPED`` rows; only an
+    invalid contract stops it.
     """
     blueprint = tmp_path / "blueprint"
     (blueprint / "roadmap").mkdir(parents=True)
@@ -204,15 +203,17 @@ def test_coverage_role_mismatch_warns_in_render_and_fails_audit(tmp_path: Path, 
         "| Section 1 | DECOMPOSED | [Lemma](../roadmap/lemma.md) |\n",
         encoding="utf-8",
     )
+    reason = "coverage area 'Section 1' is DECOMPOSED, but roadmap/lemma.md reaches no declaration leaf"
 
     assert main(["check", str(blueprint)]) == 0
     capsys.readouterr()
     assert main(["render", str(blueprint), "--output", str(tmp_path / "site")]) == 0
-    rendered = capsys.readouterr().out
-    assert "warning: coverage contract line 5: coverage area 'Section 1' is DECOMPOSED" in rendered
+    assert f"warning: coverage contract line 5: {reason}" in capsys.readouterr().out.splitlines()
     assert (tmp_path / "site" / "publication.json").is_file()
-    assert main(["audit", str(blueprint)]) == 1
-    assert "error: coverage/README.md: coverage-role-mismatch:" in capsys.readouterr().out
+    assert main(["audit", str(blueprint)]) == 0
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        f"warning: coverage/README.md: decomposed-without-declaration: {reason} (line 5)"
+    )
 
 
 def test_an_unrelated_atlas_json_warns_in_render_and_audit(tmp_path: Path, capsys) -> None:

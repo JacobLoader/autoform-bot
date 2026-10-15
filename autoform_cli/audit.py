@@ -366,9 +366,13 @@ def audit_graph(
     if coverage_findings is None:
         coverage, coverage_findings = _coverage_findings(graph.blueprint_dir)
     findings.extend(coverage_findings)
-    if coverage is not None:
-        findings.extend(_coverage_role_findings(graph, coverage))
     warnings = [AuditWarning("atlas.json", "atlas-omission", omission, ()) for omission in atlas_omissions(graph)]
+    for issue in () if coverage is None else validate_coverage_roles(graph, coverage):
+        reason = f"{issue.reason}{f' (line {issue.line})' if issue.line else ''}"
+        if issue.code == "decomposed-without-declaration":
+            warnings.append(AuditWarning("coverage/README.md", issue.code, reason, ()))
+        else:
+            findings.append(AuditFinding("coverage/README.md", issue.code, reason))
     if lean_root is not None:
         findings.extend(_lean_findings(graph, lean_root, warnings=warnings))
     return _result(findings, coverage=coverage, warnings=warnings)
@@ -486,22 +490,6 @@ def _coverage_findings(
                     AuditFinding(article_path, code, f"{reason} (line {line_number})")
                 )
     return coverage, findings
-
-
-def _coverage_role_findings(
-    graph: Graph,
-    coverage: CoverageSummary,
-) -> list[AuditFinding]:
-    """Project public coverage-role issues into the audit result model."""
-
-    return [
-        AuditFinding(
-            "coverage/README.md",
-            issue.code,
-            f"{issue.reason}{f' (line {issue.line})' if issue.line else ''}",
-        )
-        for issue in validate_coverage_roles(graph, coverage)
-    ]
 
 
 def _lean_findings(

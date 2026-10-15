@@ -410,9 +410,14 @@ never change it. The machine-checkable
 with `MAPPED`, `INVENTORIED`, `DECOMPOSED`, `DEFERRED`, or `OUT` dispositions.
 `MAPPED` is nonterminal. `INVENTORIED` is the terminal disposition for exact
 source accounting and must link to a `catalog: module` record, directly or
-through a containing roadmap scope. `DECOMPOSED` is reserved for
-source-grounded declaration articles and must link to one, directly or through
-a containing roadmap scope. `DEFERRED` and `OUT` record an explicit later
+through a containing roadmap scope: `coverage-role-mismatch` names a link that
+reaches none, and `unclassified-inventory` the first catalogs no such row
+reaches. `DECOMPOSED` is reserved for source-grounded declaration articles and
+links to them, directly or through a containing roadmap scope. A row whose
+links reach nothing but catalogs is a `coverage-role-mismatch`. Any other link
+that reaches no declaration leaf, such as one to prose or to leaves marked
+`not_ready`, is a `decomposed-without-declaration` [warning](#warnings), since
+earlier versions accepted it. `DEFERRED` and `OUT` record an explicit later
 milestone or exclusion. Audit JSON includes canonical rows, counts, and the
 exact coverage source hash, while `publication.json` records aggregate counts
 without duplicating the authored rows.
@@ -569,7 +574,7 @@ invalid coverage contract fails `render` before any output is written, but a
 valid contract with `MAPPED` rows publishes normally even though `audit` reports
 each one as a `declared-coverage-gap`. That is intended: a roadmap is published
 while it is still being decomposed, and the published `coverage.complete: false`
-is how a reader sees that. Coverage-role findings take the same path: `render`
+is how a reader sees that. Coverage-role issues take the same path: `render`
 prints each one as a warning and publishes, and `audit` reports it. Run
 `autoform audit` in CI when you want mapped rows or role findings to block a
 merge.
@@ -1226,8 +1231,10 @@ affected declaration and setting with its `name`, `option`, `value`,
 `location` (the `set_option` as `path:line` relative to the Lean root), and
 `scope` (`file`, `section`, `declaration`, or `proof`), sorted by name. The
 catalog limit warnings under [Elaboration limits](#elaboration-limits) fill
-`declarations`; `atlas-omission`, at `atlas.json`, names what loading ignored
-in that file and has none.
+`declarations`. Two warnings leave it empty: `atlas-omission`, at `atlas.json`,
+names what loading ignored in that file, and `decomposed-without-declaration`,
+at `coverage/README.md`, names a `DECOMPOSED` row's links that reach no
+declaration leaf.
 
 ### Structure
 

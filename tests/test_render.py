@@ -819,8 +819,8 @@ def test_an_unclassified_catalog_warning_names_the_contract_once(tmp_path: Path)
     report = render_site(project / "blueprint", tmp_path / "out", lean_root=project)
 
     assert report.warnings == [
-        "coverage contract leaves 1 catalog article outside INVENTORIED evidence; "
-        "link each inventory area directly or through a containing roadmap article"
+        "coverage contract leaves 1 catalog article outside INVENTORIED evidence "
+        "(roadmap/catalog.md); link each inventory area directly or through a containing roadmap article"
     ]
 
 
