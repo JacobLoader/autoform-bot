@@ -353,7 +353,7 @@ def audit_graph(
                 AuditFinding(
                     article_path,
                     "missing-declaration-intent",
-                    "formalization-bearing leaf has neither declaration nor catalog intent metadata",
+                    "formalization-bearing leaf has no declaration intent metadata",
                 )
             )
 
