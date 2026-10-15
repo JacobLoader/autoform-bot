@@ -1669,22 +1669,34 @@ def test_audit_allows_a_wide_repository_subject_index(tmp_path: Path) -> None:
     assert audit_blueprint(blueprint).clean
 
 
-def test_audit_keeps_the_normal_limit_for_flat_root_articles(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("chapters", "leaves", "limit"),
+    [
+        pytest.param(0, 25, 24, id="flat-root"),
+        pytest.param(30, 1, 24, id="subject-index-with-a-leaf"),
+        pytest.param(65, 0, 64, id="wide-subject-index"),
+    ],
+)
+def test_audit_limits_the_root_as_a_subject_index_only_when_every_child_is_a_chapter(
+    tmp_path: Path, chapters: int, leaves: int, limit: int
+) -> None:
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)
     _article(blueprint, "README.md", depends=False)
-    for index in range(25):
-        _article(blueprint, f"chapter/unit-{index:02d}.md", declaration="theorem")
+    for index in range(chapters):
+        _article(blueprint, f"subject-{index:02d}/README.md", depends=False)
+    for index in range(leaves):
+        _article(blueprint, f"unit-{index:02d}.md", declaration="theorem")
 
-    findings = _finding_map(blueprint)["roadmap/chapter/README.md"]
-
-    assert findings == [
+    assert _finding_map(blueprint)["roadmap/README.md"] == [
         (
             "overfull-container",
-            "article directly contains 25 articles, more than the 24-article limit; "
+            f"article directly contains {chapters + leaves} articles, more than the {limit}-article limit; "
             "group them into chapters",
         )
     ]
+
+
 def test_audit_reports_nodes_that_are_large_outliers_for_their_project(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)

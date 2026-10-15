@@ -22,6 +22,7 @@ from urllib.parse import unquote, urlsplit
 from .lean import declaration_names
 from .markdown import mask_code_and_comments
 
+
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 _LINK = re.compile(r"(?<!!)\[[^\]]+\]\(\s*(<[^>]+>|[^)\s]+)(?:\s+[^)]*)?\)")
 _INLINE_CODE = re.compile(r"(`+).*?\1")

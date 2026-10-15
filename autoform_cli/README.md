@@ -1245,10 +1245,11 @@ directory directly under `roadmap/` that holds articles but names no chapter.
 Deeper directories (the `definitions/` and `theorems/` buckets the bundled
 example uses) are a filing convention inside a chapter and are not checked.
 `overfull-container` reports a mathematical article with more than 24 direct
-children, or a repository-wide root subject index with more than 64,
-which is a table of contents rather than a chapter. Both defects leave a valid
-graph, which is why they need their own checks rather than falling out of
-`autoform check`.
+children, which is a table of contents rather than a chapter. A roadmap root
+whose direct children are all chapter pages is a repository-wide subject index
+and may hold 64; one root-level leaf returns the root to the 24-article limit.
+Both defects leave a valid graph, which is why they need their own checks
+rather than falling out of `autoform check`.
 
 ### Node size
 
