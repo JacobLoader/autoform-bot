@@ -122,6 +122,10 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
             status_counts=(("planned", 1),),
             declaration="theorem",
             status_key="planned",
+            # Long enough to fill a phone's sheet to its height cap.
+            summary=" ".join(
+                ["The target theorem gathers the foundation and the middle lemma into one statement."] * 6
+            ),
         ),
     )
     nodes = core_nodes + tuple(
@@ -522,6 +526,20 @@ def test_oversized_flat_scope_defaults_to_browse(desktop_page: object, explorer_
         "map unavailable above 120 items"
     )
     playwright.expect(page.locator(".bp-dag-node")).to_have_count(0)
+
+
+def test_a_node_chosen_on_a_phone_lands_above_the_open_sheet(mobile_page: object, explorer_url: str) -> None:
+    """Centring in the whole stage put the chosen node under the sheet its selection opens."""
+    page = mobile_page
+    _open_ready(page, explorer_url)
+    search = page.locator(".bp-dag-search")
+    search.fill("target")
+    search.press("Enter")
+    node = page.locator('[data-autoform-node-id="chapter/target"]')
+    playwright.expect(node).to_be_focused()
+    box, sheet = node.bounding_box(), page.locator(".bp-dag-inspector").bounding_box()
+    assert box is not None and sheet is not None
+    assert box["y"] + box["height"] <= sheet["y"]
 
 
 def test_mobile_browse_pagination_stays_above_the_collapsed_sheet(
