@@ -1144,6 +1144,25 @@ def test_libraries_and_modules_follow_the_lake_source_directory(tmp_path: Path) 
     assert path_of("Skel.Missing", libraries, project) is None
 
 
+def test_a_file_no_library_selects_has_no_module(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "lakefile.toml").write_text(
+        'name = "Demo"\n\n[[lean_lib]]\nname = "Demo"\n\n[[lean_lib]]\nname = "Lib"\nglobs = ["Extra.+"]\n',
+        encoding="utf-8",
+    )
+
+    libraries = lean_libraries(project)
+
+    # Both libraries hold every file under the project, but Lake builds only
+    # what their roots and globs make buildable: Lib's glob leaves out its own root.
+    assert module_of(project / "Demo" / "Basic.lean", libraries) == "Demo.Basic"
+    assert module_of(project / "Extra" / "Sub.lean", libraries) == "Extra.Sub"
+    assert module_of(project / "Extra.lean", libraries) is None
+    assert module_of(project / "Lib" / "Foo.lean", libraries) is None
+    assert module_of(project / "v1" / "Old.lean", libraries) is None
+
+
 def test_a_package_without_library_targets_is_its_own_library(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
