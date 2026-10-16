@@ -46,7 +46,9 @@ def _served(directory: Path) -> Iterator[str]:
         server.server_close()
 
 
-@pytest.fixture(scope="session")
+# Module scope: Playwright's event loop stays running while the browser is open,
+# and asyncio.run() in later test modules refuses to start under it.
+@pytest.fixture(scope="module")
 def webkit_browser() -> Iterator[object]:
     with playwright.sync_playwright() as runtime:
         try:
