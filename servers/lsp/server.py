@@ -69,6 +69,40 @@ class LspConfig:
     timeout: float = DEFAULT_LSP_TIMEOUT
 
 
+def _descendant_process_groups(process_group_id: int) -> dict[int, list[Any]]:
+    """Return the descendants of a group's members that run in other groups, by group."""
+    import psutil
+
+    groups: dict[int, list[Any]] = {}
+    for member in psutil.process_iter():
+        try:
+            if os.getpgid(member.pid) != process_group_id:
+                continue
+            descendants = member.children(recursive=True)
+        except (OSError, psutil.Error):
+            continue
+        for descendant in descendants:
+            try:
+                descendant_group_id = os.getpgid(descendant.pid)
+            except OSError:
+                continue
+            if descendant_group_id != process_group_id:
+                groups.setdefault(descendant_group_id, []).append(descendant)
+    return groups
+
+
+def _still_in_process_group(process: Any, process_group_id: int) -> bool:
+    """Whether a recorded process, not a later one reusing its PID, is in a group."""
+    import psutil
+
+    try:
+        # Look the group up first: a process still running afterwards is the
+        # one that was looked up.
+        return os.getpgid(process.pid) == process_group_id and process.is_running()
+    except (OSError, psutil.Error):
+        return False
+
+
 class LeanLspSession:
     """Manages a Lean 4 language server subprocess via JSON-RPC."""
 
@@ -76,6 +110,9 @@ class LeanLspSession:
         self.config = config
         self.process: subprocess.Popen | None = None
         self._process_group_id: int | None = None
+        # Lean's file workers and their builds, by the process groups they
+        # run in, recorded while the watchdog still parents them.
+        self._worker_groups: dict[int, list[Any]] = {}
         self._group_retired = False
         self._retire_pending = False
         self._request_id = 0
@@ -153,12 +190,13 @@ class LeanLspSession:
                     )
             else:
                 # Lean's watchdog starts each file worker in its own session
-                # and stops every worker group when its stdin closes. A TERM
+                # and stops worker groups itself when its stdin closes. A TERM
                 # first would kill the watchdog and orphan workers the group
                 # signal cannot reach. Close stdout too: the watchdog writes
                 # during that shutdown and handles a closed pipe, but would
                 # block on a full one. The leader stays unreaped while the
                 # watchdog exits, so the PGID cannot be reused meanwhile.
+                self._record_worker_groups()
                 for stream in (process.stdin, process.stdout):
                     if stream is not None:
                         try:
@@ -173,6 +211,7 @@ class LeanLspSession:
             # retry must never signal a reused numeric PGID.
             self._group_retired = True
             self._process_group_id = None
+        self._stop_worker_groups()
         _reap_process(process)
         for stream in (process.stdin, process.stdout):
             if stream is not None:
@@ -180,6 +219,28 @@ class LeanLspSession:
         self.process = None
         self._group_retired = False
         self._retire_pending = False
+
+    def _record_worker_groups(self) -> None:
+        """Record the groups of the server's descendants outside its own group.
+
+        When Lean's watchdog shuts down, it skips a worker that has already
+        exited, and that worker's builds keep running in the worker's group.
+        Once the watchdog exits, nothing ties them to this session. Call only
+        while the leader is unreaped, so the server's group ID is still ours.
+        """
+        if self._process_group_id is None:
+            return
+        for process_group_id, members in _descendant_process_groups(self._process_group_id).items():
+            self._worker_groups.setdefault(process_group_id, []).extend(members)
+
+    def _stop_worker_groups(self) -> None:
+        """Terminate the recorded worker groups that are still running."""
+        for process_group_id, members in self._worker_groups.items():
+            # A recorded descendant still in the group proves that its ID was
+            # never reused; a process started after the recording cannot.
+            if any(_still_in_process_group(member, process_group_id) for member in members):
+                _terminate_process_group(process_group_id)
+        self._worker_groups.clear()
 
     def _abort_process(self) -> None:
         """Retry verified retirement without ever surrendering ownership."""
@@ -197,6 +258,8 @@ class LeanLspSession:
         with self._lifecycle_lock:
             if self.is_alive():
                 try:
+                    # A shutdown request stops Lean's workers as an EOF does.
+                    self._record_worker_groups()
                     self._send_request("shutdown", {})
                     # Lean leaves after shutdown only on an exit without params.
                     self._send_notification("exit", None)
