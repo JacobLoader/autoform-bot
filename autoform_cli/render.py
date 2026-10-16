@@ -1471,7 +1471,7 @@ def _next_target(
         if statement is None and chapter_page is not None:
             anchor = node.id.split("/", 1)[1].replace("/", "-") if "/" in node.id else node.id
             statement = f"{mermaid.relative_link(chapter_page, page, '.html')}#{anchor}"
-        graph_href = graph_pages.focus_page_href(destination, node.id, page, parent=node.parent)
+        graph_href = graph_pages.scope_page_href(destination, node.id, page, parent=node.parent)
 
         title = html.escape(node.title)
         heading = (
@@ -2595,7 +2595,7 @@ def _vault_source_link(node: Node, *, repo_root: Path, linker) -> str:
 
 def _graph_context_link(node: Node, *, page: Path, destination: Path) -> str:
     """Link a textbook statement to its hash-focused dependency explorer."""
-    href = graph_pages.focus_page_href(destination, node.id, page, parent=node.parent)
+    href = graph_pages.scope_page_href(destination, node.id, page, parent=node.parent)
     label = html.escape(f"Open dependency explorer for {node.title}", quote=True)
     icon = (
         '<svg class="bp-context-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">'

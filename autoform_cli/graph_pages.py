@@ -71,22 +71,18 @@ def write_graph_pages(
     complete = full_view(graph, statuses)
     context_links: dict[str, str] = {}
     for node in complete.nodes:
+        if node.id not in scope_pages:
+            # The book's statement links the same page, so search and the book agree.
+            context_links[node.id] = scope_page_href(
+                destination, node.id, search_index, parent=graph.nodes[node.id].parent
+            )
+            continue
         target = (
             chapter_pages["roadmap"]
             if node.id == "roadmap" and "roadmap" in chapter_pages
-            else scope_pages.get(node.id)
+            else scope_pages[node.id]
         )
-        if target is None:
-            parent = graph.nodes[node.id].parent or "roadmap"
-            target = (
-                chapter_pages["roadmap"]
-                if parent == "roadmap" and "roadmap" in chapter_pages
-                else scope_pages.get(parent, project_page)
-            )
-        context = _published_link(target, search_index)
-        if node.id not in scope_pages:
-            context += f"#node={quote(node.id, safe='')}"
-        context_links[node.id] = context
+        context_links[node.id] = _published_link(target, search_index)
     dag_viewer.write_search_index(search_index, complete, context_links=context_links)
 
     project = project_view(graph, statuses)
@@ -254,12 +250,13 @@ def write_graph_pages(
     return tuple(written)
 
 
-def focus_page_path(destination: str | Path, node_id: str, *, parent: str | None = None) -> Path:
-    """Return the smallest published explorer scope that contains a node."""
+def scope_page_path(destination: str | Path, node_id: str, *, parent: str | None = None) -> Path:
+    """Return the smallest published explorer scope that contains a node.
+
+    A node without a parent sits at the root, so the root chapter holds it.
+    """
     destination = Path(destination).resolve()
-    scope = parent if parent is not None else node_id.rpartition("/")[0]
-    if scope == "":
-        return destination / "dependencies.md"
+    scope = parent if parent is not None else (node_id.rpartition("/")[0] or "roadmap")
     if scope == "roadmap":
         return destination / "dependencies/chapters/roadmap.md"
     if "/" not in scope:
@@ -267,15 +264,15 @@ def focus_page_path(destination: str | Path, node_id: str, *, parent: str | None
     return destination / "dependencies/scopes" / f"{scope}.md"
 
 
-def focus_page_href(
+def scope_page_href(
     destination: str | Path,
     node_id: str,
     page: str | Path,
     *,
     parent: str | None = None,
 ) -> str:
-    """Return a published explorer link with durable node focus in the hash."""
-    target = focus_page_path(destination, node_id, parent=parent)
+    """Link a node's scope page from *page*, selecting the node in the hash."""
+    target = scope_page_path(destination, node_id, parent=parent)
     return f"{mermaid.relative_link(target, Path(page), '.html')}#node={quote(node_id, safe='')}"
 
 
@@ -445,4 +442,4 @@ def _scope_breadcrumbs(
     return tuple(items)
 
 
-__all__ = ["focus_page_href", "focus_page_path", "write_graph_pages"]
+__all__ = ["scope_page_href", "scope_page_path", "write_graph_pages"]

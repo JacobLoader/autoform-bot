@@ -2341,7 +2341,7 @@ def test_rewriting_a_page_links_only_the_nodes_it_names(tmp_path: Path, monkeypa
 
 def test_the_hierarchical_explorer_indexes_nodes_without_a_full_graph(tmp_path: Path) -> None:
     """Global search jumps into a small scope instead of fitting every node."""
-    from autoform_cli.graph_pages import focus_page_path, write_graph_pages
+    from autoform_cli.graph_pages import scope_page_path, write_graph_pages
 
     project = _project(tmp_path)
     graph = load_graph(project / "blueprint")
@@ -2361,7 +2361,7 @@ def test_the_hierarchical_explorer_indexes_nodes_without_a_full_graph(tmp_path: 
         payload = json.loads(page.with_suffix(".json").read_text(encoding="utf-8"))
         assert set(ids) == {node["id"] for node in payload["nodes"] if node["kind"] == "node"}
     pages = {
-        node_id: focus_page_path(destination, node_id, parent=graph.nodes[node_id].parent)
+        node_id: scope_page_path(destination, node_id, parent=graph.nodes[node_id].parent)
         for node_id in ("base", "top")
     }
     assert len(set(pages.values())) == 1
@@ -2374,6 +2374,22 @@ def test_the_hierarchical_explorer_indexes_nodes_without_a_full_graph(tmp_path: 
         "chapters/roadmap.html#node=base",
         "chapters/roadmap.html#node=top",
     }
+
+
+def test_a_root_article_links_the_explorer_page_search_opens(tmp_path: Path) -> None:
+    """Without roadmap/README.md a root article has no parent, and its statement
+    linked the project overview, which does not draw it, while search opened
+    the root chapter's explorer."""
+    project = _project(tmp_path)
+    (project / "blueprint/roadmap/README.md").unlink()
+    out = tmp_path / "out"
+
+    render_site(project / "blueprint", out, lean_root=project)
+
+    index = json.loads((out / "dependencies/index.json").read_text(encoding="utf-8"))
+    assert {node["id"]: node["url"] for node in index["nodes"]}["top"] == "chapters/roadmap.html#node=top"
+    chapter = (out / "roadmap/README.md").read_text(encoding="utf-8")
+    assert '<a class="bp-context-link" href="../dependencies/chapters/roadmap.html#node=top"' in chapter
 
 
 def test_a_node_that_is_the_current_page_links_as_a_bare_fragment(tmp_path: Path) -> None:
