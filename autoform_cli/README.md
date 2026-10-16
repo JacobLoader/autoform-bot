@@ -968,7 +968,7 @@ rolled-up containment level,
 missing or multiple H1 titles, unsupported frontmatter keys, assertion values
 it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
-`mathlib: true`. An inline `## Sources` link to a local path must name a file
+`mathlib: true`. A `## Sources` link to a local path must name a file
 inside the blueprint, as `audit` also requires: a missing file, a directory, an
 invalid path, or a target outside the blueprint fails, and `audit` alone checks
 fragments and fails links with other schemes or a network location. Such a link
@@ -1254,8 +1254,8 @@ each a list), `limit`, `total_matches`, and
 `node_id`, `article_id`, `article_path`, `article_revision`, `title`,
 `declaration`, `state`, `statement_text` (the authored Markdown),
 `lean_targets` (all of them), `mathlib`, `mathlib_declarations`,
-`mathlib_file`, `source_targets` (as the article writes them, minus any that is
-neither an http(s) link nor a path inside the blueprint), `used_by`,
+`mathlib_file`, `source_targets` (as the article writes them, once each, minus
+any that is neither an http(s) link nor a path inside the blueprint), `used_by`,
 `used_by_count`, `shared_title`, and `matched_fields`; `article_id`,
 `declaration`, and `mathlib_file` may be null. A Lean target has `declaration`,
 `source_file` (relative to `--lean-root`), and `line`; the last two are null
