@@ -3106,8 +3106,8 @@ def test_a_name_selects_its_one_public_declaration_or_is_ambiguous(
 ) -> None:
     index = _index_files(tmp_path, files)
 
-    assert _where(index.occurrences("Demo.main")) == occurrences
     assert _where(filter(None, [index.find("Demo.main")])) == selected
+    assert _where(index.occurrences("Demo.main")) == occurrences
     # A name that selects nothing lists every declaration.
     ambiguity = "" if selected else ", ".join(f"{path}:{line}" for path, line in occurrences)
     assert index.ambiguity("Demo.main") == ambiguity
