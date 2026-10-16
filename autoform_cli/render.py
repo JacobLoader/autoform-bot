@@ -2029,64 +2029,8 @@ def _anchor(node_id: str, group: str) -> str:
     return remainder.replace("/", "-")
 
 
-class _AnchoredLinks(Mapping[str, str]):
-    """Resolve published article links on demand for one output page.
-
-    Most article bodies mention no other article, while a repository-wide wiki
-    can contain tens of thousands of targets. Materializing the complete map
-    for every body therefore made link rewriting quadratic in the roadmap size.
-    """
-
-    def __init__(
-        self,
-        targets: Mapping[str, tuple[Path, str]],
-        page: Path,
-        *,
-        extension: str,
-        node_ids: Iterable[str] | None,
-    ) -> None:
-        self._targets = targets
-        self._page = page
-        self._resolved_page = page.resolve()
-        self._node_ids = targets.keys() if node_ids is None else tuple(dict.fromkeys(node_ids))
-        self._allowed = None if node_ids is None else frozenset(self._node_ids)
-        self._extension = extension
-        self._cache: dict[str, str] = {}
-        self._hrefs: dict[Path, str] = {}
-
-    def __getitem__(self, node_id: str) -> str:
-        if self._allowed is not None and node_id not in self._allowed:
-            raise KeyError(node_id)
-        cached = self._cache.get(node_id)
-        if cached is not None:
-            return cached
-        target, anchor = self._targets[node_id]
-        if target in self._hrefs:
-            href = self._hrefs[target]
-        elif target.resolve() == self._resolved_page:
-            href = ""
-            self._hrefs[target] = href
-        else:
-            href = mermaid.relative_link(target, self._page, self._extension)
-            if self._extension == ".html":
-                href = _as_published(href)
-            self._hrefs[target] = href
-        if href:
-            anchored = f"{href}#{anchor}" if anchor else href
-        else:
-            anchored = f"#{anchor}" if anchor else "#"
-        self._cache[node_id] = anchored
-        return anchored
-
-    def __iter__(self):
-        return iter(self._node_ids)
-
-    def __len__(self) -> int:
-        return len(self._node_ids)
-
-
 def _anchored_links(
-    targets: Mapping[str, tuple[Path, str]],
+    targets: dict[str, tuple[Path, str]],
     page: Path,
     *,
     extension: str = ".html",
@@ -2096,15 +2040,63 @@ def _anchored_links(
 
     Use ``.md`` for links MkDocs will parse -- it validates and rewrites those
     itself -- and ``.html`` for raw HTML and Mermaid, which it never sees. A
-    statement on the current page is just a fragment. Link construction is
-    lazy, and nodes on the same target page share its cached base href.
+    statement on the current page is just a fragment. *node_ids*, when given,
+    limits the map to those nodes.
     """
-    return _AnchoredLinks(
-        targets,
-        page,
-        extension=extension,
-        node_ids=node_ids,
-    )
+    return _PageLinks(targets, page, extension, node_ids)
+
+
+class _PageLinks(Mapping[str, str]):
+    """The links from one page to every node, each built when first read.
+
+    A page names a few nodes but *targets* holds the whole graph, and a site
+    has a page per node, so building every link up front made rendering
+    quadratic in the size of the graph.
+    """
+
+    def __init__(
+        self, targets: dict[str, tuple[Path, str]], page: Path, extension: str, node_ids: Iterable[str] | None
+    ):
+        self._targets = targets
+        self._page = page
+        self._resolved_page = page.resolve()
+        self._extension = extension
+        self._hrefs: dict[Path, str] = {}
+        self._links: dict[str, str] = {}
+        self._node_ids = targets.keys() if node_ids is None else tuple(dict.fromkeys(node_ids))
+        self._allowed = None if node_ids is None else frozenset(self._node_ids)
+
+    def __getitem__(self, node_id: str) -> str:
+        if self._allowed is not None and node_id not in self._allowed:
+            raise KeyError(node_id)
+        link = self._links.get(node_id)
+        if link is not None:
+            return link
+        target, anchor = self._targets[node_id]
+        # Many nodes share a chapter page, and resolving a path walks the disk,
+        # so each target page is linked once. The current page is cached as ""
+        # and links as a bare fragment.
+        href = self._hrefs.get(target)
+        if href is None:
+            if target.resolve() == self._resolved_page:
+                href = ""
+            else:
+                href = mermaid.relative_link(target, self._page, self._extension)
+                if self._extension == ".html":
+                    href = _as_published(href)
+            self._hrefs[target] = href
+        if href:
+            link = f"{href}#{anchor}" if anchor else href
+        else:
+            link = f"#{anchor}" if anchor else "#"
+        self._links[node_id] = link
+        return link
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._node_ids)
+
+    def __len__(self) -> int:
+        return len(self._node_ids)
 
 
 def _as_published(href: str) -> str:
