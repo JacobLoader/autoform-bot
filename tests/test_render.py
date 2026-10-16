@@ -1445,7 +1445,7 @@ def test_render_is_deterministic_and_records_a_path_free_manifest(tmp_path: Path
         "schema": "autoform-publication/v3",
         "source": "blueprint/roadmap Markdown",
         "source_revision": manifest["source_revision"],
-        "views": ["book", "progress", "project", "chapter", "focus", "full"],
+        "views": ["book", "progress", "project", "chapter", "full"],
     }
     assert re.fullmatch(r"[0-9a-f]{64}", manifest["source_revision"])
     assert manifest["files"] == {

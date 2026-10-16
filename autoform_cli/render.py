@@ -1249,7 +1249,7 @@ def _write_publication_manifest(
         "lean_source_revision": lean_source_revision,
         "nodes": len(graph.nodes),
         "dependencies": graph.edge_count,
-        "views": ["book", "progress", "project", "chapter", "focus", "full"],
+        "views": ["book", "progress", "project", "chapter", "full"],
     }
     encoded = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
     if len(encoded) > PUBLICATION_MANIFEST_MAX_BYTES:  # the next render could not read it
