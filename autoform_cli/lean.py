@@ -274,8 +274,9 @@ def index_project(
     With *names*, only files that may declare one of their last components, or
     that of a name an alias's target can mean, are indexed, so
     :meth:`SourceIndex.find` answers for the requested names and aliases
-    resolve as in an unfiltered index. Each such file is indexed whole, and the
-    line counts and digest still cover every file.
+    resolve as in an unfiltered index. Each such file is indexed whole. The
+    digest still covers every file, and so do the line counts unless the
+    request is empty: an empty request scans and counts no file.
 
     Raises :class:`LeanSourceError` when the root cannot be used or its
     sources cannot be read.
@@ -680,6 +681,8 @@ def _indexed_source_snapshot(
         relative_path = Path(relative_text)
         _update_source_digest(digest, relative_path, data)
         source_files.append((relative_path, data))
+        if wanted_short is not None and not wanted_short:
+            continue
         if relative_text in scanned:
             lines, scan = scanned[relative_text]
         else:
@@ -723,8 +726,6 @@ def _may_declare(lines: list[str], wanted_short: frozenset[str]) -> bool:
     ``lines`` are the file's lines with comments blanked, as :func:`_scan` reads them.
     """
 
-    if not wanted_short:
-        return False
     for line in lines:
         match = _DECLARATION.match(line)
         if match is None:

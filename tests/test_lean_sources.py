@@ -196,6 +196,7 @@ def test_targeted_index_prefilters_files_but_preserves_file_context_and_digest(
     assert targeted.find("unrelated") is None
     assert targeted.source_digest == full.source_digest
     assert targeted.line_counts == full.line_counts
+    assert index_project(tmp_path, names=()).line_counts == {}
 
 
 def test_targeted_index_treats_inline_comments_as_lean_whitespace(
