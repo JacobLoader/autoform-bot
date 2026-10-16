@@ -683,6 +683,32 @@ def test_a_search_result_in_this_view_selects_the_drawn_node(desktop_page: objec
         )
 
 
+def test_a_result_neither_drawn_here_nor_safely_linked_selects_nothing(
+    desktop_page: object, explorer_url: str
+) -> None:
+    """Such a record went to chooseNode, which selected a node the map does not draw."""
+    page = desktop_page
+
+    def add_unlinked_record(route: object) -> None:
+        index = route.fetch().json()
+        index["nodes"].append(
+            {"id": "elsewhere/unlinked", "kind": "node", "status": "planned", "title": "Unlinked result", "url": None}
+        )
+        route.fulfill(json=index)
+
+    page.route("**/search.json", add_unlinked_record)
+    _open_ready(page, explorer_url)
+    search = page.locator(".bp-dag-search")
+    search.focus()
+    playwright.expect(search).to_have_attribute("placeholder", "Search 65 roadmap entries")
+    search.fill("Unlinked")
+    url = page.url
+    page.locator(".bp-dag-result", has_text="Unlinked result").click()
+    page.evaluate("() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))")
+    playwright.expect(page.locator(".bp-dag-has-selection")).to_have_count(0)
+    assert page.url == url
+
+
 def test_a_browse_query_lists_only_this_scope(desktop_page: object, explorer_url: str) -> None:
     """Whole-roadmap matches belong to the search dropdown, not under "Browse this scope"."""
     page = desktop_page
