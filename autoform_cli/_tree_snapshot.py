@@ -78,8 +78,6 @@ class TreeCaptureLimitError(TreeSnapshotError):
     """A named resource limit stopped a directory-tree capture."""
 
     def __init__(self, limit: str, maximum: int) -> None:
-        self.limit = limit
-        self.maximum = maximum
         super().__init__(f"directory tree exceeds {limit}={maximum}")
 
 
@@ -388,11 +386,7 @@ class BoundDirectoryTree:
             if self._binding is not None:
                 self._binding.verify()
                 return
-            if (
-                self._portable_path_identities is None
-                or _portable_directory_identities(self.root)
-                != self._portable_path_identities
-            ):
+            if _portable_directory_identities(self.root) != self._portable_path_identities:
                 raise TreeChangedError("directory tree changed while it was in use")
             metadata = os.lstat(self.root)
             if not stat.S_ISDIR(metadata.st_mode) or (
@@ -411,7 +405,6 @@ class BoundDirectoryTree:
             if self._binding is not None:
                 snapshot = capture_directory_descriptor(
                     self._binding.descriptor,
-                    expected_identity=self.identity,
                     selection=self.selection,
                 )
             else:
@@ -468,8 +461,7 @@ def bind_directory_tree(
 def capture_directory_descriptor(
     descriptor: int,
     *,
-    expected_identity: tuple[int, int] | None = None,
-    selection: TreeSelection = ALL_ENTRIES,
+    selection: TreeSelection,
 ) -> TreeSnapshot:
     """Capture a tree below an already retained directory descriptor."""
 
@@ -477,11 +469,6 @@ def capture_directory_descriptor(
         root = os.fstat(descriptor)
     except OSError as error:
         raise TreeSnapshotError("directory tree cannot be inspected safely") from error
-    if not stat.S_ISDIR(root.st_mode) or (
-        expected_identity is not None
-        and (root.st_dev, root.st_ino) != expected_identity
-    ):
-        raise TreeChangedError("directory tree changed before it was captured")
     directories: list[_DirectoryRecord] = []
     entries: list[_EntryRecord] = []
     files: list[tuple[str, bytes]] = []
@@ -1060,7 +1047,7 @@ def _read_file(
     expected: tuple[int, ...],
     *,
     relative: str,
-    max_bytes: int | None = None,
+    max_bytes: int | None,
 ) -> bytes:
     """Read the regular file *name* in the directory *relative*."""
 
@@ -1216,7 +1203,7 @@ def _verify_snapshot(
 def _capture_portable(
     root: Path,
     *,
-    expected_identity: tuple[int, int] | None = None,
+    expected_identity: tuple[int, int],
     selection: TreeSelection,
 ) -> TreeSnapshot:
     """Best-effort double-captured fallback for read-only non-POSIX clients.
@@ -1237,11 +1224,10 @@ def _capture_portable(
         )
     path_identities = _portable_directory_identities(root)
     root_before = os.lstat(root)
-    root_identity = (root_before.st_dev, root_before.st_ino)
     if (
         not stat.S_ISDIR(root_before.st_mode)
         or _is_reparse_point(root_before)
-        or (expected_identity is not None and root_identity != expected_identity)
+        or (root_before.st_dev, root_before.st_ino) != expected_identity
     ):
         raise TreeSnapshotError("directory tree cannot be inspected safely")
     directories: list[str] = [""]
@@ -1348,7 +1334,7 @@ def _read_portable_file(
     path: Path,
     expected: tuple[int, ...],
     *,
-    max_bytes: int | None = None,
+    max_bytes: int | None,
 ) -> bytes:
     descriptor: int | None = None
     try:

@@ -642,6 +642,8 @@ def test_audit_validates_local_source_links_without_network_access(tmp_path: Pat
     source = blueprint / "sources" / "paper.md"
     source.parent.mkdir(parents=True)
     source.write_text("# Paper\n\n## Theorem\n", encoding="utf-8")
+    (blueprint / ".drafts").mkdir()
+    (blueprint / ".drafts" / "notes.md").write_text("# Notes\n", encoding="utf-8")
     _article(
         blueprint,
         "chapter/result.md",
@@ -651,6 +653,7 @@ def test_audit_validates_local_source_links_without_network_access(tmp_path: Pat
             "../../sources/paper.md#theorem",
             "../../sources/missing.md",
             "../../../outside.md",
+            "../../.drafts/notes.md",
             "https://example.invalid/paper",
             "ftp://example.invalid/paper",
             "//example.invalid/paper",
@@ -666,6 +669,7 @@ def test_audit_validates_local_source_links_without_network_access(tmp_path: Pat
     findings = _finding_map(blueprint)["roadmap/chapter/result.md"]
 
     assert findings == [
+        ("hidden-source-target", "source link names a hidden path, which render omits: '../../.drafts/notes.md'"),
         ("malformed-source-link", "source link contains an invalid path: '%00'"),
         ("malformed-source-link", "source link is not a valid URL: 'http://[oops/paper'"),
         ("source-escapes-blueprint", "source link escapes the blueprint: '../../../outside.md'"),
