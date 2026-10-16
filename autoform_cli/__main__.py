@@ -569,6 +569,25 @@ def _source_link_issues(graph: Graph) -> list[str]:
     return issues
 
 
+def _formalizable_container_issues(graph: Graph) -> list[str]:
+    """Name each article that sets ``declaration`` and also contains articles.
+
+    The generated workflows run ``check`` but not ``audit``, which reports these
+    as ``formalizable-container``. Nothing counts or schedules a container's own
+    declaration, yet its scope is drawn complete once its leaves are proved.
+    The message names the move because deleting only ``declaration:`` passes
+    both commands, and a container left with ``lean:`` and ``statement:`` is
+    still drawn complete while its own proof is open.
+    """
+    containers = {node.parent for node in graph.nodes.values() if node.parent is not None}
+    return [
+        f"{node.id}: formalizable article has contained articles; declaration-sized articles must be leaves; "
+        "move the declaration and its lean, statement and proof fields into a leaf article"
+        for node in graph.nodes.values()
+        if node.formalizable and node.id in containers
+    ]
+
+
 def _check(args: argparse.Namespace) -> int:
     try:
         graph = load_graph(args.blueprint_dir)
@@ -576,8 +595,8 @@ def _check(args: argparse.Namespace) -> int:
         for issue in exc.issues:
             print(f"error: {issue}")
         return 1
-    if source_issues := _source_link_issues(graph):
-        for issue in source_issues:
+    if issues := _formalizable_container_issues(graph) + _source_link_issues(graph):
+        for issue in issues:
             print(f"error: {issue}")
         return 1
 

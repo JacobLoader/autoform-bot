@@ -964,7 +964,7 @@ example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml).
 
 `autoform check` rejects cycles, missing targets, escaping paths, symbolic
 links anywhere under `roadmap/`, self-dependencies, cycles introduced at any
-rolled-up containment level,
+rolled-up containment level, a `declaration` on a container article,
 missing or multiple H1 titles, unsupported frontmatter keys, assertion values
 it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
