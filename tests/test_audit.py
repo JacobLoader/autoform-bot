@@ -1119,6 +1119,29 @@ def test_a_source_span_does_not_depend_on_the_names_a_filter_admits(tmp_path: Pa
         assert audit_module._source_spans(index_project(root, names=names))["X.bar"] == 9, names
 
 
+def test_an_alias_s_limits_do_not_depend_on_the_names_other_articles_request(tmp_path: Path) -> None:
+    # Unfiltered, the index keeps A.lean's `N.aux` and cannot place B.lean's
+    # alias, so it reads no limit for it; an article naming `N.helper` must
+    # not change that.
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    _article(blueprint, "good.md", declaration="theorem", statement="formalized", proof="formalized", lean="N.good")
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    (lean_root / "A.lean").write_text(
+        "namespace N\nprivate theorem aux : True := trivial\ntheorem helper : True := trivial\nend N\n",
+        encoding="utf-8",
+    )
+    (lean_root / "B.lean").write_text(
+        "namespace N\nset_option maxHeartbeats 0 in\nprivate theorem aux : True := trivial\nalias good := aux\nend N\n",
+        encoding="utf-8",
+    )
+
+    assert audit_blueprint(blueprint, lean_root=lean_root).findings == ()
+    _article(blueprint, "helper.md", declaration="theorem", statement="formalized", proof="formalized", lean="N.helper")
+    assert audit_blueprint(blueprint, lean_root=lean_root).findings == ()
+
+
 def test_an_alias_ends_the_source_span_of_the_declaration_above_it(tmp_path: Path) -> None:
     lean_root = tmp_path / "lean"
     lean_root.mkdir()

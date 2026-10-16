@@ -3139,6 +3139,22 @@ def test_an_alias_is_followed_only_to_an_earlier_declaration_of_its_file(tmp_pat
         assert index.reached(index.find(name)) is None, name
 
 
+def test_a_name_filter_resolves_an_alias_as_the_unfiltered_index_does(tmp_path: Path) -> None:
+    # The unfiltered index keeps A.lean's `N.aux`, so B.lean's alias has no sure
+    # target, whether or not a request also names A.lean's `N.helper`.
+    (tmp_path / "A.lean").write_text(
+        "namespace N\nprivate theorem aux : True := trivial\ntheorem helper : True := trivial\nend N\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "B.lean").write_text(
+        "namespace N\nprivate theorem aux : True := trivial\nalias good := aux\nend N\n", encoding="utf-8"
+    )
+
+    for names in (None, ("N.good",), ("N.good", "N.helper")):
+        index = index_project(tmp_path, names=names)
+        assert index.reached(index.find("N.good")) is None, names
+
+
 def test_anonymous_instances_are_not_mistaken_for_names(tmp_path: Path) -> None:
     index = _index(tmp_path, "instance : Inhabited Nat := ⟨0⟩\n")
 

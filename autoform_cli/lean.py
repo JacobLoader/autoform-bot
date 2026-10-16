@@ -271,10 +271,11 @@ def index_project(
 ) -> SourceIndex:
     """Scan ``*.lean`` beneath *root* and index declarations by full name.
 
-    With *names*, only files that may declare one of their last components are
-    scanned, so :meth:`SourceIndex.find` answers only for the requested names.
-    Every declaration of a scanned file is still indexed, same-file alias
-    targets included, and the line counts and digest still cover every file.
+    With *names*, only files that may declare one of their last components, or
+    that of a name an alias's target can mean, are indexed, so
+    :meth:`SourceIndex.find` answers for the requested names and aliases
+    resolve as in an unfiltered index. Each such file is indexed whole, and the
+    line counts and digest still cover every file.
 
     Raises :class:`LeanSourceError` when the root cannot be used or its
     sources cannot be read.
@@ -655,23 +656,46 @@ def _indexed_source_snapshot(
         if names is None
         else frozenset(_short_name(name) for name in names)
     )
+    # An alias resolves through the first file that declares a name its target
+    # can mean, so a filter also admits every file that may declare one. Files
+    # holding an alias are stripped and scanned once, here, to learn those names.
+    scanned: dict[str, tuple[list[str], tuple[list[Declaration], int]]] = {}
+    if wanted_short:
+        for relative_text, data in snapshot.files:
+            if b"alias" not in data:
+                continue
+            try:
+                lines = _without_lean_comments(data.decode("utf-8")).splitlines()
+            except UnicodeError:
+                continue
+            scan = _scan(lines, Path(relative_text))
+            scanned[relative_text] = lines, scan
+            wanted_short |= {
+                _short_name(candidate)
+                for declaration in scan[0]
+                if declaration.alias is not None
+                for candidate in declaration.alias.candidates
+            }
     for relative_text, data in snapshot.files:
         relative_path = Path(relative_text)
         _update_source_digest(digest, relative_path, data)
         source_files.append((relative_path, data))
-        try:
-            text = data.decode("utf-8")
-        except UnicodeError:
-            continue
-        # The stripper keeps newlines, so both passes number lines as the file does.
-        lines = _without_lean_comments(text).splitlines()
+        if relative_text in scanned:
+            lines, scan = scanned[relative_text]
+        else:
+            try:
+                text = data.decode("utf-8")
+            except UnicodeError:
+                continue
+            # The stripper keeps newlines, so both passes number lines as the file does.
+            lines, scan = _without_lean_comments(text).splitlines(), None
         if wanted_short is not None and not _may_declare(lines, wanted_short):
             # Nothing in this file is indexed, but its count still stops where Lean stops reading.
             line_counts[relative_path] = next(
                 (number for number, line in enumerate(lines) if _EXIT.match(line)), len(lines)
             )
             continue
-        found, line_counts[relative_path] = _scan(lines, relative_path)
+        found, line_counts[relative_path] = _scan(lines, relative_path) if scan is None else scan
         declaration_lines[relative_path] = tuple(sorted({declaration.line for declaration in found}))
         for declaration in found:
             first = declarations.setdefault(declaration.name, declaration)
