@@ -143,10 +143,12 @@ def classdef_lines(*, dark: bool = False) -> list[str]:
         )
 
     states = [classdef(state.key, state) for state in STATES]
-    # Chapter and boundary boxes are the project map, which is the first thing
-    # on the landing page, so they take the same greys and blues as the rest of
-    # the site rather than the GitHub palette the states used to sit in. A
-    # finished scope takes the fully proved green, so completion reads at a glance.
+    # Scope boxes are the vault map's containers. They take the same greys and
+    # blues as the rest of the site rather than the GitHub palette the states
+    # used to sit in, and a finished scope takes the fully proved green, so
+    # completion reads at a glance. No generated map draws boundary or focus
+    # boxes any more; those classes stay until authored diagrams on the site
+    # get a rule of their own.
     complete = classdef("scope_complete", next(state for state in STATES if state.key == "fully_proved"))
     if dark:
         views = [
