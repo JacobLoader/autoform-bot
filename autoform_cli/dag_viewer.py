@@ -461,7 +461,8 @@ def viewer_script() -> str:
 # list, code and heading rules reach a specificity of (0,2,2). The rules they
 # would override carry a doubled .bp-dag-viewer class, and the status filter is
 # a button and popover because Material styles details and summary as an
-# admonition.
+# admonition. The landing page's card frames the embedded layout and names its
+# map, so that layout draws no frame or context row of its own.
 _STYLE = r"""
 .bp-dag-viewer {
   --dag-border: var(--bp-rule, #d8dade); --dag-bg: var(--bp-surface, #fff);
@@ -477,6 +478,8 @@ body.bp-dag-app-page .bp-dag-viewer[data-layout=app] {
   position: fixed; z-index: 40; inset: 0; width: 100dvw; max-width: none;
   height: 100dvh !important; min-height: 0; margin: 0; border: 0; border-radius: 0; box-shadow: none;
 }
+.bp-dag-viewer[data-layout=embedded] { border: 0; border-radius: 0; box-shadow: none; }
+.bp-dag-viewer[data-layout=embedded] .bp-dag-context { display: none; }
 body.bp-dag-app-page { overflow: hidden; }
 body.bp-dag-app-page .md-header, body.bp-dag-app-page .md-tabs,
 body.bp-dag-app-page .md-sidebar, body.bp-dag-app-page .md-footer { display: none; }
@@ -610,7 +613,7 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
   .bp-dag-stats { order: 8; width: 100%; min-height: 1.4rem; margin: 0; justify-content: flex-start; }
 }
 @media (max-width: 680px) {
-  .bp-dag-viewer:not([data-layout=app]) { height: calc(100svh - 1rem); min-height: 34rem; border-radius: 10px; }
+  .bp-dag-viewer:not([data-layout=app]) { height: calc(100svh - 1rem); min-height: 34rem; }
   body.bp-dag-app-page .bp-dag-viewer[data-layout=app] { min-height: 28rem; }
   .bp-dag-context { padding-inline: .55rem; }
   .bp-dag-toolbar { gap: .35rem; padding: .35rem .5rem .5rem; }

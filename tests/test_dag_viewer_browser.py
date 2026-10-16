@@ -939,6 +939,19 @@ def test_the_published_landing_map_leaves_one_finger_scrolling_to_the_page(
     assert canvas.evaluate("element => getComputedStyle(element).touchAction") != "none"
 
 
+def test_the_published_landing_explorer_sits_unframed_in_its_card(mobile_page: object, site_url: str) -> None:
+    """The explorer drew a second border, rounded corners and a shadow inside the card, under its title."""
+    page = _offline(mobile_page, site_url)
+    page.goto(f"{site_url}/index.html")
+    page.locator(".bp-dag-stage").wait_for()
+    viewer = page.locator(".bp-map .bp-dag-viewer")
+    frame = viewer.evaluate(
+        "element => ['borderTopWidth', 'borderTopLeftRadius', 'boxShadow'].map(key => getComputedStyle(element)[key])"
+    )
+    assert frame == ["0px", "0px", "none"]
+    playwright.expect(viewer.locator(".bp-dag-context")).to_be_hidden()
+
+
 def test_the_published_atlas_hides_the_isolate_toggle(desktop_page: object, site_url: str) -> None:
     page = _offline(desktop_page, site_url)
     page.goto(f"{site_url}/dependencies.html")
