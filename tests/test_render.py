@@ -1345,8 +1345,22 @@ def test_reference_style_links_are_rewritten_with_the_inline_ones(tmp_path: Path
     assert "[paper]: ../sources/paper.md" not in chapter
 
 
-def test_angle_bracket_reference_destinations_with_spaces_are_rewritten(tmp_path: Path) -> None:
-    """An angle-bracket destination may contain spaces and must stay whole."""
+@pytest.mark.parametrize(
+    ("repository_url", "definition"),
+    [
+        (_REPOSITORY, "[paper]: https://github.com/owner/repo/blob/{ref}/blueprint/sources/paper%20note.md"),
+        ("", "[paper]: ../sources/paper%20note.md"),
+    ],
+)
+def test_angle_bracket_reference_destinations_with_spaces_are_rewritten(
+    tmp_path: Path, repository_url: str, definition: str
+) -> None:
+    """An angle-bracket destination may contain spaces and must stay whole.
+
+    Without repository coordinates the note stays on the site, and
+    Python-Markdown reads a definition's destination only up to whitespace, in
+    angle brackets or not, so its space is encoded.
+    """
     project = _project(tmp_path)
     sources = project / "blueprint" / "sources"
     sources.mkdir()
@@ -1364,16 +1378,160 @@ def test_angle_bracket_reference_destinations_with_spaces_are_rewritten(tmp_path
         project / "blueprint",
         out,
         lean_root=project,
-        repository_url="https://github.com/owner/repo",
+        repository_url=repository_url,
         ref=ref,
     )
 
     chapter = (out / "roadmap/README.md").read_text(encoding="utf-8")
-    assert (
-        f'[paper]: https://github.com/owner/repo/blob/{ref}/blueprint/sources/paper%20note.md "Source note"'
-        in chapter
-    )
+    assert f'{definition.format(ref=ref)} "Source note"' in chapter
     assert "<../sources/paper note.md>" not in chapter
+
+
+def _render_statement_link(
+    tmp_path: Path, link: str, *, notes: tuple[str, ...] = (), committed: bool = True
+) -> tuple[str, str]:
+    """Render a project whose statement body carries *link*, with the extra
+    source *notes*, from a commit with repository coordinates if *committed*;
+    return the chapter and the commit."""
+    project = _with_source_notes(tmp_path)
+    for name in ("Smith 2019.pdf", "Smith(2019).pdf"):
+        (project / "blueprint/sources" / name).write_bytes(b"%PDF-1.4\n")
+    for name in notes:
+        (project / "blueprint/sources" / name).write_text("---\n---\n\n# Note\n", encoding="utf-8")
+    _edit(project / "blueprint/roadmap/top.md", "The main result.", f"The main result. See {link}.")
+    commit = _commit_project(project) if committed else ""
+    out = tmp_path / "out"
+
+    render_site(
+        project / "blueprint", out, lean_root=project, repository_url=_REPOSITORY if committed else "", ref=commit
+    )
+
+    return (out / "roadmap/README.md").read_text(encoding="utf-8"), commit
+
+
+def test_angle_bracket_link_destinations_with_spaces_are_rewritten_whole(tmp_path: Path) -> None:
+    """Cut at the space, the link was published as `[Smith](<../sources/Smith)`."""
+    chapter, commit = _render_statement_link(tmp_path, "[Smith](<../sources/Smith 2019.pdf>)")
+
+    assert f"[Smith]({_REPOSITORY}/blob/{commit}/blueprint/sources/Smith%202019.pdf)" in chapter
+
+
+def test_a_site_relative_link_with_a_decoded_space_or_parenthesis_is_bracketed(tmp_path: Path) -> None:
+    """Without repository coordinates the note stays on the site under its
+    decoded path, whose space or unbalanced `(` a bare destination cannot hold."""
+    links = "[Smith](../sources/Smith%202019.pdf) and [x](../sources/a%28b.md)"
+    chapter, _ = _render_statement_link(tmp_path, links, committed=False)
+
+    assert "See [Smith](<../sources/Smith 2019.pdf>) and [x](<../sources/a(b.md>)." in chapter
+
+
+def test_math_that_reads_like_an_unmoved_link_is_left_alone(tmp_path: Path) -> None:
+    """Read as links, `$[X,Y](f(p))$` gained angle brackets and a composite
+    argument was dropped as a title, though neither destination moves."""
+    math = r"$[X,Y](f(p))$ and $[X,Y](f \circ g)$"
+    chapter, _ = _render_statement_link(tmp_path, math)
+
+    assert f"See {math}." in chapter
+
+
+def test_a_bare_link_with_balanced_parentheses_is_rewritten_whole(tmp_path: Path) -> None:
+    """Read only to its first `)`, the target named `Smith(2019`, a file the
+    blueprint lacks, so the note got a repository URL that 404s, or, kept on
+    the site, a link the strict build rejects."""
+    chapter, commit = _render_statement_link(tmp_path, "[Smith](../sources/Smith(2019).pdf)")
+
+    assert f"[Smith]({_REPOSITORY}/blob/{commit}/blueprint/sources/Smith%282019%29.pdf)" in chapter
+
+
+def test_an_unbalanced_bare_link_leaves_the_rest_of_its_line_alone(tmp_path: Path) -> None:
+    """Python-Markdown reads `[x]` as text and `[y]` as a link, so both stay
+    that way. Had `a(b.md)` counted as balanced, taking the link's own `)`,
+    the title after it would run on to `[y]`'s and drop ` and [y](../sources/c.md`."""
+    line = "[x](../sources/a(b.md) and [y](../sources/c.md)"
+    chapter, commit = _render_statement_link(tmp_path, line, notes=("a(b.md", "c.md"))
+
+    y = f"{_REPOSITORY}/blob/{commit}/blueprint/sources/c.md"
+    assert f"The main result. See [x](../sources/a(b.md) and [y]({y})." in chapter
+
+
+def test_an_escaped_parenthesis_leaves_the_rest_of_its_line_alone(tmp_path: Path) -> None:
+    """Python-Markdown reads `\\(` as text, so `[x]` ends at its own `)`.
+    Counted as an open parenthesis, `\\(` took that `)`, and the title after it
+    ran on to the `)` closing the aside and dropped ` and [y](../sources/c.md)`.
+    The escape is not decoded, so `x` names no captured note and is left as
+    written, where the strict build reports it."""
+    line = r"(see [x](../sources/a\(b.md) and [y](../sources/c.md))"
+    chapter, commit = _render_statement_link(tmp_path, line, notes=("a(b.md", "c.md"))
+
+    y = f"{_REPOSITORY}/blob/{commit}/blueprint/sources/c.md"
+    assert f"The main result. See {line.replace('../sources/c.md', y)}." in chapter
+
+
+def test_a_title_with_parentheses_ends_where_its_link_does(tmp_path: Path) -> None:
+    """Ended at the first `)`, `"Smith (2019)"` left `")` on the page. A quoted
+    title, in either quote and with or without a space before the `)`, may also
+    leave a `(` open, as Python-Markdown reads it; counted as open, it would
+    carry the match on to a later `)` and drop the text before it."""
+    chapter, commit = _render_statement_link(
+        tmp_path,
+        '[the paper](../sources/paper.md "Smith (2019)")'
+        ' (or [its note](../sources/paper.md "Smith (2019" ) for short,'
+        " [the note](../sources/paper.md 'Smith (2019') in full)",
+    )
+
+    paper = f"{_REPOSITORY}/blob/{commit}/blueprint/sources/paper.md"
+    assert f"See [the paper]({paper}) (or [its note]({paper}) for short, [the note]({paper}) in full)." in chapter
+
+
+def test_a_query_on_a_source_note_link_is_kept_out_of_the_file_name(tmp_path: Path) -> None:
+    """Resolved as part of the path, `?plain=1` reached the repository as `paper.md%3Fplain%3D1`."""
+    chapter, commit = _render_statement_link(tmp_path, "[the source](../sources/paper.md?plain=1#L3)")
+
+    assert f"[the source]({_REPOSITORY}/blob/{commit}/blueprint/sources/paper.md?plain=1#L3)" in chapter
+
+
+def test_a_missing_source_note_keeps_the_link_a_strict_build_rejects(tmp_path: Path) -> None:
+    """Every path under `sources/` went to the repository, so a missing note got
+    a link that 404s. Its site-relative link names a page the site does not
+    publish, so `mkdocs build --strict` fails instead of deploying it."""
+    chapter, _ = _render_statement_link(tmp_path, "[lemma 3](../sources/lemma-3.md)")
+
+    assert "[lemma 3](../sources/lemma-3.md)" in chapter
+
+
+def test_a_link_to_the_sources_directory_names_its_repository_tree(tmp_path: Path) -> None:
+    """The existence check lets the directory through. A check for a file would
+    publish `../sources`, which the site lacks and a strict build only logs."""
+    chapter, commit = _render_statement_link(tmp_path, "[the notes](../sources/)")
+
+    assert f"[the notes]({_REPOSITORY}/tree/{commit}/blueprint/sources)" in chapter
+
+
+def test_a_query_on_a_node_link_is_kept_before_its_anchor(tmp_path: Path) -> None:
+    """Resolved as part of the path, the query hid the node, and the link kept
+    naming a file its chapter absorbs. A page that stays on the site keeps its
+    query too."""
+    project = _project(tmp_path)
+    _edit(
+        project / "blueprint/coverage/README.md",
+        "Source audit pending",
+        "See [Top](../roadmap/top.md?plain=1) and [the overview](../README.md?plain=1).",
+    )
+
+    render_site(project / "blueprint", tmp_path / "out", lean_root=project)
+
+    published = (tmp_path / "out/coverage/README.md").read_text(encoding="utf-8")
+    assert "See [Top](../roadmap/README.md?plain=1#top) and [the overview](../README.md?plain=1)." in published
+
+
+def test_a_query_on_a_book_link_keeps_its_chapter_in_the_book(tmp_path: Path) -> None:
+    """Read as part of the path, the query hid the chapter from the book's page order."""
+    project = _project(tmp_path)
+    _edit(project / "blueprint/README.md", "(roadmap/README.md)", "(roadmap/README.md?plain=1)")
+
+    render_site(project / "blueprint", tmp_path / "out", lean_root=project)
+
+    assert "[Roadmap](roadmap/README.md)" in (tmp_path / "out/SUMMARY.md").read_text(encoding="utf-8")
 
 
 def test_a_fresh_vault_reports_no_work_rather_than_one_ready_item(tmp_path: Path) -> None:

@@ -63,7 +63,14 @@ from .status import is_definition
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 _FENCE = re.compile(r"^ {0,3}(`{3,}(?=[^`]*$)|~{3,})")
-_MARKDOWN_LINK = re.compile(r"(?<!!)\[(?P<label>[^\]]*)\]\(\s*(?P<target>[^)\s]+)(?:\s+[^)]*)?\)")
+#: An inline link. A bare destination or a title may hold one level of
+#: balanced parentheses, a quoted title may leave a `(` open, and an escaped
+#: parenthesis is text, as in Python-Markdown. `replace` drops the title of a
+#: link it moves, so a match that ran past the link's own `)` would drop text.
+_MARKDOWN_LINK = re.compile(
+    r"(?<!!)\[(?P<label>[^\]]*)\]\(\s*(?P<target><[^>]+>|(?:\\.|[^\\()\s]|\((?:\\.|[^\\()\s])*\))+)"
+    r"""(?:\s+(?:"[^")]*"\s*|'[^')]*'\s*|(?:\\.|[^\\()]|\((?:\\.|[^\\()])*\))*))?\)"""
+)
 #: A reference-style link definition, `[label]: target "title"`. Markdown
 #: resolves `[Paper][paper]` through one of these, so a rewrite that only sees
 #: inline links leaves the destination behind and publishes a dead link.
@@ -1278,7 +1285,7 @@ def _book_page_order(blueprint: Path, destination: Path, graph: Graph) -> list[P
             for match in _MARKDOWN_LINK.finditer(line):
                 raw = match.group("target")
                 bare = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
-                path = bare.partition("#")[0]
+                path = bare.partition("#")[0].partition("?")[0]
                 if not path or urlsplit(path).scheme or path.startswith("/"):
                     continue
                 candidate = (source.parent / unquote(path)).resolve()
@@ -2038,7 +2045,10 @@ def _rewrite_links(
     def moved_target(raw: str) -> str | None:
         """Where *raw* should point once published, or None to leave it alone."""
         bare = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
-        path, separator, fragment = bare.partition("#")
+        # The query and fragment are not part of the file's name: they are
+        # kept as written, beside the path render moves.
+        located, separator, fragment = bare.partition("#")
+        path, asked, query = located.partition("?")
         if not path or urlsplit(path).scheme or path.startswith("/"):
             return None
         candidate = (source_dir / unquote(path)).resolve()
@@ -2047,21 +2057,31 @@ def _rewrite_links(
             href = _anchored_links({node_id: targets[node_id]}, page, extension=".md", hrefs=page_hrefs)[node_id]
             if not targets[node_id][1] and separator:
                 href = f"{'' if href == '#' else href}#{fragment}"
-            return href
+            before, hashed, anchor = href.partition("#")  # the query goes before the anchor
+            return f"{before}{asked}{query}{hashed}{anchor}"
         if not _is_within(candidate, blueprint):
             # Nothing outside the blueprint is published: "" keeps only the text.
             return ""
         relative = candidate.relative_to(blueprint)
-        if sources_base is not None and relative.parts[:1] == (SOURCES_DIR,):
-            return f"{_source_href(sources_base, relative.parts[1:])}{separator}{fragment}"
+        # A repository link to a note the captured blueprint lacks would 404, so
+        # it stays site-relative, where a strict build reports the page missing.
+        if sources_base is not None and relative.parts[:1] == (SOURCES_DIR,) and os.path.exists(candidate):
+            return f"{_source_href(sources_base, relative.parts[1:])}{asked}{query}{separator}{fragment}"
         published = destination / relative
-        return f"{mermaid.relative_link(published, page, candidate.suffix)}{separator}{fragment}"
+        return f"{mermaid.relative_link(published, page, candidate.suffix)}{asked}{query}{separator}{fragment}"
+
+    def bracketed(href: str) -> str:
+        # A decoded path, or a query or fragment kept from angle brackets, can
+        # hold a space or a parenthesis. CommonMark allows no space in a bare
+        # destination, and Python-Markdown needs its parentheses balanced.
+        return f"<{href}>" if re.search(r"[\s()]", href) else href
 
     def replace(match: re.Match[str]) -> str:
-        href = moved_target(match.group("target"))
-        if href is None:
+        raw = match.group("target")
+        href = moved_target(raw)
+        if href is None or raw in (href, f"<{href}>"):  # nothing moved: keep the link as written
             return match.group(0)
-        return f"[{match.group('label')}]({href})" if href else match.group("label")
+        return f"[{match.group('label')}]({bracketed(href)})" if href else match.group("label")
 
     def rewrite(line: str) -> str:
         # A reference definition carries the destination for every `[x][label]`
@@ -2072,6 +2092,9 @@ def _rewrite_links(
             href = moved_target(definition.group("target"))
             if href:
                 indent, label = definition.group("indent"), definition.group("label")
+                # Python-Markdown reads a definition's destination only up to
+                # whitespace, in angle brackets or not, so whitespace is encoded.
+                href = re.sub(r"\s", lambda space: quote(space.group()), href)
                 return f"{indent}[{label}]: {href}{definition.group('rest') or ''}"
             return line
         return _MARKDOWN_LINK.sub(replace, line)
