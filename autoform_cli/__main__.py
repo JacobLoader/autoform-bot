@@ -21,6 +21,7 @@ from .claims import CLAIM_TTL_S, ClaimBoard, ClaimTransportError, author_claim_k
 from .doctor import diagnose_project
 from .dashboard import publication_bound_live_state, serve_dashboard
 from .graph import Graph, GraphValidationError, atlas_omissions, catalogs_without_ledger, load_graph
+from .graph_views import _countable, _module_inventories
 from .impact import (
     ImpactError,
     format_impact,
@@ -591,19 +592,10 @@ def _check(args: argparse.Namespace) -> int:
             print(f"error: {index_failure_message(error)}")
             return 1
 
+    # The book's hero counts the same targets and inventories.
     statuses = status.derive(graph)
-    containers = frozenset(
-        node.parent for node in graph.nodes.values() if node.parent is not None
-    )
-    target_statuses = {
-        node_id: statuses[node_id]
-        for node_id, node in graph.nodes.items()
-        if node_id not in containers and node.formalizable
-    }
-    inventories = sum(
-        node_id not in containers and node.catalog == "module"
-        for node_id, node in graph.nodes.items()
-    )
+    target_statuses = {node_id: statuses[node_id] for node_id in _countable(graph)}
+    inventories = len(_module_inventories(graph))
     summary = " · ".join(
         f"{count} {state.label}" for state, count in status.summarize(target_statuses)
     )

@@ -438,13 +438,12 @@ def _edges(counts: dict[tuple[str, str], list[int]]) -> tuple[ViewEdge, ...]:
 
 
 def _theorem_node(node: Node, node_status: NodeStatus) -> ViewNode:
-    inventory = inventory_state(node, node_status)
     return ViewNode(
         id=node.id,
         title=node.title,
         kind="node",
         members=(node.id,),
-        status_counts=((inventory.key if inventory else node_status.key, 1),),
+        status_counts=((display_state(node, node_status).key, 1),),
         declaration=node.declaration,
         catalog=node.catalog,
         status_key=display_status_key(node, node_status),
@@ -464,7 +463,7 @@ def is_scope_target(node: Node) -> bool:
     return node.catalog is None and (node.formalizable or node.not_ready)
 
 
-def inventory_state(node: Node, node_status: NodeStatus) -> State | None:
+def _inventory_state(node: Node, node_status: NodeStatus) -> State | None:
     """Return a module catalog's neutral inventory state, or None for any other node.
 
     A catalog is checked once it is fully proved and pending until then. Every
@@ -483,7 +482,17 @@ def display_status_key(node: Node, node_status: NodeStatus) -> str:
     An inventory is deliberately neutral, checked or not: it records source
     accounting, not progress on a mathematical target.
     """
-    return "planned" if inventory_state(node, node_status) else node_status.key
+    return "planned" if _inventory_state(node, node_status) else node_status.key
+
+
+def display_state(node: Node, node_status: NodeStatus) -> State:
+    """Return the state a node is named by: a catalog's inventory state, otherwise its own."""
+    return _inventory_state(node, node_status) or node_status.state
+
+
+def kind_label(node: Node) -> str:
+    """Name what a node is: a module inventory, or what it declares, or its kind."""
+    return "module inventory" if node.catalog == "module" else node.declaration or node.kind
 
 
 def scope_target_statuses(graph: Graph, statuses: dict[str, NodeStatus]) -> dict[str, NodeStatus]:
@@ -492,12 +501,51 @@ def scope_target_statuses(graph: Graph, statuses: dict[str, NodeStatus]) -> dict
     Containers are drawn as scopes, so they have no row of their own, and a
     catalog counts apart as an inventory.
     """
-    containers = {node.parent for node in graph.nodes.values()}
+    containers = _containers(graph)
     return {
         node_id: statuses[node_id]
         for node_id, node in graph.nodes.items()
         if node_id not in containers and is_scope_target(node)
     }
+
+
+def _containers(graph: Graph) -> frozenset[str]:
+    """Index which articles contain others, so loops need not rescan the graph."""
+    return frozenset(node.parent for node in graph.nodes.values() if node.parent is not None)
+
+
+def _is_countable(graph: Graph, node_id: str, containers: frozenset[str]) -> bool:
+    """Whether *node_id* is a formalization target the dashboards should count.
+
+    A leaf, and a leaf that declares something. Counting every leaf made a
+    freshly scaffolded vault report "0 of 1 targets complete, 1 ready now": the
+    roadmap landing page has no children yet, so it counted as an unstarted
+    result, and the site claimed work existed before any had been planned. A
+    module catalog declares nothing, so it never counts.
+    """
+
+    return node_id not in containers and graph.nodes[node_id].formalizable
+
+
+def _countable(graph: Graph) -> list[str]:
+    containers = _containers(graph)
+    return [node_id for node_id in graph.nodes if _is_countable(graph, node_id, containers)]
+
+
+def _module_inventories(
+    graph: Graph,
+    *,
+    containers: frozenset[str] | None = None,
+    node_ids: Iterable[str] | None = None,
+) -> list[str]:
+    """Return inventory leaves separately from mathematical targets."""
+    containers = _containers(graph) if containers is None else containers
+    candidates = graph.nodes if node_ids is None else node_ids
+    return [
+        node_id
+        for node_id in candidates
+        if node_id not in containers and graph.nodes[node_id].catalog == "module"
+    ]
 
 
 def _scope_node(
@@ -573,7 +621,7 @@ def _status_counts(
     for node_id in node_ids:
         node = graph.nodes[node_id]
         node_status = statuses[node_id]
-        inventory = inventory_state(node, node_status)
+        inventory = _inventory_state(node, node_status)
         if inventory is not None:
             inventories[inventory.key] += 1
         elif is_scope_target(node):
@@ -712,14 +760,15 @@ __all__ = [
     "ViewNode",
     "chapter_view",
     "container_nodes",
+    "display_state",
     "display_status_key",
     "full_view",
     "group_id",
     "group_nodes",
     "group_title",
     "inventory_counts",
-    "inventory_state",
     "is_scope_target",
+    "kind_label",
     "project_view",
     "scope_target_statuses",
     "scope_view",

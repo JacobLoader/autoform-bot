@@ -129,8 +129,8 @@ def export_structure(blueprint_dir: Path, output: Path | None = None) -> Path:
         if node is None:
             lines.append(f"{indent}- [{entry.name}]({entry.as_posix()}) · prose")
             continue
-        state = graph_views.inventory_state(node, statuses[node.id]) or statuses[node.id].state
-        kind = "module inventory" if node.catalog == "module" else node.declaration or node.kind
+        state = graph_views.display_state(node, statuses[node.id])
+        kind = graph_views.kind_label(node)
         lines.append(
             f"{indent}- [{node.title}]({entry.as_posix()}) · {kind} · {state.label}"
         )

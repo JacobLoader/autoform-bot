@@ -16,7 +16,7 @@ from pathlib import Path
 from urllib.parse import quote
 from typing import TYPE_CHECKING
 
-from .graph_views import container_nodes, display_status_key, inventory_counts, inventory_state
+from .graph_views import container_nodes, display_state, display_status_key, inventory_counts
 from .status import INVENTORY_STATES, MEANINGS, STATES, State, is_definition
 
 if TYPE_CHECKING:
@@ -106,7 +106,7 @@ def render_diagram(
         if node.id in boxes:
             state_label = _view_summary(boxes[node.id])
         else:
-            state_label = (inventory_state(node, statuses[node.id]) or statuses[node.id].state).label
+            state_label = display_state(node, statuses[node.id]).label
         tooltip = _escape(f"{node.title} — {state_label}")
         lines.append(f'  click {handles[node.id]} "{links[node.id]}" "{tooltip}"')
 

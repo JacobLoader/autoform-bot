@@ -46,6 +46,7 @@ from .coverage import (
     validate_coverage_roles,
 )
 from .graph import Graph, GraphValidationError, Node, _implementation_note_issues, atlas_omissions, load_graph
+from .graph_views import _containers, _countable, _is_countable, _module_inventories
 from .lean import (
     _REPLACEABLE_SCHEMAS,
     PUBLICATION_MANIFEST,
@@ -1287,11 +1288,6 @@ def _group_nodes(graph: Graph) -> dict[str, list[str]]:
     return grouped
 
 
-def _containers(graph: Graph) -> frozenset[str]:
-    """Index which articles contain others, so loops need not rescan the graph."""
-    return frozenset(node.parent for node in graph.nodes.values() if node.parent is not None)
-
-
 def _group_page(group: str) -> Path:
     """Where a milestone's consolidated chapter lives in the output tree."""
     return (
@@ -1588,8 +1584,8 @@ def _render_structure_page(
             continue
         href = links.get(node.id)
         label = f'<a href="{html.escape(href, quote=True)}">{name}</a>' if href else name
-        state = graph_views.inventory_state(node, statuses[node.id]) or statuses[node.id].state
-        kind = "module inventory" if node.catalog == "module" else node.declaration or node.kind
+        state = graph_views.display_state(node, statuses[node.id])
+        kind = graph_views.kind_label(node)
         rows.append(
             row(
                 depth,
@@ -1790,40 +1786,6 @@ _ACTIONABLE_STATES = frozenset({"can_prove", "can_state"})
 _COVERAGE_SUMMARY_ORDER = tuple(
     sorted(COVERAGE_DISPOSITIONS, key=lambda disposition: disposition != "DECOMPOSED")
 )
-
-
-def _is_countable(graph: Graph, node_id: str, containers: frozenset[str]) -> bool:
-    """Whether *node_id* is a formalization target the dashboards should count.
-
-    A leaf, and a leaf that declares something. Counting every leaf made a
-    freshly scaffolded vault report "0 of 1 targets complete, 1 ready now": the
-    roadmap landing page has no children yet, so it counted as an unstarted
-    result, and the site claimed work existed before any had been planned. A
-    module catalog declares nothing, so it never counts.
-    """
-
-    return node_id not in containers and graph.nodes[node_id].formalizable
-
-
-def _countable(graph: Graph) -> list[str]:
-    containers = _containers(graph)
-    return [node_id for node_id in graph.nodes if _is_countable(graph, node_id, containers)]
-
-
-def _module_inventories(
-    graph: Graph,
-    *,
-    containers: frozenset[str] | None = None,
-    node_ids: Iterable[str] | None = None,
-) -> list[str]:
-    """Return inventory leaves separately from mathematical targets."""
-    containers = _containers(graph) if containers is None else containers
-    candidates = graph.nodes if node_ids is None else node_ids
-    return [
-        node_id
-        for node_id in candidates
-        if node_id not in containers and graph.nodes[node_id].catalog == "module"
-    ]
 
 
 def _completion_percentage(done: int, total: int) -> int:
@@ -2460,9 +2422,8 @@ def _render_environment(
 
     # amsthm distinguishes the two: a proposition is set in italics, a
     # definition upright. leanblueprint keeps that distinction on the web.
-    inventory = graph_views.inventory_state(node, node_status)
     display_key = graph_views.display_status_key(node, node_status)
-    display_label = inventory.label if inventory else node_status.label
+    display_label = graph_views.display_state(node, node_status).label
     style = (
         "theorem-style-definition"
         if node.catalog == "module" or is_definition(node)
