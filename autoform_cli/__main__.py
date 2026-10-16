@@ -14,7 +14,7 @@ import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
-from . import debrief, status
+from . import debrief, debrief_orchestrator, status
 from .article_identity import ArticleIdWriteError, plan_article_ids, write_article_ids
 from .audit import audit_blueprint
 from .claims import CLAIM_TTL_S, ClaimBoard, ClaimTransportError, author_claim_key
@@ -332,12 +332,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     claim_cleanup = claim_subparsers.add_parser("cleanup")
     _add_claim_board_arguments(claim_cleanup)
 
-    debrief_parser = subparsers.add_parser(
-        "debrief", help="opt-in feedback form an agent fills in after a formalization attempt"
+    debrief_parser = subparsers.add_parser("debrief", help="feedback forms agents fill in about their work")
+    debrief_kinds = debrief_parser.add_subparsers(dest="debrief_kind", required=True)
+    orchestrator = debrief_kinds.add_parser(
+        "orchestrator", help="feedback on AutoformBot from the agent that led a Setup, Roadmap or Formalize run"
     )
-    debrief_subparsers = debrief_parser.add_subparsers(dest="debrief_command", required=True)
+    orchestrator_subparsers = orchestrator.add_subparsers(dest="debrief_command", required=True)
     for operation, help_text in (
-        ("form", "print the form for a finished attempt (or report that debriefs are disabled)"),
+        ("form", "print the form for a finished run (or report that orchestrator debriefs are disabled)"),
+        ("record", "validate an answer, store it, and draft an issue for any AutoformBot friction"),
+    ):
+        command = orchestrator_subparsers.add_parser(operation, help=help_text)
+        command.add_argument("target", nargs="?", default=".", help="project root or blueprint directory")
+        command.add_argument("--skill", required=True, choices=debrief_orchestrator.SKILLS, help="skill that ran")
+        if operation == "record":
+            command.add_argument("--answer", type=Path, help="answer file (default: standard input)")
+            command.add_argument("--json", action="store_true", help="write stable machine-readable output")
+    subagent = debrief_kinds.add_parser(
+        "subagent", help="opt-in form the agent that worked a formalization attempt fills in"
+    )
+    debrief_subparsers = subagent.add_subparsers(dest="debrief_command", required=True)
+    for operation, help_text in (
+        ("form", "print the form for a finished attempt (or report that subagent debriefs are disabled)"),
         ("record", "validate an answer and store it as a new debrief record"),
     ):
         command = debrief_subparsers.add_parser(operation, help=help_text)
@@ -1200,7 +1216,18 @@ def _work_impact(args: argparse.Namespace) -> int:
     return 0
 
 
+def _read_answer(args: argparse.Namespace) -> str:
+    if args.answer is not None:
+        with args.answer.open("rb") as handle:
+            raw = handle.read(debrief.MAX_ANSWER_BYTES + 1)
+    else:
+        raw = sys.stdin.buffer.read(debrief.MAX_ANSWER_BYTES + 1)
+    return raw.decode("utf-8", "replace")
+
+
 def _debrief(args: argparse.Namespace) -> int:
+    if args.debrief_kind == "orchestrator":
+        return _debrief_orchestrator(args)
     try:
         if args.debrief_command == "render":
             root = debrief.debrief_root(args.target)
@@ -1210,21 +1237,16 @@ def _debrief(args: argparse.Namespace) -> int:
         if args.debrief_command == "form":
             if not debrief.enabled():
                 print(
-                    f"Debriefs are disabled ({debrief.DEBRIEF_ENV} is not set, "
+                    f"Subagent debriefs are disabled ({debrief.SUBAGENT_DEBRIEF_ENV} is not set, "
                     "or this platform cannot store them); skip this step."
                 )
                 return 0
             print(debrief.form(args.target, args.selector, phase=args.phase, note=args.note))
             return 0
-        if args.answer is not None:
-            with args.answer.open("rb") as handle:
-                raw = handle.read(debrief.MAX_ANSWER_BYTES + 1)
-        else:
-            raw = sys.stdin.buffer.read(debrief.MAX_ANSWER_BYTES + 1)
         entry, path = debrief.record(
             args.target,
             args.selector,
-            raw.decode("utf-8", "replace"),
+            _read_answer(args),
             phase=args.phase,
             note=args.note,
             worker_id=args.worker_id,
@@ -1244,6 +1266,46 @@ def _debrief(args: argparse.Namespace) -> int:
         ))
     else:
         print(_human_text(f"recorded debrief {entry.attempt_id} ({entry.outcome_label}) at {path}"))
+    return 0
+
+
+def _debrief_orchestrator(args: argparse.Namespace) -> int:
+    try:
+        if args.debrief_command == "form":
+            if not debrief_orchestrator.enabled():
+                print(
+                    f"Orchestrator debriefs are disabled ({debrief_orchestrator.DEBRIEF_ENV} is off, "
+                    "or this platform cannot store them); skip this step."
+                )
+                return 0
+            print(debrief_orchestrator.form(args.skill))
+            return 0
+        entry, path, issue = debrief_orchestrator.record(args.target, _read_answer(args), skill=args.skill)
+    except (GraphValidationError, RuntimeProjectionError) as error:
+        for issue_text in error.issues:
+            print(f"error: {_human_text(issue_text)}", file=sys.stderr)
+        return 2
+    except (debrief.DebriefError, OSError) as error:
+        print(f"error: {_human_text(error)}", file=sys.stderr)
+        return 2
+    if args.json:
+        draft = None
+        if issue is not None:
+            draft = {"path": str(issue.path), "url": issue.url, "url_has_body": issue.url_has_body}
+        print(json.dumps(
+            {"run_id": entry.run_id, "path": str(path), "issue": draft},
+            sort_keys=True,
+            separators=(",", ":"),
+        ))
+        return 0
+    print(_human_text(f"recorded orchestrator debrief {entry.run_id} at {path}"))
+    if issue is None:
+        print("no AutoformBot friction reported; no issue drafted")
+        return 0
+    print(_human_text(f"drafted an issue for {debrief_orchestrator.ISSUE_REPOSITORY} at {issue.path}"))
+    if not issue.url_has_body:
+        print("the draft is too long for a link; paste its body into the issue form")
+    print(f"nothing has been sent; to review, edit and submit it, open: {issue.url}")
     return 0
 
 

@@ -1,18 +1,22 @@
-"""Opt-in feedback form ("debrief") an agent fills in after a formalization attempt.
+"""Opt-in subagent debrief: the form an agent fills in after a formalization attempt.
 
 The agent that worked a leaf is the only witness to what the proof cost: the
 finished Lean records what it wrote, not what it searched for and could not
 find, nor what it tried and abandoned. Once the attempt is over (its result
 integrated and its claim released, or the leaf abandoned), the same agent asks
-``autoform debrief form`` for the form, answers it from its own session, and
-stores the answer with ``autoform debrief record``. Recording cannot change the
-attempt: the outcome is read from the roadmap runtime, not from the agent.
+``autoform debrief subagent form`` for the form, answers it from its own
+session, and stores the answer with ``autoform debrief subagent record``.
+Recording cannot change the attempt: the outcome is read from the roadmap
+runtime, not from the agent.
+
+This module also owns the store that :mod:`autoform_cli.debrief_orchestrator`
+shares for the per-run orchestrator debrief.
 
 Configuration (environment):
 
-``AUTOFORM_DEBRIEF``
+``AUTOFORM_SUBAGENT_DEBRIEF``
     ``1`` / ``true`` / ``yes`` makes ``form`` print the form; otherwise it says
-    debriefs are disabled and the agent skips the step.
+    subagent debriefs are disabled and the agent skips the step.
 ``AUTOFORM_DEBRIEF_DIR``
     Absolute store directory outside the working tree. Defaults to
     ``autoform/debriefs`` inside the repository's Git common directory, which
@@ -44,7 +48,7 @@ from .lean import _git
 from .runtime import RuntimeNode, load_runtime_graph, resolve_runtime_paths
 
 SCHEMA_VERSION = 1
-DEBRIEF_ENV = "AUTOFORM_DEBRIEF"
+SUBAGENT_DEBRIEF_ENV = "AUTOFORM_SUBAGENT_DEBRIEF"
 DEBRIEF_DIR_ENV = "AUTOFORM_DEBRIEF_DIR"
 
 RECORDS, VIEWS = "records", "views"
@@ -144,8 +148,8 @@ class RecordError(ValueError):
 
 
 def enabled() -> bool:
-    """Opted in, on a platform that can store the answer."""
-    opted_in = (os.environ.get(DEBRIEF_ENV) or "").strip().lower() in {"1", "true", "yes"}
+    """Subagent debriefs opted in, on a platform that can store the answer."""
+    opted_in = (os.environ.get(SUBAGENT_DEBRIEF_ENV) or "").strip().lower() in {"1", "true", "yes"}
     return opted_in and store.directory_binding.DIRECTORY_BINDING_SUPPORTED
 
 
@@ -155,6 +159,16 @@ def _git_dir(project: Path, flag: str) -> Path | None:
     return path.resolve() if path is not None and path.is_absolute() and path.is_dir() else None
 
 
+def project_dir(project_or_blueprint: str | Path) -> Path:
+    """The project root; a directory without a roadmap yet (as during Setup) is the project itself."""
+    candidate = Path(project_or_blueprint).expanduser().resolve()
+    if (candidate / "roadmap").is_dir() or (candidate / "blueprint" / "roadmap").is_dir():
+        return resolve_runtime_paths(project_or_blueprint).project_root.resolve()
+    if candidate.is_dir():
+        return candidate
+    raise DebriefError(f"project directory does not exist: {candidate}")
+
+
 def debrief_root(project_or_blueprint: str | Path) -> Path:
     """Resolve the store directory, which must not lie in the working tree.
 
@@ -162,7 +176,7 @@ def debrief_root(project_or_blueprint: str | Path) -> Path:
     untracked, and shared by every worktree, so all agents of one repository
     record into the same store.
     """
-    project = resolve_runtime_paths(project_or_blueprint).project_root.resolve()
+    project = project_dir(project_or_blueprint)
     common = _git_dir(project, "--git-common-dir")
     top = _git_dir(project, "--show-toplevel")
     configured = (os.environ.get(DEBRIEF_DIR_ENV) or "").strip()
