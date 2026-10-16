@@ -766,6 +766,9 @@ def test_module_catalog_is_separate_from_formalization_progress(
     assert '<span class="bp-thmcaption">Module</span><span class="bp-thmlabel">1</span>' in chapter
     assert "A checked inventory of an existing Lean module." in chapter
     assert "1 module inventory" in chapter
+    # No slot places the catalog, and it is no formalization target.
+    assert chapter.index("## Module inventories") < chapter.index('id="catalog"')
+    assert "Additional formalization targets" not in chapter
 
 
 def test_catalog_slot_with_bracketed_inline_code_is_absorbed(
@@ -804,7 +807,9 @@ def test_catalog_slot_with_bracketed_inline_code_is_absorbed(
     assert 'id="catalog"' in chapter
     assert "A checked inventory with bracketed mathematics in its title." in chapter
     assert chapter.index("## Existing modules") < chapter.index('id="catalog"')
+    assert "- [Existing module on" not in chapter
     assert "## Additional formalization targets" not in chapter
+    assert "## Module inventories" not in chapter
 
 
 def test_a_catalog_links_a_few_lean_names_and_counts_the_rest() -> None:
