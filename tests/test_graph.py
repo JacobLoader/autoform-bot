@@ -599,6 +599,7 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
     (blueprint / "sources").mkdir()
     (blueprint / "sources" / "paper.md").write_text("# Paper\n", encoding="utf-8")
     sources += "- [Book](https://example.org/book)\n- [Author](mailto:author@example.org)\n"
+    sources += "- [Same paper](../.x/../sources/paper.md)\n"
     _node(blueprint, "result.md", sources)
 
     assert main(["check", str(blueprint)]) == 0
@@ -607,6 +608,21 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
         "warning: result: work and search omit this source target, which is neither an http(s) link "
         "nor a path inside the blueprint: 'mailto:author@example.org'"
     ]
+
+    # Issue #304: render omits hidden files, so a link that names one fails
+    # although the file exists.
+    for note in (".drafts/notes.md", "sources/.private/paper.md"):
+        (blueprint / note).parent.mkdir(exist_ok=True)
+        (blueprint / note).write_text("# Notes\n", encoding="utf-8")
+    hidden = "- [Draft](../.drafts/notes.md)\n- [Private](../sources/.private/paper.md)\n"
+    _node(blueprint, "result.md", sources + hidden)
+
+    hidden_reason = "source target names a hidden path, which render omits"
+    assert main(["check", str(blueprint)]) == 1
+    assert capsys.readouterr().out == (
+        f"error: result: {hidden_reason}: '../.drafts/notes.md'\n"
+        f"error: result: {hidden_reason}: '../sources/.private/paper.md'\n"
+    )
 
     (tmp_path / "slides.pdf").write_bytes(b"%PDF-1.4\n")
     rejected = (

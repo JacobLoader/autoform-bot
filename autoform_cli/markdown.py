@@ -717,7 +717,7 @@ def local_target_issue(
     *,
     label: str,
 ) -> tuple[str, str] | None:
-    """Return ``(code, reason)`` when a local link does not resolve.
+    """Return ``(code, reason)`` when a local link does not resolve, or names a hidden path.
 
     ``source_path`` is the file containing the link, ``boundary`` the directory
     the link may not escape. External schemes are the reader's problem and are
@@ -757,6 +757,12 @@ def local_target_issue(
     boundary = boundary.resolve()
     if not _is_within(candidate, boundary):
         return f"{label}-escapes-blueprint", f"{label} link escapes the blueprint: {target!r}"
+    # Render resolves links in a copy of the vault that has no hidden paths and no
+    # symbolic links, so a link on a page it publishes breaks when the path it spells
+    # is hidden. `.x/../paper.md` still passes.
+    spelled = Path(os.path.normpath(source_path.parent.resolve() / raw_path))
+    if _is_hidden_path(spelled, boundary) and not _is_hidden_path(source_path.resolve(), boundary):
+        return f"hidden-{label}-target", f"{label} link names a hidden path, which render omits: {target!r}"
     # Before Python 3.14, `Path.is_file` raises under an unreadable directory.
     if not os.path.isfile(candidate):
         return f"{label}-not-found", f"{label} link does not resolve to a file: {target!r}"
@@ -916,6 +922,11 @@ def _is_within(path: Path, directory: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _is_hidden_path(path: Path, boundary: Path) -> bool:
+    """Whether a part of *path* below *boundary* starts with ".", so render omits it (its `_is_hidden`)."""
+    return _is_within(path, boundary) and any(part.startswith(".") for part in path.relative_to(boundary).parts)
 
 
 __all__ = [
