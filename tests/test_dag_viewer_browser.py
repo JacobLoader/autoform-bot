@@ -333,6 +333,7 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         ),
         edges=(),
     )
+    dense_views["empty"] = GraphView(kind="project", title="Fresh roadmap", nodes=(), edges=())
     for name, dense_view in dense_views.items():
         links = (
             {node.id: f"other.html#node={node.id}" for node in dense_view.nodes}
@@ -523,6 +524,15 @@ def test_a_view_of_topics_and_results_draws_readable_result_cards(desktop_page: 
     assert title.evaluate("element => element.scrollWidth <= element.clientWidth")
     meta = page.locator('[data-autoform-node-id="topics/compactness"] .bp-dag-node-meta')
     playwright.expect(meta).to_have_text("1 item · 0 internal links")
+
+
+def test_a_roadmap_without_articles_says_so(desktop_page: object, explorer_url: str) -> None:
+    """An empty project view said that no node matched controls the reader never touched."""
+    page = desktop_page
+    page.goto(f"{explorer_url}/empty.html")
+    empty = page.locator(".bp-dag-empty")
+    playwright.expect(empty).to_be_visible()
+    playwright.expect(empty).to_have_text("This roadmap has no articles yet.")
 
 
 def test_a_click_on_empty_map_space_keeps_the_readers_zoom(desktop_page: object, explorer_url: str) -> None:

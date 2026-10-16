@@ -2232,6 +2232,8 @@ def test_a_fresh_vault_reports_no_work_rather_than_one_ready_item(tmp_path: Path
     assert "items settled" not in overview
     assert '<div class="bp-figure-value">0%</div>' in overview
     assert '<div class="bp-figure-value">0</div>' in overview
+    # Nothing is there to explore yet, so the home page mounts no explorer.
+    assert "bp-dag-viewer" not in overview
 
 
 def test_a_directory_link_uses_tree_even_when_the_repo_url_says_blob() -> None:

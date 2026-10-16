@@ -1742,34 +1742,38 @@ def _render_landing_page(
     )
     # dependencies.json is the project projection written by graph_pages. The
     # landing page deliberately mounts that exact payload and host instead of
-    # maintaining a second, Mermaid-only preview of the same graph.
-    parts.extend(
-        [
-            "",
-            '<div class="bp-map" markdown="1">',
-            '<div class="bp-map-head">',
-            f'<span class="bp-map-title">{html.escape(graph_views.group_title(graph, "roadmap"))}</span>',
-            '<span class="bp-map-hint">Explore mathematical regions, topics, and dependencies · '
-            '<a href="dependencies.html">open full-page</a></span>',
-            "</div>",
-            "",
-            dag_viewer.render_container(
-                graph_pages.PROJECT_PAYLOAD,
-                script_href=mermaid.relative_link(destination / DAG_SCRIPT, page, ".js"),
-                fallback_links=(
-                    ("Open the dependency explorer", "dependencies.html"),
+    # maintaining a second, Mermaid-only preview of the same graph. A roadmap
+    # without articles has nothing to explore, so it gets no map.
+    if graph_views.group_nodes(graph):
+        parts.extend(
+            [
+                "",
+                '<div class="bp-map" markdown="1">',
+                '<div class="bp-map-head">',
+                f'<span class="bp-map-title">{html.escape(graph_views.group_title(graph, "roadmap"))}</span>',
+                '<span class="bp-map-hint">Explore mathematical regions, topics, and dependencies · '
+                '<a href="dependencies.html">open full-page</a></span>',
+                "</div>",
+                "",
+                dag_viewer.render_container(
+                    graph_pages.PROJECT_PAYLOAD,
+                    script_href=mermaid.relative_link(destination / DAG_SCRIPT, page, ".js"),
+                    fallback_links=(
+                        ("Open the dependency explorer", "dependencies.html"),
+                    ),
+                    fallback_total=1,
+                    layout="embedded",
+                    search_href=graph_pages.SEARCH_INDEX,
                 ),
-                fallback_total=1,
-                layout="embedded",
-                search_href=graph_pages.SEARCH_INDEX,
-            ),
-            "",
-            f'<div class="bp-map-legend" markdown="1">\n\n{breakdown}\n\n</div>'
-            if breakdown
-            else "",
-            "</div>",
-        ]
-    )
+                "",
+                f'<div class="bp-map-legend" markdown="1">\n\n{breakdown}\n\n</div>'
+                if breakdown
+                else "",
+                "</div>",
+            ]
+        )
+    elif breakdown:
+        parts.extend(["", "## Status breakdown", "", breakdown])
     # The authored body is a contents list and links to the roadmap, coverage
     # contract and dependency view. The hero retains a compact coverage summary;
     # repeating the full list here would only push the explorer down the page. Its
