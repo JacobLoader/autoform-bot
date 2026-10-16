@@ -217,6 +217,58 @@ def test_a_decomposed_link_that_declares_nothing_warns_in_render_and_audit(tmp_p
     )
 
 
+def test_a_coverage_role_mismatch_fails_the_audit(tmp_path: Path, capsys) -> None:
+    """A DECOMPOSED row reaching only catalogs and an INVENTORIED row reaching no catalog both fail.
+
+    Earlier audits could express neither.
+    """
+    blueprint = tmp_path / "blueprint"
+    (blueprint / "roadmap").mkdir(parents=True)
+    (blueprint / "sources").mkdir()
+    (blueprint / "coverage").mkdir()
+    (blueprint / "roadmap" / "module.md").write_text(
+        "---\ncatalog: module\n---\n\n# Module\n\nAn existing module.\n\n"
+        "## Sources\n\n- [Ledger](../sources/ledger.md)\n",
+        encoding="utf-8",
+    )
+    (blueprint / "sources" / "ledger.md").write_text("# Ledger\n", encoding="utf-8")
+    (blueprint / "roadmap" / "lemma.md").write_text(
+        "---\ndeclaration: theorem\n---\n\n# Lemma\n\nA precise statement.\n\n## Depends on\n\nNo prerequisites.\n",
+        encoding="utf-8",
+    )
+    (blueprint / "coverage" / "README.md").write_text(
+        "# Coverage\n\n"
+        "| Area | Coverage | Evidence |\n"
+        "| --- | --- | --- |\n"
+        "| Section 1 | INVENTORIED | [Module](../roadmap/module.md) |\n"
+        "| Section 2 | DECOMPOSED | [Module](../roadmap/module.md) |\n"
+        "| Section 3 | INVENTORIED | [Lemma](../roadmap/lemma.md) |\n",
+        encoding="utf-8",
+    )
+    reasons = [
+        "coverage area 'Section 2' is DECOMPOSED, but each roadmap link must resolve to a declaration leaf or a "
+        "container with declaration descendants; roadmap/module.md reaches no declaration leaf (line 6)",
+        "coverage area 'Section 3' is INVENTORIED, but each roadmap link must resolve to a catalog leaf or a "
+        "container with catalog descendants; roadmap/lemma.md reaches no catalog leaf (line 7)",
+    ]
+
+    assert main(["audit", str(blueprint)]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "    coverage: 0 mapped · 1 decomposed · 2 inventoried · 0 deferred · 0 out",
+        *(f"error: coverage/README.md: coverage-role-mismatch: {reason}" for reason in reasons),
+    ]
+    assert main(["audit", str(blueprint), "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert (payload["clean"], payload["findings"], payload["warnings"]) == (
+        False,
+        [
+            {"article_path": "coverage/README.md", "code": "coverage-role-mismatch", "reason": reason}
+            for reason in reasons
+        ],
+        [],
+    )
+
+
 def test_an_unrelated_atlas_json_warns_in_render_and_audit(tmp_path: Path, capsys) -> None:
     """Earlier versions ignored blueprint/atlas.json, so a file another tool wrote there fails nothing."""
     blueprint = _clean_blueprint(tmp_path)
