@@ -110,7 +110,7 @@ _GENERATED_FILES = frozenset(
     {
         "dependencies.md",
         "dependencies.html",
-        "dependencies.json",
+        graph_pages.PROJECT_PAYLOAD,
         "graph.html",
         "progress.md",
         # The vault keeps its own Obsidian-readable copy; the site builds one.
@@ -132,7 +132,7 @@ _LOCAL_ONLY_NAMES = frozenset(
 )
 #: Root entries every site holds; an authored root entry differing only in case would collide.
 _GENERATED_ROOT_ENTRIES = frozenset(
-    {"SUMMARY.md", "dependencies.json", "dependencies.md", "structure.md", PUBLICATION_MANIFEST}
+    {"SUMMARY.md", graph_pages.PROJECT_PAYLOAD, "dependencies.md", "structure.md", PUBLICATION_MANIFEST}
     | {"assets", "dependencies", "javascripts", "stylesheets"}
 )
 #: Render reads no hidden, local-only, or root generated file. Omitted entries are
@@ -165,12 +165,12 @@ DECLARATION_LABELS = {
 STYLESHEET = "stylesheets/blueprint.css"
 MERMAID_SCRIPT = "javascripts/blueprint-mermaid.js"
 LIVE_SCRIPT = "javascripts/blueprint-live.js"
-DAG_SCRIPT = "javascripts/blueprint-dag.js"
+DAG_SCRIPT = dag_viewer.SCRIPT_PATH
 LOGO = "assets/autoform.svg"
 #: Paths render writes at fixed places; an authored path differing only in case would collide.
 _GENERATED_PATHS = _GENERATED_ROOT_ENTRIES | {STYLESHEET, MERMAID_SCRIPT, LIVE_SCRIPT, DAG_SCRIPT, LOGO}
 #: The explorer's files at paths a blueprint may already use for files of its own.
-_EXPLORER_PATHS = ("dependencies.json", DAG_SCRIPT)
+_EXPLORER_PATHS = (graph_pages.PROJECT_PAYLOAD, DAG_SCRIPT)
 _ASSET_DIR = Path(__file__).resolve().parent / "assets"
 
 
@@ -1754,14 +1754,14 @@ def _render_landing_page(
             "</div>",
             "",
             dag_viewer.render_container(
-                "dependencies.json",
+                graph_pages.PROJECT_PAYLOAD,
                 script_href=mermaid.relative_link(destination / DAG_SCRIPT, page, ".js"),
                 fallback_links=(
                     ("Open the dependency explorer", "dependencies.html"),
                 ),
                 fallback_total=1,
                 layout="embedded",
-                search_href="dependencies/index.json",
+                search_href=graph_pages.SEARCH_INDEX,
             ),
             "",
             f'<div class="bp-map-legend" markdown="1">\n\n{breakdown}\n\n</div>'

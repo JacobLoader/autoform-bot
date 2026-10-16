@@ -31,6 +31,9 @@ from .graph_views import (
 from .status import NodeStatus
 
 NodeLinks = Callable[[Path, Iterable[str]], Mapping[str, str]]
+#: The project explorer's payload and the search index, relative to the site root.
+PROJECT_PAYLOAD = "dependencies.json"
+SEARCH_INDEX = "dependencies/index.json"
 
 
 def write_graph_pages(
@@ -49,9 +52,10 @@ def write_graph_pages(
     destination = Path(destination).resolve()
     groups = group_nodes(graph)
     root_title = group_title(graph, "roadmap")
-    project_page = destination / "dependencies.md"
+    # _write_page writes each payload beside its page.
+    project_page = (destination / PROJECT_PAYLOAD).with_suffix(".md")
     full_page = destination / "dependencies/full.md"
-    search_index = destination / "dependencies/index.json"
+    search_index = destination / SEARCH_INDEX
     chapter_pages = {group: destination / "dependencies/chapters" / f"{group or 'roadmap'}.md" for group in groups}
     scope_maps = scope_views(graph, statuses)
     containers = scope_maps.keys()
@@ -405,7 +409,7 @@ def _viewer_script_link(page: Path, site_root: Path) -> str:
     """Link the viewer asset from an explicit publication root."""
 
     return mermaid.relative_link(
-        site_root / "javascripts/blueprint-dag.js",
+        site_root / dag_viewer.SCRIPT_PATH,
         page,
         ".js",
     )
@@ -442,4 +446,4 @@ def _scope_breadcrumbs(
     return tuple(items)
 
 
-__all__ = ["scope_page_href", "scope_page_path", "write_graph_pages"]
+__all__ = ["PROJECT_PAYLOAD", "SEARCH_INDEX", "scope_page_href", "scope_page_path", "write_graph_pages"]
