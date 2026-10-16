@@ -522,6 +522,50 @@ def test_unplaced_statements_use_an_explicit_fallback_section(tmp_path: Path) ->
     assert page.index("## Additional formalization targets") < page.index('id="base"')
 
 
+def test_a_bullet_with_a_bracket_before_its_link_keeps_its_prose(tmp_path: Path) -> None:
+    """A link label could reach back to an earlier "[" on its line, so a cited
+    or ticked bullet read as a slot and its statement box replaced the line."""
+    project = _project(tmp_path)
+    (project / "blueprint/roadmap/README.md").write_text(
+        "# Roadmap\n\n- [Hartshorne II.3] constructs [Base](base.md)\n- [x] [Top](top.md)\n",
+        encoding="utf-8",
+    )
+
+    render_site(project / "blueprint", tmp_path / "out", lean_root=project)
+    page = (tmp_path / "out/roadmap/README.md").read_text(encoding="utf-8")
+
+    assert "- [Hartshorne II.3] constructs [Base](#base)\n- [x] [Top](#top)\n" in page
+    assert page.index("## Additional formalization targets") < page.index('id="base"')
+
+
+def test_a_label_holding_half_open_math_is_still_a_link(tmp_path: Path) -> None:
+    """The site reads inline math before links, so the "]" in ``$(0,1]$`` does
+    not end a label. Check follows such links, but render left the chapter out
+    of the book's page order, did not take the bullet as a slot, and left a
+    hoisted link pointing where it was filed."""
+    project = _project(tmp_path)
+    blueprint = project / "blueprint"
+    (blueprint / "sources").mkdir()
+    (blueprint / "sources/paper.md").write_text("# Paper\n", encoding="utf-8")
+    roadmap = blueprint / "roadmap/README.md"
+    roadmap.write_text(roadmap.read_text(encoding="utf-8") + "- [On $(0,1]$](ch/README.md)\n", encoding="utf-8")
+    chapter = blueprint / "roadmap/ch"
+    (chapter / "theorems").mkdir(parents=True)
+    (chapter / "README.md").write_text("# Chapter\n\n- [Half-open $(0,1]$](theorems/leaf.md)\n", encoding="utf-8")
+    (chapter / "theorems/leaf.md").write_text(
+        "---\ndeclaration: lemma\n---\n\n# Leaf\n\nA lemma.\n\n"
+        "## Sources\n\n- [Lemma on $(0,1]$](../../../sources/paper.md)\n",
+        encoding="utf-8",
+    )
+
+    render_site(blueprint, tmp_path / "out", lean_root=project, repository_url="", ref="")
+    page = (tmp_path / "out/roadmap/ch/README.md").read_text(encoding="utf-8")
+
+    assert "bp-book-nav" in page
+    assert "Additional formalization targets" not in page
+    assert "- [Lemma on $(0,1]$](../../sources/paper.md)\n" in page
+
+
 def test_authored_slots_override_dependency_order_for_book_flow(tmp_path: Path) -> None:
     project = _project(tmp_path)
     roadmap = project / "blueprint/roadmap"
@@ -2011,6 +2055,45 @@ def test_a_published_link_out_of_the_blueprint_keeps_only_its_text(
     assert "Evidence on $[0,1]$: Top.lean and `Lean` for [Top](" in published
     assert "../../Project/Top.lean" not in published
     assert "../../lean/" not in published
+
+
+def test_a_bracket_in_the_text_does_not_widen_a_link(tmp_path: Path) -> None:
+    """A link label could reach back to an earlier "[" on its line, so an image
+    after a citation was published as text, and a dropped link's half-open
+    interval lost its own bracket instead of the link's. Links are read as the
+    site reads them: a label's brackets come in pairs; code, math and escaped
+    brackets hold no link syntax; and an angle-bracketed target may hold spaces."""
+    from autoform_cli.render import _rewrite_links
+
+    blueprint = tmp_path / "blueprint"
+    kept = (
+        "See [1] and ![outside figure](../../figures/f.png) here.\n"
+        "See [note ![fig](../../figures/f.png) too.\n"
+        "Write `[Top](../../Project/Top.lean)` for a link.\n"
+    )
+    text = kept + (
+        "Proof of [continuity on $[0,1)$](../../Project/Top.lean#L5).\n"
+        "Cited in [Lemma [3]](../../Project/Top.lean).\n"
+        "A [half-open \\[0,1) range](../../Project/Top.lean) here.\n"
+        "Data in [the table](<../../data/a b.csv>).\n"
+    )
+
+    rewritten = _rewrite_links(
+        text,
+        source_dir=blueprint / "sources",
+        page=tmp_path / "out/sources/paper.md",
+        blueprint=blueprint,
+        destination=tmp_path / "out",
+        node_sources={},
+        targets={},
+    )
+
+    assert rewritten == kept + (
+        "Proof of continuity on $[0,1)$.\n"
+        "Cited in Lemma [3].\n"
+        "A half-open \\[0,1) range here.\n"
+        "Data in the table.\n"
+    )
 
 
 def test_permalinks_are_relative_to_the_repository_not_the_vaults_parent(

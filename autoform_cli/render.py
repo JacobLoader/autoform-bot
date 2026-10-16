@@ -63,18 +63,19 @@ from .lean import (
     snapshot_project_sources,
     verify_repository_snapshot,
 )
-from .markdown import article_parts
+from .markdown import INLINE_CODE, _BRACKET_ESCAPE, _INLINE_MATH, _blank, article_parts
 from .markdown import mask_fences_and_comments
 from .status import is_definition
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 _FENCE = re.compile(r"^ {0,3}(`{3,}(?=[^`]*$)|~{3,})")
-# A link label may itself contain a closing bracket, most commonly inside
-# inline mathematical code such as ``[0,1]^n``.  Only ``](`` closes the label.
-_LINK_LABEL_PART = r"(?:[^\]]|\](?!\())"
+# Links are matched in a line masked by _link_mask, where brackets in code such
+# as ``[0,1]^n`` and in math such as ``$(0,1]$`` are blanks. Any other bracket in
+# a label must be paired, so an earlier "[1]" or "[x]" on the line stays text.
+_LINK_LABEL = r"(?:[^\[\]]|\[[^\[\]]*\])*"
 _MARKDOWN_LINK = re.compile(
-    rf"(?<!!)\[(?P<label>{_LINK_LABEL_PART}*)\]"
-    r"\(\s*(?P<target>[^)\s]+)(?:\s+[^)]*)?\)"
+    rf"(?<!!)\[(?P<label>{_LINK_LABEL})\]"
+    r"\(\s*(?P<target><[^>]+>|[^)\s]+)(?:\s+[^)]*)?\)"
 )
 #: A reference-style link definition, `[label]: target "title"`. Markdown
 #: resolves `[Paper][paper]` through one of these, so a rewrite that only sees
@@ -84,7 +85,7 @@ _LINK_DEFINITION = re.compile(
     r'(?P<target><[^>\r\n]+>|[^\s]+)(?P<rest>[ \t]+.*)?$'
 )
 _ARTICLE_SLOT = re.compile(
-    rf"^(?P<indent>[ \t]*)[-*+]\s+\[{_LINK_LABEL_PART}+\]"
+    rf"^(?P<indent>[ \t]*)[-*+]\s+\[(?=[^\]]){_LINK_LABEL}\]"
     r"\(\s*(?P<target>[^)\s]+)(?:\s+[^)]*)?\)\s*$"
 )
 _DEPENDENCY_SECTIONS = frozenset({"depends on", "proof depends on"})
@@ -1328,8 +1329,8 @@ def _book_page_order(blueprint: Path, destination: Path, graph: Graph) -> list[P
         linked_sources: list[Path] = []
 
         def collect(line: str) -> str:
-            for match in _MARKDOWN_LINK.finditer(line):
-                raw = match.group("target")
+            for match in _MARKDOWN_LINK.finditer(_link_mask(line)):
+                raw = line[match.start("target") : match.end("target")]
                 bare = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
                 path = bare.partition("#")[0]
                 if not path or urlsplit(path).scheme or path.startswith("/"):
@@ -2118,6 +2119,16 @@ def _as_published(href: str) -> str:
     return href
 
 
+def _link_mask(line: str) -> str:
+    """*line* with its code spans, inline math and bracket escapes blanked.
+
+    The site reads code and math before links and an escaped bracket as text,
+    as ``markdown.link_targets`` does for check. Blanking keeps every offset,
+    so a link matched in the mask reads its label and target back from *line*.
+    """
+    return _BRACKET_ESCAPE.sub(_blank, _INLINE_MATH.sub(_blank, INLINE_CODE.sub(_blank, line)))
+
+
 def _rewrite_links(
     text: str,
     *,
@@ -2168,26 +2179,6 @@ def _rewrite_links(
         published = destination / relative
         return f"{mermaid.relative_link(published, page, candidate.suffix)}{separator}{fragment}"
 
-    def replace(match: re.Match[str]) -> str:
-        href = moved_target(match.group("target"))
-        if href is None:
-            return match.group(0)
-        label = match.group("label")
-        if href:
-            return f"[{label}]({href})"
-        # The label pattern lets a match start at an earlier "[" on the line,
-        # such as the one in "$[0,1]$", so drop only the bracket that opens
-        # this link and keep the earlier text as it was.
-        depth = 0
-        for index in range(len(label) - 1, -1, -1):
-            if label[index] == "]":
-                depth += 1
-            elif label[index] == "[":
-                if depth == 0:
-                    return f"[{label[:index]}{label[index + 1:]}"
-                depth -= 1
-        return label
-
     def rewrite(line: str) -> str:
         # A reference definition carries the destination for every `[x][label]`
         # on the page. Rewriting only inline links leaves it pointing at the
@@ -2199,7 +2190,15 @@ def _rewrite_links(
                 indent, label = definition.group("indent"), definition.group("label")
                 return f"{indent}[{label}]: {href}{definition.group('rest') or ''}"
             return line
-        return _MARKDOWN_LINK.sub(replace, line)
+        pieces: list[str] = []
+        end = 0
+        for match in _MARKDOWN_LINK.finditer(_link_mask(line)):
+            href = moved_target(line[match.start("target") : match.end("target")])
+            if href is not None:
+                label = line[match.start("label") : match.end("label")]
+                pieces += [line[end : match.start()], f"[{label}]({href})" if href else label]
+                end = match.end()
+        return "".join(pieces) + line[end:]
 
     return _outside_fences(text, rewrite)
 
@@ -2380,11 +2379,11 @@ def _place_environments(
                 fence = None
             output.append(line)
             continue
-        slot = _ARTICLE_SLOT.match(line) if fence is None else None
+        slot = _ARTICLE_SLOT.match(_link_mask(line)) if fence is None else None
         if slot is None:
             output.append(line)
             continue
-        target = slot.group("target")
+        target = line[slot.start("target") : slot.end("target")]
         path, separator, fragment = target.partition("#")
         if not path and separator:
             node_id = anchor_nodes.get(fragment)
