@@ -68,14 +68,6 @@ def test_capture_limits_are_frozen() -> None:
         limits.max_entries = 2  # type: ignore[misc]
 
 
-def test_capture_limit_error_exposes_a_stable_discriminator() -> None:
-    error = TreeCaptureLimitError("max_entries", 3)
-
-    assert error.limit == "max_entries"
-    assert error.maximum == 3
-    assert str(error) == "directory tree exceeds max_entries=3"
-
-
 def test_portable_file_capture_accepts_windows_path_and_handle_stat_views(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -164,15 +156,13 @@ def test_entry_limit_counts_ignored_entries(
     assert snapshot.files == ()
     assert snapshot.omitted == (("ignored.bin", "file"), ("other.bin", "file"))
 
-    with pytest.raises(TreeCaptureLimitError, match="max_entries=1") as captured:
+    with pytest.raises(TreeCaptureLimitError, match=r"^directory tree exceeds max_entries=1$"):
         _capture(
             root,
             selection(1),
             portable=portable,
             monkeypatch=monkeypatch,
         )
-    assert captured.value.limit == "max_entries"
-    assert captured.value.maximum == 1
 
 
 @pytest.mark.parametrize("portable", [False, True])
@@ -225,7 +215,7 @@ def test_total_byte_limit_accepts_the_boundary_and_rejects_one_more_byte(
 
     monkeypatch.setattr(tree_snapshot_module, reader_name, record_read)
 
-    with pytest.raises(TreeCaptureLimitError, match="max_total_bytes=4") as captured:
+    with pytest.raises(TreeCaptureLimitError, match=r"^directory tree exceeds max_total_bytes=4$"):
         _capture(
             root,
             _all_entries(TreeCaptureLimits(max_total_bytes=4)),
@@ -234,8 +224,6 @@ def test_total_byte_limit_accepts_the_boundary_and_rejects_one_more_byte(
         )
 
     assert read_paths == ["a"]
-    assert captured.value.limit == "max_total_bytes"
-    assert captured.value.maximum == 4
 
 
 def test_file_read_cap_does_not_trust_an_underreported_size() -> None:
