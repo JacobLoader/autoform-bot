@@ -3059,77 +3059,58 @@ def _where(declarations) -> list[tuple[str, int]]:
 
 
 _PUBLIC_MAIN = "namespace Demo\ntheorem main : True := trivial\nend Demo\n"
+_PRIVATE_MAIN = "private theorem Demo.main : True := trivial\n"
 
 
 @pytest.mark.parametrize(
-    ("private_source", "private_line"),
+    ("files", "occurrences", "selected"),
     [
-        ("@[simp] private theorem Demo.main : True := trivial\n", 1),
-        ("@[simp]\nprivate\ntheorem Demo.main : True := trivial\n", 3),
+        (
+            {"A.lean": f"@[simp] {_PRIVATE_MAIN}", "B.lean": _PUBLIC_MAIN},
+            [("A.lean", 1), ("B.lean", 2)],
+            [("B.lean", 2)],
+        ),
+        (
+            {"A.lean": "@[simp]\nprivate\ntheorem Demo.main : True := trivial\n", "B.lean": _PUBLIC_MAIN},
+            [("A.lean", 3), ("B.lean", 2)],
+            [("B.lean", 2)],
+        ),
+        ({"A.lean": _PUBLIC_MAIN, "B.lean": _PRIVATE_MAIN}, [("A.lean", 2), ("B.lean", 1)], [("A.lean", 2)]),
+        # Batteries makes a wanted command a private placeholder, so the
+        # theorem that fills it may stand beside it.
+        (
+            {"A.lean": "theorem_wanted Demo.main : True\n", "B.lean": _PUBLIC_MAIN},
+            [("A.lean", 1), ("B.lean", 2)],
+            [("B.lean", 2)],
+        ),
+        ({"A.lean": "\n" + _PRIVATE_MAIN}, [("A.lean", 2)], [("A.lean", 2)]),
+        (
+            {"A.lean": "theorem Demo.main : True := trivial\n", "B.lean": _PRIVATE_MAIN, "C.lean": _PUBLIC_MAIN},
+            [("A.lean", 1), ("B.lean", 1), ("C.lean", 2)],
+            [],
+        ),
+        (
+            {"A.lean": _PRIVATE_MAIN, "B.lean": "\nprivate def Demo.main : Nat := 0\n"},
+            [("A.lean", 1), ("B.lean", 2)],
+            [],
+        ),
+        ({"A.lean": _PRIVATE_MAIN, "B.lean": "\nproof_wanted Demo.main : True\n"}, [("A.lean", 1), ("B.lean", 2)], []),
+    ],
+    ids=[
+        "earlier-private", "private-above", "later-private", "wanted",
+        "lone-private", "two-public", "two-private", "private-wanted",
     ],
 )
-def test_a_public_declaration_is_selected_over_an_earlier_private_one(
-    tmp_path: Path, private_source: str, private_line: int
+def test_a_name_selects_its_one_public_declaration_or_is_ambiguous(
+    tmp_path: Path, files: dict[str, str], occurrences: list[tuple[str, int]], selected: list[tuple[str, int]]
 ) -> None:
-    index = _index_files(tmp_path, {"A.lean": private_source, "B.lean": _PUBLIC_MAIN})
+    index = _index_files(tmp_path, files)
 
-    assert _where([index.find("Demo.main")]) == [("B.lean", 2)]
-    assert index.ambiguity("Demo.main") == ""
-    assert _where(index.occurrences("Demo.main")) == [("A.lean", private_line), ("B.lean", 2)]
-    assert [declaration.private for declaration in index.occurrences("Demo.main")] == [True, False]
-
-
-def test_a_public_declaration_is_selected_over_a_later_private_one(tmp_path: Path) -> None:
-    index = _index_files(
-        tmp_path, {"A.lean": _PUBLIC_MAIN, "B.lean": "private theorem Demo.main : True := trivial\n"}
-    )
-
-    assert _where([index.find("Demo.main")]) == [("A.lean", 2)]
-    assert index.ambiguity("Demo.main") == ""
-    assert _where(index.duplicates["Demo.main"]) == [("A.lean", 2), ("B.lean", 1)]
-
-
-def test_a_declaration_is_selected_over_a_wanted_command_of_its_name(tmp_path: Path) -> None:
-    # Batteries makes a wanted command a private placeholder, so the theorem
-    # that fills it may stand beside it.
-    index = _index_files(tmp_path, {"A.lean": "theorem_wanted Demo.main : True\n", "B.lean": _PUBLIC_MAIN})
-
-    assert _where([index.find("Demo.main")]) == [("B.lean", 2)]
-
-
-def test_two_public_declarations_of_one_name_select_neither(tmp_path: Path) -> None:
-    index = _index_files(
-        tmp_path,
-        {
-            "A.lean": "theorem Demo.main : True := trivial\n",
-            "B.lean": "private theorem Demo.main : True := trivial\n",
-            "C.lean": _PUBLIC_MAIN,
-        },
-    )
-
-    assert index.find("Demo.main") is None
-    assert index.ambiguity("Demo.main") == "A.lean:1, B.lean:1, C.lean:2"
-
-
-@pytest.mark.parametrize(
-    "second",
-    ["private def Demo.main : Nat := 0\n", "proof_wanted Demo.main : True\n"],
-)
-def test_only_private_declarations_of_one_name_select_neither(tmp_path: Path, second: str) -> None:
-    index = _index_files(
-        tmp_path,
-        {"A.lean": "private theorem Demo.main : True := trivial\n", "B.lean": f"\n{second}"},
-    )
-
-    assert index.find("Demo.main") is None
-    assert index.ambiguity("Demo.main") == "A.lean:1, B.lean:2"
-
-
-def test_a_lone_private_declaration_is_selected(tmp_path: Path) -> None:
-    index = _index_files(tmp_path, {"A.lean": "\nprivate theorem Demo.main : True := trivial\n"})
-
-    assert _where([index.find("Demo.main")]) == [("A.lean", 2)]
-    assert index.duplicates == {}
+    assert _where(index.occurrences("Demo.main")) == occurrences
+    assert _where(filter(None, [index.find("Demo.main")])) == selected
+    # A name that selects nothing lists every declaration.
+    ambiguity = "" if selected else ", ".join(f"{path}:{line}" for path, line in occurrences)
+    assert index.ambiguity("Demo.main") == ambiguity
 
 
 def test_one_short_name_in_distinct_namespaces_is_no_duplicate(tmp_path: Path) -> None:

@@ -879,27 +879,20 @@ def test_an_alias_ends_the_source_span_of_the_declaration_above_it(tmp_path: Pat
 
 
 def test_a_private_twin_ends_the_source_span_of_the_declaration_above_it(tmp_path: Path) -> None:
-    blueprint = tmp_path / "blueprint"
-    _coverage(blueprint)
-    _article(blueprint, "README.md", depends=False)
-    spans = {f"Project.small{index}": 6 for index in range(5)}
-    spans["Project.big"] = 6
-    for name in spans:
-        _article(
-            blueprint,
-            f"{name.rsplit('.', 1)[-1]}.md",
-            declaration="theorem",
-            statement="formalized",
-            proof="formalized",
-            lean=name,
-        )
-    lean_root = _lean_project(tmp_path, spans)
-    with (lean_root / "big.lean").open("a", encoding="utf-8") as source:
-        source.write("private theorem Project.helper : True := by\n" + "  -- step\n" * 420 + "  trivial\n")
-    # The public twin sorts before big.lean.
-    (lean_root / "A.lean").write_text("theorem Project.helper : True := trivial\n", encoding="utf-8")
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    # The public twin sorts before Big.lean.
+    (lean_root / "A.lean").write_text("theorem helper : True := trivial\n", encoding="utf-8")
+    (lean_root / "Big.lean").write_text(
+        "theorem big : True := by\n  trivial\nprivate theorem helper : True := by\n  trivial\n", encoding="utf-8"
+    )
 
-    assert _finding_map(blueprint, lean_root=lean_root) == {}
+    spans = audit_module._source_spans(index_project(lean_root))
+    assert sorted((key.path.as_posix(), key.line, span) for key, span in spans.items()) == [
+        ("A.lean", 1, 1),
+        ("Big.lean", 1, 2),
+        ("Big.lean", 3, 2),
+    ]
 
 
 def test_audit_reports_unbounded_and_inherited_elaboration_limits(tmp_path: Path) -> None:
