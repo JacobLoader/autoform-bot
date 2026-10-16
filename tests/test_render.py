@@ -807,6 +807,25 @@ def test_catalog_slot_with_bracketed_inline_code_is_absorbed(
     assert "## Additional formalization targets" not in chapter
 
 
+def test_a_catalog_links_a_few_lean_names_and_counts_the_rest() -> None:
+    """A catalog's heading carried one identical code icon per public name, in a
+    row that could not wrap, so a real inventory overflowed the page."""
+    names = [f"Project.lemma_{index:02d}" for index in range(40)]
+    node = SimpleNamespace(id="catalog", lean=", ".join(names), catalog="module")
+    linker = SimpleNamespace(
+        indexed=True, url=lambda name: f"{_REPOSITORY}/blob/abc/Project.lean#{name}", location=lambda name: None
+    )
+
+    icons, rows, linked, unresolved = render_module._lean_presentation(node, linker)
+
+    assert (icons, linked, unresolved) == ("", 40, [])
+    [(key, value)] = rows
+    assert key == "Lean"
+    assert value.count("<code>") == 8
+    assert value.startswith(f'<a href="{_REPOSITORY}/blob/abc/Project.lean#Project.lemma_00"><code>')
+    assert value.endswith("<code>Project.lemma_07</code></a> and 32 more, listed in its declaration ledger")
+
+
 def test_partial_module_catalog_is_not_reported_as_dispatchable_work(tmp_path: Path) -> None:
     project = _project(tmp_path)
     sources = project / "blueprint/sources"

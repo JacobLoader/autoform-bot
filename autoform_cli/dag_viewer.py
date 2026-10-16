@@ -25,7 +25,8 @@ SEARCH_SCHEMA = "autoform-dag-search/v1"
 MAX_LAYOUT_ROWS = 160
 
 _PALETTE_KEYS = frozenset(state.key for state in (*STATES, *INVENTORY_STATES))
-#: A catalog lists its keyword-declared public names; its explorer node carries this many and a count.
+#: A catalog lists its keyword-declared public names; its explorer node and its Lean row
+#: in the book show this many and a count.
 _CATALOG_LEAN_NAMES = 8
 _NODE_WIDTH = 196
 _NODE_HEIGHT = 56

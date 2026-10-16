@@ -2507,7 +2507,12 @@ def _lean_presentation(
     node: Node,
     linker: SourceLinker,
 ) -> tuple[str, list[tuple[str, str]], int, list[str]]:
-    """Render direct source icons, falling back to quiet diagnostic metadata."""
+    """Render direct source icons, falling back to quiet diagnostic metadata.
+
+    A catalog can list hundreds of names, so it gets no icons: its Lean row
+    links the first few by name, as its explorer node shows them, and counts
+    the rest, which its declaration ledger lists.
+    """
     icons: list[str] = []
     fallback: list[str] = []
     linked = 0
@@ -2522,6 +2527,9 @@ def _lean_presentation(
         if not linker.indexed:
             # The sources were not read, so "not found" would be false.
             fallback.append(code)
+        elif url and node.catalog == "module":
+            fallback.append(f'<a href="{html.escape(url, quote=True)}">{code}</a>')
+            linked += 1
         elif url:
             label = html.escape(f"View {name} in Lean source", quote=True)
             icons.append(
@@ -2537,7 +2545,10 @@ def _lean_presentation(
             unresolved.append(f"{node.id}: {name}")
 
     code_links = f'<span class="bp-code-links">{"".join(icons)}</span>' if icons else ""
-    rows = [("Lean", " · ".join(fallback))] if fallback else []
+    shown = fallback[: dag_viewer._CATALOG_LEAN_NAMES] if node.catalog == "module" else fallback
+    rest = len(fallback) - len(shown)
+    more = f" and {rest} more, listed in its declaration ledger" if rest else ""
+    rows = [("Lean", " · ".join(shown) + more)] if fallback else []
     return code_links, rows, linked, unresolved
 
 
@@ -3182,7 +3193,7 @@ a:hover, a:visited:hover {{ color: var(--bp-link-hover); text-decoration: underl
 .bp-source-link:hover {{ color: var(--bp-link-hover); text-decoration: none; }}
 .bp-source-icon {{ width: 0.95em; height: 0.95em; fill: none; stroke: currentColor;
   stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; vertical-align: -0.12em; }}
-.bp-code-links {{ display: inline-flex; align-items: center; gap: 0.2rem; margin-left: 0.45rem; }}
+.bp-code-links {{ display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.2rem; margin-left: 0.45rem; }}
 .bp-code-link {{
   display: inline-flex;
   align-items: center;
