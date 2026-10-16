@@ -16,7 +16,7 @@ from pathlib import Path
 from urllib.parse import quote
 from typing import TYPE_CHECKING
 
-from .graph_views import container_nodes, display_status_key, inventory_counts, inventory_state, scope_target_statuses
+from .graph_views import container_nodes, display_status_key, inventory_counts, inventory_state
 from .status import INVENTORY_STATES, MEANINGS, STATES, State, is_definition
 
 if TYPE_CHECKING:
@@ -260,7 +260,17 @@ def render_page(
         links=links,
         include_classdefs=include_classdefs,
     )
-    legend = render_legend(scope_target_statuses(graph, statuses), inventory_counts(graph, statuses))
+    # Containers are drawn as scope boxes, so they have no row in the legend,
+    # and a catalog counts apart as an inventory.
+    boxes = container_nodes(graph, statuses)
+    legend = render_legend(
+        {
+            node_id: state
+            for node_id, state in statuses.items()
+            if node_id not in boxes and graph.nodes[node_id].catalog is None
+        },
+        inventory_counts(graph, statuses),
+    )
     sections = [
         "---",
         "kind: graph",

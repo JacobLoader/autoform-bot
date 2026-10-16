@@ -206,6 +206,22 @@ def test_the_exported_legend_leaves_out_containers(tmp_path: Path) -> None:
     assert '<span class="bp-legend-count">1</span>' in document
 
 
+def test_the_exported_legend_counts_a_prose_leaf_the_map_colours(tmp_path: Path) -> None:
+    """The map draws a prose leaf in its derived state, so the legend has its row."""
+    blueprint = tmp_path / "blueprint"
+    _write_node(blueprint / "roadmap" / "README.md", "Roadmap")
+    _write_node(blueprint / "roadmap" / "base.md", "Base", declaration="def", statement="formalized")
+    _write_node(blueprint / "roadmap" / "notation.md", "Notation")
+
+    document = export_graph(blueprint).read_text(encoding="utf-8")
+
+    assert '("Notation"):::can_state' in document
+    assert (
+        '<span class="bp-legend-label">ready to state</span>'
+        '<span class="bp-legend-count">1</span>'
+    ) in document.split("## Legend", 1)[1]
+
+
 def test_cli_writes_only_the_graph_by_default(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
