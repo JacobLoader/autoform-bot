@@ -152,7 +152,7 @@ def test_status_counts_keep_the_legend_order(tmp_path: Path) -> None:
 
 
 def test_a_catalog_carries_a_few_lean_names_and_counts_the_rest(tmp_path: Path) -> None:
-    """A catalog lists every compiled name, which made its payload and inspector line unbounded."""
+    """A catalog lists its keyword-declared public names, which made its payload and inspector line unbounded."""
     names = [f"Mathlib.Algebra.Module.lemma_{index:03d}" for index in range(150)]
     nodes = (
         ViewNode(
