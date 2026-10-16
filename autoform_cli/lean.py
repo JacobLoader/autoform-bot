@@ -127,7 +127,11 @@ class Declaration:
 
 @dataclass(frozen=True, slots=True)
 class SourceIndex:
-    """Every declaration the scanner found, keyed by fully qualified name."""
+    """The scanner's declarations, by fully qualified name.
+
+    The one each name selects is in ``declarations``, and every occurrence of a
+    repeated name in ``duplicates``.
+    """
 
     root: Path
     #: The declaration each name selects: its only one, else its only one that
@@ -708,10 +712,10 @@ def _update_source_digest(digest, relative: Path, data: bytes) -> None:
 def _select(same: list[Declaration]) -> Declaration | None:
     """The declaration a name means among all of its declarations, if one is sure.
 
-    A private declaration is local to its file and a wanted command declares
-    nothing, so beside them every other module sees the one public
-    declaration. Two public ones, or only private and wanted ones, leave no
-    single answer.
+    A private declaration, including the placeholder a wanted command makes,
+    is local to its file, so beside them every other module sees the one
+    public declaration. Two public ones, or only private and wanted ones,
+    leave no single answer.
     """
 
     if len(same) == 1:

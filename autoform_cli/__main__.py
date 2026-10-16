@@ -437,7 +437,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     render.add_argument(
         "--require-declarations",
         action="store_true",
-        help="fail when a 'lean:' declaration is not found in the Lean sources "
+        help="fail when a 'lean:' declaration is not found in the Lean sources, is defined more than once in them, "
         "or cannot be looked up because the sources cannot be read",
     )
 

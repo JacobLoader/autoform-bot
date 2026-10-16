@@ -1923,8 +1923,7 @@ def test_a_root_several_files_declare_fails_closed_naming_every_file(tmp_path: P
 
 
 def test_a_root_beside_a_private_twin_is_probed_in_its_public_module(tmp_path: Path) -> None:
-    # Lean accepts a private declaration beside a public one of the same name
-    # in a module that does not import it; any other module binds the public one.
+    # A private declaration is local to its file, so every other module binds the public one.
     project = _project(tmp_path)
     for module, prefix in (("Adup", "private "), ("Bdup", "")):
         (project / "Skel" / f"{module}.lean").write_text(

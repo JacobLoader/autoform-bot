@@ -980,11 +980,10 @@ first line: frontmatter there is read as text, so its keys are ignored, and
 `check` warns about the mark when the article otherwise loads; an H1 title
 there is missed, and `check` fails the article as missing one.
 With `--lean-root`, `check`
-also fails on a `lean:` name
-absent from the sources, as `leanblueprint checkdecls` does for LaTeX
-blueprints, or defined more than once in them (see below). It validates
-structure and leaves mathematical correctness to the
-agent and the Lean kernel.
+also fails on a `lean:` name that is absent from the sources (as
+`leanblueprint checkdecls` does for LaTeX blueprints) or defined more than
+once in them (see below). It validates structure and leaves mathematical
+correctness to the agent and the Lean kernel.
 
 Source-aware `--lean-root` inspection requires directory-descriptor traversal.
 Platforms without that capability, including Windows, fail closed instead of
@@ -1075,9 +1074,10 @@ in its own module's file among the declarations of its name. The rule sees
 only indexed declarations: a public one behind an unindexed prefix such as
 `open X in`, or written `«main»` where the article writes `main`, leaves a
 private one as the name's only declaration. In a file that starts with
-`module`, a declaration without `public` is private to Lean but public to the
-index, so such a name may be reported as defined more than once where Lean
-accepts it.
+`module`, a declaration outside a `public section` and without `public` is
+private to Lean but public to the index, so such a name may be reported as
+defined more than once where Lean accepts it, or selected where Lean binds it
+nowhere outside its file.
 
 The Markdown files are the source of truth. Graphs and sites are derived views
 that may be regenerated at any time.
@@ -1092,9 +1092,7 @@ internally consistent, and that cited work resolves to local source
 material without escaping the blueprint. Coverage files are checked for broken
 links and explicitly declared gaps. With `--lean-root`, local declaration names
 and declaration kinds are checked against the Lean source index, along with the
-elaboration limits each target runs under. A target the index finds defined
-more than once (see Validation) is reported as `lean-target-ambiguous`, naming
-the `path:line` of each declaration, and nothing else is checked for it.
+elaboration limits each target runs under.
 
 An alias has its target's kind, size, and elaboration limits when the index
 can be sure what the target is. The audit tries the names Lean tries, in the
