@@ -28,7 +28,7 @@ from .impact import (
     module_import_impact,
     revision_impact,
 )
-from .lean import build_linker, declaration_names, format_locations, index_failure_message
+from .lean import build_linker, declaration_names, index_failure_message
 from .library.generate import GenerateError, check_index, generate_index, write_index
 from .library.index import INDEX_FILE
 from .library.listing import indexed_packages, list_libraries
@@ -595,8 +595,8 @@ def _check(args: argparse.Namespace) -> int:
 
     if linker is not None:
         missing = [
-            f"{node.id}: declaration defined more than once in {args.lean_root}: {name} ({format_locations(ambiguous)})"
-            if (ambiguous := linker.index.ambiguous(name))
+            f"{node.id}: declaration defined more than once in {args.lean_root}: {name} ({ambiguous})"
+            if (ambiguous := linker.index.ambiguity(name))
             else f"{node.id}: declaration not found in {args.lean_root}: {name}"
             for node in graph.nodes.values()
             for name in declaration_names(node.lean or "")
@@ -1456,9 +1456,7 @@ def _render(args: argparse.Namespace) -> int:
         return 1
 
     print(f"{report.output_dir}: {report.pages} pages, {report.nodes} nodes, {report.linked} code links")
-    for issue in report.unresolved:
-        print(f"warning: {issue}")
-    for issue in report.warnings:
+    for issue in (*report.unresolved, *report.warnings):
         print(f"warning: {issue}")
     # A declaration that was never looked up is not known to exist.
     if (report.unresolved or report.unchecked) and args.require_declarations:

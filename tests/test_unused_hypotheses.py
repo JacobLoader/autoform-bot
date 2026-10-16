@@ -217,7 +217,11 @@ def test_a_name_several_files_declare_is_unresolved_without_running_lean(tmp_pat
     report = find_unused_hypotheses(blueprint, lean_root=project, runner=runner)
 
     assert [(item.declaration, item.reason) for item in report.unresolved] == [
-        ("Skel.dup", "defined more than once in the Lean sources: Skel/Adup.lean:2, Skel/Bdup.lean:2, Skel/Cdup.lean:2")
+        (
+            "Skel.dup",
+            "declaration defined more than once in the Lean sources: "
+            "Skel/Adup.lean:2, Skel/Bdup.lean:2, Skel/Cdup.lean:2",
+        )
     ]
 
 

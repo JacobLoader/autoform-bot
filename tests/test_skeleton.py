@@ -1917,7 +1917,7 @@ def test_a_root_several_files_declare_fails_closed_naming_every_file(tmp_path: P
     assert report.nodes[0].declarations == ()
     (issue,) = report.unresolved
     assert issue.reason.endswith(
-        "defined more than once in the Lean sources: Skel/Adup.lean:2, Skel/Bdup.lean:2, Skel/Cdup.lean:2"
+        "declaration defined more than once in the Lean sources: Skel/Adup.lean:2, Skel/Bdup.lean:2, Skel/Cdup.lean:2"
     )
     assert issue.reason.startswith("source locator ") == (passage == "broken")
 

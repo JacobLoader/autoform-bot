@@ -52,7 +52,6 @@ from .lean import (
     declaration_names,
     detect_ref,
     detect_repository_url,
-    format_locations,
     index_failure_message,
     resolve_lean_root,
     snapshot_project_sources,
@@ -2400,11 +2399,10 @@ def _lean_presentation(
         elif location is not None:
             fallback.append(f'{code} <span class="bp-where">{html.escape(location.path.as_posix())}</span>')
             linked += 1
-        elif ambiguous := linker.index.ambiguous(name):
+        elif ambiguous := linker.index.ambiguity(name):
             fallback.append(f'{code} <span class="bp-missing">defined more than once in the Lean sources</span>')
             unresolved.append(
-                f"declaration defined more than once in the Lean sources: {node.id}: {name} "
-                f"({format_locations(ambiguous)})"
+                f"declaration defined more than once in the Lean sources: {node.id}: {name} ({ambiguous})"
             )
         else:
             fallback.append(f'{code} <span class="bp-missing">not found in the Lean sources</span>')

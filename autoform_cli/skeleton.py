@@ -45,7 +45,6 @@ from .lean import (
     LeanSourceError,
     SourceIndex,
     declaration_names,
-    format_locations,
     index_failure_message,
     index_project,
     resolve_lean_root,
@@ -2289,8 +2288,8 @@ def locate_declaration(
 
     location = index.find(name)
     if location is None:
-        if ambiguous := index.ambiguous(name):
-            return None, f"defined more than once in the Lean sources: {format_locations(ambiguous)}"
+        if ambiguous := index.ambiguity(name):
+            return None, f"declaration defined more than once in the Lean sources: {ambiguous}"
         return None, "declaration not found in the Lean sources"
     module = module_of(lean_root / location.path, libraries)
     if module is None:

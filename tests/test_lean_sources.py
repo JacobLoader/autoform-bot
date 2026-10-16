@@ -3074,7 +3074,7 @@ def test_a_public_declaration_is_selected_over_an_earlier_private_one(
     index = _index_files(tmp_path, {"A.lean": private_source, "B.lean": _PUBLIC_MAIN})
 
     assert _where([index.find("Demo.main")]) == [("B.lean", 2)]
-    assert index.ambiguous("Demo.main") == ()
+    assert index.ambiguity("Demo.main") == ""
     assert _where(index.occurrences("Demo.main")) == [("A.lean", private_line), ("B.lean", 2)]
     assert [declaration.private for declaration in index.occurrences("Demo.main")] == [True, False]
 
@@ -3085,7 +3085,7 @@ def test_a_public_declaration_is_selected_over_a_later_private_one(tmp_path: Pat
     )
 
     assert _where([index.find("Demo.main")]) == [("A.lean", 2)]
-    assert index.ambiguous("Demo.main") == ()
+    assert index.ambiguity("Demo.main") == ""
     assert _where(index.duplicates["Demo.main"]) == [("A.lean", 2), ("B.lean", 1)]
 
 
@@ -3108,7 +3108,7 @@ def test_two_public_declarations_of_one_name_select_neither(tmp_path: Path) -> N
     )
 
     assert index.find("Demo.main") is None
-    assert _where(index.ambiguous("Demo.main")) == [("A.lean", 1), ("B.lean", 1), ("C.lean", 2)]
+    assert index.ambiguity("Demo.main") == "A.lean:1, B.lean:1, C.lean:2"
 
 
 @pytest.mark.parametrize(
@@ -3122,7 +3122,7 @@ def test_only_private_declarations_of_one_name_select_neither(tmp_path: Path, se
     )
 
     assert index.find("Demo.main") is None
-    assert _where(index.ambiguous("Demo.main")) == [("A.lean", 1), ("B.lean", 2)]
+    assert index.ambiguity("Demo.main") == "A.lean:1, B.lean:2"
 
 
 def test_a_lone_private_declaration_is_selected(tmp_path: Path) -> None:

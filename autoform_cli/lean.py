@@ -120,9 +120,9 @@ class Declaration:
     keyword: str
     #: Whether ``protected`` is written before the keyword, on its line or above.
     protected: bool = False
-    alias: Alias | None = None
     #: Whether ``private`` is written before the keyword, on its line or above.
     private: bool = False
+    alias: Alias | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,15 +149,14 @@ class SourceIndex:
     def occurrences(self, name: str) -> tuple[Declaration, ...]:
         """Every declaration of ``name``, by path and line."""
 
-        if name in self.duplicates:
-            return self.duplicates[name]
         found = self.declarations.get(name)
-        return () if found is None else (found,)
+        return self.duplicates.get(name, () if found is None else (found,))
 
-    def ambiguous(self, name: str) -> tuple[Declaration, ...]:
-        """Every declaration of ``name`` when it selects none of them, else nothing."""
+    def ambiguity(self, name: str) -> str:
+        """The ``path:line`` of each declaration of ``name`` when it selects none of them, else ``""``."""
 
-        return () if name in self.declarations else self.duplicates.get(name, ())
+        found = () if name in self.declarations else self.duplicates.get(name, ())
+        return ", ".join(f"{item.path.as_posix()}:{item.line}" for item in found)
 
     def reached(self, declaration: Declaration) -> Declaration | None:
         """The declaration ``declaration`` stands for: itself, or what an alias names through any chain.
@@ -192,9 +191,7 @@ class SourceIndex:
             found = self.occurrences(candidate)
             above = [other for other in found if other.path == declaration.path and other.line < declaration.line]
             if above:
-                if above[0].protected and declaration.alias.atomic:
-                    return None
-                return above[0]
+                return None if above[0].protected and declaration.alias.atomic else above[0]
             if not found or any(other.path != declaration.path for other in found):
                 return None
         return None
@@ -718,9 +715,7 @@ def _select(same: list[Declaration]) -> Declaration | None:
     leave no single answer.
     """
 
-    if len(same) == 1:
-        return same[0]
-    public = [item for item in same if not item.private and item.keyword not in _WANTED_KEYWORDS]
+    public = [item for item in same if not item.private and item.keyword not in _WANTED_KEYWORDS] or same
     return public[0] if len(public) == 1 else None
 
 
@@ -779,9 +774,7 @@ def _scan(text: str, relative: Path) -> tuple[list[Declaration], int]:
             name = _name_token(declaration_match.group(2))
             if name is None:
                 continue
-            found.append(
-                Declaration(_qualified(namespaces, name), relative, number, keyword, protected, private=private)
-            )
+            found.append(Declaration(_qualified(namespaces, name), relative, number, keyword, protected, private))
     return found, len(lines)
 
 
@@ -847,7 +840,7 @@ def _aliases(
     iff = match["name"] is None
     alias = Alias(candidates, atomic, iff)
     return [
-        Declaration(_qualified(namespaces, name), relative, line, "alias", protected, alias, private)
+        Declaration(_qualified(namespaces, name), relative, line, "alias", protected, private, alias)
         for name in ([match["mp"], match["mpr"]] if iff else [match["name"]])
         if name != "_"
     ]
@@ -976,12 +969,6 @@ def declaration_names(lean: str) -> list[str]:
     """Split a ``lean:`` frontmatter value into individual declaration names."""
 
     return _DECLARATION_NAME.findall(lean)
-
-
-def format_locations(declarations: Iterable[Declaration]) -> str:
-    """Each declaration's ``path:line``, as diagnostics list the declarations of one name."""
-
-    return ", ".join(f"{declaration.path.as_posix()}:{declaration.line}" for declaration in declarations)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1379,7 +1366,6 @@ __all__ = [
     "declaration_names",
     "detect_ref",
     "detect_repository_url",
-    "format_locations",
     "index_failure_message",
     "index_project",
     "project_source_revision",
