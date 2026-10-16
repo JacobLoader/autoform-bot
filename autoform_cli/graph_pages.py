@@ -232,8 +232,8 @@ def write_graph_pages(
             links=project_links(full_page),
             heading=root_title,
             lead=(
-                f"Browse {len(graph.nodes)} roadmap entries without flattening them into one canvas. "
-                "Search jumps directly to the relevant chapter or nested scope."
+                f"Search {len(graph.nodes)} roadmap entries without flattening them into one canvas; "
+                "a result opens its chapter or nested scope."
             ),
             navigation=_navigation(
                 ("Dependency explorer", _markdown_link(project_page, full_page)),
