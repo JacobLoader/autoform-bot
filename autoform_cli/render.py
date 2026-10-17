@@ -38,6 +38,7 @@ from ._tree_snapshot import (
     TreeSelection,
     TreeSnapshot,
     TreeSnapshotError,
+    _read_prefix,
     _update_digest,
     bind_directory_tree,
     descriptor_capture_supported,
@@ -804,7 +805,7 @@ def _destination_state(path: Path) -> _State | None:
     try:  # bounded, and read before anything below it
         if stat.S_ISREG(os.lstat(path / PUBLICATION_MANIFEST).st_mode):
             with open(path / PUBLICATION_MANIFEST, "rb") as handle:
-                data = handle.read(PUBLICATION_MANIFEST_MAX_BYTES + 1)
+                data = _read_prefix(handle, PUBLICATION_MANIFEST_MAX_BYTES + 1)  # read(n) allocates n bytes first
             manifest = json.loads(data) if len(data) <= PUBLICATION_MANIFEST_MAX_BYTES else None
     except (OSError, ValueError, RecursionError):
         pass
@@ -830,12 +831,12 @@ def _destination_state(path: Path) -> _State | None:
     expected = {name: digest for name, digest in expected.items() if not _is_os_metadata(name)}
     try:
         with bind_directory_tree(path, expected_identity=identity) as tree:
-            snapshot = tree.capture()
+            snapshot = tree.capture(digests=True)
     except TreeSnapshotError as error:
         raise PublicationError([f"could not inspect the output directory: {error}"]) from error
     files = {
-        name: hashlib.sha256(data).hexdigest()
-        for name, data in snapshot.files
+        name: digest.hex()
+        for name, digest in snapshot.files
         if name != PUBLICATION_MANIFEST and not _is_os_metadata(name)
     }
     names = {*files, *dict(snapshot.symlinks), *dict(snapshot.special)}
