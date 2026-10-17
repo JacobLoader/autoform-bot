@@ -684,15 +684,22 @@ def test_search_keyboard_navigation_and_focus(desktop_page: object, explorer_url
     page = desktop_page
     _open_ready(page, explorer_url)
     search = _load_search_index(page)
+    results = page.locator(".bp-dag-search-results")
+    announcement = page.locator(".bp-dag-sr-only")
+    # A search box takes no aria-expanded; the result count is announced instead.
+    assert search.get_attribute("aria-expanded") is None
+    search.fill("no such node")
+    playwright.expect(announcement).to_have_text("No results")
     search.fill("middle")
-    playwright.expect(search).to_have_attribute("aria-expanded", "true")
+    playwright.expect(results).to_be_visible()
+    playwright.expect(announcement).to_have_text("1 result")
 
     search.press("ArrowDown")
     result = page.locator(".bp-dag-result").first
     playwright.expect(result).to_be_focused()
     result.press("Escape")
     playwright.expect(search).to_be_focused()
-    playwright.expect(search).to_have_attribute("aria-expanded", "false")
+    playwright.expect(results).to_be_hidden()
 
     search.fill("target")
     search.press("Enter")

@@ -340,7 +340,7 @@ def test_explorer_is_responsive_accessible_and_history_addressable() -> None:
     assert "100dvh" in container
     assert 'refs.canvas.setAttribute("aria-hidden", "true")' in script
     assert 'refs.stage.setAttribute("role", "region")' in script
-    assert 'toolbar.setAttribute("role", "toolbar")' in script
+    assert 'toolbar.setAttribute("role", "group")' in script
     assert 'refs.announcement.setAttribute("aria-live", "polite")' in script
     assert "control.dataset.autoformNodeId = node.id" in script
     assert "new ResizeObserver(resize)" in script
