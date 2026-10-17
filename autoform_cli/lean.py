@@ -671,6 +671,7 @@ def _is_complete_publication(data: bytes) -> bool:
         return False
     return (
         isinstance(value, dict)
+        and isinstance(value.get("schema"), str)
         and value.get("schema") in {"autoform-publication/v1", PUBLICATION_SCHEMA}
         and value.get("complete") is True
     )
