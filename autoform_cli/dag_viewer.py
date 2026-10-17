@@ -462,7 +462,9 @@ def viewer_script() -> str:
 # map, so that layout draws no frame or context row of its own. On phones the
 # search box takes the toolbar's first row, so the Status popover opens
 # rightwards from the start of the next, and the head stacks above the bottom
-# sheet so that neither of its popovers paints under it.
+# sheet so that neither of its popovers paints under it. The app layout hides
+# the page's own heading because the hierarchy rail carries it; while phones
+# hide the rail, the heading stays for assistive technology as hidden text.
 _STYLE = r"""
 .bp-dag-viewer {
   --dag-border: var(--bp-rule, #d8dade); --dag-bg: var(--bp-surface, #fff);
@@ -488,6 +490,7 @@ body.bp-dag-app-page .md-main__inner { width: 100%; max-width: none; margin: 0; 
 body.bp-dag-app-page .md-content { max-width: none; }
 body.bp-dag-app-page .md-content__inner { margin: 0; padding: 0; }
 body.bp-dag-app-page .md-content__inner::before,
+body.bp-dag-app-page .md-content__inner > h1,
 body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-viewer *, .bp-dag-viewer *::before, .bp-dag-viewer *::after { box-sizing: border-box; }
 .bp-dag-viewer [hidden] { display: none !important; }
@@ -660,6 +663,7 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
   .bp-dag-isolated { min-height: 2.75rem; }
   .bp-dag-body { display: block; }
   .bp-dag-navigation { display: none; }
+  body.bp-dag-app-page .md-content__inner > h1 { display: block; }
   .bp-dag-main { position: absolute; inset: 0; }
   .bp-dag-inventory { padding-bottom: 3.65rem; }
   .bp-dag-inspector { position: absolute; z-index: 12; top: auto; right: .45rem; bottom: .45rem; left: .45rem; width: auto; max-height: min(58%, 30rem); overflow: auto; border: 1px solid var(--dag-border); border-radius: 13px; box-shadow: 0 -8px 30px rgba(15, 23, 42, .2); visibility: visible; opacity: 1; transform: translateY(calc(100% - 3.2rem)); transition: transform .2s ease; }
