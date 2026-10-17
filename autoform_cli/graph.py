@@ -308,7 +308,8 @@ def _atlas_assignments(blueprint: Path, nodes: dict[str, Node]) -> tuple[dict[st
     try:
         if not stat.S_ISREG(os.lstat(path).st_mode):
             return {}, ["ignored, since it is not a regular file inside the blueprint"]
-        raw = path.read_bytes()
+        with path.open("rb") as handle:
+            raw = handle.read(_MAX_ATLAS_BYTES + 1)
     except FileNotFoundError:
         return {}, []
     except OSError as error:
