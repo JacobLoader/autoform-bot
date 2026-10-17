@@ -26,12 +26,14 @@ import unicodedata
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
+
+from markdown.treeprocessors import Treeprocessor
 
 from . import graph_pages, graph_views, mermaid, status
 from ._tree_snapshot import (
-    OpaqueDirectoryMarker,
     TreeChangedError,
     TreeSelection,
     TreeSnapshot,
@@ -43,6 +45,9 @@ from ._tree_snapshot import (
 from .coverage import COVERAGE_DISPOSITIONS, CoverageSummary, load_coverage
 from .graph import Graph, GraphValidationError, Node, _implementation_note_issues, load_graph
 from .lean import (
+    PUBLICATION_MANIFEST,
+    PUBLICATION_MANIFEST_MAX_BYTES,
+    PUBLICATION_SCHEMA,
     IndexedSourceSnapshot,
     LeanSourceError,
     SourceIndex,
@@ -55,13 +60,20 @@ from .lean import (
     snapshot_project_sources,
     verify_repository_snapshot,
 )
-from .markdown import article_parts
+from .markdown import article_parts, site_converter
 from .markdown import mask_fences_and_comments
 from .status import is_definition
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 _FENCE = re.compile(r"^ {0,3}(`{3,}(?=[^`]*$)|~{3,})")
-_MARKDOWN_LINK = re.compile(r"(?<!!)\[(?P<label>[^\]]*)\]\(\s*(?P<target>[^)\s]+)(?:\s+[^)]*)?\)")
+#: An inline link. A bare destination or a title may hold one level of
+#: balanced parentheses, a quoted title may leave a `(` open, and an escaped
+#: parenthesis is text, as in Python-Markdown. `replace` drops the title of a
+#: link it moves, so a match that ran past the link's own `)` would drop text.
+_MARKDOWN_LINK = re.compile(
+    r"(?<!!)\[(?P<label>[^\]]*)\]\(\s*(?P<target><[^>]+>|(?:\\.|[^\\()\s]|\((?:\\.|[^\\()\s])*\))+)"
+    r"""(?:\s+(?:"[^")]*"\s*|'[^')]*'\s*|(?:\\.|[^\\()]|\((?:\\.|[^\\()])*\))*))?\)"""
+)
 #: A reference-style link definition, `[label]: target "title"`. Markdown
 #: resolves `[Paper][paper]` through one of these, so a rewrite that only sees
 #: inline links leaves the destination behind and publishes a dead link.
@@ -75,12 +87,9 @@ _ARTICLE_SLOT = re.compile(
 _DEPENDENCY_SECTIONS = frozenset({"depends on", "proof depends on"})
 _SKIPPED_DIRECTORIES = frozenset({".obsidian", ".trash", ".git"})
 
+
 #: Transcriptions of the paper being formalised. Vault material, not chapters.
 SOURCES_DIR = "sources"
-PUBLICATION_MANIFEST = "publication.json"
-PUBLICATION_SCHEMA = "autoform-publication/v2"
-#: Render never writes a larger manifest, so the next render can always read it.
-PUBLICATION_MANIFEST_MAX_BYTES = 8 * 1024 * 1024
 #: Hidden siblings of the output: a site being built, a replaced one, or a backup.
 _STAGE_PREFIX = ".autoform-publication-"
 #: How a filesystem says it lacks an operation (an atomic exchange, a directory sync).
@@ -130,10 +139,6 @@ _PUBLICATION_SELECTION = TreeSelection(
     ),
     descend=lambda path: path.parts[0].casefold() == ".autoform"
     or not (_is_hidden(path) or _is_sensitive(path)),
-)
-#: Every site, stage, and backup carries this, so a Lean walk never indexes their copies.
-_PUBLICATION_MARKER = OpaqueDirectoryMarker(
-    PUBLICATION_MANIFEST, PUBLICATION_MANIFEST_MAX_BYTES, lambda data: _is_complete_publication(data)
 )
 
 #: How a ``declaration:`` value is announced in the statement box.
@@ -293,6 +298,7 @@ class RenderReport:
     nodes: int = 0
     linked: int = 0
     unresolved: list[str] = field(default_factory=list)
+    """A message for each published declaration not found, or defined more than once, in the sources."""
     unchecked: bool = False
     """A published declaration was not looked up because the sources were not read."""
     warnings: list[str] = field(default_factory=list)
@@ -368,13 +374,13 @@ def render_site(
         expected = _destination_state(destination)
         # Without descriptor capture every Lean capture fails closed. The implicit
         # root is then not read and the site has no code links; an explicit Lean
-        # root asks for links, so it still fails.
+        # root asks for links, so it still fails. Like every Lean capture, this one
+        # skips each folder holding a complete publication.json: a finished site,
+        # mkdocs' copy of one, or a replaced site kept as a backup.
         indexed = lean_root is not None or descriptor_capture_supported()
         try:
             lean = (
-                snapshot_project_sources(
-                    repo_root, exclude_roots=(copy_root,), opaque_markers=(_PUBLICATION_MARKER,)
-                )
+                snapshot_project_sources(repo_root, exclude_roots=(copy_root,))
                 if indexed
                 else IndexedSourceSnapshot(SourceIndex(repo_root, {}, ""), revision="")
             )
@@ -707,18 +713,6 @@ def _is_sensitive(relative: PurePosixPath) -> bool:
 
 def _is_hidden(relative: Path | PurePosixPath) -> bool:
     return any(part.startswith(".") for part in relative.parts)
-
-
-def _is_complete_publication(data: bytes) -> bool:
-    try:
-        value = json.loads(data)
-    except (ValueError, RecursionError):
-        return False
-    return (
-        isinstance(value, dict)
-        and value.get("schema") in {"autoform-publication/v1", PUBLICATION_SCHEMA}
-        and value.get("complete") is True
-    )
 
 
 @contextmanager
@@ -1132,7 +1126,13 @@ def _sources_base(blueprint: Path, repo_root: Path, linker: SourceLinker) -> "_S
         # The vault is outside the repository being linked, so no blob URL
         # describes it. Better no link than one that 404s.
         return None
-    spellings = {unicodedata.normalize("NFC", path): committed for path, committed in linker.spellings.items()}
+    spellings: dict[str, str] = {}
+    for path, committed in linker.spellings.items():
+        # A link may name a folder as well as a note, so each leading path maps too.
+        parts, committed_parts = path.split("/"), committed.split("/")
+        for depth in range(1, len(parts) + 1):
+            prefix = unicodedata.normalize("NFC", "/".join(parts[:depth]))
+            spellings.setdefault(prefix, "/".join(committed_parts[:depth]))
     return _SourceBase(linker.repository_url, linker.ref, relative, spellings)
 
 
@@ -1151,12 +1151,19 @@ class _SourceBase:
     ref: str
     relative: str
     spellings: Mapping[str, str] = field(default_factory=dict)
-    """Committed paths keyed by NFC form, since a link spells a note however its author typed it."""
+    """Committed captured paths and their leading folders, keyed by NFC form, since a link spells a path as typed."""
 
     def href(self, tail: tuple[str, ...]) -> str:
         verb = "blob" if tail else "tree"
-        path = "/".join((self.relative, *tail))
-        path = self.spellings.get(unicodedata.normalize("NFC", path), path)
+        parts = "/".join((self.relative, *tail)).split("/")
+        # A folder with no captured file below it, such as one holding only a `.gitkeep`, has no entry of its own,
+        # so only the leading folders it shares with a captured file take their committed spelling.
+        for depth in range(len(parts), 0, -1):
+            committed = self.spellings.get(unicodedata.normalize("NFC", "/".join(parts[:depth])))
+            if committed is not None:
+                parts[:depth] = committed.split("/")
+                break
+        path = "/".join(parts)
         return f"{self.repository_url}/{verb}/{self.ref}/{quote(path, safe='/')}"
 
 
@@ -1220,7 +1227,17 @@ def _write_publication_manifest(
         raise PublicationError(
             [f"generated publication manifest exceeds max_file_bytes={PUBLICATION_MANIFEST_MAX_BYTES}"]
         )
-    (destination / PUBLICATION_MANIFEST).write_bytes(encoded)
+    # Replaced, never truncated in place: a Lean capture that read an empty
+    # manifest would index the stage's copies.
+    temporary = destination / f".{PUBLICATION_MANIFEST}.{secrets.token_hex(8)}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    descriptor = os.open(temporary, flags, 0o666)  # the mode write_bytes gives
+    try:
+        with open(descriptor, "wb") as output:
+            output.write(encoded)
+        os.replace(temporary, destination / PUBLICATION_MANIFEST)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _group_nodes(graph: Graph) -> dict[str, list[str]]:
@@ -1286,13 +1303,13 @@ def _book_page_order(blueprint: Path, destination: Path, graph: Graph) -> list[P
             for match in _MARKDOWN_LINK.finditer(line):
                 raw = match.group("target")
                 bare = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
-                path = bare.partition("#")[0]
-                if not path or urlsplit(path).scheme or path.startswith("/"):
-                    continue
-                candidate = (source.parent / unquote(path)).resolve()
+                path = bare.partition("#")[0].partition("?")[0]
                 try:
+                    if not path or urlsplit(path).scheme or path.startswith("/"):
+                        continue
+                    candidate = (source.parent / unquote(path)).resolve()
                     candidate_relative = candidate.relative_to(blueprint)
-                except ValueError:
+                except ValueError:  # a target outside the vault, an unbalanced IPv6 bracket, or a decoded NUL
                     continue
                 if (
                     not candidate_relative.parts
@@ -1491,7 +1508,10 @@ def _render_structure_page(
     each file beside it. Directories are rows too, because they are what a
     chapter is; without them every `README.md` looks like every other one.
     """
-    links = _anchored_links(targets, page, extension=".md")
+    # These links sit inside raw HTML, so MkDocs never rewrites their source
+    # ``.md`` paths to the files it publishes. Name the published routes here,
+    # just as statement boxes and Mermaid links do.
+    links = _anchored_links(targets, page, extension=".html")
     by_path = {node.path.resolve(): node for node in graph.nodes.values()}
 
     def keep(relative: Path) -> bool:
@@ -2046,30 +2066,54 @@ def _rewrite_links(
     def moved_target(raw: str) -> str | None:
         """Where *raw* should point once published, or None to leave it alone."""
         bare = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
-        path, separator, fragment = bare.partition("#")
-        if not path or urlsplit(path).scheme or path.startswith("/"):
+        # The query and fragment are not part of the file's name: they are
+        # kept as written, beside the path render moves.
+        located, separator, fragment = bare.partition("#")
+        path, asked, query = located.partition("?")
+        try:
+            if not path or urlsplit(path).scheme or path.startswith("/"):
+                return None
+            candidate = (source_dir / unquote(path)).resolve()
+        except ValueError:
+            # An unbalanced IPv6 bracket or a decoded NUL names no file to
+            # point at, so the link is published as written, like a URL.
             return None
-        candidate = (source_dir / unquote(path)).resolve()
         node_id = node_sources.get(candidate)
         if node_id is not None:
             href = _anchored_links({node_id: targets[node_id]}, page, extension=".md", hrefs=page_hrefs)[node_id]
             if not targets[node_id][1] and separator:
                 href = f"{'' if href == '#' else href}#{fragment}"
-            return href
+            before, hashed, anchor = href.partition("#")  # the query goes before the anchor
+            return f"{before}{asked}{query}{hashed}{anchor}"
         if not _is_within(candidate, blueprint):
             # Nothing outside the blueprint is published: "" keeps only the text.
             return ""
         relative = candidate.relative_to(blueprint)
-        if sources_base is not None and relative.parts[:1] == (SOURCES_DIR,):
-            return f"{_source_href(sources_base, relative.parts[1:])}{separator}{fragment}"
+        # A repository link to a note the captured blueprint lacks would 404, so
+        # it stays site-relative, where a strict build reports the page missing.
+        # The capture skips hidden files, so a hidden note keeps its repository
+        # link, which resolves once the note is committed, as check warns.
+        if (
+            sources_base is not None
+            and relative.parts[:1] == (SOURCES_DIR,)
+            and (os.path.exists(candidate) or _is_hidden(relative))
+        ):
+            return f"{_source_href(sources_base, relative.parts[1:])}{asked}{query}{separator}{fragment}"
         published = destination / relative
-        return f"{mermaid.relative_link(published, page, candidate.suffix)}{separator}{fragment}"
+        return f"{mermaid.relative_link(published, page, candidate.suffix)}{asked}{query}{separator}{fragment}"
+
+    def bracketed(href: str) -> str:
+        # A decoded path, or a query or fragment kept from angle brackets, can
+        # hold a space or a parenthesis. CommonMark allows no space in a bare
+        # destination, and Python-Markdown needs its parentheses balanced.
+        return f"<{href}>" if re.search(r"[\s()]", href) else href
 
     def replace(match: re.Match[str]) -> str:
-        href = moved_target(match.group("target"))
-        if href is None:
+        raw = match.group("target")
+        href = moved_target(raw)
+        if href is None or raw in (href, f"<{href}>"):  # nothing moved: keep the link as written
             return match.group(0)
-        return f"[{match.group('label')}]({href})" if href else match.group("label")
+        return f"[{match.group('label')}]({bracketed(href)})" if href else match.group("label")
 
     def rewrite(line: str) -> str:
         # A reference definition carries the destination for every `[x][label]`
@@ -2080,6 +2124,9 @@ def _rewrite_links(
             href = moved_target(definition.group("target"))
             if href:
                 indent, label = definition.group("indent"), definition.group("label")
+                # Python-Markdown reads a definition's destination only up to
+                # whitespace, in angle brackets or not, so whitespace is encoded.
+                href = re.sub(r"\s", lambda space: quote(space.group()), href)
                 return f"{indent}[{label}]: {href}{definition.group('rest') or ''}"
             return line
         return _MARKDOWN_LINK.sub(replace, line)
@@ -2267,18 +2314,154 @@ def _place_environments(
             continue
         target = slot.group("target")
         path, separator, fragment = target.partition("#")
-        if not path and separator:
-            node_id = anchor_nodes.get(fragment)
-        elif not path or urlsplit(path).scheme or path.startswith("/"):
+        try:
+            if not path and separator:
+                node_id = anchor_nodes.get(fragment)
+            elif not path or urlsplit(path).scheme or path.startswith("/"):
+                node_id = None
+            else:
+                node_id = node_sources.get((source_dir / unquote(path)).resolve())
+        except ValueError:  # an unbalanced IPv6 bracket or a decoded NUL names no article
             node_id = None
-        else:
-            node_id = node_sources.get((source_dir / unquote(path)).resolve())
         if node_id is None or node_id not in environments or node_id in placed:
             output.append(line)
             continue
         output.append(environments[node_id])
         placed.add(node_id)
     return "\n".join(output), placed
+
+
+class _FenceSafeHtml(HTMLParser):
+    """Keep displayed fence markers from opening fences on the second pass.
+
+    HTML entities decode to the exact displayed code/TeX. Raw script/style
+    text is not entity-decoded by HTML, so it retains its original spelling.
+    """
+
+    _runs = re.compile(r"`{3,}|~{3,}")
+    _quoted = re.compile(r"(['\"])(.*?)\1", re.DOTALL)
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.parts: list[str] = []
+
+    @classmethod
+    def escaped(cls, value: str) -> str:
+        return cls._runs.sub(lambda match: "".join(f"&#{ord(char)};" for char in match.group()), value)
+
+    def handle_starttag(self, tag, attrs):
+        value = self.get_starttag_text()
+        # Quoted attribute values also decode entities; names are untouched.
+        self.parts.append(self._quoted.sub(
+            lambda match: match.group(1) + self.escaped(match.group(2)) + match.group(1), value
+        ))
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag):
+        self.parts.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        self.parts.append(data if self.cdata_elem else self.escaped(data))
+
+    def handle_entityref(self, name):
+        self.parts.append(f"&{name};")
+
+    def handle_charref(self, name):
+        self.parts.append(f"&#{name};")
+
+    def handle_comment(self, data):
+        self.parts.append(f"<!--{data}-->")
+
+    def handle_decl(self, decl):
+        self.parts.append(f"<!{decl}>")
+
+    def handle_pi(self, data):
+        self.parts.append(f"<?{data}>")
+
+    def unknown_decl(self, data):
+        self.parts.append(f"<![{data}{']]>' if data.startswith('CDATA[') else ']>'}")
+
+
+class _PublishedBodyLinks(Treeprocessor):
+    """Give parsed Markdown links their final URLs before they become HTML.
+
+    MkDocs does not rewrite links inside raw HTML. Authored raw HTML links are
+    not Markdown tree elements, so their spelling remains untouched.
+    """
+
+    def __init__(self, md):
+        super().__init__(md)
+        self.validation_targets: list[tuple[str, str]] = []
+
+    def run(self, root):
+        for element in root.iter():
+            if element.tag not in {"a", "img"}:
+                continue
+            key = "href" if element.tag == "a" else "src"
+            href = element.get(key, "")
+            try:
+                parts = urlsplit(href)
+            except ValueError:
+                self.validation_targets.append((element.tag, href))
+                continue
+            if not parts.scheme and not parts.netloc:
+                # Keep the original parsed link/image and .md destination for
+                # MkDocs' configured missing-file/anchor checks on the final
+                # page. Raw authored HTML links are not tree elements here.
+                self.validation_targets.append((element.tag, href))
+                if (element.tag == "a" and not parts.path.startswith("/")
+                        and parts.path.lower().endswith(".md") and "\0" not in unquote(parts.path)):
+                    path = _as_published(parts.path[:-3] + ".html")
+                    element.set("href", urlunsplit(parts._replace(path=path)))
+
+
+def _body_converter():
+    converter = site_converter()
+    # The final page assigns heading IDs once, across all its statements.
+    # attr_list still keeps an author's explicit {#id} here.
+    converter.treeprocessors.deregister("toc")
+    converter.treeprocessors.register(_PublishedBodyLinks(converter), "published-body-links", 5)
+    return converter
+
+
+def _protect_markdown_in_html(
+    text: str, *, references: Mapping[str, tuple[str, str]] | None = None, force: bool = False,
+) -> str:
+    """Parse an affected authored chunk before introducing HTML containers.
+
+    HTML extraction precedes arithmatex and indented code. Inside markdown=1,
+    r<n can consume the container's closing tag and lose its whole suffix.
+    Parsing the fragment first lets the configured Markdown engine distinguish
+    code, math, HTML and autolinks and emit the correct escaping for each.
+    The vault and generated wrapper/navigation markup are never rewritten.
+    """
+    if not force and "<" not in text:
+        return text
+    converter = _body_converter()
+    if references:
+        converter.references.update(references)
+    rendered = converter.convert(text)
+    if "```" in rendered or "~~~" in rendered:
+        protected = _FenceSafeHtml()
+        protected.feed(rendered)
+        protected.close()
+        rendered = "".join(protected.parts)
+    targets = converter.treeprocessors["published-body-links"].validation_targets
+    if targets:
+        # The visible fragment is raw HTML, which MkDocs does not validate.
+        # Native Markdown witnesses retain the original validation behavior,
+        # including images, decoded paths, queries, fragments and warning
+        # levels. A hidden subtree prevents extra layout or keyboard targets;
+        # whitespace-only labels add no visible text.
+        witnesses = []
+        for kind, href in dict.fromkeys(targets):
+            target = f"<{href}>" if "<" not in href and ">" not in href else href
+            witnesses.append(f"{'!' if kind == 'img' else ''}[ ]({target})")
+        rendered += '\n\n<div class="bp-body-link-validation" hidden markdown="1">\n\n'
+        rendered += "\n\n".join(witnesses) + "\n\n</div>"
+    return rendered
 
 
 def _render_environment(
@@ -2316,6 +2499,19 @@ def _render_environment(
             sources_base=sources_base,
         )
         for part in (statement, remainder)
+    )
+
+    # References in either chunk may be used by the other. If one chunk is
+    # preconverted, render both with the shared article context: otherwise its
+    # consumed definitions would leave the remaining Markdown links unresolved.
+    references = {}
+    affected = "<" in statement or "<" in remainder
+    if affected:
+        context = _body_converter()
+        context.convert("\n\n".join((statement, remainder)))
+        references = context.references
+    statement, remainder = (
+        _protect_markdown_in_html(part, references=references, force=affected) for part in (statement, remainder)
     )
 
     code_links, implementation_rows, linked, unresolved = _lean_presentation(node, linker)
@@ -2406,9 +2602,14 @@ def _lean_presentation(
         elif location is not None:
             fallback.append(f'{code} <span class="bp-where">{html.escape(location.path.as_posix())}</span>')
             linked += 1
+        elif ambiguous := linker.index.ambiguity(name):
+            fallback.append(f'{code} <span class="bp-missing">defined more than once in the Lean sources</span>')
+            unresolved.append(
+                f"declaration defined more than once in the Lean sources: {node.id}: {name} ({ambiguous})"
+            )
         else:
             fallback.append(f'{code} <span class="bp-missing">not found in the Lean sources</span>')
-            unresolved.append(f"{node.id}: {name}")
+            unresolved.append(f"declaration not found in the Lean sources: {node.id}: {name}")
 
     code_links = f'<span class="bp-code-links">{"".join(icons)}</span>' if icons else ""
     rows = [("Lean", " · ".join(fallback))] if fallback else []

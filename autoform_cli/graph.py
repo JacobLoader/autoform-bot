@@ -14,16 +14,14 @@ import os
 import re
 import stat
 from dataclasses import dataclass
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .lean import declaration_names
-from .markdown import mask_code_and_comments
+from .markdown import link_definitions, link_targets, mask_code_and_comments, resolved_path
 
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
-_LINK = re.compile(r"(?<!!)\[[^\]]+\]\(\s*(<[^>]+>|[^)\s]+)(?:\s+[^)]*)?\)")
-_INLINE_CODE = re.compile(r"(`+).*?\1")
 ARTICLE_ID_PATTERN = re.compile(r"af_[0-9a-f]{24}\Z")
 _FRONTMATTER_KEYS = frozenset(
     {
@@ -148,7 +146,11 @@ class _NodeSource:
 def load_graph(blueprint_dir: str | Path) -> Graph:
     """Load and validate Markdown nodes beneath *blueprint_dir*."""
 
-    blueprint = Path(blueprint_dir).expanduser().resolve()
+    # As every link in it is resolved, so a link above it that cannot be read
+    # fails here once instead of failing every link.
+    blueprint = resolved_path(Path(blueprint_dir).expanduser())
+    if blueprint is None:
+        raise GraphValidationError([f"blueprint directory cannot be resolved: {blueprint_dir}"])
     if not blueprint.is_dir():
         raise GraphValidationError([f"blueprint directory does not exist: {blueprint}"])
 
@@ -249,7 +251,7 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
             not_ready=metadata.get("not_ready") in _TRUE,
             discussion=metadata.get("discussion"),
             origin=metadata.get("origin"),
-            sources=parsed_node.source_targets,
+            sources=tuple(dict.fromkeys(parsed_node.source_targets)),
             parent=parents[parsed_node.id],
             depth=_article_depth(parsed_node.id, parents),
             article_id=metadata.get("article_id"),
@@ -530,7 +532,10 @@ def _parse_node(node_id: str, path: Path, text: str) -> tuple[_ParsedNode | None
     # Fences, comments and indented code are read as the page and the audit
     # read them, so a section a reader sees never loses its links here, and a
     # link the page shows as code is not read as one.
-    for line in mask_code_and_comments(lines[body_start:]):
+    body = mask_code_and_comments(lines[body_start:])
+    # A reference link takes its target from a definition anywhere on the page.
+    references = link_definitions(body)
+    for line in body:
         heading = _HEADING.match(line)
         if heading:
             level = len(heading.group(1))
@@ -544,11 +549,7 @@ def _parse_node(node_id: str, path: Path, text: str) -> tuple[_ParsedNode | None
                 section = heading_key if level == 2 and heading_key in targets else None
             continue
         if section is not None:
-            for match in _LINK.finditer(_INLINE_CODE.sub("", line)):
-                target = match.group(1)
-                if target.startswith("<") and target.endswith(">"):
-                    target = target[1:-1]
-                targets[section].append(target)
+            targets[section].extend(link_targets(line, references))
 
     if title is None:
         issues.append(f"{node_id}: missing H1 title")
@@ -654,20 +655,7 @@ def _normalize_value(node_id: str, line_number: int, key: str, value: str) -> tu
         if folded not in {"allowed", "forbidden"}:
             return value, f"{location}: 'open_statements' accepts allowed or forbidden"
         return folded, None
-    if key == "mathlib_file" and not _is_portable_relative_path(value):
-        return value, f"{location}: 'mathlib_file' must be a portable relative path"
     return value, None
-
-
-def _is_portable_relative_path(value: str) -> bool:
-    path = Path(value)
-    windows = PureWindowsPath(value)
-    return (
-        not path.is_absolute()
-        and not windows.is_absolute()
-        and ".." not in path.parts
-        and ".." not in windows.parts
-    )
 
 
 def _unquote_scalar(value: str) -> str:
@@ -682,20 +670,28 @@ def _resolve_target(
     blueprint: Path,
     canonical_ids: dict[Path, str],
 ) -> tuple[str | None, str | None]:
-    split = urlsplit(target)
+    try:
+        split = urlsplit(target)
+    except ValueError:
+        return None, f"{node.id}: dependency target must be a relative Markdown path: {target!r}"
     if split.scheme or split.netloc or split.query:
         return None, f"{node.id}: dependency target must be a relative Markdown path: {target!r}"
     raw_path = unquote(split.path)
     if not raw_path:
         return None, f"{node.id}: dependency target must name a Markdown file: {target!r}"
+    if "\x00" in raw_path:
+        return None, f"{node.id}: dependency target contains an invalid path: {target!r}"
     relative = Path(raw_path)
     if relative.is_absolute() or relative.suffix != ".md":
         return None, f"{node.id}: dependency target must be a relative .md file: {target!r}"
 
-    resolved = (node.path.parent / relative).resolve()
+    resolved = resolved_path(node.path.parent / relative)
+    if resolved is None:
+        return None, f"{node.id}: dependency target does not exist: {target!r}"
     if not _is_within(resolved, blueprint):
         return None, f"{node.id}: dependency target escapes the blueprint directory: {target!r}"
-    if not resolved.is_file():
+    # Before Python 3.14, `Path.is_file` raises under an unreadable directory.
+    if not os.path.isfile(resolved):
         return None, f"{node.id}: dependency target does not exist: {target!r}"
     dependency = canonical_ids.get(resolved)
     if dependency is None:

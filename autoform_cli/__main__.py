@@ -13,6 +13,7 @@ import sys
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 from . import status
 from .article_identity import ArticleIdWriteError, plan_article_ids, write_article_ids
@@ -36,8 +37,8 @@ from .library.locate import LibraryError, WorkspaceError
 from .library.search import LibraryResult, library_argument, search_with_libraries
 from .markdown import local_target_issue
 from .project import ProjectCatalogError, ProjectCreateError, create_project, inspect_project, load_release_catalog
-from .render import PublicationError, render_site
-from .runtime import RuntimeProjectionError, resolve_runtime_paths
+from .render import SOURCES_DIR, PublicationError, render_site
+from .runtime import RuntimeProjectionError, projection_omissions, resolve_runtime_paths
 from .scaffold import ScaffoldError, scaffold_project
 from .search import SearchError, search_blueprint, statement_preview
 from .skeleton import (
@@ -48,7 +49,6 @@ from .skeleton import (
     write_packets,
     write_skeleton_report,
 )
-from .unused_hypotheses import find_unused_hypotheses, format_unused_hypotheses
 from .work import WORK_SCHEMA, WorkError, assumption_contract, list_ready_work, work_context
 
 
@@ -398,33 +398,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         "for the whole extraction; the Lake freshness check before them has its own budget",
     )
 
-    unused = subparsers.add_parser(
-        "unused-hypotheses",
-        help="report the hypotheses that the proof of each theorem the blueprint names never uses",
-    )
-    unused.add_argument("blueprint_dir")
-    unused.add_argument(
-        "--lean-root",
-        type=Path,
-        required=True,
-        help="built Lean project whose declarations the blueprint names",
-    )
-    unused.add_argument(
-        "--node",
-        action="append",
-        dest="nodes",
-        metavar="ID",
-        help="restrict to one article id (repeatable)",
-    )
-    unused.add_argument("--json", action="store_true", help="write stable machine-readable output")
-    unused.add_argument(
-        "--timeout",
-        type=_positive_seconds,
-        metavar="SECONDS",
-        help=f"seconds the Lean probe may run (default {DEFAULT_PROBE_TIMEOUT:g}); "
-        "the Lake freshness check before it has its own budget",
-    )
-
     render = subparsers.add_parser("render", help="build the publishable blueprint")
     render.add_argument("blueprint_dir")
     render.add_argument("-o", "--output", default="site-src", help="output directory")
@@ -432,13 +405,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     render.add_argument("--repository-url", help="project URL, e.g. https://github.com/owner/repo")
     render.add_argument(
         "--ref",
-        help="commit or branch to link; links appear only if its local commit "
-        "holds the exact rendered inputs",
+        help="commit or branch to link; code links appear only if its local commit holds "
+        "the captured Lean sources, and links into the blueprint only if it also holds the blueprint",
     )
     render.add_argument(
         "--require-declarations",
         action="store_true",
-        help="fail when a 'lean:' declaration is not found in the Lean sources "
+        help="fail when a 'lean:' declaration is not found in the Lean sources, is defined more than once in them, "
         "or cannot be looked up because the sources cannot be read",
     )
 
@@ -468,8 +441,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _migrate(args)
     if args.command == "skeleton":
         return _skeleton(args)
-    if args.command == "unused-hypotheses":
-        return _unused_hypotheses(args)
     if args.command == "render":
         return _render(args)
     return 2
@@ -529,28 +500,84 @@ def _init(args: argparse.Namespace) -> int:
     return 0
 
 
-def _source_link_issues(graph: Graph) -> list[str]:
-    """Name each ``## Sources`` link that is neither an http(s) link nor a file in the blueprint.
+def _byte_order_mark_warnings(graph: Graph) -> list[str]:
+    """Name each article that starts with a byte-order mark, which hides frontmatter on its first line."""
+    warnings = []
+    for node in graph.nodes.values():
+        try:
+            with node.path.open("rb") as article:
+                marked = article.read(3) == b"\xef\xbb\xbf"
+        except OSError:
+            continue
+        if marked:
+            warnings.append(
+                f"{node.id}: starts with a byte-order mark, so frontmatter on its first line is read as text "
+                "and its keys are ignored; remove the mark"
+            )
+    return warnings
 
-    The generated workflows run ``check`` but not ``audit``, and render publishes
-    a missing or escaping target broken: a page a strict MkDocs build cannot find,
-    a repository URL that 404s, or a path off the site. Every runtime command
-    refuses other schemes and network locations, so ``check`` does too. Fragments
-    stay with ``audit``, whose anchor check renders each cited note.
+
+def _source_link_issues(graph: Graph) -> tuple[list[str], list[str]]:
+    """Name each ``## Sources`` link to a local path that is not a file in the blueprint, or is hidden.
+
+    Returns the errors, then the warnings. The generated workflows run ``check``
+    but not ``audit``, and render publishes a missing or escaping target broken:
+    a page a strict MkDocs build cannot find, a repository URL that 404s for a
+    hidden note under ``sources/``, or the link's text alone. Render omits
+    hidden files, so a hidden target is refused too, unless it is a note under
+    ``sources/`` that exists. Only a repository link reaches that note, and
+    render writes one when it links the other source notes there, so it is only
+    warned about: it must be committed. Fragments and other schemes stay with
+    ``audit``, whose anchor check renders each cited note.
     """
     rejected = {
         "source-not-found": "does not resolve to a file",
         "source-escapes-blueprint": "escapes the blueprint directory",
+        "malformed-source-url": "is not a valid URL",
         "malformed-source-link": "contains an invalid path",
-        "unsupported-source-link": "is not a local file or an http(s) link",
+        "hidden-source-target": "names a hidden path, which render omits",
     }
-    issues = []
+    issues, warnings = [], []
     for node in graph.nodes.values():
         for target in node.sources:
-            issue = local_target_issue(node.path, target.partition("#")[0], graph.blueprint_dir, label="source")
-            if issue is not None and issue[0] in rejected:
-                issues.append(f"{node.id}: source target {rejected[issue[0]]}: {target!r}")
-    return issues
+            located = target.partition("#")[0]
+            issue = local_target_issue(node.path, located, graph.blueprint_dir, label="source")
+            if issue is None or issue[0] not in rejected:
+                continue
+            code = issue[0]
+            if code == "hidden-source-target":
+                # The path local_target_issue found hidden: as written, with its `..` steps applied.
+                spelled = Path(os.path.normpath(node.path.parent.resolve() / unquote(urlsplit(located).path)))
+                if spelled.relative_to(graph.blueprint_dir).parts[:1] == (SOURCES_DIR,):
+                    if os.path.isfile(spelled):
+                        warnings.append(
+                            f"{node.id}: source target names a hidden path, which only a repository link reaches, "
+                            f"so it must be committed: {target!r}"
+                        )
+                        continue
+                    code = "source-not-found"
+            issues.append(f"{node.id}: source target {rejected[code]}: {target!r}")
+    return issues, warnings
+
+
+def _formalizable_container_warnings(graph: Graph) -> list[str]:
+    """Name each article that sets ``declaration`` and also contains articles.
+
+    The generated workflows run ``check`` but not ``audit``, which reports these
+    as ``formalizable-container``. Nothing counts or schedules a container's own
+    declaration, yet its scope is drawn complete once its leaves are proved.
+    The site still builds, so ``check`` warns rather than fails. The message
+    names the move because deleting only ``declaration:`` silences both
+    commands, and a container left with ``lean:`` and ``statement:`` is still
+    drawn complete while its own proof is open.
+    """
+    containers = {node.parent for node in graph.nodes.values() if node.parent is not None}
+    return [
+        f"{node.id}: formalizable article has contained articles; declaration-sized articles must be leaves; "
+        "move the declaration and its lean, statement and proof fields into a leaf article"
+        for node in graph.nodes.values()
+        if node.formalizable and node.id in containers
+    ]
 
 
 def _check(args: argparse.Namespace) -> int:
@@ -560,7 +587,8 @@ def _check(args: argparse.Namespace) -> int:
         for issue in exc.issues:
             print(f"error: {issue}")
         return 1
-    if source_issues := _source_link_issues(graph):
+    source_issues, source_warnings = _source_link_issues(graph)
+    if source_issues:
         for issue in source_issues:
             print(f"error: {issue}")
         return 1
@@ -579,21 +607,25 @@ def _check(args: argparse.Namespace) -> int:
     if summary:
         print(f"    {summary}")
 
-    if linker is None:
-        return 0
-
-    missing = [
-        f"{node.id}: declaration not found in {args.lean_root}: {name}"
-        for node in graph.nodes.values()
-        for name in declaration_names(node.lean or "")
-        if linker.location(name) is None
-    ]
-    for issue in missing:
-        print(f"error: {issue}")
-    if missing:
-        return 1
-    declared = sum(1 for node in graph.nodes.values() if node.lean)
-    print(f"    {declared} declaration(s) resolved in the Lean sources")
+    if linker is not None:
+        missing = [
+            f"{node.id}: declaration defined more than once in {args.lean_root}: {name} ({ambiguous})"
+            if (ambiguous := linker.index.ambiguity(name))
+            else f"{node.id}: declaration not found in {args.lean_root}: {name}"
+            for node in graph.nodes.values()
+            for name in declaration_names(node.lean or "")
+            if linker.location(name) is None
+        ]
+        for issue in missing:
+            print(f"error: {issue}")
+        if missing:
+            return 1
+        declared = sum(1 for node in graph.nodes.values() if node.lean)
+        print(f"    {declared} declaration(s) resolved in the Lean sources")
+    for omission in projection_omissions(graph):
+        print(f"warning: {omission}")
+    for warning in _byte_order_mark_warnings(graph) + _formalizable_container_warnings(graph) + source_warnings:
+        print(f"warning: {warning}")
     return 0
 
 
@@ -1365,22 +1397,6 @@ def _skeleton(args: argparse.Namespace) -> int:
     return 0 if report.clean else 1
 
 
-def _unused_hypotheses(args: argparse.Namespace) -> int:
-    try:
-        report = find_unused_hypotheses(
-            args.blueprint_dir,
-            lean_root=args.lean_root,
-            node_ids=tuple(args.nodes) if args.nodes else None,
-            timeout=args.timeout or DEFAULT_PROBE_TIMEOUT,
-        )
-    except SkeletonError as exc:
-        for issue in exc.issues:
-            print(f"error: {issue}", file=sys.stderr)
-        return 2
-    print(report.to_json() if args.json else format_unused_hypotheses(report), end="\n" if args.json else "")
-    return 0 if report.clean else 1
-
-
 def _claim_board(args: argparse.Namespace) -> ClaimBoard:
     worker_id = args.worker_id
     if not worker_id:
@@ -1436,9 +1452,7 @@ def _render(args: argparse.Namespace) -> int:
         return 1
 
     print(f"{report.output_dir}: {report.pages} pages, {report.nodes} nodes, {report.linked} code links")
-    for issue in report.unresolved:
-        print(f"warning: declaration not found in the Lean sources: {issue}")
-    for issue in report.warnings:
+    for issue in (*report.unresolved, *report.warnings):
         print(f"warning: {issue}")
     # A declaration that was never looked up is not known to exist.
     if (report.unresolved or report.unchecked) and args.require_declarations:

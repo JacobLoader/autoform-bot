@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import errno
+import html
+import os
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -14,14 +18,15 @@ from autoform_cli.markdown import (
     content_lines,
     has_substance,
     is_placeholder,
-    link_targets,
     local_target_issue,
     markdown_anchors,
     markdown_links,
     mask_fences_and_comments,
     PublishedTable,
     published_tables,
+    render_html,
     rendered_visible_text,
+    resolved_path,
     visible_prose,
 )
 
@@ -325,18 +330,57 @@ def test_a_bare_closing_fence_ends_the_block() -> None:
     assert [line for line in view.lines if line.strip()] == ["published"]
 
 
-def test_link_extraction_requires_a_closing_parenthesis() -> None:
-    assert link_targets("[Node](../roadmap/node.md)") == ("../roadmap/node.md",)
-    assert link_targets("[Node](<../roadmap/a b.md>)") == ("../roadmap/a b.md",)
-    assert link_targets("[Node](../roadmap/node.md") == ()
-    assert link_targets("`[Node](../roadmap/node.md)`") == ()
-    assert link_targets("![Figure](../image.png)") == ()
-
-
 def test_markdown_links_report_visible_links_with_line_numbers() -> None:
     text = "# Title\n\n[One](a.md)\n\n```\n[Two](b.md)\n```\n\n[Three](c.md)\n"
 
     assert markdown_links(text) == [(3, "a.md"), (9, "c.md")]
+
+
+#: Link forms paired with the targets the configured renderer links them to. A
+#: link the site publishes and the checks miss is never validated, so the scan
+#: must find each of these, and no link the site does not publish.
+LINK_CORPUS = [
+    ("[`Foo.bar`](a.md)", ["a.md"]),
+    ("[](a.md)", ["a.md"]),
+    ("`[Example](a.md)`", []),
+    ("[[1] Smith](a.md)", ["a.md"]),
+    (r"[\[1\] Smith](a.md)", ["a.md"]),
+    (r"\[Not a link](a.md)", []),
+    ("[![Badge](a.png)](b.md)", ["b.md"]),
+    ("[Paper][paper]\n\n[paper]: a.md", ["a.md"]),
+    ("[Paper][]\n\n[PAPER]: <a.md>", ["a.md"]),
+    ("[Paper] and [paper] [Other]\n\n[paper]: a.md", ["a.md", "a.md"]),
+    ("[Unknown][missing] and [unknown]", []),
+    ("[[a]] and [see [a]]\n\n[a]: x.md", []),
+    ("![x [a] y]\n\n[a]: x.md", ["x.md"]),
+    ("[x [b](c.md) y]", ["c.md"]),
+    ("[paper]: a.md", []),
+    ("[Paper][paper]\n\n```\n[paper]: a.md\n```", []),
+    ("[Paper][paper]\n\n    [paper]: a.md", []),
+    ("![Figure][fig]\n\n[fig]: a.png", []),
+    ("[One][x] and [Two](b.md)\n\n[x]: a.md\n[x]: c.md", ["c.md", "b.md"]),
+    (r"\\[x](a.md)", ["a.md"]),
+    (r"\![x](a.png)", ["a.png"]),
+    ("[Two  spaces]\n\n[two spaces]: a.md", ["a.md"]),
+    ("[Paper][two  spaces](b.md)\n\n[two spaces]: a.md", ["a.md"]),
+    ("- [Torsion](t.md) on $E[2]$\n\n[2]: ../sources/jones.md", ["t.md"]),
+    ("[Half-open $(0,1]$](h.md)", ["h.md"]),
+    (r"Index \([a]\) here" + "\n\n[a]: x.md", []),
+    ("[x][y][z](a.md)\n\n[z]: z.md", ["a.md"]),
+    ("[x [a][b] y][undefined]\n\n[b]: b.md", []),
+    ("[Paper][missing][b](x.md)\n\n[paper]: p.md\n[b]: b.md", ["p.md", "x.md"]),
+    ("[Node](<a b.md>)", ["a b.md"]),
+    ("[Node](a.md", []),
+    ("![Figure](a.png)", []),
+]
+
+
+@pytest.mark.parametrize(("source", "expected"), LINK_CORPUS)
+def test_links_are_the_ones_the_configured_renderer_publishes(source: str, expected: list[str]) -> None:
+    published = re.findall(r'<a href="([^"]*)"', render_html(source))
+
+    assert [html.unescape(href) for href in published] == expected
+    assert [target for _, target in markdown_links(source)] == expected
 
 
 def test_anchors_follow_headings_and_explicit_ids(tmp_path: Path) -> None:
@@ -389,6 +433,9 @@ def test_local_targets_are_resolved_against_the_boundary(tmp_path: Path) -> None
     source = tmp_path / "coverage" / "README.md"
     source.parent.mkdir()
     source.write_text("# Coverage\n", encoding="utf-8")
+    hidden = tmp_path / ".drafts" / "notes.md"
+    hidden.parent.mkdir()
+    hidden.write_text("# Notes\n", encoding="utf-8")
 
     def issue(target: str) -> str | None:
         problem = local_target_issue(source, target, tmp_path, label="coverage")
@@ -396,12 +443,120 @@ def test_local_targets_are_resolved_against_the_boundary(tmp_path: Path) -> None
 
     assert issue("../roadmap/node.md") is None
     assert issue("../roadmap/node.md#results") is None
+    assert issue("../.x/../roadmap/node.md") is None
     assert issue("https://example.invalid/page") is None
     assert issue("../roadmap/node.md#absent") == "coverage-anchor-not-found"
     assert issue("../roadmap/absent.md") == "coverage-not-found"
     assert issue("../../outside.md") == "coverage-escapes-blueprint"
+    assert issue("../.drafts/notes.md") == "hidden-coverage-target"
+    # Render publishes neither a hidden page nor its links.
+    assert local_target_issue(hidden, "#notes", tmp_path, label="coverage") is None
     assert issue("mailto:someone@example.invalid") == "unsupported-coverage-link"
     assert issue("//example.invalid/page") == "unsupported-coverage-link"
+
+
+def test_a_link_through_a_hidden_symlink_is_hidden(tmp_path: Path) -> None:
+    """Issue #304: render resolves links in a copy of the vault without symlinks.
+
+    `../.link/paper.md` reaches a published file through `.link`, a symlink to
+    `sources`, but render would link `.link/paper.md`, a page it never writes. The
+    hidden folder holding the vault does not count.
+    """
+    root = tmp_path / ".checkout"
+    for name in ("sources/paper.md", "roadmap/result.md"):
+        (root / name).parent.mkdir(parents=True)
+        (root / name).write_text("# Page\n", encoding="utf-8")
+    try:
+        (root / ".link").symlink_to("sources", target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    def issue(target: str) -> str | None:
+        problem = local_target_issue(root / "roadmap" / "result.md", target, root, label="source")
+        return None if problem is None else problem[0]
+
+    assert issue("../sources/paper.md") is None
+    assert issue("../.link/paper.md") == "hidden-source-target"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows applies `..` as written, before any link")
+def test_resolved_path_follows_links_as_python_3_13_does(tmp_path: Path) -> None:
+    # Before 3.13, `os.path.realpath` recurses once per link and stops at a loop.
+    root = tmp_path.resolve()
+    (root / "away").mkdir()
+    (root / "here" / "sub").mkdir(parents=True)
+    links = {"loop": "loop", "grow": "grow/more", "away": str(root / "away"), "sub/back": "../away"}
+    links |= {"sub/up": "../", "sub/dot": "./../.."}
+    links |= {f"hop{n}": f"loop/../hop{n + 1}" for n in range(45)} | {"hop45": "away/file.tex"}
+    links |= {f"chain{n}": f"chain{n + 1}" for n in range(1000)}
+    try:
+        for name, target in links.items():
+            (root / "here" / name).symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    def resolved(path: str) -> str:
+        return resolved_path(root / "here" / path).relative_to(root).as_posix()
+
+    assert resolved("loop/x") == "here/loop/x"
+    assert resolved("loop/../away/file.tex") == "away/file.tex"
+    # A later `..` steps out of the link it follows, not out of the name as written.
+    assert resolved("loop/../sub/back/../file.tex") == "file.tex"
+    assert resolved("grow/x") == "here/grow/more/x"
+    assert resolved("hop0") == "away/file.tex"
+    assert resolved("chain0") == "here/chain1000"
+    # An empty part and `.` in a link's target, and a link met again once it is resolved.
+    assert resolved("sub/up/../file.tex") == "file.tex"
+    assert resolved("sub/dot/file.tex") == "file.tex"
+    assert resolved("sub/back/../here/sub/back/file.tex") == "away/file.tex"
+
+
+def test_a_link_that_cannot_be_read_does_not_resolve(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
+    # macOS follows a link whose mode forbids reading it, so keeping it as
+    # written would hide where it leads.
+    root = tmp_path.resolve()
+    (root / "away").mkdir()
+    (root / "away" / "paper.md").write_text("# Paper\n", encoding="utf-8")
+    (root / "blueprint" / "roadmap").mkdir(parents=True)
+    unreadable_link(root / "blueprint" / "locked", root / "away")
+
+    assert resolved_path(root / "blueprint" / "locked" / "paper.md") is None
+    issue = local_target_issue(root / "blueprint" / "roadmap" / "result.md", "../locked/paper.md", root / "blueprint", label="source")
+    assert issue == ("source-not-found", "source link does not resolve to a file: '../locked/paper.md'")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows resolves with os.path.realpath")
+def test_resolved_path_gives_up_past_its_link_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # On a case-insensitive file system each level of links can double the
+    # spellings of a link, so the reads are capped.
+    root = tmp_path.resolve()
+    try:
+        for n in range(5):
+            (root / f"chain{n}").symlink_to(f"chain{n + 1}")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+    monkeypatch.setattr("autoform_cli.markdown._MAX_LINKS", 4)
+
+    assert resolved_path(root / "chain1") == root / "chain5"
+    assert resolved_path(root / "chain0") is None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows resolves with os.path.realpath")
+def test_a_path_that_fails_to_resolve_does_not_resolve_to_a_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Resolving can fail, as `ntpath.realpath` does for a path over Windows'
+    # length limit.
+    (tmp_path / "paper.md").write_text("# Paper\n", encoding="utf-8")
+
+    def refuse(path: str) -> str:
+        raise OSError(errno.ENAMETOOLONG, os.strerror(errno.ENAMETOOLONG), path)
+
+    monkeypatch.setattr("autoform_cli.markdown._realpath_posix", refuse)
+
+    assert resolved_path(tmp_path / "paper.md") is None
+    issue = local_target_issue(tmp_path / "result.md", "paper.md", tmp_path, label="source")
+    assert issue == ("source-not-found", "source link does not resolve to a file: 'paper.md'")
 
 
 def test_a_statement_runs_from_the_title_to_the_first_h2() -> None:

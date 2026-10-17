@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import errno
 import hashlib
 import json
 import os
@@ -32,7 +33,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import psutil
 import tomli
@@ -50,6 +51,7 @@ from .lean import (
     index_project,
     resolve_lean_root,
 )
+from .markdown import resolved_path
 
 SKELETON_SCHEMA = "autoform-skeleton/v5"
 SEMANTIC_SCHEMA = "autoform-lean-expr/v4"
@@ -1536,13 +1538,43 @@ def _translate_lakefile(root: Path) -> bytes:
 
 
 def module_of(path: Path, libraries: tuple[LeanLibrary, ...]) -> str | None:
-    """Return the Lean module name of a source file, or ``None`` if no library holds it."""
+    """Return the Lean module name of a source file, or ``None`` if no library builds it.
+
+    Lake builds only the modules a library's roots and globs make buildable, not
+    every file under its srcDir, so a stray file there has no module.
+    """
 
     resolved = path.resolve()
-    held = [lib.src_dir for lib in libraries if resolved != lib.src_dir and resolved.is_relative_to(lib.src_dir)]
-    if resolved.suffix != ".lean" or not held:
+    if resolved.suffix != ".lean":
         return None
-    return ".".join(resolved.relative_to(max(held, key=lambda src_dir: len(src_dir.parts))).with_suffix("").parts)
+    held = [lib for lib in libraries if resolved != lib.src_dir and resolved.is_relative_to(lib.src_dir)]
+    for library in sorted(held, key=lambda lib: len(lib.src_dir.parts), reverse=True):
+        module = ".".join(resolved.relative_to(library.src_dir).with_suffix("").parts)
+        if _builds(library, module):
+            return module
+    return None
+
+
+def _builds(library: LeanLibrary, module: str) -> bool:
+    """Whether Lake builds ``module`` for ``library``, as ``LeanLibConfig.isBuildableModule`` decides.
+
+    Lake finds, imports and builds a module by that rule, not by ``isLocalModule``:
+    a glob matches the module, or a root prefixes it and a glob matches that root.
+    Without ``globs``, each root is its own glob.
+    """
+
+    globs = library.globs or library.roots
+
+    def globbed(name: str) -> bool:
+        for glob in globs:
+            base, mode = (glob[:-2], glob[-1]) if glob.endswith((".*", ".+")) else (glob, "")
+            if (name == base and mode != "+") or (mode and name.startswith(f"{base}.")):
+                return True
+        return False
+
+    return globbed(module) or any(
+        (module == root or module.startswith(f"{root}.")) and globbed(root) for root in library.roots
+    )
 
 
 def path_of(module: str, libraries: tuple[LeanLibrary, ...], lean_root: Path) -> str | None:
@@ -2752,13 +2784,9 @@ def locate_declaration(
 
     location = index.find(name)
     if location is None:
+        if ambiguous := index.ambiguity(name):
+            return None, f"declaration defined more than once in the Lean sources: {ambiguous}"
         return None, "declaration not found in the Lean sources"
-    if name in index.elsewhere:
-        # The lexical index cannot tell which of several declarations Lean binds
-        # a name to (one may be private, or in a file no target builds), so the
-        # name fails closed.
-        files = sorted(path.as_posix() for path in (location.path, *index.elsewhere[name]))
-        return None, f"several source files declare it: {', '.join(files)}"
     module = module_of(lean_root / location.path, libraries)
     if module is None:
         return None, f"source {location.path.as_posix()} is not built by any library target"
@@ -2934,9 +2962,11 @@ def source_passage(node: Node, blueprint: Path, *, issues: list[str] | None = No
 
     A ``## Sources`` link to a non-Markdown file inside the blueprint with a
     ``#L<start>-L<end>`` fragment names the exact source text the statement
-    came from. The first such link wins. Markdown targets are notes, not
-    passages, and are ignored here. When the first locator names no text there
-    is no passage, and the reason is appended to ``issues`` if given.
+    came from. The first such link wins. Markdown files are notes, not
+    passages, and are ignored here, but a link that names no regular file in
+    the blueprint is reported whatever its suffix, as check reports it. When
+    the first locator names no text there is no passage, and the reason is
+    appended to ``issues`` if given.
     """
 
     def broken(target: str, why: str) -> tuple[None, None]:
@@ -2945,15 +2975,46 @@ def source_passage(node: Node, blueprint: Path, *, issues: list[str] | None = No
         return None, None
 
     for target in node.sources:
-        parsed = urlsplit(target)
+        try:
+            parsed = urlsplit(target)
+        except ValueError:
+            continue
         if parsed.scheme or parsed.netloc:
             continue
-        match = _LINE_LOCATOR.fullmatch(parsed.fragment)
-        if match is None or not parsed.path or parsed.path.endswith(".md"):
+        path = unquote(parsed.path)
+        match = _LINE_LOCATOR.fullmatch(unquote(parsed.fragment))
+        if match is None or not path:
             continue
-        candidate = (node.path.parent / parsed.path).resolve()
+        if "\x00" in path:
+            return broken(target, "contains an invalid path")
+        candidate = resolved_path(node.path.parent / path)
+        if candidate is None:
+            return broken(target, "names a path that cannot be resolved")
         if not candidate.is_relative_to(blueprint.resolve()):
             return broken(target, "points outside the blueprint")
+        # Each way a locator's file cannot be read is this article's problem, so
+        # the other articles still extract.
+        try:
+            metadata = os.stat(candidate)
+        except OSError as error:
+            if error.errno in (errno.ELOOP, errno.ENAMETOOLONG):
+                return broken(target, "names a path that cannot be resolved")
+            if error.errno in (errno.EACCES, errno.EPERM):
+                return broken(target, "names a file that cannot be read")
+            return broken(target, "names a missing file")
+        if not stat.S_ISREG(metadata.st_mode):
+            return broken(target, "names something other than a regular file")
+        # As audit judges a link that names a file: a Markdown file, in any
+        # letter case, is a note, whose fragment names a heading.
+        if candidate.suffix.casefold() == ".md":
+            continue
+        if metadata.st_size > _SNAPSHOT_FILE_LIMIT:
+            return broken(target, f"names a file over the {_SNAPSHOT_FILE_LIMIT}-byte limit")
+        try:
+            # Opening it tests readability; `os.access` ignores Windows ACLs.
+            os.close(os.open(candidate, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)))
+        except OSError:
+            return broken(target, "names a file that cannot be read")
         try:
             captured = _read_snapshot_file(candidate)
             if captured is None:
@@ -2967,8 +3028,12 @@ def source_passage(node: Node, blueprint: Path, *, issues: list[str] | None = No
                 lines.pop()
         except (ValueError, UnicodeError):
             return broken(target, "names a file that is not readable UTF-8 text")
-        start = int(match.group(1))
-        end = int(match.group(2) or start)
+        try:
+            start = int(match.group(1))
+            end = int(match.group(2) or start)
+        except ValueError:
+            # By default `int` refuses more than 4,300 digits, far past any file's last line.
+            return broken(target, "names no lines of its file")
         if start < 1 or end < start or end > len(lines):
             return broken(target, "names no lines of its file")
         relative = candidate.relative_to(blueprint.resolve()).as_posix()
@@ -3232,6 +3297,7 @@ def _validate_managed_output(path: Path, *, kind: str) -> tuple[int, int, str] |
     if not (
         isinstance(payload, dict)
         and payload.get("kind") == kind
+        and isinstance(payload.get("schema"), str)
         and (kind, payload.get("schema")) in MANAGED_OUTPUT_SCHEMAS
         and isinstance(payload.get(kind), list)
     ):

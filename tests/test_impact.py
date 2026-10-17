@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 import autoform_cli.lean as lean_module
-from autoform_cli import __main__ as cli, claims, skeleton
+from autoform_cli import __main__ as cli, claims, runtime, skeleton
 from autoform_cli import _tree_snapshot as tree_snapshot_module
 from autoform_cli._tree_snapshot import TreeChangedError
 from autoform_cli.impact import (
@@ -35,7 +35,6 @@ from autoform_cli.impact import (
     revision_impact,
 )
 from autoform_cli.lean import snapshot_project_sources
-from autoform_cli.runtime import load_runtime_graph
 from autoform_cli.skeleton import LeanLibrary, SkeletonError, lean_libraries
 from autoform_cli.work import work_context
 
@@ -197,7 +196,7 @@ def test_module_import_impact_reports_reverse_import_scope_without_blocking() ->
     assert formatted[0] == "Import edit allowed in Demo.Base for base [af_base]."
     assert f"Module graph revision: {report.module_graph_revision}" in formatted
     assert "Module scope: loaded-root-library-graph" in formatted
-    assert formatted[-1] == "Required claims for the import edit: " + ", ".join(
+    assert formatted[-1] == "Claim targets of the import edit: " + ", ".join(
         f"{target} (key {key})"
         for target, key in zip(report.claim_targets, report.claim_keys)
     )
@@ -2074,9 +2073,9 @@ def test_cli_import_impact_text_report_lists_each_section(tmp_path: Path, monkey
         f"  chapter/uses [{_USES_ID}]: Demo",
         "Potentially affected unowned helpers:",
         *(f"  {name} (Demo): {keyed(_lean_key(name))}" for name in helpers),
-        "Check active claims or semantic changes for: "
+        "Check other workers, live claims, or semantic changes for: "
         + keyed(_USES_ID, "chapter/inlines", "chapter/loose", *map(_lean_key, helpers)),
-        f"Required claims for the import edit: {keyed(_BASE_ID, module)}",
+        f"Claim targets of the import edit: {keyed(_BASE_ID, module)}",
     ]
     assert calls[0]["timeout"] == 30
 
@@ -2267,6 +2266,45 @@ def test_helpers_are_located_by_source_name_in_their_module_s_file(tmp_path: Pat
     ]
 
 
+def test_helpers_sharing_a_source_name_are_located_in_their_own_module_s_file(tmp_path: Path, monkeypatch) -> None:
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _stub_lean_root(tmp_path)
+    with (lean_root / "Demo.lean").open("a", encoding="utf-8") as demo:
+        demo.write("\ntheorem Demo.dup : True := trivial\n")
+    # A private twin in a file that sorts first, and one private name in two modules.
+    (lean_root / "A.lean").write_text("private theorem Demo.dup : True := trivial\n", encoding="utf-8")
+    (lean_root / "Demo").mkdir()
+    for module, line in (("Extra", 2), ("More", 4)):
+        (lean_root / "Demo" / f"{module}.lean").write_text(
+            "namespace Demo\n" + "\n" * (line - 2) + "private theorem aux : True := trivial\nend Demo\n",
+            encoding="utf-8",
+        )
+    _stub_probe(
+        monkeypatch,
+        [
+            *_STUB_RECORDS,
+            _payload("Demo.dup", type_uses=["Demo.base"]),
+            _payload("_private.A.0.Demo.dup", module="A", type_uses=["Demo.base"], user_name="Demo.dup"),
+            _payload(
+                "_private.Demo.Extra.0.Demo.aux", module="Demo.Extra", type_uses=["Demo.base"], user_name="Demo.aux"
+            ),
+            _payload(
+                "_private.Demo.More.0.Demo.aux", module="Demo.More", type_uses=["Demo.base"], user_name="Demo.aux"
+            ),
+        ],
+    )
+
+    report = revision_impact(project, "chapter/base", lean_root=lean_root)
+
+    assert [(helper.name, helper.path, helper.line) for helper in report.helpers] == [
+        ("Demo.base_eq", "Demo.lean", 5),
+        ("Demo.dup", "Demo.lean", 9),
+        ("_private.A.0.Demo.dup", "A.lean", 1),
+        ("_private.Demo.Extra.0.Demo.aux", "Demo/Extra.lean", 2),
+        ("_private.Demo.More.0.Demo.aux", "Demo/More.lean", 4),
+    ]
+
+
 def test_unselected_source_with_a_quoted_module_name_stays_local(tmp_path: Path, monkeypatch, capsys) -> None:
     project = _blueprint_project(tmp_path, "Demo")
     lean_root = _stub_lean_root(tmp_path)
@@ -2305,6 +2343,25 @@ def test_unselected_source_with_a_quoted_module_name_stays_local(tmp_path: Path,
     assert helpers["Demo.greek"] == "Demo/α.lean"
 
 
+def test_revision_impact_reads_the_roadmap_once_before_the_probe(tmp_path: Path, monkeypatch) -> None:
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _stub_lean_root(tmp_path)
+    calls = _stub_probe(monkeypatch)
+    original = runtime.build_runtime_graph
+    probes_before_each_read = []
+
+    def counted(*args, **kwargs):
+        probes_before_each_read.append(len(calls))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(runtime, "build_runtime_graph", counted)
+
+    revision_impact(project, "chapter/base", lean_root=lean_root)
+
+    # One read selects the article; the read after the probe checks that the roadmap held still.
+    assert probes_before_each_read == [0, 1]
+
+
 def _rewrite_base(project: Path) -> None:
     metadata = [f"article_id: {_BASE_ID}", "declaration: definition", "statement: formalized", "lean: Demo.base"]
     _write_article(project, "base.md", metadata=metadata, title="Base, revised")
@@ -2314,27 +2371,9 @@ def _delete_empty(project: Path) -> None:
     (project / "blueprint/roadmap/chapter/empty.md").unlink()
 
 
-@pytest.mark.parametrize(("selector", "change"), [("chapter/base", _rewrite_base), ("chapter/empty", _delete_empty)])
-def test_revision_impact_refuses_a_roadmap_that_changes_while_it_is_read(
-    tmp_path: Path, monkeypatch, selector: str, change
-) -> None:
-    project = _blueprint_project(tmp_path, "Demo")
-    lean_root = _stub_lean_root(tmp_path)
-    calls = _stub_probe(monkeypatch)
-
-    def changed(target: Path):
-        change(project)
-        return load_runtime_graph(target)
-
-    monkeypatch.setattr("autoform_cli.impact.load_runtime_graph", changed)
-
-    with pytest.raises(ImpactError, match="^the roadmap changed while it was read; rerun the command$"):
-        revision_impact(project, selector, lean_root=lean_root)
-    assert calls == []
-
-
+@pytest.mark.parametrize("change", [_rewrite_base, _delete_empty])
 def test_revision_impact_refuses_a_roadmap_that_changes_during_the_probe(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change
 ) -> None:
     project = _blueprint_project(tmp_path, "Demo")
     lean_root = _stub_lean_root(tmp_path)
@@ -2343,7 +2382,7 @@ def test_revision_impact_refuses_a_roadmap_that_changes_during_the_probe(
 
     def run_then_change(*args, **kwargs):
         output = original(*args, **kwargs)
-        _rewrite_base(project)
+        change(project)
         return output
 
     monkeypatch.setattr("autoform_cli.skeleton.run_probe", run_then_change)
