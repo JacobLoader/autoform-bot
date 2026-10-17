@@ -680,6 +680,28 @@ def test_plain_wheel_scrolls_the_page_instead_of_being_trapped(desktop_page: obj
     assert page.evaluate("window.scrollY") > before
 
 
+def test_a_plain_wheel_pans_the_full_page_explorer(desktop_page: object, explorer_url: str) -> None:
+    """The full-page explorer leaves nothing else to scroll, and a plain wheel or trackpad scroll did nothing there."""
+    page = desktop_page
+    page.goto(f"{explorer_url}/app.html")
+    node = page.locator('[data-autoform-node-id="chapter/middle"]')
+    node.wait_for()
+    frames = "() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))"
+    page.evaluate(frames)
+    before = node.bounding_box()
+    stage = page.locator(".bp-dag-stage").bounding_box()
+    assert before is not None and stage is not None
+
+    page.mouse.move(stage["x"] + stage["width"] / 2, stage["y"] + stage["height"] / 2)
+    page.mouse.wheel(0, -120)
+    page.evaluate(frames)
+    after = node.bounding_box()
+    assert after is not None
+    # Scrolling up moves the map down, at the same zoom.
+    assert after["y"] > before["y"]
+    assert abs(after["height"] - before["height"]) < 0.5
+
+
 def test_search_keyboard_navigation_and_focus(desktop_page: object, explorer_url: str) -> None:
     page = desktop_page
     _open_ready(page, explorer_url)
