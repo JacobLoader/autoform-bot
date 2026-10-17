@@ -624,6 +624,12 @@ def _check(args: argparse.Namespace) -> int:
         ]
         for issue in missing:
             print(f"error: {issue}")
+        if any(": declaration not found in " in issue for issue in missing):
+            print(
+                "note: check resolves lean: names only in the project's own Lean files, not in Mathlib or other "
+                "dependencies under .lake; if a name is a shared library's declaration, record it in the article's "
+                "implementation note instead"
+            )
         if missing:
             return 1
         declared = sum(1 for node in graph.nodes.values() if node.lean)

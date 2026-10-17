@@ -805,6 +805,51 @@ def test_check_resolves_a_name_beside_a_private_twin_and_rejects_two_public_ones
     assert [line for line in lines if line.startswith("error:")] == [error.format(root=lean_root) for error in errors]
 
 
+_LIBRARY_DECLARATION_NOTE = (
+    "note: check resolves lean: names only in the project's own Lean files, not in Mathlib or other dependencies "
+    "under .lake; if a name is a shared library's declaration, record it in the article's implementation note instead"
+)
+
+
+@pytest.mark.parametrize(
+    ("lean", "expected"),
+    [
+        (
+            "Lib.base Lib.other",
+            [
+                "error: base: declaration not found in {root}: Lib.base",
+                "error: base: declaration not found in {root}: Lib.other",
+                _LIBRARY_DECLARATION_NOTE,
+            ],
+        ),
+        (
+            "Project.base",
+            ["error: base: declaration defined more than once in {root}: Project.base (A.lean:1, B.lean:1)"],
+        ),
+    ],
+    ids=["library-declarations", "two-public-declarations"],
+)
+def test_check_says_where_a_library_declaration_goes_when_a_name_is_not_found(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], lean: str, expected: list[str]
+) -> None:
+    """Issue #346: a trial put library declarations in `lean:`, and the error alone did not say where they go."""
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "base.md", "# Base\n", lean=lean)
+    lean_root = tmp_path / "lean"
+    (lean_root / ".lake/packages/lib").mkdir(parents=True)
+    (lean_root / ".lake/packages/lib/Lib.lean").write_text(
+        "def Lib.base : Nat := 0\ndef Lib.other : Nat := 0\n", encoding="utf-8"
+    )
+    (lean_root / "A.lean").write_text("def Project.base : Nat := 0\n", encoding="utf-8")
+    (lean_root / "B.lean").write_text("theorem Project.base : True := trivial\n", encoding="utf-8")
+
+    assert main(["check", str(blueprint), "--lean-root", str(lean_root)]) == 1
+    lines = capsys.readouterr().out.splitlines()
+    expected = [line.format(root=lean_root) for line in expected]
+    # The errors, then one note however many names are missing, end the output; a name defined twice gets no note.
+    assert [line for line in lines if line.startswith(("error:", "note:"))] == lines[-len(expected) :] == expected
+
+
 def test_check_prints_its_warnings_after_the_whole_summary(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

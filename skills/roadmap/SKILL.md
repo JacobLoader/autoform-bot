@@ -62,12 +62,16 @@ and contacting people requires permission. Read [Setup's Zulip workflow](../setu
 requested Zulip work.
 
 Before adding a formalizable article, run `autoform search` over the blueprint
-for its result, by a few distinctive words of the statement and by a Lean name
-when one is known; the
-[search contract](../../autoform_cli/README.md#search-contract) says what is
-matched. Read each hit's statement, and narrow a query whose listing the limit
-cut short. Matching is literal, so the result is new only when retries with
-fewer words, and under other usual names for its objects, also show no article
+for its result and for each intermediate result its proof proves or cites, by a
+few distinctive words of each statement and by a Lean name when one is known;
+the [search contract](../../autoform_cli/README.md#search-contract) says what
+is matched. Bound a listing with search's limit, never by dropping lines (as
+`| head` does): each hit's name is followed by its statement, or a library
+hit's signature, and each listing ends by saying how many of its matches it
+shows. A line ending in `...` is shortened; the JSON output has it whole.
+Narrow a query whose listing the limit cut short. Matching is literal, so a
+result is new only when retries with fewer words, and under other usual names
+for its objects, also show no article
 stating it. Search the project's usable shared libraries in the same call: run
 `autoform library list .` once, and pass each package it reports as usable to
 every search as `--library NAME --lean-root .`, even while the blueprint is
@@ -85,7 +89,8 @@ project's own Lean files, since `autoform check --lean-root` resolves no other.
 A refusal (exit 2) is not an empty result: resolve what it reports without
 adding the article, and search again, except that a refusal naming a library is
 handled as the library search rules say. A dependency link to a page not yet
-written causes one, so search for a batch of articles before writing the first.
+written causes one, so search for a batch of articles before writing the first,
+for each one's result and the intermediate results its proof proves or cites.
 When another formalizable article already states the result, link to it from
 each article that needs it, under `## Depends on` or `## Proof depends on`, and
 from the coverage row, instead of adding a node. A hit that is more general, a

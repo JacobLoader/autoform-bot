@@ -354,7 +354,11 @@ autoform check blueprint --lean-root .
 autoform audit blueprint --lean-root .
 ```
 
-`check` validates the graph contract. `audit` adds deterministic completeness,
+`check` validates the graph contract. With `--lean-root` it resolves names only
+in the project's own Lean files, not in Mathlib or other dependencies under
+`.lake`; when a name is not found, a note at the end of the output says that a
+shared library's declaration belongs in the article's implementation note.
+`audit` adds deterministic completeness,
 provenance, coverage, checked-fact, and optional Lean-target checks. It is local
 and read-only: it neither contacts network services nor writes findings back
 into the blueprint. Pass `--json` for stable machine-readable output; a nonzero
