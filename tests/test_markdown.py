@@ -107,6 +107,12 @@ def test_the_extension_config_matches_the_scaffolded_mkdocs_yml() -> None:
     assert SITE_EXTENSION_CONFIGS["toc"] == {"toc_depth": "2-3"}
     assert "generic: true" in block
     assert SITE_EXTENSION_CONFIGS["pymdownx.arithmatex"] == {"generic": True}
+    # So do the fences.
+    fences = re.findall(r"- name: (\w+)\n +class: (\w+)\n +format: !!python/name:([\w.]+)\.(\w+)\n", block)
+    assert [
+        (fence["name"], fence["class"], fence["format"].__module__, fence["format"].__name__)
+        for fence in SITE_EXTENSION_CONFIGS["pymdownx.superfences"]["custom_fences"]  # type: ignore[index]
+    ] == fences
 
 
 #: Pins the Pages build may keep below uv.lock. mkdocs-literate-nav 0.6.2

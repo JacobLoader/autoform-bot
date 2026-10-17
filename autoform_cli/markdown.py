@@ -32,6 +32,7 @@ import re
 import stat
 from dataclasses import dataclass
 from functools import lru_cache
+from itertools import groupby
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -41,6 +42,11 @@ from markdown.blockprocessors import ReferenceProcessor
 from markdown.inlinepatterns import ReferenceInlineProcessor
 from pymdownx.arithmatex import RE_BRACKET_INLINE, RE_SMART_DOLLAR_INLINE
 from pymdownx.superfences import fence_div_format
+
+#: The class pymdownx.arithmatex gives each formula it finds in the site's
+#: Markdown. The page's MathJax reads these elements and no other text, so a
+#: title or the navigation shows its TeX as typed.
+FORMULA_CLASS = "arithmatex"
 
 #: The Markdown extensions the generated `mkdocs.yml` enables, and their
 #: settings. Anchor prediction builds a real converter from these, so the site's
@@ -63,6 +69,10 @@ SITE_EXTENSION_CONFIGS: dict[str, dict[str, object]] = {
         ]
     },
 }
+
+#: The file names MkDocs converts to pages, as ``mkdocs.utils.markdown_extensions``
+#: lists them. A file so named in the vault is a page on the site, whoever wrote it.
+PAGE_SUFFIXES = (".markdown", ".mdown", ".mkdn", ".mkd", ".md")
 
 #: A published heading's ID, read back out of the rendered HTML.
 _HEADING_ID = re.compile(r"<h[1-6][^>]*\bid=\"([^\"]*)\"", re.IGNORECASE)
@@ -675,6 +685,139 @@ def site_converter() -> pymarkdown.Markdown:
     )
 
 
+#: The sections that list an article's dependencies. The site shows them in
+#: its own form in the article's box, so they are not published as written.
+DEPENDENCY_SECTIONS = frozenset({"depends on", "proof depends on"})
+
+#: The boxes a leaf article's statement and the sections after it are
+#: published in, on the page of the article that contains it.
+STATEMENT_BOX = "bp-thmcontent"
+NOTES_BOX = "bp-thmnotes"
+
+#: What render writes at the top of every page an author wrote, in place of
+#: the page's frontmatter. MkDocs takes it for the page's metadata, so no key
+#: an author wrote reaches the theme, which prints metadata unescaped, and
+#: MkDocs reads no leading line of the page as metadata either.
+PAGE_HEADER = "---\n{}\n---\n"
+
+#: A code span, which shows a comment as typed, or an HTML comment with its end.
+_CODE_OR_COMMENT = re.compile(INLINE_CODE.pattern + r"|<!--(?s:.*?)-->")
+
+
+def published_lines(text: str) -> str:
+    """``text`` with every line break :meth:`str.splitlines` reads written as
+    ``\\n``, and ending in one.
+
+    The site edits articles a line at a time and writes them back this way,
+    so a form feed or U+2028, which Python-Markdown reads as text, is a line
+    break by the time the page is converted. Checking this text, rather than
+    the bytes in the vault, checks the lines the page has."""
+
+    return "".join(f"{line}\n" for line in text.splitlines())
+
+
+def published_page(text: str) -> str:
+    """The page render publishes for a page an author wrote with ``text``:
+    :data:`PAGE_HEADER`, then the page with its frontmatter, as
+    :func:`frontmatter_end` reads it, left as blank lines, so each line is
+    three below its line in the file, and without the HTML comments outside
+    code, as :func:`published_lines` writes it.
+
+    A comment in a code span or a fenced or indented code block is shown as
+    typed, so it stays, as does a comment that never closes, which check
+    warns about.
+    """
+
+    lines = text.splitlines()
+    start = frontmatter_end(lines)
+    if start == len(lines) and (start < 2 or lines[-1].strip() != "---"):
+        start = 0  # a first line of --- that nothing closes is no frontmatter
+    body = lines[start:]
+    code: set[int] = set()
+    _mask_indented_code(_mask_fences_and_comments(body, set(), unclosed_fence_is_text=True, fenced=code), code)
+    kept: list[str] = []
+    for in_code, run in groupby(enumerate(body), key=lambda numbered: numbered[0] in code):
+        block = "\n".join(line for _, line in run)
+        kept.append(block if in_code else _CODE_OR_COMMENT.sub(lambda found: found.group() if found[1] else "", block))
+    return PAGE_HEADER + "\n" * start + published_lines("\n".join(kept))
+
+
+def published_markdown(text: str) -> list[tuple[str, str]]:
+    """Each piece of the article ``text`` the site can publish, with the
+    Markdown it is converted in: the page MkDocs reads from its file, and the
+    statement and notes a leaf's boxes show on its chapter page. ``text`` is
+    :func:`published_page` text; the renderer publishes these same pieces,
+    so check reads an article as the site does."""
+
+    # MkDocs reads the header off, and the blank lines after it.
+    page = text.removeprefix(PAGE_HEADER).lstrip("\n")
+    pieces = [(page, page)]
+    parts = statement_and_notes(text)
+    # Render converts both parts on their own before boxing them when either
+    # holds a "<", which the box's HTML reading could take for a tag.
+    alone = any("<" in part for part in parts)
+    for part, box in zip(parts, (STATEMENT_BOX, NOTES_BOX), strict=True):
+        if part:
+            pieces.append((part, part if alone else "\n".join(boxed(part, box))))
+    return pieces
+
+
+def boxed(part: str, box: str) -> list[str]:
+    """The lines that publish ``part`` as Markdown in a ``<div>`` of class
+    ``box`` on a page."""
+
+    return [f'<div class="{box}" markdown="1">', "", part, "", "</div>"]
+
+
+def statement_and_notes(text: str) -> tuple[str, str]:
+    """A leaf article's statement and the sections after it, as the site
+    publishes them in the article's box.
+
+    The statement is :func:`article_parts`'s, the span the audit reads. The
+    dependency sections are dropped, since the box shows the DAG in its
+    metadata line, and the headings in both parts are demoted below the
+    chapter page's. Otherwise each part is the author's Markdown, less the
+    blank lines around it and each section's body, so an indented first line
+    is code in the box as in the vault."""
+
+    parts = article_parts(text)
+    notes = "\n\n".join(
+        f"{section.heading}\n\n{section.body}".rstrip()
+        for section in parts.sections
+        if section.title.casefold() not in DEPENDENCY_SECTIONS
+    )
+    return _demote_headings(parts.statement), _demote_headings(notes)
+
+
+def outside_fences(text: str, transform) -> str:
+    """Apply *transform* to every line that is not inside a code fence."""
+    fence: tuple[str, int] | None = None
+    out: list[str] = []
+    for line in text.splitlines():
+        match = FENCE.match(line) if fence is None else FENCE_CLOSE.match(line)
+        if match:
+            marker = match.group(1)
+            if fence is None:
+                fence = (marker[0], len(marker))
+            elif marker[0] == fence[0] and len(marker) >= fence[1]:
+                fence = None
+            out.append(line)
+            continue
+        out.append(line if fence is not None else transform(line))
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+
+
+def _demote_headings(text: str) -> str:
+    def demote(line: str) -> str:
+        heading = HEADING.match(line)
+        if heading is None:
+            return line
+        level = min(len(heading.group(1)) + 4, 6)
+        return f"{'#' * level} {heading.group(2)}"
+
+    return outside_fences(text, demote)
+
+
 def markdown_anchors(path: Path) -> set[str]:
     """Return the heading anchors MkDocs will publish for ``path``.
 
@@ -897,7 +1040,9 @@ def _mask_fences_and_comments(
     *,
     unclosed_fence_is_text: bool = False,
     unclosed_openers: set[int] | None = None,
+    fenced: set[int] | None = None,
 ) -> list[str]:
+    fenced = set() if fenced is None else fenced
     masked: list[str] = []
     fence: tuple[str, int] | None = None
     in_comment = False
@@ -917,6 +1062,7 @@ def _mask_fences_and_comments(
             index, in_comment = opened
             del masked[index:]
             hidden.difference_update(range(index, len(lines)))
+            fenced.difference_update(range(index, len(lines)))
             fence = None
             continue
         raw = lines[index]
@@ -930,6 +1076,7 @@ def _mask_fences_and_comments(
                 if marker[0] == fence[0] and len(marker) >= fence[1]:
                     fence = None
             hidden.add(index)
+            fenced.add(index)
             masked.append("")
             index += 1
             continue
@@ -941,6 +1088,7 @@ def _mask_fences_and_comments(
             fence = (marker[0], len(marker))
             opened = (index, opened_in_comment)
             hidden.add(index)
+            fenced.add(index)
             masked.append("")
             index += 1
             continue
@@ -1016,17 +1164,23 @@ def _is_hidden_path(path: Path, boundary: Path) -> bool:
 
 
 __all__ = [
+    "DEPENDENCY_SECTIONS",
     "EXTERNAL_SCHEMES",
     "FENCE",
     "FENCE_CLOSE",
+    "FORMULA_CLASS",
     "HEADING",
     "INLINE_CODE",
+    "NOTES_BOX",
+    "PAGE_SUFFIXES",
     "SITE_EXTENSIONS",
     "SITE_EXTENSION_CONFIGS",
+    "STATEMENT_BOX",
     "ArticleParts",
     "ArticleSection",
     "article_parts",
     "Content",
+    "boxed",
     "content",
     "content_lines",
     "frontmatter_end",
@@ -1038,6 +1192,11 @@ __all__ = [
     "markdown_anchors",
     "PublishedTable",
     "markdown_links",
+    "outside_fences",
+    "PAGE_HEADER",
+    "published_lines",
+    "published_markdown",
+    "published_page",
     "mask_code_and_comments",
     "mask_fences_and_comments",
     "published_tables",
@@ -1046,6 +1205,7 @@ __all__ = [
     "rendered_visible_text",
     "resolved_path",
     "site_converter",
+    "statement_and_notes",
     "strip_line_comments",
     "first_unclosed_fence",
     "visible_prose",
