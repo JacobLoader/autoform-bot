@@ -404,8 +404,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     render.add_argument("--repository-url", help="project URL, e.g. https://github.com/owner/repo")
     render.add_argument(
         "--ref",
-        help="commit or branch to link; links appear only if its local commit "
-        "holds the exact rendered inputs",
+        help="commit or branch to link; code links appear only if its local commit holds "
+        "the captured Lean sources, and links into the blueprint only if it also holds the blueprint",
     )
     render.add_argument(
         "--require-declarations",
