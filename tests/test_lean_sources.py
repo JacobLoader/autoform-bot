@@ -264,6 +264,23 @@ def test_declaration_scan_view_preserves_coordinates_and_original_literal_bytes(
     assert snapshot.source_files == ((Path("Project/Basic.lean"), source.encode("utf-8")),)
 
 
+@pytest.mark.parametrize(
+    ("source", "masked"),
+    [
+        ('def s := "ab" ++ t', "def s :=      ++ t"),
+        ("def c := 'x' ++ t", "def c :=     ++ t"),
+        ('def s := "a\\"b" ++ t', "def s :=        ++ t"),
+        ('def s := s!"a{x}b" ++ t', "def s := s!        ++ t"),
+        ('def s := r#"a"# ++ t', "def s :=        ++ t"),
+        ('def «a b» := "c"', "def «a b» :=    "),
+    ],
+)
+def test_masking_blanks_each_literal_through_its_closer(source: str, masked: str) -> None:
+    # The closer is appended before its frame pops; appended after, it would
+    # stay visible while the rest of its literal is blanked.
+    assert lean_module._without_lean_comments(source, mask_literals=True) == masked
+
+
 def test_alias_identifier_and_target_can_each_follow_on_the_next_line(tmp_path: Path) -> None:
     source = "\n".join(
         [
