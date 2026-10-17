@@ -590,6 +590,36 @@ def test_oversized_flat_scope_defaults_to_browse(desktop_page: object, explorer_
     playwright.expect(page.locator(".bp-dag-node")).to_have_count(0)
 
 
+def test_choosing_from_browse_keeps_the_readers_place_and_focus(desktop_page: object, explorer_url: str) -> None:
+    """Each choice from Browse scrolled the list to its top, and closing the inspector dropped focus to the page."""
+    page = desktop_page
+    page.goto(f"{explorer_url}/flat.html")
+    page.locator(".bp-dag-inventory > .bp-dag-load-more").click()
+    scroll = page.locator(".bp-dag-inventory-scroll")
+    row = page.locator(".bp-dag-inventory-row").nth(150)
+    row.scroll_into_view_if_needed()
+    # Off centre, since focus scrolls a row it reveals to the centre and must not pass for a kept place.
+    offset = scroll.evaluate("element => { element.scrollTop += 40; return element.scrollTop; }")
+    assert offset > 0
+
+    row.click()
+    playwright.expect(row).to_have_attribute("aria-current", "true")
+    assert scroll.evaluate("element => element.scrollTop") == offset
+    close = page.get_by_role("button", name="Clear node selection")
+    close.press("Enter")
+    playwright.expect(row).to_be_focused()
+    assert scroll.evaluate("element => element.scrollTop") == offset
+
+    # Back restores the selection and brings its row into view; Escape in the inspector clears it again.
+    scroll.evaluate("element => { element.scrollTop = 0; }")
+    page.evaluate("history.back()")
+    playwright.expect(row).to_have_attribute("aria-current", "true")
+    playwright.expect(row).to_be_in_viewport()
+    close.press("Escape")
+    playwright.expect(page.locator(".bp-dag-has-selection")).to_have_count(0)
+    playwright.expect(row).to_be_focused()
+
+
 def test_a_node_chosen_on_a_phone_lands_above_the_open_sheet(mobile_page: object, explorer_url: str) -> None:
     """Centring in the whole stage put the chosen node under the sheet its selection opens."""
     page = mobile_page
