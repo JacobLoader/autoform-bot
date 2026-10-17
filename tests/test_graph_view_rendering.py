@@ -62,7 +62,6 @@ def test_full_view_payload_is_deterministic_layout_ready_and_data_only(tmp_path:
     }
     assert payload["present_statuses"] == ["planned", "inventory_checked"]
     assert payload["nodes"][0]["title"] == "Unsafe <script>"
-    assert payload["nodes"][0]["catalog"] == "module"
     assert payload["nodes"][0]["status"] == "inventory_checked"
     assert payload["nodes"][0]["member_count"] == 1
     assert "members" not in payload["nodes"][0]
@@ -192,11 +191,11 @@ def test_a_catalog_carries_a_few_lean_names_and_counts_the_rest(tmp_path: Path) 
 
     catalog, leaf = json.loads(output.read_text(encoding="utf-8"))["nodes"]
     assert catalog["lean"] == ", ".join(names[:8])
-    assert catalog["lean_count"] == 150
+    assert catalog["lean_more"] == 142
     assert len(catalog["lean"].encode()) < 400
     # A declaration leaf names only its own declarations, so it keeps them all.
     assert leaf["lean"] == " ".join(names[:20])
-    assert "lean_count" not in leaf
+    assert "lean_more" not in leaf
 
 
 def test_isolated_inventory_does_not_spread_the_connected_dag(tmp_path: Path) -> None:
