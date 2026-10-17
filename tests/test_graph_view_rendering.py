@@ -330,7 +330,7 @@ def test_explorer_marks_isolates_but_keeps_them_in_the_complete_inventory(tmp_pa
     assert '" · items without edges included"' in script
 
 
-def test_explorer_is_responsive_accessible_and_history_addressable() -> None:
+def test_explorer_host_is_escaped_responsive_and_accessible() -> None:
     container = dag_viewer.render_container(
         'unsafe" data-x="oops',
         script_href='scripts/viewer" onload="oops.js',
