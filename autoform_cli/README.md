@@ -149,9 +149,9 @@ holds its dependents back until its whole-module assertion is recorded, so a
 dependent that needs one result links the declaration article that expounds it.
 
 `check --lean-root` and `audit --lean-root` resolve every name the catalog
-lists, and say for a catalog's unresolved name that a generated name belongs in
-the ledger. They cannot prove that the list omitted no newly added public
-declaration; completeness remains an authored assertion pending
+lists, and say for a catalog name they do not find that a generated name
+belongs in the ledger. They cannot prove that the list omitted no newly added
+public declaration; completeness remains an authored assertion pending
 repository-inventory reconciliation. `audit --lean-root` also reads the
 [elaboration limits](#elaboration-limits) of the declarations a catalog
 resolves and reports them as warnings, which never fail the audit. A catalog
@@ -1025,14 +1025,13 @@ route renders only the project shell and never fits the whole repository into
 one canvas. Every generated site projection uses the same deterministic
 JSON-derived Canvas and semantic-DOM explorer with search, filters, pan/zoom,
 and hash-routed node neighborhoods, so none inherits Mermaid's text, edge, or
-SVG-size ceilings. Authored Mermaid remains supported in the vault and book,
-including the bounded graph produced by `autoform-visualize`. A persistent
-hierarchy rail keeps the current ancestry and immediate contents visible. The
-project overview groups readable topic cards by authored mathematical area and
-reveals only a selected topic's direct dependency neighborhood; its detail
-drawer overlays the map instead of shrinking it. Breadcrumbs return through the
-explorer hierarchy to the book (to the home page for a roadmap with neither a
-root article nor root leaves), and every formal
+SVG-size ceilings. Authored Mermaid remains supported in the vault and book.
+A persistent hierarchy rail keeps the current ancestry and immediate contents
+visible. The project overview groups readable topic cards by authored
+mathematical area and reveals only a selected topic's direct dependency
+neighborhood; its detail drawer overlays the map instead of shrinking it.
+Breadcrumbs return through the explorer hierarchy to the book (to the home page
+for a roadmap with neither a root article nor root leaves), and every formal
 statement links to the smallest explorer scope containing that item. Point
 `mkdocs.yml` at `docs_dir: site-src` and enable `md_in_html` plus a
 `pymdownx.superfences` mermaid fence; see the [repository
@@ -1081,9 +1080,8 @@ What an existing repository meets when it moves to this version:
 
 ## Validation
 
-`autoform check` rejects cycles between authored articles or introduced at any
-rolled-up containment level, missing targets, escaping paths, symbolic links
-anywhere under `roadmap/`, and self-dependencies,
+`autoform check` rejects cycles between authored articles, missing targets,
+escaping paths, symbolic links anywhere under `roadmap/`, and self-dependencies,
 missing or multiple H1 titles, unsupported frontmatter keys, assertion values
 it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
@@ -1335,7 +1333,7 @@ locates the `set_option` of the first by name, for
 example `2 of 40 catalogued declarations have no maxHeartbeats limit
 (Inv.alpha at Inv.lean:1 and 1 more); existing code: change it only on request,
 and a finite limit must pass a rebuild`. A name that does not resolve is a
-`lean-target-not-found` finding and is not counted.
+`lean-target-not-found` or `lean-target-ambiguous` finding and is not counted.
 
 ATLAS v1, built with Autoform, shows what accumulates without this check: 901
 raised `maxHeartbeats` settings, 497 of them file- or section-wide and 9 of them

@@ -947,7 +947,7 @@ def test_a_topic_of_unchecked_catalogs_counts_each_as_a_pending_inventory(tmp_pa
     Scope items counted only checked catalogs, so a topic made of catalogs not
     yet checked read "0 items" under a hero that counted three: a blank status
     treatment, the smallest topic card, and catalog nodes that presented as ready to state.
-    The book and the structure page show each catalog as the explorer does,
+    The book shows each catalog as the explorer does,
     and a reference to one is drawn as neutrally as the catalog itself.
     """
     blueprint = tmp_path / "blueprint"
