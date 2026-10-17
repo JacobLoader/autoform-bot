@@ -313,8 +313,8 @@ def test_check_warns_about_a_catalog_that_links_no_ledger_under_sources(
     "link",
     [
         pytest.param("http://[oops/paper.md", id="invalid-url"),
-        pytest.param("../sources/" + "a" * 300 + ".md", id="long-name"),
-        pytest.param("../sources/loop.md", id="symlink-loop"),
+        pytest.param("../notes/" + "a" * 300 + ".md", id="long-name"),
+        pytest.param("../notes/loop.md", id="symlink-loop"),
     ],
 )
 def test_a_catalog_ledger_listed_after_a_link_that_cannot_be_resolved_still_counts(
@@ -322,14 +322,16 @@ def test_a_catalog_ledger_listed_after_a_link_that_cannot_be_resolved_still_coun
 ) -> None:
     # Each link once crashed the ledger rule: urlsplit rejects the first, Path.is_file
     # raises on the long name before Python 3.14, and resolve raises on the loop
-    # before 3.13. The rule now reads links without touching files.
+    # before 3.13. The rule now reads links without touching files, and none of
+    # these is under sources/, so it must read past each one to the ledger.
     blueprint = tmp_path / "blueprint"
     ledger = blueprint / "sources/module.md"
     ledger.parent.mkdir(parents=True)
     ledger.write_text("# Module declarations\n", encoding="utf-8")
     if link.endswith("loop.md"):
+        (blueprint / "notes").mkdir()
         try:
-            (blueprint / "sources/loop.md").symlink_to("loop.md")
+            (blueprint / "notes/loop.md").symlink_to("loop.md")
         except OSError:
             pytest.skip("symlinks are unavailable")
     _node(
