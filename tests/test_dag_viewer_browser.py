@@ -1061,6 +1061,16 @@ def test_published_explorer_controls_keep_their_own_styles_under_material(
     assert results.evaluate("element => getComputedStyle(element).listStyleType") == "none"
     assert results.locator("li").first.evaluate("element => getComputedStyle(element).marginLeft") == "0px"
 
+    # The atlas opens on its overview, whose heading took Material's large, light h2 and its margin.
+    page.goto(f"{site_url}/dependencies.html")
+    heading = page.locator(".bp-dag-inspector-inner > h2").evaluate(
+        """heading => {
+          const style = getComputedStyle(heading), root = getComputedStyle(document.documentElement);
+          return [style.fontWeight, parseFloat(style.marginTop) < parseFloat(root.fontSize)];
+        }"""
+    )
+    assert heading == ["700", True]
+
 
 def _assert_site_chrome_is_reachable(page: object) -> None:
     """The header, heading and navigation are visible, and each is the element a click would hit."""
