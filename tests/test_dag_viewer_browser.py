@@ -1240,6 +1240,8 @@ def test_a_published_chapter_explorer_links_its_textbook_chapter_and_keeps_its_h
     page = _open_site(desktop_page, site_url, "dependencies/chapters/algebra.html")
     playwright.expect(page.locator(".bp-dag-book")).to_have_attribute("href", "../../roadmap/algebra/index.html")
     playwright.expect(page.locator(".bp-dag-book")).to_be_visible()
+    # A section's explorer carries the same link to its own page, so it names no chapter.
+    playwright.expect(page.locator(".bp-dag-book")).to_have_text("Open the textbook page")
     playwright.expect(page.get_by_role("heading", level=1)).to_have_text("Algebra dependencies")
 
 
