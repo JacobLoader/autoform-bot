@@ -1208,8 +1208,15 @@ def test_published_explorer_controls_keep_their_own_styles_under_material(
     results.wait_for()
     assert results.evaluate("element => getComputedStyle(element).listStyleType") == "none"
     assert results.locator("li").first.evaluate("element => getComputedStyle(element).marginLeft") == "0px"
+    # The hierarchy rail's lists took Material's bullets, indents and block flow, and its title Material's light h1.
+    for rail_list in (page.locator(".bp-dag-navigation-path"), page.locator(".bp-dag-navigation-list").first):
+        assert rail_list.evaluate("element => getComputedStyle(element).listStyleType") == "none"
+        assert rail_list.evaluate("element => getComputedStyle(element).display") == "grid"
+        assert rail_list.locator("li").first.evaluate("element => getComputedStyle(element).marginLeft") == "0px"
+    title = page.locator(".bp-dag-navigation-title")
+    assert title.evaluate("element => getComputedStyle(element).fontWeight") == "650"
 
-    # The atlas opens on its overview, whose heading took Material's large, light h2 and its margin.
+    # The atlas overview's heading, in the details drawer, took Material's large, light h2 and its margin.
     page.goto(f"{site_url}/dependencies.html")
     heading = page.locator(".bp-dag-inspector-inner > h2").evaluate(
         """heading => {
