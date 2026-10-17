@@ -179,11 +179,13 @@ class SourceIndex:
         lacks may be declared outside the project, and one in another file may
         or may not be imported: either way the answer is ``None``. A candidate
         declared above the alias in its file is the one Lean sees, whatever
-        other files declare, since importing one of them would be a clash. A
-        candidate only below the alias in its file is not declared yet, so Lean
-        looks further out. A ``protected`` candidate is skipped for a
-        one-component target, except when it is also private, written or under
-        the module system; not knowing which, the answer is ``None`` again.
+        other files declare: importing a public one would be a clash, and an
+        imported private one is tried only after this file's own. A candidate
+        only below the alias in its file is not declared yet, so Lean looks
+        further out. A ``protected`` candidate is skipped for a one-component
+        target unless it is also private; written ``private`` is not consulted
+        here, and the module system can make a declaration private without it,
+        so the answer is ``None`` again.
         """
 
         assert declaration.alias is not None
@@ -706,16 +708,16 @@ def _update_source_digest(digest, relative: Path, data: bytes) -> None:
     digest.update(data)
 
 
-def _select(same: list[Declaration]) -> Declaration | None:
-    """The declaration a name means among all of its declarations, if one is sure.
+def _select(occurrences: list[Declaration]) -> Declaration | None:
+    """The declaration a name means among all of its declarations, when the index can be sure which.
 
     A private declaration, including the placeholder a wanted command makes,
     is local to its file, so beside them every other module sees the one
-    public declaration. Two public ones, or only private and wanted ones,
-    leave no single answer.
+    public declaration. Two or more public ones, or only private and wanted
+    ones, leave no single answer.
     """
 
-    public = [item for item in same if not item.private and item.keyword not in _WANTED_KEYWORDS] or same
+    public = [item for item in occurrences if not item.private and item.keyword not in _WANTED_KEYWORDS] or occurrences
     return public[0] if len(public) == 1 else None
 
 

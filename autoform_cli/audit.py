@@ -458,7 +458,6 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
         names = declaration_names(node.lean or "")
         resolved = []
         for name in names:
-            declaration = index.find(name)
             if ambiguous := index.ambiguity(name):
                 findings.append(
                     AuditFinding(
@@ -467,7 +466,7 @@ def _lean_findings(graph: Graph, lean_root: str | Path) -> list[AuditFinding]:
                         f"Lean declaration target is defined more than once: {name} ({ambiguous})",
                     )
                 )
-            elif declaration is None:
+            elif (declaration := index.find(name)) is None:
                 findings.append(
                     AuditFinding(
                         article_path,

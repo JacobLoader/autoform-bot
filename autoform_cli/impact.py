@@ -1494,7 +1494,7 @@ def _locator(
     libraries: tuple[LeanLibrary, ...],
     snapshot: IndexedSourceSnapshot,
 ) -> Locator:
-    """Locate a constant through one captured index, else by its captured module path.
+    """Locate a constant in its compiled module's file, with the line from the index, else through the index alone.
 
     The compiled module says which of a name's declarations a record is, so a
     private one beside a public twin is still located.

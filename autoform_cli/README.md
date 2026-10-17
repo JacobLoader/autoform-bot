@@ -676,8 +676,9 @@ assigned `article_id` and reports the exact article, dependencies, source
 targets (except those the Runtime contract leaves out), Lean targets, blockers,
 article and graph source revisions, and claim
 target. The article revision hashes that article's bytes alone. A Lean target's
-`source_file` is relative to `--lean-root`, and null without one or when the
-local scan does not find the declaration. The scan skips build output and nested
+`source_file` is relative to `--lean-root`, and null without one, when the
+local scan does not find the declaration, or when it finds several with none
+chosen (see Validation). The scan skips build output and nested
 checkouts, meaning any subdirectory with a `.git` entry, such as a worker's
 worktree or a submodule. Blockers are unmet dependency IDs or one of
 `roadmap:not-a-formalizable-leaf`, `roadmap:missing-article-id`,
@@ -1020,9 +1021,10 @@ A name declared once has that declaration, even a private one. A name declared
 more than once has the one declaration among them that is neither written
 `private` nor a wanted command, which Batteries makes a private placeholder:
 a private declaration is local to its file, so every other module sees the
-public one. With two public declarations, or only private and wanted
-ones, the name has none. Then `check --lean-root` fails with `declaration
-defined more than once`, `render` warns (`--require-declarations` exits 1),
+public one. With two or more public declarations (a file no library builds
+counts too), or only private and wanted ones, the name has none. Then
+`check --lean-root` fails with `declaration defined more than once`,
+`render` warns (`--require-declarations` exits 1),
 `audit` reports `lean-target-ambiguous`, `skeleton` leaves it
 unresolved, and work and search report no `source_file`; each
 diagnostic lists the `path:line` of every declaration of the name, by path and
@@ -1237,7 +1239,8 @@ any that is neither an http(s) link nor a path inside the blueprint), `used_by`,
 `used_by_count`, `shared_title`, and `matched_fields`; `article_id`,
 `declaration`, and `mathlib_file` may be null. A Lean target has `declaration`,
 `source_file` (relative to `--lean-root`), and `line`; the last two are null
-without `--lean-root` or when the lexical scan does not find the name.
+without `--lean-root`, when the lexical scan does not find the name, or when it
+finds several with none chosen (see Validation).
 `used_by` holds the first ten dependents by node ID, through statement or
 proof; `used_by_count` counts all. `shared_title` marks a title another article
 repeats and is advisory. `matched_fields` lists, best first and once each, the
