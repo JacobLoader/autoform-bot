@@ -106,9 +106,10 @@ then one fine article per coherent unit with one unique main result. Ground each
 statement and proof sketch in the source. Put genuine statement prerequisites
 under `## Depends on` and proof-only prerequisites under `## Proof depends on`.
 Never delete or reverse a genuine article edge to make a chapter-level or
-scope-level projection acyclic. The authored leaf DAG is the mathematical
-record; a coarser view may have relations in both directions and must present
-them honestly.
+scope-level projection acyclic. When the project's CI pins an older
+`AUTOFORM_REF`, its `autoform check` still rejects such a cycle as a
+`rolled-up dependency cycle`: leave out the edge that closes it until the pin
+moves, and report the old pin and that edge.
 Assign durable `article_id` metadata to new articles; run
 `autoform migrate article-ids blueprint --write` after creating the pages to
 add deterministic IDs.

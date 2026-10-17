@@ -1029,10 +1029,8 @@ also fails on a `lean:` name that is absent from the sources (as
 once in them (see below). It validates structure and leaves mathematical
 correctness to the agent and the Lean kernel.
 
-Contracting that acyclic article graph into chapters or nested scopes can put
-an edge in both directions between two containers. Generated views retain and
-draw both relations: an authored dependency is not deleted merely to make a
-coarser projection acyclic.
+Only the article graph must be acyclic, so project, chapter, and scope maps can
+relate two containers in both directions.
 
 Source-aware `--lean-root` inspection requires directory-descriptor traversal.
 Platforms without that capability, including Windows, fail closed instead of
