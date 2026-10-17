@@ -175,7 +175,8 @@ def test_the_structure_page_shows_the_tree_not_the_content(tmp_path: Path) -> No
     assert "<strong>blueprint/</strong>" in page
     # Files carry their title and status, and link to the statement itself.
     assert "top.md" in page and "bp-tree-title'>Top<" in page
-    assert "roadmap/README.md#top" in page
+    assert "roadmap/index.html#top" in page
+    assert "roadmap/README.md#top" not in page
     assert 'bp-swatch-fully_proved"' in page
     # Prose that was never meant to be a node is not an anomaly.
     assert "not in the graph" not in page
