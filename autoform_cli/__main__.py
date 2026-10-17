@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import shlex
+import signal
 import socket
 import subprocess
 import sys
@@ -54,6 +55,11 @@ from .work import WORK_SCHEMA, WorkError, assumption_contract, list_ready_work, 
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    if os.name == "posix" and signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN:
+        # An ignored SIGCHLD, on Linux even one inherited across exec, has the kernel
+        # reap every child, and Popen would report each exit status as 0. Autoform
+        # waits for its own children.
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
     parser = argparse.ArgumentParser(prog="autoform")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
