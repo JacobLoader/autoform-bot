@@ -321,6 +321,16 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
             summary="Analysis studies limits, approximation, measure, and functional spaces.",
             area="Analysis & Probability",
         ),
+        # Only module inventories: a topic with no target rolls up to planned.
+        ViewNode(
+            id="atlas/library",
+            title="Library",
+            kind="scope",
+            members=(),
+            status_counts=(("inventory_checked", 5),),
+            status_key="planned",
+            area="Algebra",
+        ),
     )
     dense_views["atlas"] = GraphView(kind="project", title="Knowledge atlas", nodes=atlas_nodes, edges=())
     dense_views["topics"] = GraphView(
@@ -330,6 +340,16 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
             ViewNode("topics/compactness", "Compactness", "scope", ("topics/compactness/a",), (("planned", 1),)),
             ViewNode("topics/heine-borel", "Heine-Borel theorem", "node", ("topics/heine-borel",), (("planned", 1),)),
             ViewNode("topics/tychonoff", "Tychonoff theorem", "node", ("topics/tychonoff",), (("planned", 1),)),
+            # Ten names, the first holding ", " inside guillemets, of which the explorer shows eight.
+            ViewNode(
+                "topics/library",
+                "Topology library",
+                "node",
+                ("topics/library",),
+                (("inventory_checked", 1),),
+                catalog="module",
+                lean=", ".join(["Topology.«open, closed»", *(f"Topology.lemma{index}" for index in range(2, 11))]),
+            ),
         ),
         edges=(),
     )
@@ -520,6 +540,13 @@ def test_atlas_bubbles_open_authored_mathematical_context(
         "continuity, deformation, and invariants"
     )
     playwright.expect(page.get_by_role("link", name="Explore topic")).to_be_visible()
+    # A topic made only of module inventories says so instead of its rolled-up planned status.
+    page.locator('[data-autoform-node-id="atlas/library"]').click()
+    playwright.expect(page.locator(".bp-dag-status-pill")).to_have_text("inventory only")
+    # Browse names each topic's region, which the map paints only on the canvas.
+    page.get_by_role("button", name="Browse").click()
+    topology = page.locator(".bp-dag-inventory-row", has_text="Topology")
+    playwright.expect(topology.locator(".bp-dag-inventory-meta")).to_contain_text("Geometry & Topology")
 
 
 def test_a_view_of_topics_and_results_draws_readable_result_cards(desktop_page: object, explorer_url: str) -> None:
@@ -532,6 +559,10 @@ def test_a_view_of_topics_and_results_draws_readable_result_cards(desktop_page: 
     assert title.evaluate("element => element.scrollWidth <= element.clientWidth")
     meta = page.locator('[data-autoform-node-id="topics/compactness"] .bp-dag-node-meta')
     playwright.expect(meta).to_have_text("1 item · 0 internal links")
+    # A drawn DAG counts its nodes by status; only an atlas counts topics by their least-complete item.
+    playwright.expect(page.locator(".bp-dag-inspector h3")).to_have_text("Nodes by status")
+    page.locator('[data-autoform-node-id="topics/library"]').click()
+    playwright.expect(page.locator(".bp-dag-lean")).to_contain_text("Topology.lemma8 and 2 more")
 
 
 def test_a_roadmap_without_articles_says_so(desktop_page: object, explorer_url: str) -> None:
@@ -709,6 +740,15 @@ def test_a_plain_wheel_pans_the_full_page_explorer(desktop_page: object, explore
     assert after["y"] > before["y"]
     assert abs(after["height"] - before["height"]) < 0.5
 
+    # Control with the wheel zooms by the size of the step, where it once took a fixed 13% step.
+    scale = r"node => Number(/scale\(([^)]+)\)/.exec(node.style.transform)[1])"
+    unzoomed = node.evaluate(scale)
+    page.keyboard.down("Control")
+    page.mouse.wheel(0, -10)
+    page.keyboard.up("Control")
+    page.evaluate(frames)
+    assert 1.0 < node.evaluate(scale) / unzoomed < 1.1
+
 
 def test_search_keyboard_navigation_and_focus(desktop_page: object, explorer_url: str) -> None:
     page = desktop_page
@@ -729,6 +769,11 @@ def test_search_keyboard_navigation_and_focus(desktop_page: object, explorer_url
     playwright.expect(result).to_be_focused()
     result.press("Escape")
     playwright.expect(search).to_be_focused()
+    playwright.expect(results).to_be_hidden()
+    # Focus moving from the results to a control outside them closes them too.
+    search.press("ArrowDown")
+    playwright.expect(result).to_be_focused()
+    page.get_by_role("button", name="Browse").focus()
     playwright.expect(results).to_be_hidden()
 
     search.fill("target")
@@ -977,7 +1022,19 @@ def test_hiding_the_selected_status_clears_selection(
     page.locator('[data-autoform-node-id="chapter/target"]').click()
     assert "node=chapter%2Ftarget" in page.url
 
-    page.locator(".bp-dag-filter-summary").click()
+    summary = page.locator(".bp-dag-filter-summary")
+    popover = page.locator(".bp-dag-filter-popover")
+    summary.click()
+    # Each status row carries its colour; Escape and a press outside both close the popover.
+    playwright.expect(popover.locator(".bp-dag-swatch")).to_have_count(3)
+    popover.locator("input").first.press("Escape")
+    playwright.expect(popover).to_be_hidden()
+    playwright.expect(summary).to_be_focused()
+    summary.click()
+    page.mouse.click(2, 2)
+    playwright.expect(popover).to_be_hidden()
+
+    summary.click()
     page.locator('.bp-dag-filter-popover input[value="planned"]').uncheck()
 
     assert "node=" not in page.url
