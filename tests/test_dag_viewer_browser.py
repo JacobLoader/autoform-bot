@@ -1140,23 +1140,43 @@ def test_a_published_canvas_covers_exactly_its_stage(
     assert abs(canvas["width"] - stage["width"]) < 1
 
 
-def test_the_published_landing_map_leaves_one_finger_scrolling_to_the_page(
-    mobile_page: object, site_url: str
+def test_the_published_landing_page_is_one_full_page_explorer_opened_by_its_hero(
+    desktop_page: object, site_url: str
 ) -> None:
-    page = _open_site(mobile_page, site_url, "index.html")
-    canvas = page.locator(".bp-dag-canvas")
-    assert canvas.evaluate("element => getComputedStyle(element).touchAction") != "none"
+    """The page stacked a hero, a framed map card and the explorer's own title over a boxed map."""
+    page = _open_site(desktop_page, site_url, "index.html")
+    box = page.locator(".bp-dag-viewer").bounding_box()
+    assert box is not None and (box["width"], box["height"]) == (1280, 900)
+    playwright.expect(page.locator(".md-header")).to_be_hidden()
+    intro = page.locator(".bp-dag-navigation .bp-dag-intro")
+    playwright.expect(intro).to_be_visible()
+    headings = page.get_by_role("heading", level=1)
+    playwright.expect(headings).to_have_count(1)
+    playwright.expect(headings).to_have_text("Explorer fixture")
+    playwright.expect(page.locator(".bp-dag-navigation-title")).to_have_count(0)
+    playwright.expect(intro.get_by_role("link", name="Read the book")).to_have_attribute("href", "roadmap/index.html")
+    # The rail lists the project's chapters under the hero.
+    playwright.expect(page.locator(".bp-dag-navigation-link", has_text="Algebra")).to_be_visible()
+    # Only autoform dashboard serves the live overlay; this local server answers 404, so no panel opens.
+    with page.expect_response(lambda response: response.url.endswith("/__autoform/live.json")):
+        page.reload()
+    page.locator(".bp-dag-navigation .bp-dag-intro").wait_for()
+    playwright.expect(page.locator("#bp-live-activity")).to_have_count(0)
 
 
-def test_the_published_landing_explorer_sits_unframed_in_its_card(mobile_page: object, site_url: str) -> None:
-    """The explorer drew a second border, rounded corners and a shadow inside the card, under its title."""
+def test_on_a_phone_the_landing_hero_opens_in_the_details_sheet(mobile_page: object, site_url: str) -> None:
+    """Phones hide the hierarchy rail, so the hero moves into the details sheet and a hidden heading names the page."""
     page = _open_site(mobile_page, site_url, "index.html")
-    viewer = page.locator(".bp-map .bp-dag-viewer")
-    frame = viewer.evaluate(
-        "element => ['borderTopWidth', 'borderTopLeftRadius', 'boxShadow'].map(key => getComputedStyle(element)[key])"
-    )
-    assert frame == ["0px", "0px", "none"]
-    playwright.expect(viewer.locator(".bp-dag-context")).to_be_hidden()
+    playwright.expect(page.locator(".bp-dag-navigation")).to_be_hidden()
+    handle = page.locator(".bp-dag-sheet-handle")
+    playwright.expect(handle).to_have_text("Explorer fixture")
+    playwright.expect(page.locator(".bp-dag-inspector .bp-dag-intro")).to_have_count(1)
+    headings = page.get_by_role("heading", level=1)
+    playwright.expect(headings).to_have_count(1)
+    handle.click()
+    playwright.expect(page.locator(".bp-dag-inspector .bp-hero-title")).to_be_visible()
+    # The open sheet's visible title is not a second heading.
+    playwright.expect(headings).to_have_count(1)
 
 
 def test_on_a_phone_the_status_filter_and_search_results_open_in_view(mobile_page: object, site_url: str) -> None:
@@ -1304,11 +1324,11 @@ def test_a_published_chapter_explorer_links_its_textbook_chapter_and_keeps_its_h
     playwright.expect(page.get_by_role("heading", level=1)).to_have_text("Algebra dependencies")
 
 
-def test_slash_on_the_published_landing_page_opens_site_search(desktop_page: object, site_url: str) -> None:
-    """The embedded explorer answers its shortcuts only while it has focus, so "/" stays Material's."""
+def test_slash_on_the_published_landing_page_opens_the_explorer_search(desktop_page: object, site_url: str) -> None:
+    """The landing page is the full-page explorer, so "/" opens its search, as on every explorer page."""
     page = _open_site(desktop_page, site_url, "index.html")
     page.keyboard.press("/")
-    playwright.expect(page.locator("input.md-search__input")).to_be_focused()
+    playwright.expect(page.locator(".bp-dag-search")).to_be_focused()
 
 
 def test_slash_inside_the_explorer_opens_its_search_but_an_input_keeps_its_keys(

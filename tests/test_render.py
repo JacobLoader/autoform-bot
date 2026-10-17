@@ -201,7 +201,6 @@ def test_the_root_explorer_takes_the_roadmap_root_title(tmp_path: Path) -> None:
     assert chapter_payload["title"] == "Top level dependencies"
     crumbs = [crumb["label"] for crumb in chapter_payload["view"]["breadcrumbs"]]
     assert crumbs == ["Book", "Learning theory", "Top level"]
-    assert '<span class="bp-map-title">Learning theory</span>' in (out / "README.md").read_text(encoding="utf-8")
 
 
 def test_a_graph_page_hides_its_legend_behind_an_icon(tmp_path: Path) -> None:
@@ -1008,37 +1007,34 @@ def test_a_topic_of_unchecked_catalogs_counts_each_as_a_pending_inventory(tmp_pa
     assert "Module A" not in structure
 
 
-def test_the_landing_page_is_the_hero_and_project_explorer_and_nothing_else(
+def test_the_landing_page_is_one_full_page_explorer_opened_by_its_hero(
     tmp_path: Path,
 ) -> None:
     """A blueprint's subject is the shape of the project, not its front matter.
 
-    The map used to sit below the authored prose and the status breakdown,
-    which put the one thing a visitor comes for last on the page. The prose
-    itself was a contents list and links to the roadmap, the coverage notes and
-    the dependency view, all of which are tabs.
+    The page stacked a hero, a framed map card with a title of its own, the
+    explorer's own title inside the card and a legend under it, so it read as a
+    column of headings with the map in a box. The hero now opens the explorer's
+    hierarchy rail, and the explorer has the window.
     """
     _render(tmp_path)
     overview = (tmp_path / "out/README.md").read_text(encoding="utf-8")
 
     # The sidebar would hold a single "Home" entry here, so the page drops it.
-    assert "  - navigation" in overview.split("---")[1]
-    assert overview.index("bp-hero") < overview.index('class="bp-map"')
-    assert "bp-landing-prose" not in overview
-    assert "## Contents" not in overview
-    assert '<span class="bp-map-title">Roadmap</span>' in overview
+    front = overview.split("---")[1]
+    assert all(f"  - {part}" in front for part in ("navigation", "toc", "footer"))
     assert 'data-graph-src="dependencies.json"' in overview
-    # The card frames the explorer and names its map, so the explorer draws neither.
-    assert 'data-layout="embedded"' in overview
-    assert ".bp-dag-viewer[data-layout=embedded] { border: 0; border-radius: 0; box-shadow: none; }" in overview
-    assert ".bp-dag-viewer[data-layout=embedded] .bp-dag-context { display: none; }" in overview
-    assert '<a href="dependencies.html">open full-page</a>' in overview
-    assert "```mermaid" not in overview
+    assert 'data-layout="app"' in overview
+    assert overview.index('class="bp-dag-viewer"') < overview.index('class="bp-dag-intro bp-landing-intro"')
+    intro = overview.split('class="bp-dag-intro bp-landing-intro"', 1)[1]
+    assert intro.index("bp-hero-title") < intro.index("bp-hero-figures") < intro.index("bp-intro-book")
+    assert '<a class="bp-intro-book" href="roadmap/index.html">Read the book</a>' in intro
+    # The hero's title is the page's one heading.
+    assert overview.count("<h1") == 1 and "\n# " not in overview
+    for retired in ("bp-map", 'class="bp-landing"', "open full-page", "## Status breakdown", "## Contents", "```mermaid"):
+        assert retired not in overview
     assert overview.count("blueprint-dag.js") == 1
     assert (tmp_path / "out/dependencies.json").is_file()
-    # The legend travels with the map instead of becoming a section of its own.
-    assert "## Status breakdown" not in overview
-    assert overview.index("bp-map-legend") > overview.index("bp-map-head")
 
 
 def test_the_legends_beside_the_explorer_count_what_its_rings_count(tmp_path: Path) -> None:
@@ -1097,7 +1093,6 @@ def test_the_legends_beside_the_explorer_count_what_its_rings_count(tmp_path: Pa
     overview = (out / "README.md").read_text(encoding="utf-8")
     assert "2 of 2 targets complete" in overview
     for legend in (
-        overview.split('class="bp-map-legend"', 1)[1],
         (out / "dependencies.md").read_text(encoding="utf-8"),
         (out / "dependencies/chapters/roadmap.md").read_text(encoding="utf-8"),
     ):

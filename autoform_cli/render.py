@@ -1613,95 +1613,74 @@ def _render_landing_page(
 ) -> str:
     """The landing page: what this is, how far it has got, and what is next.
 
-    Material renders a table of contents beside every page. On a short
-    dashboard it lists one or two headings and steals a third of the width, so
-    the page opts out.
+    Once the roadmap has articles to draw, the page is the full-page project
+    explorer, on the payload dependencies.md mounts, and the hero opens the
+    explorer's hierarchy rail (its details sheet on phones) in place of the
+    explorer's own title. The page then has one heading, and the map has the
+    rest of the window.
     """
     body = _document_body(text)
     title = _first_h1(text) or "Blueprint"
-    parts = [
+    hero = _render_hero(
+        title,
+        body,
+        graph,
+        statuses,
+        coverage=coverage,
+        coverage_href=_as_published(
+            mermaid.relative_link(destination / coverage.source_path, page, ".html")
+        ),
+    )
+    next_up = _next_target(
+        graph,
+        statuses,
+        page=page,
+        destination=destination,
+        group_pages=group_pages,
+        targets=targets,
+    )
+    front = [
         "---",
         # The hero sets the H1 itself, so the page title has to be declared
         # rather than discovered from the first Markdown heading.
         f"title: {title}",
-        # The sidebar lists the open tab's pages, and this tab holds only this
-        # page, so on the landing page it is a column of one word. The tabs
-        # already carry the reader to Book and Graph, so it goes, and the hero
-        # and explorer get the width instead.
+        # The sidebar would list this page alone, and the table of contents one
+        # or two headings, so both give their width back.
         "hide:",
         "  - navigation",
         "  - toc",
-        "---",
-        "",
-        '<div class="bp-landing" markdown="1">',
-        "",
-        _render_hero(
-            title,
-            body,
-            graph,
-            statuses,
-            coverage=coverage,
-            coverage_href=_as_published(
-                mermaid.relative_link(destination / coverage.source_path, page, ".html")
-            ),
-        ),
-        "",
-        _next_target(
-            graph,
-            statuses,
-            page=page,
-            destination=destination,
-            group_pages=group_pages,
-            targets=targets,
-        ),
     ]
-    # The legend sits under the map, so it counts what the map's rings count,
-    # deferred work and module inventories included, rather than the hero's
-    # declaration targets.
+    scopes = graph_views.group_nodes(graph)
+    if scopes:
+        book = graph_pages.book_contents(graph, scopes)
+        # Without a roadmap contents page the book starts here.
+        book_link = (
+            ""
+            if book == Path("README.md")
+            else '<a class="bp-intro-book" href="'
+            + html.escape(_as_published(mermaid.relative_link(destination / book, page, ".html")), quote=True)
+            + '">Read the book</a>'
+        )
+        explorer = dag_viewer.render_container(
+            graph_pages.PROJECT_PAYLOAD,
+            script_href=mermaid.relative_link(destination / DAG_SCRIPT, page, ".js"),
+            fallback_links=(("Open the dependency explorer", "dependencies.html"),),
+            fallback_total=1,
+            search_href=graph_pages.SEARCH_INDEX,
+            intro=f'<div class="bp-dag-intro bp-landing-intro">{hero}{book_link}{next_up}</div>',
+        )
+        return "\n".join([*front, "  - footer", "---", "", explorer]).rstrip() + "\n"
+    # A roadmap without articles has nothing to explore, so the hero stands
+    # over its status breakdown.
     breakdown = mermaid.render_legend(
         graph_views.scope_target_statuses(graph, statuses),
         graph_views.inventory_counts(graph, statuses),
     )
-    # dependencies.json is the project projection written by graph_pages. The
-    # landing page deliberately mounts that exact payload and host instead of
-    # maintaining a second, Mermaid-only preview of the same graph. A roadmap
-    # without articles has nothing to explore, so it gets no map.
-    if graph_views.group_nodes(graph):
-        parts.extend(
-            [
-                "",
-                '<div class="bp-map" markdown="1">',
-                '<div class="bp-map-head">',
-                f'<span class="bp-map-title">{html.escape(graph_views.group_title(graph, "roadmap"))}</span>',
-                '<span class="bp-map-hint">Explore mathematical regions, topics, and dependencies · '
-                '<a href="dependencies.html">open full-page</a></span>',
-                "</div>",
-                "",
-                dag_viewer.render_container(
-                    graph_pages.PROJECT_PAYLOAD,
-                    script_href=mermaid.relative_link(destination / DAG_SCRIPT, page, ".js"),
-                    fallback_links=(
-                        ("Open the dependency explorer", "dependencies.html"),
-                    ),
-                    fallback_total=1,
-                    layout="embedded",
-                    search_href=graph_pages.SEARCH_INDEX,
-                ),
-                "",
-                f'<div class="bp-map-legend" markdown="1">\n\n{breakdown}\n\n</div>'
-                if breakdown
-                else "",
-                "</div>",
-            ]
-        )
-    elif breakdown:
-        parts.extend(["", "## Status breakdown", "", breakdown])
-    # The authored body is a contents list and links to the roadmap, coverage
-    # contract and dependency view. The hero retains a compact coverage summary;
-    # repeating the full list here would only push the explorer down the page. Its
-    # opening sentence is already the hero's lead.
+    parts = [*front, "---", "", '<div class="bp-landing" markdown="1">', "", hero, "", next_up]
+    if breakdown:
+        parts.extend(["", breakdown])
     parts.append("</div>")
-    return "\n".join(part for part in parts if part is not None).rstrip() + "\n"
+    return "\n".join(parts).rstrip() + "\n"
 
 
 #: States a contributor could pick up today.
@@ -3001,31 +2980,55 @@ a:hover, a:visited:hover {{ color: var(--bp-link-hover); text-decoration: underl
   text-underline-offset: 0.15em;
 }}
 
-/* The map is the page's subject, so it gets a panel of its own and the
-   legend rides with it instead of becoming a section further down. */
-.bp-map {{
-  margin: 2.5rem 0;
-  border: 1px solid var(--bp-rule);
-  border-radius: var(--bp-radius);
-  background: var(--bp-surface);
-  overflow: hidden;
+/* On the landing page the hero opens the explorer's hierarchy rail, or its
+   details sheet on phones, so it is set to the rail's width. Material's
+   typeset rules reach the hero's heading, paragraph and links there, so these
+   rules carry a doubled class; the explorer's own rules stay in its script. */
+.bp-landing-intro.bp-landing-intro {{ margin: 0 .35rem 1.1rem; }}
+.bp-landing-intro.bp-landing-intro .bp-hero {{ margin: 0; }}
+.bp-landing-intro.bp-landing-intro .bp-hero-rule {{ width: 56px; height: 3px; }}
+.bp-landing-intro.bp-landing-intro .bp-hero-kicker {{ margin-top: 0.8rem; font-size: 0.6rem; }}
+.bp-landing-intro.bp-landing-intro .bp-hero-title {{
+  margin: 0.3rem 0 0;
+  color: var(--bp-fg);
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1.12;
 }}
-.bp-map-head {{
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.75rem;
-  padding: 0.9rem 1.25rem;
-  border-bottom: 1px solid var(--bp-rule);
-  background: var(--bp-sunken);
+.bp-landing-intro.bp-landing-intro .bp-hero-lead {{
+  max-width: none;
+  margin: 0.6rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
 }}
-.bp-map-title {{ font-size: 0.82rem; font-weight: 700; letter-spacing: -0.01em; }}
-.bp-map-hint {{ font-size: 0.7rem; color: var(--bp-muted); }}
-.bp-map-legend {{
-  padding: 1rem 1.25rem;
-  border-top: 1px solid var(--bp-rule);
-  background: var(--bp-sunken);
+.bp-landing-intro.bp-landing-intro .bp-hero-figures {{
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 0.9rem;
 }}
+.bp-landing-intro.bp-landing-intro .bp-figure {{ padding: 0.55rem 0.6rem; }}
+.bp-landing-intro.bp-landing-intro .bp-figure:last-child:nth-child(odd) {{ grid-column: 1 / -1; }}
+.bp-landing-intro.bp-landing-intro .bp-figure-value {{ font-size: 1.35rem; }}
+.bp-landing-intro.bp-landing-intro .bp-figure-label {{ margin-top: 0.3rem; font-size: 0.66rem; }}
+.bp-landing-intro.bp-landing-intro .bp-figure-note {{ font-size: 0.6rem; }}
+.bp-landing-intro.bp-landing-intro .bp-hero-bar {{ margin-top: 0.7rem; }}
+.bp-landing-intro.bp-landing-intro .bp-hero-coverage {{ margin-top: 0.6rem; font-size: 0.64rem; }}
+.bp-landing-intro.bp-landing-intro .bp-intro-book {{
+  display: inline-block;
+  margin-top: 0.85rem;
+  color: var(--bp-link);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-decoration: none;
+}}
+.bp-intro-book::after {{ content: " →"; }}
+.bp-landing-intro.bp-landing-intro .bp-next-target {{ margin: 0.9rem 0 0; padding: 0.6rem 0.7rem; }}
+.bp-landing-intro.bp-landing-intro .bp-next-title {{ font-size: 0.95rem; }}
+.bp-landing-intro.bp-landing-intro .bp-next-why,
+.bp-landing-intro.bp-landing-intro .bp-next-rests,
+.bp-landing-intro.bp-landing-intro .bp-next-actions {{ font-size: 0.7rem; }}
+.bp-landing-intro.bp-landing-intro .bp-live-activity {{ margin: 0.9rem 0 0; padding: 0.6rem 0.7rem; }}
+.bp-landing-intro.bp-landing-intro .bp-live-row {{ font-size: 0.7rem; }}
 
 /* One grid for the whole legend. The cells are emitted in reading order with
    no row wrapper, so every swatch, label and count sits on the same axis

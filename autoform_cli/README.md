@@ -1066,10 +1066,11 @@ explorer, and direct links to Lean declarations at the current commit:
 autoform render blueprint --output site-src --lean-root . --require-declarations
 ```
 
-`render` never writes into the vault. It leads the landing page with the project
-explorer, once the roadmap has articles to draw, over a summary of what is
-formalized and what is unblocked, places a compact
-progress summary after each chapter's opening prose, keeps `structure.md` as a
+`render` never writes into the vault. Once the roadmap has articles to draw, it
+makes the landing page the full-page project explorer, whose hierarchy rail
+opens with the project's title, what is formalized and what is unblocked, the
+coverage contract, and a link into the book (on phones these sit in the details
+sheet). It places a compact progress summary after each chapter's opening prose, keeps `structure.md` as a
 short page that opens the explorer, which shows the vault's hierarchy, and
 shows a source icon when a `lean:` declaration resolves to a repository
 permalink; a catalog

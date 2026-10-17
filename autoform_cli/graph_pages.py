@@ -37,6 +37,15 @@ PROJECT_PAYLOAD = "dependencies.json"
 SEARCH_INDEX = "dependencies/index.json"
 
 
+def book_contents(graph: Graph, groups: Collection[str]) -> Path:
+    """The book's contents page, relative to the site, which the Book tab opens.
+
+    Every explorer trail starts there. A roadmap with neither a root article
+    nor root leaves has no such page, so its trails start at home.
+    """
+    return Path("roadmap/README.md" if "roadmap" in graph.nodes or "roadmap" in groups else "README.md")
+
+
 def write_graph_pages(
     graph: Graph,
     statuses: dict[str, NodeStatus],
@@ -56,10 +65,7 @@ def write_graph_pages(
     # _write_page writes each payload beside its page.
     project_page = (destination / PROJECT_PAYLOAD).with_suffix(".md")
     full_page = destination / "dependencies/full.md"
-    # The book's contents, which the Book tab opens; every explorer trail starts
-    # there. A roadmap with neither a root article nor root leaves has no such
-    # page, so its trails start at home.
-    book_root = destination / ("roadmap/README.md" if "roadmap" in graph.nodes or "roadmap" in groups else "README.md")
+    book_root = destination / book_contents(graph, groups)
     search_index = destination / SEARCH_INDEX
     chapter_pages = {group: destination / "dependencies/chapters" / f"{group or 'roadmap'}.md" for group in groups}
     scope_maps = scope_views(graph, statuses)
