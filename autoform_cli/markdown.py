@@ -711,8 +711,14 @@ def _anchors_from_body(body: str) -> frozenset[str]:
     return frozenset(html.unescape(found) for found in _HEADING_ID.findall(rendered))
 
 
+# More link spellings than any one path in a blueprint needs. On a
+# case-insensitive file system, each level of links can double the spellings
+# of the same link, and resolving them all would take exponential time.
+_MAX_LINKS = 4096
+
+
 def resolved_path(path: Path) -> Path | None:
-    """``path`` with its symbolic links resolved, or None if one cannot be read.
+    """``path`` with its symbolic links resolved, or None if that fails or a link cannot be read.
 
     On POSIX, `_realpath_posix` resolves it as Python 3.13's `os.path.realpath`
     does, on every version: a symlink loop stays as written and the rest of the
@@ -720,9 +726,11 @@ def resolved_path(path: Path) -> Path | None:
     stops at a loop, applying the rest of the path's `..` steps as written, so
     a link after the loop could lead out of the blueprint unresolved, and
     `Path.resolve` raises when the path `realpath` returns still runs through a
-    loop. So a link gets the same verdict on every supported version; callers
-    still check where it points and whether it is a file. Windows `realpath`
-    applies `..` as written on every version, as Windows itself does.
+    loop. From 3.13 it runs too, because `realpath` keeps a link it cannot read
+    as written, so a target outside the blueprint would look inside. So a link
+    gets the same verdict on every supported version; callers still check where
+    it points and whether it is a file. Windows `realpath` applies `..` as
+    written on every version, as Windows itself does.
     """
 
     try:
@@ -730,8 +738,9 @@ def resolved_path(path: Path) -> Path | None:
             return Path(os.path.realpath(path))
         resolved = _realpath_posix(os.fspath(path))
     except (OSError, ValueError):
-        # A NUL in the path, which callers check for first, or a path Windows
-        # refuses to resolve, such as one over its length limit.
+        # A NUL in the path, which callers check for first, `os.getcwd` failing
+        # for a relative path, or a path Windows refuses to resolve, such as one
+        # over its length limit.
         return None
     return None if resolved is None else Path(resolved)
 
@@ -739,12 +748,14 @@ def resolved_path(path: Path) -> Path | None:
 def _realpath_posix(path: str) -> str | None:
     """Python 3.13's POSIX `os.path.realpath`, or None at a link it cannot read.
 
-    Each link is read once. A link met again before its target is resolved is
-    a loop and stays as written; a later `..` leaves it again. A part that
-    cannot be looked up, missing or under a loop, also stays as written, and
-    the parts after it still resolve. Unlike 3.13, a link that cannot be read
-    leaves the path unresolved: macOS follows a link whose mode forbids reading
-    it, so keeping that link as written would hide where it leads.
+    Each spelling of a link is read once. A link met again before its target is
+    resolved is a loop and stays as written; a later `..` leaves it again. A
+    part that cannot be looked up, missing or under a loop, also stays as
+    written, and the parts after it still resolve. Unlike 3.13, a link that
+    cannot be read leaves the path unresolved: macOS follows a link whose mode
+    forbids reading it, so keeping that link as written would hide where it
+    leads. A path that needs more than `_MAX_LINKS` spellings of links is not
+    resolved either.
     """
 
     pending: list[str | None] = path.split("/")[::-1]
@@ -773,6 +784,8 @@ def _realpath_posix(path: str) -> str | None:
         if joined in links:
             resolved = links[joined] or joined
             continue
+        if len(links) >= _MAX_LINKS:
+            return None
         try:
             target = os.readlink(joined)
         except OSError:

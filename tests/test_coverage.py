@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -831,21 +831,14 @@ def test_a_roadmap_link_through_a_symlink_to_another_folder_is_not_a_roadmap_art
     ]
 
 
-@pytest.mark.skipif(not hasattr(os, "lchmod"), reason="a symlink's own mode does not deny reading it here")
-def test_a_roadmap_link_through_a_link_that_cannot_be_read_is_not_a_roadmap_article(tmp_path: Path) -> None:
+def test_a_coverage_link_through_a_link_that_cannot_be_read_does_not_resolve(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
     blueprint = tmp_path / "blueprint"
     (blueprint / "sources").mkdir(parents=True)
     (blueprint / "sources" / "note.md").write_text("# Note\n", encoding="utf-8")
     (blueprint / "roadmap").mkdir()
-    alias = blueprint / "roadmap" / "alias.md"
-    alias.symlink_to("../sources/note.md")
-    os.lchmod(alias, 0)
-    try:
-        os.readlink(alias)
-    except OSError:
-        pass
-    else:
-        pytest.skip("the link can still be read")
+    unreadable_link(blueprint / "roadmap" / "alias.md", "../sources/note.md")
     _contract(blueprint, "| Aliased | DECOMPOSED | [Alias](../roadmap/alias.md) |\n")
 
     summary, issues = load_coverage(blueprint)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -195,26 +196,34 @@ def test_check_passes_a_sources_link_that_reaches_its_file_through_loops(tmp_pat
     assert main(["check", str(blueprint)]) == 0
 
 
-@pytest.mark.skipif(not hasattr(os, "lchmod"), reason="a symlink's own mode does not deny reading it here")
-def test_a_dependency_through_a_link_that_cannot_be_read_does_not_exist(tmp_path: Path) -> None:
+def test_a_dependency_through_a_link_that_cannot_be_read_does_not_exist(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
     blueprint = tmp_path / "blueprint"
     _node(blueprint, "result.md", "# Result\n## Depends on\n[x](../locked/a.md)\n")
     (tmp_path / "away").mkdir()
     (tmp_path / "away" / "a.md").write_text("# A\n", encoding="utf-8")
-    locked = blueprint / "locked"
-    locked.symlink_to(tmp_path / "away")
-    os.lchmod(locked, 0)
-    try:
-        os.readlink(locked)
-    except OSError:
-        pass
-    else:
-        pytest.skip("the link can still be read")
+    unreadable_link(blueprint / "locked", tmp_path / "away")
 
     with pytest.raises(GraphValidationError) as caught:
         load_graph(blueprint)
 
     assert caught.value.issues == ("result: dependency target does not exist: '../locked/a.md'",)
+
+
+def test_a_blueprint_behind_a_link_that_cannot_be_read_fails_once(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
+    # Every link in it would fail to resolve, so the blueprint fails instead.
+    _node(tmp_path / "real" / "blueprint", "result.md", "# Result\n## Depends on\n[x](other.md)\n")
+    _node(tmp_path / "real" / "blueprint", "other.md", "# Other\n")
+    unreadable_link(tmp_path / "via", tmp_path / "real")
+    blueprint = tmp_path / "via" / "blueprint"
+
+    with pytest.raises(GraphValidationError) as caught:
+        load_graph(blueprint)
+
+    assert caught.value.issues == (f"blueprint directory cannot be resolved: {blueprint}",)
 
 
 @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")

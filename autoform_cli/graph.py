@@ -146,7 +146,11 @@ class _NodeSource:
 def load_graph(blueprint_dir: str | Path) -> Graph:
     """Load and validate Markdown nodes beneath *blueprint_dir*."""
 
-    blueprint = Path(blueprint_dir).expanduser().resolve()
+    # As every link in it is resolved, so a link above it that cannot be read
+    # fails here once instead of failing every link.
+    blueprint = resolved_path(Path(blueprint_dir).expanduser())
+    if blueprint is None:
+        raise GraphValidationError([f"blueprint directory cannot be resolved: {blueprint_dir}"])
     if not blueprint.is_dir():
         raise GraphValidationError([f"blueprint directory does not exist: {blueprint}"])
 

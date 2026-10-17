@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -1910,9 +1911,10 @@ def test_extraction_reports_a_locator_through_links_alike_on_every_python(tmp_pa
     assert unresolved.reason.startswith("source locator ") and why in unresolved.reason
 
 
-@pytest.mark.skipif(not hasattr(os, "lchmod"), reason="a symlink's own mode does not deny reading it here")
 @pytest.mark.parametrize("cited", ["locked/secret.tex", "locked"], ids=["through-the-link", "the-link-itself"])
-def test_extraction_reports_a_locator_through_a_link_it_cannot_read(tmp_path: Path, cited: str) -> None:
+def test_extraction_reports_a_locator_through_a_link_it_cannot_read(
+    tmp_path: Path, cited: str, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
     # macOS follows a link whose mode forbids reading it, so keeping it as
     # written would hide where it leads.
     project = _project(tmp_path)
@@ -1920,15 +1922,8 @@ def test_extraction_reports_a_locator_through_a_link_it_cannot_read(tmp_path: Pa
     (blueprint / "sources").mkdir()
     (tmp_path / "away").mkdir()
     (tmp_path / "away" / "secret.tex").write_text("secret\n", encoding="utf-8")
-    locked = blueprint / "sources" / "locked"
-    locked.symlink_to(tmp_path / "away" / ("secret.tex" if cited == "locked" else ""))
-    os.lchmod(locked, 0)
-    try:
-        os.readlink(locked)
-    except OSError:
-        pass
-    else:
-        pytest.skip("the link can still be read")
+    target = tmp_path / "away" / "secret.tex" if cited == "locked" else tmp_path / "away"
+    unreadable_link(blueprint / "sources" / "locked", target)
     article = blueprint / "roadmap" / "basics" / "determined.md"
     _replace_source(article, "## Depends on", f"## Sources\n\n- [book](../../sources/{cited}#L1-L1)\n\n## Depends on")
 

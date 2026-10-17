@@ -4,6 +4,7 @@ import errno
 import html
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -510,32 +511,42 @@ def test_resolved_path_follows_links_as_python_3_13_does(tmp_path: Path) -> None
     assert resolved("sub/back/../here/sub/back/file.tex") == "away/file.tex"
 
 
-@pytest.mark.skipif(not hasattr(os, "lchmod"), reason="a symlink's own mode does not deny reading it here")
-def test_a_link_that_cannot_be_read_does_not_resolve(tmp_path: Path) -> None:
+def test_a_link_that_cannot_be_read_does_not_resolve(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
     # macOS follows a link whose mode forbids reading it, so keeping it as
     # written would hide where it leads.
     root = tmp_path.resolve()
     (root / "away").mkdir()
     (root / "away" / "paper.md").write_text("# Paper\n", encoding="utf-8")
     (root / "blueprint" / "roadmap").mkdir(parents=True)
-    locked = root / "blueprint" / "locked"
-    locked.symlink_to(root / "away")
-    os.lchmod(locked, 0)
-    try:
-        os.readlink(locked)
-    except OSError:
-        pass
-    else:
-        pytest.skip("the link can still be read")
+    unreadable_link(root / "blueprint" / "locked", root / "away")
 
-    assert resolved_path(locked / "paper.md") is None
+    assert resolved_path(root / "blueprint" / "locked" / "paper.md") is None
     issue = local_target_issue(root / "blueprint" / "roadmap" / "result.md", "../locked/paper.md", root / "blueprint", label="source")
     assert issue == ("source-not-found", "source link does not resolve to a file: '../locked/paper.md'")
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows resolves with os.path.realpath")
+def test_resolved_path_gives_up_past_its_link_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # On a case-insensitive file system each level of links can double the
+    # spellings of a link, so the reads are capped.
+    root = tmp_path.resolve()
+    try:
+        for n in range(5):
+            (root / f"chain{n}").symlink_to(f"chain{n + 1}")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+    monkeypatch.setattr("autoform_cli.markdown._MAX_LINKS", 4)
+
+    assert resolved_path(root / "chain1") == root / "chain5"
+    assert resolved_path(root / "chain0") is None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows resolves with os.path.realpath")
 def test_a_path_that_fails_to_resolve_does_not_resolve_to_a_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # As `ntpath.realpath` raises for a path over Windows' length limit.
+    # Resolving can fail, as `ntpath.realpath` does for a path over Windows'
+    # length limit.
     (tmp_path / "paper.md").write_text("# Paper\n", encoding="utf-8")
 
     def refuse(path: str) -> str:

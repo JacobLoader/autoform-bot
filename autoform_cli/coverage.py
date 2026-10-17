@@ -534,6 +534,7 @@ def _is_roadmap_article(target: str, *, coverage_path: Path, roadmap: Path) -> b
         return False
     candidate = resolved_path(coverage_path.parent / raw_path)
     if candidate is None:
+        # load_coverage reports such a link first, through local_target_issue.
         return False
     return candidate.is_relative_to(roadmap) and os.path.isfile(candidate) and candidate.suffix.casefold() == ".md"
 
