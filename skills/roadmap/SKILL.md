@@ -224,7 +224,10 @@ the article's `## Sources` section. Names Lean generates
 yet (behind `nonrec` or `meta`, or written `class inductive`) go in the ledger
 as supporting entries, never in `lean`; a `private` name never goes in `lean`.
 A keyword-declared public name left out of `lean` or unresolved means the
-catalog is not yet verified and must not carry formalized assertions.
+catalog is not yet verified and must not carry formalized assertions. Like any
+prerequisite, a catalog linked under `## Depends on` or `## Proof depends on`
+holds its dependents back until its whole-module assertion is recorded, so a
+dependent that needs one result links the declaration article that expounds it.
 
 For a large source, divide independent sections among available agents while
 retaining one owner for global coverage, status semantics, and dependency

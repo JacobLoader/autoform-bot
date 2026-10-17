@@ -140,8 +140,11 @@ supporting entries, never in `lean:`; a `private` name never goes in `lean:`.
 A completed catalog may assert `statement: formalized` and `proof: formalized`
 when the complete module has been checked. It contributes to the neutral
 inventory metric and graph status while remaining a readable page in the vault
-and a section of its parent chapter on the site, but stays outside the
-mathematical `Scoped roadmap` completion percentage.
+and a section of its parent chapter on the site, but its own entry stays
+outside the mathematical `Scoped roadmap` completion percentage. Like any
+prerequisite, a catalog linked under `## Depends on` or `## Proof depends on`
+holds its dependents back until its whole-module assertion is recorded, so a
+dependent that needs one result links the declaration article that expounds it.
 
 `check --lean-root` and `audit --lean-root` resolve every name the catalog
 lists, and say for a catalog's unresolved name that a generated name belongs in
@@ -557,7 +560,8 @@ declares nothing yet, so deferred work holds its scope open. All three also
 count every catalog, under a neutral status: `inventory checked` once the
 catalog is fully proved, which records inspection rather than a completed
 result, and `inventory pending` until then, whatever its derived state. Neither
-status changes a scope's rolled-up status or completion.
+status changes a scope's rolled-up status or completion, though a target that
+depends on a catalog waits for it like any prerequisite.
 
 Publication and audit are deliberately different gates. The generated
 `blueprint-pages.yml` runs `check` and `render`; it does not run `audit`. An
