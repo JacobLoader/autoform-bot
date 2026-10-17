@@ -1053,7 +1053,8 @@ explorer, once the roadmap has articles to draw, over a summary of what is
 formalized and what is unblocked, places a compact
 progress summary after each chapter's opening prose, writes `structure.md` so a
 vault's layout can be checked against the book it produces, and shows a source
-icon when a `lean:` declaration resolves to a repository permalink. Its
+icon when a `lean:` declaration resolves to a repository permalink; a catalog
+instead links its first eight names in its Lean row and counts the rest. Its
 `dependencies.md` opens a full-viewport application and rolls dependencies
 through the article hierarchy, with bounded project, chapter, and nested-scope
 projections. Global search loads a layout-free index and jumps to the smallest
@@ -1064,7 +1065,8 @@ one canvas. Every generated site projection uses the same deterministic
 JSON-derived Canvas and semantic-DOM explorer with search, filters, pan/zoom,
 and hash-routed node neighborhoods, so none inherits Mermaid's text, edge, or
 SVG-size ceilings. Authored Mermaid remains supported in the vault and book.
-Breadcrumbs return through the explorer hierarchy to the book, and every formal
+Breadcrumbs return through the explorer hierarchy to the book (to the home page
+for a roadmap with neither a root article nor root leaves), and every formal
 statement links to the smallest explorer scope containing that item. Point
 `mkdocs.yml` at `docs_dir: site-src` and enable `md_in_html` plus a
 `pymdownx.superfences` mermaid fence; see the [repository
