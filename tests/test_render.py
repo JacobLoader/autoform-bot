@@ -816,8 +816,8 @@ def test_a_topic_of_unchecked_catalogs_counts_each_as_a_pending_inventory(tmp_pa
     """The atlas counts every catalog that the hero above it counts.
 
     Scope items counted only checked catalogs, so a topic made of catalogs not
-    yet checked read "0 items" under a hero that counted three: a blank ring,
-    the smallest bubble, and catalog nodes that presented as ready to state.
+    yet checked read "0 items" under a hero that counted three: a blank status
+    treatment, the smallest topic card, and catalog nodes that presented as ready to state.
     The book and the structure page show each catalog as the explorer does,
     and a reference to one is drawn as neutrally as the catalog itself.
     """
@@ -859,8 +859,9 @@ def test_a_topic_of_unchecked_catalogs_counts_each_as_a_pending_inventory(tmp_pa
     assert topic["member_count"] == 3
     # An inventory never sets a scope's own status.
     assert topic["status"] == "planned"
-    # round(72 + 11 * log2(3 + 1)); a topic with no items is the 92 px minimum.
-    assert topic["layout"]["width"] == 94
+    # Cards keep their labels readable; scope size changes height, not title width.
+    assert topic["layout"]["width"] == 232
+    assert topic["layout"]["height"] == 92
     assert "3 items across 1 chapter." in (out / "dependencies.md").read_text(encoding="utf-8")
     chapter = json.loads((out / "dependencies/chapters/library.json").read_text(encoding="utf-8"))
     assert {node["id"]: node["status"] for node in chapter["nodes"]} == dict.fromkeys(

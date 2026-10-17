@@ -1010,9 +1010,13 @@ site projection uses the same deterministic JSON-derived Canvas and semantic-DOM
 explorer with search, filters, pan/zoom, and hash-routed node neighborhoods, so
 none inherits Mermaid's text, edge, or SVG-size ceilings. Authored Mermaid remains
 supported in the vault and book, including the bounded graph produced by
-`autoform-visualize`. Breadcrumbs return through the explorer hierarchy to the
-book, and every formal statement links to the smallest explorer scope containing
-that item. Point `mkdocs.yml` at `docs_dir: site-src` and enable `md_in_html` plus a
+`autoform-visualize`. A persistent hierarchy rail keeps the current ancestry and
+immediate contents visible. The project overview groups readable topic cards by
+authored mathematical area and reveals only a selected topic's direct dependency
+neighborhood; its detail drawer overlays the map instead of shrinking it.
+Breadcrumbs return through the explorer hierarchy to the book, and every formal
+statement links to the smallest explorer scope containing that item. Point
+`mkdocs.yml` at `docs_dir: site-src` and enable `md_in_html` plus a
 `pymdownx.superfences` mermaid fence; see the [repository
 example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml).
 
