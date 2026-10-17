@@ -777,8 +777,8 @@ def test_unreadable_probe_records_are_refused(tmp_path: Path) -> None:
         _read_probe_records(records, "skeleton probe")
     records.unlink()
     records.mkdir()
-    with pytest.raises(SkeletonError, match="^the unused-hypotheses probe's records could not be read: "):
-        _read_probe_records(records, "unused-hypotheses probe")
+    with pytest.raises(SkeletonError, match="^the impact probe's records could not be read: "):
+        _read_probe_records(records, "impact probe")
 
 
 def _pid_is_live(pid: int) -> bool:

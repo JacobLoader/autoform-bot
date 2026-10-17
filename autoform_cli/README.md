@@ -528,7 +528,7 @@ environment, or reaches a refused declaration; that name is unresolved for its a
 A name that several indexed files declare, even when all but one of them
 declare it `private`, is unresolved without a probe, because the index cannot
 tell which one Lean binds; the reason names each of those files in sorted
-order. `unused-hypotheses` looks names up the same way.
+order.
 `--output` records the `autoform-skeleton/v4` report, which contains no
 timestamp or absolute path, for a later render or review to consume. The
 report identifies the exact blueprint, its complete target set, and whether
@@ -652,51 +652,6 @@ are staged before publication and a failed commit restores the previous set.
 This is failure atomicity, not simultaneous visibility across paths: each
 rename is atomic, but a reader opening several outputs during publication can
 briefly observe different generations.
-
-Report the hypotheses that a theorem's proof never uses:
-
-```bash
-autoform unused-hypotheses blueprint --lean-root .
-autoform unused-hypotheses blueprint --lean-root . --node chapter/main-result --json
-```
-
-A theorem can compile and be true while one of its hypotheses plays no part.
-Either the source states a hypothesis it does not need, or the formal statement
-says less than the source, so the hypothesis has nothing left to do, as when a
-statement assumes the supremum that the source derives from boundedness, or
-when a library convention such as `x / 0 = 0` covers a case the source excludes.
-
-For every theorem a `lean:` line names, the command reads its proof term and
-lists each propositional hypothesis that could be deleted, with its binder
-position and whether the proof uses it. A hypothesis the proof term never
-mentions can be deleted, and the same term proves what remains, so a
-`hypothesis-unused` finding is certain; a tactic that names the hypothesis,
-such as `simp [h]` or `clear h`, has to drop the name too. A hypothesis the proof does use may
-still be unnecessary, and a proof that is just another theorem counts as using
-every hypothesis it passes on. A hypothesis that the conclusion or a later
-binder mentions cannot be deleted and is not listed. A proof that itself
-contains `sorry` is not read; a complete proof that uses an open statement is.
-Findings are for a reviewer and never fail the run, since the source may state
-a hypothesis its theorem does not need; the command exits 1 only when a `lean:`
-name cannot be read: it is not found, several source files declare it, or it
-is an alias, whose proof only names its target. `--json` writes the
-`autoform-unused-hypotheses/v1` report.
-
-`lake build` already warns about some of these: Lean's `unusedVariables`
-linter names a hypothesis the proof never references, and `unusedSectionVars`
-names a section variable a theorem includes without needing. Neither reports a
-hypothesis named with a leading `_`, an unnamed instance argument of the
-theorem itself, the antecedent of `p → q`, or a binder such as `∀ n > 0`; this
-command does, so renaming a hypothesis to `_h` does not hide it. It also reports per article,
-for the reviewer of that article.
-
-Like `autoform skeleton`, it runs a small program with `lake env lean` after the
-same Lake freshness check, over the modules that hold the named theorems, and
-the same trust caveats apply: run it in a trusted checkout or a sandbox whose
-build is current. `--timeout SECONDS` sets the Lean run's budget, as for
-`autoform skeleton`. Nothing it reports enters the skeleton report,
-its packets, or their hashes, and findings name Lean hypotheses, so they stay
-out of the blind read-back route.
 
 Inspect the current Markdown-derived formalization frontier without creating a
 queue or scheduler state:
