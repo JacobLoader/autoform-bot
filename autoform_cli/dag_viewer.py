@@ -462,7 +462,10 @@ def viewer_script() -> str:
 # would override carry a doubled .bp-dag-viewer class, and the status filter is
 # a button and popover because Material styles details and summary as an
 # admonition. The landing page's card frames the embedded layout and names its
-# map, so that layout draws no frame or context row of its own.
+# map, so that layout draws no frame or context row of its own. On phones the
+# search box takes the toolbar's first row, so the Status popover opens
+# rightwards from the start of the next, and the head stacks above the bottom
+# sheet so that neither of its popovers paints under it.
 _STYLE = r"""
 .bp-dag-viewer {
   --dag-border: var(--bp-rule, #d8dade); --dag-bg: var(--bp-surface, #fff);
@@ -615,9 +618,11 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 @media (max-width: 680px) {
   .bp-dag-viewer:not([data-layout=app]) { height: calc(100svh - 1rem); min-height: 34rem; }
   body.bp-dag-app-page .bp-dag-viewer[data-layout=app] { min-height: 28rem; }
+  .bp-dag-head { z-index: 13; }
   .bp-dag-context { padding-inline: .55rem; }
   .bp-dag-toolbar { gap: .35rem; padding: .35rem .5rem .5rem; }
   .bp-dag-search-wrap { flex-basis: calc(100% - .4rem); order: -2; }
+  .bp-dag-filter-popover { left: 0; right: auto; max-width: calc(100vw - 1rem); }
   .bp-dag-search, .bp-dag-button, .bp-dag-filter-summary, .bp-dag-mode-button { min-height: 2.75rem; }
   .bp-dag-isolated { min-height: 2.75rem; }
   .bp-dag-body { display: block; }

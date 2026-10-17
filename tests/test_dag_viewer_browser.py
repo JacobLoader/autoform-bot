@@ -952,6 +952,57 @@ def test_the_published_landing_explorer_sits_unframed_in_its_card(mobile_page: o
     playwright.expect(viewer.locator(".bp-dag-context")).to_be_hidden()
 
 
+def test_on_a_phone_the_status_filter_and_search_results_open_in_view(mobile_page: object, site_url: str) -> None:
+    """The Status popover opened past the screen's left edge, and the toolbar's popovers painted under the sheet."""
+    page = _offline(mobile_page, site_url)
+
+    def lengthen_the_index(route: object) -> None:
+        index = route.fetch().json()
+        index["nodes"] += [
+            {"id": f"more/result-{n}", "kind": "node", "status": "planned", "title": f"Result {n}", "url": None}
+            for n in range(20)
+        ]
+        route.fulfill(json=index)
+
+    page.route("**/dependencies/index.json", lengthen_the_index)
+    # The selection opens the sheet over the lower half of the screen.
+    page.goto(f"{site_url}/dependencies/chapters/algebra.html#node=algebra%2Fresult")
+    page.locator(".bp-dag-node").first.wait_for()
+
+    page.locator(".bp-dag-filter-summary").tap()
+    popover = page.locator(".bp-dag-filter-popover")
+    playwright.expect(popover).to_be_visible()
+    box, viewport = popover.bounding_box(), page.viewport_size
+    assert box is not None and viewport is not None
+    assert 0 <= box["x"] and box["x"] + box["width"] <= viewport["width"]
+    assert 0 <= box["y"] and box["y"] + box["height"] <= viewport["height"]
+    assert popover.locator("input").first.evaluate(
+        """input => {
+          const box = input.getBoundingClientRect();
+          return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === input;
+        }"""
+    )
+
+    search = page.locator(".bp-dag-search")
+    search.focus()
+    playwright.expect(search).to_have_attribute("placeholder", "Search 27 roadmap entries")
+    search.fill("Result")
+    # The lowest result the dropdown shows lies over the sheet, so it is the one to hit.
+    lowest = page.evaluate(
+        """() => {
+          const sheet = document.querySelector(".bp-dag-inspector").getBoundingClientRect();
+          const list = document.querySelector(".bp-dag-search-results").getBoundingClientRect();
+          const centre = box => [box.x + box.width / 2, box.y + box.height / 2];
+          const result = Array.from(document.querySelectorAll(".bp-dag-result"))
+            .filter(result => centre(result.getBoundingClientRect())[1] < list.bottom)
+            .pop();
+          const [x, y] = centre(result.getBoundingClientRect());
+          return [y > sheet.top, result.contains(document.elementFromPoint(x, y))];
+        }"""
+    )
+    assert lowest == [True, True]
+
+
 def test_the_published_atlas_hides_the_isolate_toggle(desktop_page: object, site_url: str) -> None:
     page = _offline(desktop_page, site_url)
     page.goto(f"{site_url}/dependencies.html")
