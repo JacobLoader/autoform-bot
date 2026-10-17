@@ -1310,6 +1310,9 @@ def _run_registered_command(
         raise _CommandTimedOut([f"{context} timed out"])
     if output_limit < 1:
         raise ValueError("output_limit must be positive")
+    if os.name == "posix" and signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN:
+        # The kernel would reap the command as it exits, and Popen would then report status 0.
+        raise SkeletonError([f"{context} cannot run while SIGCHLD is ignored: its exit status would be lost"])
     process: subprocess.Popen[bytes] | None = None
     readers: list[threading.Thread] = []
     chunks: dict[str, list[bytes]] = {"stdout": [], "stderr": []}
@@ -1386,8 +1389,11 @@ def _run_registered_command(
                 raise _CommandTimedOut([f"{context} timed out after {timeout:g} seconds"])
             overflow.wait(min(0.05, remaining))
         _remember_descendants(process, descendants)
-        # A reap recorded elsewhere frees the group id, so it is not checked again.
-        group_alive = process.returncode is None and _process_group_has_live_members(process.pid)
+        if os.name == "posix" and process.returncode is not None:
+            # Reaped elsewhere, as when C code ignores SIGCHLD where signal.getsignal
+            # can't see it. Popen then reports status 0, and the group id is free.
+            raise SkeletonError([f"{context} was reaped outside the runner: its exit status is lost"])
+        group_alive = os.name == "posix" and _process_group_has_live_members(process.pid)
         _remember_tagged_processes(token, descendants, root_pid=process.pid)
         if group_alive or any(map(_process_is_alive, descendants.values())):
             raise SkeletonError([f"{context} left descendant processes running"])
