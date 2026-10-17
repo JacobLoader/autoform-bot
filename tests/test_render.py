@@ -11,6 +11,7 @@ import shutil
 import stat
 import subprocess
 import threading
+import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
@@ -22,6 +23,7 @@ import html5lib
 import autoform_cli.audit as audit_module
 import autoform_cli.lean as lean_module
 import autoform_cli.render as render_module
+from autoform_cli import _directory_binding as directory_binding_module
 from autoform_cli.__main__ import main
 from autoform_cli._tree_snapshot import TreeChangedError
 from autoform_cli.audit import audit_blueprint
@@ -2282,6 +2284,31 @@ def test_render_installs_into_an_existing_empty_directory(tmp_path: Path, finder
     assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["complete"]
     assert not (output / ".DS_Store").exists()
     assert not _debris(tmp_path)
+
+
+@pytest.mark.parametrize("portable", [False, True])
+def test_checking_the_output_site_hashes_its_files_without_holding_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, portable: bool
+) -> None:
+    project = _project(tmp_path)
+    (project / "blueprint/media").mkdir()
+    (project / "blueprint/media/plate.bin").write_bytes(os.urandom(8 * 1024 * 1024))
+    output = tmp_path / "out"
+    render_site(project / "blueprint", output, lean_root=project)
+    assert (output / "media/plate.bin").is_file()
+    if portable:
+        monkeypatch.setattr(directory_binding_module, "DIRECTORY_BINDING_SUPPORTED", False)
+
+    tracemalloc.start()
+    try:
+        render_module._destination_state(output)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    # Read whole, the 8 MiB file would be held at once, as would read(n)'s 8 MiB
+    # manifest buffer; chunked reads hold at most two read chunks at a time.
+    assert peak < 4 * 1024 * 1024
 
 
 def test_a_failed_render_leaves_the_previous_site_and_no_debris(
