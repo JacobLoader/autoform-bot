@@ -1490,7 +1490,10 @@ def _render_structure_page(
     each file beside it. Directories are rows too, because they are what a
     chapter is; without them every `README.md` looks like every other one.
     """
-    links = _anchored_links(targets, page, extension=".md")
+    # These links sit inside raw HTML, so MkDocs never rewrites their source
+    # ``.md`` paths to the files it publishes. Name the published routes here,
+    # just as statement boxes and Mermaid links do.
+    links = _anchored_links(targets, page, extension=".html")
     by_path = {node.path.resolve(): node for node in graph.nodes.values()}
 
     def keep(relative: Path) -> bool:
