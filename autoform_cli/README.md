@@ -1088,7 +1088,8 @@ What an existing repository meets when it moves to this version:
    that declare nothing yet is now a `decomposed-without-declaration` audit
    warning, which `render` also prints; neither fails.
 3. Coverage JSON is `autoform-coverage/v2`: `INVENTORIED` is a new terminal
-   disposition, and `counts` always holds an `INVENTORIED` key.
+   disposition, and `counts` always holds an `INVENTORIED` key. `audit`'s
+   coverage line always shows an inventoried count.
 4. `publication.json` is `autoform-publication/v3`. The first render replaces a
    v2 site and refuses a v1 one, and the dashboard reports an older site as
    stale until then; the [publication contract](#publication-contract) gives
@@ -1097,10 +1098,16 @@ What an existing repository meets when it moves to this version:
    `catalog`.
 6. `audit --json` carries a `warnings` list beside `findings`, and the text
    output adds `warning:` lines; neither changes the exit status.
-7. Old `dependencies/nodes/*.html` links no longer resolve: only
+7. `check`'s status line counts only leaves that carry `declaration`, so
+   containers, prose leaves and `not_ready` leaves that declare nothing yet
+   drop out of it, and with `--lean-root` it counts the distinct `lean:` names
+   it resolved rather than the articles naming them. A `blueprint/atlas.json`
+   that is not `autoform-atlas/v1`, which earlier versions ignored, now draws a
+   warning from `check`, `render` and `audit`; it fails nothing.
+8. Old `dependencies/nodes/*.html` links no longer resolve: only
    `dependencies/full.html#node=<id>` redirects, and a statement's dependency
    link is now `<scope>.html#node=<id>`.
-8. Setup leaves an existing `mkdocs.yml` alone. A large site can add Material's
+9. Setup leaves an existing `mkdocs.yml` alone. A large site can add Material's
    `navigation.prune` feature by hand, as the scaffolded configuration does.
 
 ## Validation
