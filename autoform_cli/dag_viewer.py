@@ -172,9 +172,9 @@ def _atlas_positions(view: GraphView) -> dict[str, dict[str, int]]:
         count = max(1, node.item_count)
         return max(88, min(116, round(84 + 4 * math.log2(count + 1))))
 
-    by_area: dict[str, list[ViewNode]] = defaultdict(list)
-    for node in view.nodes:
-        by_area[node.area or ""].append(node)
+    by_area: dict[str, list[tuple[int, ViewNode]]] = defaultdict(list)
+    for index, node in enumerate(view.nodes):
+        by_area[node.area or ""].append((index, node))
 
     blocks: list[tuple[str, dict[str, dict[str, int]], int, int]] = []
     for area, indexed in sorted(by_area.items(), key=lambda item: (not item[0], item[0].casefold())):
