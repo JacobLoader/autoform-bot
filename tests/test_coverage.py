@@ -830,6 +830,20 @@ def test_a_roadmap_link_through_a_symlink_to_another_folder_is_not_a_roadmap_art
     ]
 
 
+def test_a_roadmap_link_to_a_file_that_is_not_markdown_is_not_a_roadmap_article(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    (blueprint / "roadmap").mkdir(parents=True)
+    (blueprint / "roadmap" / "figure.txt").write_text("figure\n", encoding="utf-8")
+    _contract(blueprint, "| Figure | DECOMPOSED | [Figure](../roadmap/figure.txt) |\n")
+
+    summary, issues = load_coverage(blueprint)
+
+    assert summary is None
+    assert [issue.reason for issue in issues] == [
+        "DECOMPOSED coverage evidence has no link to an existing roadmap article"
+    ]
+
+
 def test_malformed_evidence_paths_are_reported_without_raising(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _contract(

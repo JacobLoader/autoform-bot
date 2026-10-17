@@ -1812,6 +1812,7 @@ def test_probe_comment_ranges_must_cover_comments(tmp_path: Path, ranges: object
         ("../../sources/book.tex#L0-L1", "names no lines of its file"),
         ("../../sources/empty.tex#L1-L1", "names no lines of its file"),
         ("../../sources/missing.tex#L1-L1", "names a missing file"),
+        ("../../sources/missing.md#L1-L1", "names a missing file"),
         ("../../sources/book.tex/inside.tex#L1-L1", "names a missing file"),
         ("../../sources/chapter#L1-L1", "names something other than a regular file"),
         ("../../sources/binary.tex#L1-L1", "not readable UTF-8 text"),
@@ -1863,6 +1864,50 @@ def test_extraction_reports_a_locator_that_names_no_passage(tmp_path: Path, link
     assert report.nodes[0].passage == "two\nthree"
 
 
+@pytest.mark.parametrize(
+    ("link", "why"),
+    [
+        ("../../sources/hop0.tex#L1-L1", "points outside the blueprint"),
+        ("../../sources/loop.txt/../sub/back/../book.tex#L1-L1", "points outside the blueprint"),
+        ("../../sources/chain0.tex#L1-L1", "names a missing file"),
+        ("../../sources/dangling.tex#L1-L1", "names a missing file"),
+        ("../../sources/outside.tex#L1-L1", "points outside the blueprint"),
+    ],
+    ids=["loop-hops", "after-a-loop", "deep-chain", "dangling-to-markdown", "outside-markdown"],
+)
+def test_extraction_reports_a_locator_through_links_alike_on_every_python(tmp_path: Path, link: str, why: str) -> None:
+    # Before Python 3.13, `os.path.realpath` recurses once per link and stops at a loop.
+    project = _project(tmp_path)
+    blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
+    sources = blueprint / "sources"
+    (sources / "sub").mkdir(parents=True)
+    (sources / "book.tex").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    (tmp_path / "away").mkdir()
+    (tmp_path / "away" / "secret.md").write_text("# Secret\n", encoding="utf-8")
+    try:
+        (sources / "loop.txt").symlink_to("loop.txt")
+        (sources / "away").symlink_to(tmp_path / "away")
+        (sources / "sub" / "back").symlink_to("../away")
+        for n in range(45):
+            (sources / f"hop{n}.tex").symlink_to(f"loop.txt/../hop{n + 1}.tex")
+        (sources / "hop45.tex").symlink_to("away/secret.md")
+        for n in range(1000):
+            (sources / f"chain{n}.tex").symlink_to(f"chain{n + 1}.tex")
+        # A Markdown file is a note only once the link names it in the blueprint.
+        (sources / "dangling.tex").symlink_to("gone.md")
+        (sources / "outside.tex").symlink_to(tmp_path / "away" / "secret.md")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+    article = blueprint / "roadmap" / "basics" / "determined.md"
+    _replace_source(article, "## Depends on", f"## Sources\n\n- [book]({link})\n\n## Depends on")
+
+    report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+
+    assert not report.clean and report.nodes[0].declarations == ()
+    [unresolved] = report.unresolved
+    assert unresolved.reason.startswith("source locator ") and why in unresolved.reason
+
+
 @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")
 @pytest.mark.parametrize("locked", ["locked", "locked/book.tex"], ids=["unreadable-directory", "unreadable-file"])
 def test_extraction_reports_a_locator_it_cannot_read_without_stopping(tmp_path: Path, locked: str) -> None:
@@ -1903,10 +1948,14 @@ def test_extraction_reports_a_locator_over_the_size_limit_without_stopping(tmp_p
     [unresolved] = report.unresolved
     assert unresolved.reason == "source locator ../../sources/book.tex#L1-L1 names a file over the 4096-byte limit"
 
+    (blueprint / "sources" / "book.tex").write_text("line\n" * 819 + "x", encoding="utf-8")
+    report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+    assert report.clean and report.nodes[0].passage == "line"
+
 
 def test_extraction_reads_a_locator_as_check_and_audit_read_it(tmp_path: Path) -> None:
-    # Decoded, and with a Markdown note in any letter case left to audit, whose
-    # fragment names a heading.
+    # Decoded, with a fragment alone skipped, and with a Markdown note in any
+    # letter case left to audit, whose fragment names a heading.
     project = _project(tmp_path)
     blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
     sources = blueprint / "sources"
@@ -1914,7 +1963,7 @@ def test_extraction_reads_a_locator_as_check_and_audit_read_it(tmp_path: Path) -
     (sources / "NOTES.MD").write_text("# Notes\n", encoding="utf-8")
     (sources / "my book.tex").write_text("one\ntwo\nthree\n", encoding="utf-8")
     article = blueprint / "roadmap" / "basics" / "determined.md"
-    links = "- [notes](../../sources/NOTES.MD#L1-L1)\n- [book](../../sources/my%20book.tex#L2-L3)"
+    links = "- [here](#L1-L1)\n- [notes](../../sources/NOTES.MD#L1-L1)\n- [book](../../sources/my%20book.tex#L%32-L3)"
     _replace_source(article, "## Depends on", f"## Sources\n\n{links}\n\n## Depends on")
 
     report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())

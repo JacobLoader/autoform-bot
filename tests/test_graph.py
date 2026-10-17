@@ -145,6 +145,7 @@ def test_a_dependency_through_a_symlink_loop_is_reported_alike_on_every_python(t
     # Before Python 3.13 resolving a loop raises; from 3.13 it returns the looping path.
     blueprint = tmp_path / "blueprint"
     links = "[x](../loop.md)\n[y](../../outer.md)\n[z](../away/loop.md)\n[w](../loop.md/../away/note.md)\n"
+    links += "[v](../hop0.md)\n[u](../chain0.md)\n"
     _node(blueprint, "result.md", f"# Result\n## Depends on\n{links}")
     (tmp_path / "away").mkdir()
     (tmp_path / "away" / "note.md").write_text("# Note\n", encoding="utf-8")
@@ -154,6 +155,12 @@ def test_a_dependency_through_a_symlink_loop_is_reported_alike_on_every_python(t
         # A loop behind a symbolic link that leaves the blueprint, and one before it.
         (blueprint / "away").symlink_to(tmp_path / "away")
         (tmp_path / "away" / "loop.md").symlink_to("loop.md")
+        # A loop and `..` 45 times over, then out of the blueprint, and a chain past the recursion limit.
+        for n in range(45):
+            (blueprint / f"hop{n}.md").symlink_to(f"loop.md/../hop{n + 1}.md")
+        (blueprint / "hop45.md").symlink_to("away/note.md")
+        for n in range(1000):
+            (blueprint / f"chain{n}.md").symlink_to(f"chain{n + 1}.md")
     except OSError:
         pytest.skip("symlinks are unavailable")
 
@@ -165,7 +172,27 @@ def test_a_dependency_through_a_symlink_loop_is_reported_alike_on_every_python(t
         "result: dependency target escapes the blueprint directory: '../../outer.md'",
         "result: dependency target escapes the blueprint directory: '../away/loop.md'",
         "result: dependency target escapes the blueprint directory: '../loop.md/../away/note.md'",
+        "result: dependency target escapes the blueprint directory: '../hop0.md'",
+        "result: dependency target does not exist: '../chain0.md'",
     )
+
+
+def test_check_passes_a_sources_link_that_reaches_its_file_through_loops(tmp_path: Path) -> None:
+    # Each `loop.md/..` resolves past the loop, as on Python 3.13. Before 3.13
+    # the runtime's own resolution of the link then raised.
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "result.md", "# Result\n\n## Sources\n\n- [Paper](../sources/s1.md)\n")
+    sources = blueprint / "sources"
+    sources.mkdir()
+    (sources / "paper.md").write_text("# Paper\n", encoding="utf-8")
+    try:
+        (sources / "loop.md").symlink_to("loop.md")
+        (sources / "s1.md").symlink_to("loop.md/../s2.md")
+        (sources / "s2.md").symlink_to("loop.md/../paper.md")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    assert main(["check", str(blueprint)]) == 0
 
 
 @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")

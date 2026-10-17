@@ -2464,9 +2464,11 @@ def source_passage(node: Node, blueprint: Path, *, issues: list[str] | None = No
 
     A ``## Sources`` link to a non-Markdown file inside the blueprint with a
     ``#L<start>-L<end>`` fragment names the exact source text the statement
-    came from. The first such link wins. Markdown targets are notes, not
-    passages, and are ignored here. When the first locator names no text there
-    is no passage, and the reason is appended to ``issues`` if given.
+    came from. The first such link wins. Markdown files are notes, not
+    passages, and are ignored here, but a link that names no regular file in
+    the blueprint is reported whatever its suffix, as check reports it. When
+    the first locator names no text there is no passage, and the reason is
+    appended to ``issues`` if given.
     """
 
     def broken(target: str, why: str) -> tuple[None, None]:
@@ -2485,13 +2487,9 @@ def source_passage(node: Node, blueprint: Path, *, issues: list[str] | None = No
         match = _LINE_LOCATOR.fullmatch(unquote(parsed.fragment))
         if match is None or not path:
             continue
-        candidate = resolved_path(node.path.parent / path)
-        # As check and audit judge the link: a Markdown file, in any letter case,
-        # is a note, whose fragment names a heading.
-        if candidate.suffix.casefold() == ".md":
-            continue
         if "\x00" in path:
             return broken(target, "contains an invalid path")
+        candidate = resolved_path(node.path.parent / path)
         if not candidate.is_relative_to(blueprint.resolve()):
             return broken(target, "points outside the blueprint")
         # Each way a locator's file cannot be read is this article's problem, so
@@ -2506,10 +2504,14 @@ def source_passage(node: Node, blueprint: Path, *, issues: list[str] | None = No
             return broken(target, "names a missing file")
         if not stat.S_ISREG(metadata.st_mode):
             return broken(target, "names something other than a regular file")
+        # As audit judges a link that names a file: a Markdown file, in any
+        # letter case, is a note, whose fragment names a heading.
+        if candidate.suffix.casefold() == ".md":
+            continue
         if metadata.st_size > _SNAPSHOT_FILE_LIMIT:
             return broken(target, f"names a file over the {_SNAPSHOT_FILE_LIMIT}-byte limit")
         try:
-            # Opening it is the only readability test that also holds on Windows.
+            # Opening it tests readability; `os.access` ignores Windows ACLs.
             os.close(os.open(candidate, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)))
         except OSError:
             return broken(target, "names a file that cannot be read")

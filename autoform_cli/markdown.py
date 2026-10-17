@@ -29,6 +29,8 @@ from __future__ import annotations
 import html
 import os
 import re
+import stat
+import sys
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -711,27 +713,69 @@ def _anchors_from_body(body: str) -> frozenset[str]:
 
 
 def resolved_path(path: Path) -> Path:
-    """``path`` with its symbolic links resolved as far as they lead.
+    """``path`` with its symbolic links resolved, as Python 3.13's `os.path.realpath` resolves them.
 
-    `os.path.realpath` leaves a symlink loop in place instead of raising, as
-    `Path.resolve` does before Python 3.13, but before 3.13 it also stops there
-    and keeps the rest of the path as written, a link that leaves the blueprint
-    included. Repeating it resolves past the loop, as 3.13 does, so a link gets
-    the same verdict on every supported version: callers still check where it
-    points and whether it is a file.
+    From 3.13, `realpath` keeps a symlink loop as written and resolves the
+    rest of the path past it. Before 3.13, `Path.resolve` raises on a loop,
+    and POSIX `realpath` recurses once per link and stops at a loop, applying
+    the rest of the path's `..` steps as written, so a link after the loop
+    could lead out of the blueprint unresolved. Those versions get 3.13's
+    algorithm from `_realpath_before_3_13`, so a link gets the same verdict on
+    every supported version; callers still check where it points and whether
+    it is a file. Windows `realpath` applies `..` as written on every version,
+    as Windows itself does.
     """
 
     try:
-        resolved = os.path.realpath(path)
-        for _ in range(40):
-            again = os.path.realpath(resolved)
-            if again == resolved:
-                break
-            resolved = again
-        return Path(resolved)
-    except ValueError:
-        # A NUL in the path; callers check for one first.
+        if os.name == "nt" or sys.version_info >= (3, 13):
+            return Path(os.path.realpath(path))
+        return Path(_realpath_before_3_13(os.fspath(path)))
+    except (OSError, ValueError):
+        # A NUL in the path, which callers check for first, or a path Windows
+        # refuses to resolve, such as one over its length limit.
         return Path(os.path.abspath(path))
+
+
+def _realpath_before_3_13(path: str) -> str:
+    """Python 3.13's POSIX `os.path.realpath`, which does not recurse or stop at a loop.
+
+    Each link is read once. A link met again before its target is resolved is
+    a loop and stays as written; a later `..` leaves it again. A part that
+    cannot be read also stays as written, and the parts after it still resolve.
+    """
+
+    pending: list[str | None] = path.split("/")[::-1]
+    resolved = "/" if path.startswith("/") else os.getcwd()
+    # Each link seen, mapped to its resolved target, or to None while that is pending.
+    links: dict[str, str | None] = {}
+    while pending:
+        name = pending.pop()
+        if name is None:
+            # The link popped next has its target resolved.
+            links[pending.pop()] = resolved
+            continue
+        if name in ("", "."):
+            continue
+        if name == "..":
+            resolved = resolved[: resolved.rindex("/")] or "/"
+            continue
+        joined = os.path.join(resolved, name)
+        try:
+            if not stat.S_ISLNK(os.lstat(joined).st_mode):
+                resolved = joined
+                continue
+            if joined in links:
+                resolved = links[joined] or joined
+                continue
+            target = os.readlink(joined)
+        except OSError:
+            resolved = joined
+            continue
+        if target.startswith("/"):
+            resolved = "/"
+        links[joined] = None
+        pending += [joined, None, *target.split("/")[::-1]]
+    return resolved
 
 
 def local_target_issue(

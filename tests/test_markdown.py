@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import os
 import re
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from autoform_cli.markdown import (
     published_tables,
     render_html,
     rendered_visible_text,
+    resolved_path,
     visible_prose,
 )
 
@@ -473,6 +475,33 @@ def test_a_link_through_a_hidden_symlink_is_hidden(tmp_path: Path) -> None:
 
     assert issue("../sources/paper.md") is None
     assert issue("../.link/paper.md") == "hidden-source-target"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows applies `..` as written, before any link")
+def test_resolved_path_follows_links_as_python_3_13_does(tmp_path: Path) -> None:
+    # Before 3.13, `os.path.realpath` recurses once per link and stops at a loop.
+    root = tmp_path.resolve()
+    (root / "away").mkdir()
+    (root / "here" / "sub").mkdir(parents=True)
+    links = {"loop": "loop", "grow": "grow/more", "away": str(root / "away"), "sub/back": "../away"}
+    links |= {f"hop{n}": f"loop/../hop{n + 1}" for n in range(45)} | {"hop45": "away/file.tex"}
+    links |= {f"chain{n}": f"chain{n + 1}" for n in range(1000)}
+    try:
+        for name, target in links.items():
+            (root / "here" / name).symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    def resolved(path: str) -> str:
+        return resolved_path(root / "here" / path).relative_to(root).as_posix()
+
+    assert resolved("loop/x") == "here/loop/x"
+    assert resolved("loop/../away/file.tex") == "away/file.tex"
+    # A later `..` steps out of the link it follows, not out of the name as written.
+    assert resolved("loop/../sub/back/../file.tex") == "file.tex"
+    assert resolved("grow/x") == "here/grow/more/x"
+    assert resolved("hop0") == "away/file.tex"
+    assert resolved("chain0") == "here/chain1000"
 
 
 def test_a_statement_runs_from_the_title_to_the_first_h2() -> None:
