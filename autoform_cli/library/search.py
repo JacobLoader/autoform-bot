@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..search import SearchError, SearchResult, _lean_name, _normalize, _ranks, _words, search_blueprint
+from ..search import SearchError, SearchResult, _lean_name, _normalize, _ranks, _unquoted, _words, search_blueprint
 from .index import INDEX_SCHEMA, IndexDeclaration, LibraryIndex, shorten
 from .locate import canonical_name, read_workspace
 from .verify import Difference, load_library
@@ -170,12 +170,15 @@ def match_index(
             "lean": _normalize(declaration.name.rpartition(".")[2]),
             "docstring": _normalize(declaration.docstring or ""),
             "module_doc": headers[declaration.module],
-            "qualified_names": f"{name}\n{_normalize(declaration.module)}",
+            # The name also without ``_root_.`` and quoting marks, so a namespace
+            # that a quoted component spells is found here.
+            "qualified_names": "\n".join(dict.fromkeys([name, _unquoted(name), _normalize(declaration.module)])),
             "mentions": _normalize("\n".join(declaration.mentions)),
             "kind": declaration.kind,
-            # Not a field of its own: the name between a dot and a space, so a
-            # term is looked up as the whole name or as its last components.
-            "lean_names": f".{_lean_name(name)} ",
+            # Not a field of its own: the name between a dot and a newline, which
+            # no name holds, so a term is looked up as the whole name or as its
+            # last components.
+            "lean_names": f".{_lean_name(name)}\n",
         }
         ranks = _ranks(terms, fields, LIBRARY_FIELDS)
         if ranks is None:

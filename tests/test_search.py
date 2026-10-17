@@ -276,6 +276,63 @@ def test_a_full_lean_name_ending_in_a_prime_or_a_mark_finds_its_owner_first(tmp_
     assert _ids(project, name)[0] == "convexity/owner"
 
 
+@pytest.mark.parametrize("ending", ["'", "?", "!"])
+def test_a_lean_name_typed_with_its_ending_puts_its_owner_before_the_plain_name(tmp_path: Path, ending: str) -> None:
+    project = _project(tmp_path)
+    marked = f"Project.foo{ending}"
+    _article(project, "convexity/plain.md", title="Plain", metadata=("declaration: theorem", "lean: Project.foo"))
+    _article(project, "convexity/marked.md", title="Marked", metadata=("declaration: theorem", f"lean: {marked}"))
+    # A dependent puts the plain name first on any later tie.
+    _article(project, "convexity/user.md", title="User", depends=("plain.md",))
+
+    queries = (
+        marked, f"foo{ending}", f"_root_.{marked}", f"`{marked}`", f"({marked})", f'"{marked}",', f"**{marked}**"
+    )
+    for query in queries:
+        assert _ids(project, query)[:2] == ["convexity/marked", "convexity/plain"], query
+
+
+def test_the_exact_name_key_follows_the_field_keys_and_precedes_the_dependents(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    # With no ending to tell them apart, an exact last component still beats a dependent.
+    _article(project, "convexity/base.md", title="Base", metadata=("declaration: theorem", "lean: Project.foo"))
+    _article(project, "convexity/longer.md", title="Longer", metadata=("declaration: theorem", "lean: Project.foobar"))
+    _article(project, "convexity/user.md", title="User", depends=("longer.md",))
+    assert _ids(project, "foo")[:2] == ["convexity/base", "convexity/longer"]
+
+    # A better worst field comes first, and so do the words as typed.
+    primed, plain = ("declaration: theorem", "lean: Project.bar'"), ("declaration: theorem", "lean: Project.bar")
+    _article(project, "convexity/primed.md", title="Primed", metadata=primed)
+    _article(project, "convexity/plain.md", title="Plain", body="A convex statement.", metadata=plain)
+    assert _ids(project, "Project.bar' convex")[:2] == ["convexity/plain", "convexity/primed"]
+    stem, typed = ("declaration: theorem", "lean: Project.baz'"), ("declaration: theorem", "lean: Project.baz")
+    _article(project, "convexity/stem.md", title="Stem", body="A ring.", metadata=stem)
+    _article(project, "convexity/typed.md", title="Typed", body="Two rings.", metadata=typed)
+    assert _ids(project, "Project.baz' rings")[:2] == ["convexity/typed", "convexity/stem"]
+
+
+def test_a_name_in_single_quotes_is_compared_without_them(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    _article(project, "convexity/plain.md", title="Plain", metadata=("declaration: theorem", "lean: Project.foo"))
+    _article(project, "convexity/marked.md", title="Marked", metadata=("declaration: theorem", "lean: Project.foo'"))
+
+    # By node ID alone the marked name comes first. The quotation closes at the last prime.
+    assert _ids(project, "'Project.foo'")[:2] == ["convexity/plain", "convexity/marked"]
+    assert _ids(project, "'Project.foo''")[:2] == ["convexity/marked", "convexity/plain"]
+
+
+def test_a_namespace_inside_quoting_marks_matches_as_a_namespace(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    _article(
+        project, "convexity/odd.md", title="Odd", metadata=("declaration: theorem", "lean: Project.«weird name».bar")
+    )
+
+    # The space belongs to the quoted component, so `Project.weird` names no declaration.
+    assert _matched(project, "Project.weird")["convexity/odd"] == ("qualified_names",)
+    assert _matched(project, "weird")["convexity/odd"] == ("qualified_names",)
+    assert _matched(project, "bar")["convexity/odd"] == ("lean",)
+
+
 def test_a_full_mathlib_name_finds_the_article_that_owns_it(tmp_path: Path) -> None:
     project = _project(tmp_path)
     _article(
@@ -508,13 +565,31 @@ def test_a_declaration_kind_no_article_uses_is_refused_with_the_kinds_in_use(tmp
 
     # An empty answer would read as "this result is new" when the kind was only misspelled.
     with pytest.raises(SearchError) as refused:
-        search_blueprint(project, "convex", declarations=["theorem", "Definition", "thm"])
+        search_blueprint(project, "convex", declarations=["Definition", "thm"])
 
     assert str(refused.value) == (
         "no article declares kind definition, thm; this blueprint uses: lemma, noncomputable def, theorem"
     )
     # A kind in use that the query does not reach is an ordinary empty result.
     assert _ids(project, "nowhere", declarations=["def"]) == []
+
+
+def test_an_unused_kind_beside_one_in_use_adds_nothing_and_the_cli_names_it(tmp_path: Path, capsys) -> None:
+    project = _project(tmp_path)
+
+    result = search_blueprint(project, "convex", declarations=["theorem", "Definition", "thm"])
+    assert [hit.node_id for hit in result.hits] == ["convexity/hyperplane"]
+    assert result.unused_declarations == ("definition", "thm")
+    assert search_blueprint(project, "convex", declarations=["theorem"]).unused_declarations == ()
+
+    command = ["search", str(project), "convex", "--declaration", "theorem", "--declaration", "thm"]
+    for extra in ([], ["--json"]):
+        assert cli.main([*command, *extra]) == 0
+        captured = capsys.readouterr()
+        assert "hyperplane" in captured.out
+        assert captured.err == "note: no article declares kind thm, so the search used only the other kinds\n"
+    # The note is not part of the JSON, whose filters keep every requested kind.
+    assert json.loads(captured.out)["filters"]["declaration"] == ["theorem", "thm"]
 
 
 def test_a_hit_names_at_most_ten_dependents_and_counts_them_all(tmp_path: Path) -> None:

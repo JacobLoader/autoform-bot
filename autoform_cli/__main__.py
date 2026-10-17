@@ -918,10 +918,16 @@ def _search(args: argparse.Namespace) -> int:
         print("error: project, blueprint, or Lean root path cannot be read", file=sys.stderr)
         return 2
 
+    notes = []
+    if result.unused_declarations:
+        kinds = ", ".join(result.unused_declarations)
+        notes.append(_human_text(f"note: no article declares kind {kinds}, so the search used only the other kinds"))
     note = None if args.libraries else _unsearched_library_note(args.target, args.lean_root)
+    if note:
+        notes.append(note)
     if args.json:
         print(result.to_json() if combined is None else combined.to_json())
-        if note:
+        for note in notes:
             print(note, file=sys.stderr)
         return 0
     if not result.hits:
@@ -950,9 +956,10 @@ def _search(args: argparse.Namespace) -> int:
         print(f"{len(result.hits)} of {result.total_matches} matching article(s) shown.")
     for library in libraries:
         _print_library(library)
-    if note:
+    if notes:
         sys.stdout.flush()
-        print(note, file=sys.stderr)
+        for note in notes:
+            print(note, file=sys.stderr)
     return 0
 
 
