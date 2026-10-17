@@ -298,6 +298,7 @@ class RenderReport:
     nodes: int = 0
     linked: int = 0
     unresolved: list[str] = field(default_factory=list)
+    """A message for each published declaration not found, or defined more than once, in the sources."""
     unchecked: bool = False
     """A published declaration was not looked up because the sources were not read."""
     warnings: list[str] = field(default_factory=list)
@@ -1125,7 +1126,13 @@ def _sources_base(blueprint: Path, repo_root: Path, linker: SourceLinker) -> "_S
         # The vault is outside the repository being linked, so no blob URL
         # describes it. Better no link than one that 404s.
         return None
-    spellings = {unicodedata.normalize("NFC", path): committed for path, committed in linker.spellings.items()}
+    spellings: dict[str, str] = {}
+    for path, committed in linker.spellings.items():
+        # A link may name a folder as well as a note, so each leading path maps too.
+        parts, committed_parts = path.split("/"), committed.split("/")
+        for depth in range(1, len(parts) + 1):
+            prefix = unicodedata.normalize("NFC", "/".join(parts[:depth]))
+            spellings.setdefault(prefix, "/".join(committed_parts[:depth]))
     return _SourceBase(linker.repository_url, linker.ref, relative, spellings)
 
 
@@ -1144,12 +1151,19 @@ class _SourceBase:
     ref: str
     relative: str
     spellings: Mapping[str, str] = field(default_factory=dict)
-    """Committed paths keyed by NFC form, since a link spells a note however its author typed it."""
+    """Committed captured paths and their leading folders, keyed by NFC form, since a link spells a path as typed."""
 
     def href(self, tail: tuple[str, ...]) -> str:
         verb = "blob" if tail else "tree"
-        path = "/".join((self.relative, *tail))
-        path = self.spellings.get(unicodedata.normalize("NFC", path), path)
+        parts = "/".join((self.relative, *tail)).split("/")
+        # A folder with no captured file below it, such as one holding only a `.gitkeep`, has no entry of its own,
+        # so only the leading folders it shares with a captured file take their committed spelling.
+        for depth in range(len(parts), 0, -1):
+            committed = self.spellings.get(unicodedata.normalize("NFC", "/".join(parts[:depth])))
+            if committed is not None:
+                parts[:depth] = committed.split("/")
+                break
+        path = "/".join(parts)
         return f"{self.repository_url}/{verb}/{self.ref}/{quote(path, safe='/')}"
 
 
@@ -2588,9 +2602,14 @@ def _lean_presentation(
         elif location is not None:
             fallback.append(f'{code} <span class="bp-where">{html.escape(location.path.as_posix())}</span>')
             linked += 1
+        elif ambiguous := linker.index.ambiguity(name):
+            fallback.append(f'{code} <span class="bp-missing">defined more than once in the Lean sources</span>')
+            unresolved.append(
+                f"declaration defined more than once in the Lean sources: {node.id}: {name} ({ambiguous})"
+            )
         else:
             fallback.append(f'{code} <span class="bp-missing">not found in the Lean sources</span>')
-            unresolved.append(f"{node.id}: {name}")
+            unresolved.append(f"declaration not found in the Lean sources: {node.id}: {name}")
 
     code_links = f'<span class="bp-code-links">{"".join(icons)}</span>' if icons else ""
     rows = [("Lean", " · ".join(fallback))] if fallback else []
