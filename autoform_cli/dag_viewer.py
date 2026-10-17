@@ -49,7 +49,7 @@ def _positions(view: GraphView) -> dict[str, dict[str, int]]:
     for edge in view.edges:
         if edge.source not in known or edge.target not in known:
             raise ValueError("dependency view edge names an unknown node")
-        if edge.source in known and edge.target in known and edge.source != edge.target:
+        if edge.source != edge.target:
             connected.update((edge.source, edge.target))
 
     # Isolates are inventory, not dependency topology. Rank only the connected
@@ -61,7 +61,7 @@ def _positions(view: GraphView) -> dict[str, dict[str, int]]:
     incoming: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
     indegree = {node_id: 0 for node_id in node_ids}
     for edge in view.edges:
-        if edge.source not in indegree or edge.target not in indegree or edge.source == edge.target:
+        if edge.source == edge.target:
             continue
         outgoing[edge.source].append(edge.target)
         incoming[edge.target].append(edge.source)
