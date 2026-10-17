@@ -584,7 +584,7 @@ def test_atlas_hierarchy_keeps_topics_readable_and_details_out_of_the_way(
     playwright.expect(page.locator(".bp-dag-status-pill")).to_have_text("inventory only")
     # Contents names each topic's region, which the map paints only on the canvas.
     page.get_by_role("button", name="Contents").click()
-    topology = page.locator(".bp-dag-inventory-row", has_text="Topology")
+    topology = page.locator(".bp-dag-inventory-row").filter(has=page.get_by_text("atlas/topology", exact=True))
     playwright.expect(topology.locator(".bp-dag-inventory-meta")).to_contain_text("Geometry & Topology")
 
 
