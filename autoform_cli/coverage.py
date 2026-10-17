@@ -21,8 +21,8 @@ from .markdown import (
     INLINE_CODE,
     Content,
     PublishedTable,
+    blueprint_root,
     content,
-    directory_path,
     link_targets,
     local_target_issue,
     published_tables,
@@ -118,8 +118,7 @@ class CoverageSummary:
 def load_coverage(blueprint_dir: str | Path) -> tuple[CoverageSummary | None, tuple[CoverageIssue, ...]]:
     """Read and validate ``coverage/README.md`` without modifying it."""
 
-    given = Path(blueprint_dir).expanduser()
-    blueprint = directory_path(given) or given.absolute()
+    blueprint = blueprint_root(blueprint_dir)
     path = blueprint / "coverage" / "README.md"
     try:
         content = path.read_bytes()

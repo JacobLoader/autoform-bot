@@ -214,7 +214,9 @@ def resolve_runtime_paths(project_or_blueprint: str | Path) -> RuntimePaths:
         raise RuntimeProjectionError(["input is ambiguous between a project and blueprint directory"])
     if is_project:
         project_root = candidate
-        blueprint_dir = (candidate / "blueprint").resolve()
+        blueprint_dir = directory_path(candidate / "blueprint")
+        if blueprint_dir is None:
+            raise RuntimeProjectionError(["blueprint directory cannot be resolved"])
     elif is_blueprint:
         blueprint_dir = candidate
         project_root = candidate.parent.resolve()
