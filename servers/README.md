@@ -21,7 +21,9 @@ that child starts, the selected Lake toolchain runs Lean's own header parser,
 which the REPL also uses, on the submitted source. Every import it reports must
 have one of the allowlisted roots `Mathlib`, `Aesop`, `Batteries`, or
 `LeanSearchClient` (a plain `Init` import is ignored), and a rejected or
-unrecognized parser response fails closed.
+unrecognized parser response fails closed. Code with other imports, such as the
+project's own modules, is checked as a saved file with
+`lean_diagnostic_messages` instead.
 Allowlisted imports require plain, nonempty canonical module components; names
 that remain quoted or path-like after Lean parsing are refused instead of being
 reduced to a misleading allowlisted root. The allowlist is a policy check, not a
