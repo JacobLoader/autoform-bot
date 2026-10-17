@@ -3224,36 +3224,6 @@ a:hover, a:visited:hover {{ color: var(--bp-link-hover); text-decoration: underl
 }}
 .bp-legend-tip:hover .bp-legend-note,
 .bp-legend-tip:focus-within .bp-legend-note {{ opacity: 1; visibility: visible; }}
-/* The structure page is about paths, so it is set in the mono face and the
-   three columns are a grid: filenames stay on their indent, and the states
-   line up down the page where a mismatch is easy to spot. */
-.bp-tree {{
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: baseline;
-  gap: 0.3rem 1.25rem;
-  margin: 1.5rem 0;
-  padding: 1rem 1.25rem;
-  border: 1px solid var(--bp-rule);
-  border-radius: var(--bp-radius);
-  background: var(--bp-surface);
-  font-family: {mono};
-  font-size: 0.68rem;
-}}
-.bp-tree-path {{ overflow-wrap: anywhere; }}
-.bp-tree-title {{ font-family: {sans}; color: var(--bp-muted); margin-left: 0.5rem; }}
-.bp-tree-kind {{ color: var(--bp-muted); }}
-.bp-tree-mark {{ display: inline-flex; align-items: center; gap: 0.4rem; white-space: nowrap; }}
-.bp-tree-state {{ color: var(--bp-muted); }}
-.bp-tree-warn {{
-  margin: 1rem 0;
-  padding: 0.8rem 1rem;
-  border: 1px solid var(--bp-rule);
-  border-left: 3px solid #F7B928;
-  border-radius: var(--bp-radius);
-  background: var(--bp-sunken);
-  font-size: 0.75rem;
-}}
 
 .bp-visually-hidden {{
   position: absolute;
