@@ -172,12 +172,16 @@ a passing summary. An open statement the Markdown does not declare as a
 dependency fails CI: send the missing dependency to Roadmap or stop using it.
 Never describe a conditional proof as complete, fully proved, or sorry-free.
 
-Treat Lean's `unusedVariables` and `unusedSectionVars` warnings on the
-article's theorems as findings, and never silence one by renaming the
-hypothesis to `_`. Once the proof is complete and its focused build passes, also
-run `autoform unused-hypotheses <PROJECT>/blueprint --lean-root <PROJECT> --node
-<ID>`, which also sees unnamed and `_` hypotheses. A `hypothesis-unused` finding
-means the proof never needs that hypothesis. If the statement assumes something
+Treat Lean's `unusedVariables` and `unusedSectionVars` warnings on the article's
+theorems as findings. Once the proof is complete and its focused build passes,
+also run Batteries' linter: `#lint only unusedArguments in <Module>` after
+`import <Module>`, where `<Module>` declares the article's theorems, and act
+only on its findings for those theorems. From its release for Lean v4.32.0 it
+does not report an argument whose name starts with `_` or any unnamed argument
+other than an instance, such as the antecedent of `p → q` or the hypothesis in
+`∀ n > 0`; its releases for Lean v4.30.0 and v4.31.0 check no theorem at all.
+A finding means the proof never uses that argument.
+If the statement assumes something
 the source derives, such as a supremum the source obtains from boundedness,
 restate it to conclude what the source concludes. If a section `variable`
 brings it in, add `omit [C] in` for an instance or `omit h in` for an
@@ -185,9 +189,9 @@ brings it in, add `omit [C] in` for an instance or `omit h in` for an
 such as `y n ≠ 0` where `x / 0 = 0`, keep it. If the theorem genuinely holds
 without it, such as a limsup result that holds in the extended reals, keep the
 source's statement for the article and prove the general one as a separate
-lemma that it follows from. For a hypothesis you keep, add one sentence to the
-article giving the reason in mathematical or source terms, so a later reviewer
-sees the decision beside the finding.
+lemma that it follows from. Name a hypothesis you keep with a leading `_` and
+add one sentence to the article giving the reason in mathematical or source
+terms, so a later reviewer sees the decision.
 
 After the focused build passes, require an independent Agent Review of every
 changed statement or proof for source faithfulness, dependency correctness, and
