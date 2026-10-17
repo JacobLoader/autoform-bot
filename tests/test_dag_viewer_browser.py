@@ -1033,6 +1033,18 @@ def test_on_a_phone_the_status_filter_and_search_results_open_in_view(mobile_pag
     assert lowest == [True, True]
 
 
+def test_a_phones_chapter_explorer_gives_its_breadcrumb_a_line_of_its_own(mobile_page: object, site_url: str) -> None:
+    """The textbook link and kind pill shared the crumbs' line, cutting the chapter's name and Book's target short."""
+    page = _offline(mobile_page, site_url)
+    page.goto(f"{site_url}/dependencies/chapters/algebra.html")
+    page.locator(".bp-dag-node").first.wait_for()
+    current = page.locator('.bp-dag-breadcrumb [aria-current="page"]')
+    playwright.expect(current).to_have_text("Algebra")
+    assert current.evaluate("element => element.scrollWidth <= element.clientWidth")
+    book = page.locator(".bp-dag-breadcrumb li").first.bounding_box()
+    assert book is not None and book["width"] >= 24
+
+
 def test_the_published_atlas_hides_the_isolate_toggle(desktop_page: object, site_url: str) -> None:
     page = _offline(desktop_page, site_url)
     page.goto(f"{site_url}/dependencies.html")
