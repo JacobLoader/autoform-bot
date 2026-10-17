@@ -359,7 +359,7 @@ def test_formalized_module_catalog_rejects_an_empty_lean_name_list(tmp_path: Pat
         proof="formalized",
     )
 
-    with pytest.raises(GraphValidationError, match="must list exact compiled names"):
+    with pytest.raises(GraphValidationError, match="needs the lean: names of the public declarations it inventories"):
         load_graph(blueprint)
 
 

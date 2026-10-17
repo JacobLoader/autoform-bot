@@ -587,7 +587,7 @@ def test_audit_surfaces_invalid_module_catalog_evidence(
 
     assert {code for code, _reason in findings} == {"invalid-graph"}
     reasons = {reason for _code, reason in findings}
-    assert any("must list exact compiled names" in reason for reason in reasons)
+    assert any("needs the lean: names of the public declarations it inventories" in reason for reason in reasons)
 
 
 def test_audit_reports_a_catalog_that_links_no_ledger_under_sources(tmp_path: Path) -> None:

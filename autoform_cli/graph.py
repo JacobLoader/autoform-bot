@@ -773,7 +773,10 @@ def _parse_frontmatter(node_id: str, lines: list[str]) -> tuple[dict[str, str], 
     formalized = [key for key in ("statement", "proof") if metadata.get(key) == _FORMALIZED]
     if formalized and not declaration_names(metadata.get("lean", "")):
         if metadata.get("catalog") is not None:
-            issues.append(f"{node_id}: formalized module catalog must list exact compiled names in 'lean'")
+            issues.append(
+                f"{node_id}: {formalized[0]}: formalized on a module catalog needs the lean: names "
+                "of the public declarations it inventories"
+            )
         else:
             issues.append(f"{node_id}: {formalized[0]}: formalized needs the lean: declaration that formalizes it")
     return metadata, end + 1, issues
