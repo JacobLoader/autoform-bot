@@ -1484,7 +1484,7 @@ def test_example_workflows_match_the_scaffold_templates(repo_root: Path) -> None
 
     substitutions = {
         "{{AUTOFORM_SOURCE_YAML}}": '"https://github.com/facebookresearch/autoform-bot.git"',
-        "{{AUTOFORM_REF_YAML}}": '"c994d83f9fab1f40d69b2f279d4c62ca937a0186"',
+        "{{AUTOFORM_REF_YAML}}": '"0288506b87e2e2f70b7446bf0cf7145006138d74"',
     }
     template_dir = repo_root / "autoform_cli/templates/github/workflows"
     example_dir = repo_root / _EXAMPLE / ".github/workflows"
