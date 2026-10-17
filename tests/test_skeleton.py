@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import replace
 from pathlib import Path
 
@@ -48,7 +48,6 @@ from autoform_cli.skeleton import (
     _PROBE_POOL,
     _PROCESS_TERMINATION_GRACE,
     _ProbeEnvironmentError,
-    _SignalGuard,
     _declaration,
     _install_output,
     _join_readers,
@@ -57,6 +56,7 @@ from autoform_cli.skeleton import (
     _rename_no_replace,
     _run_bounded_command,
     _replace_outputs,
+    _stable_paths,
     _stage_output,
     _terminate_process_tree,
     _hash_module_files,
@@ -899,6 +899,7 @@ def test_probe_pool_interruption_kills_running_probes_and_starts_no_queued_one(
     tmp_path: Path, monkeypatch, workers: int
 ) -> None:
     pid_files = [tmp_path / "a.pids", tmp_path / "b.pids"]
+    interrupted: list[float] = []
 
     def interrupt_once_the_workers_run(*args, **kwargs):
         deadline = time.monotonic() + 20
@@ -906,6 +907,7 @@ def test_probe_pool_interruption_kills_running_probes_and_starts_no_queued_one(
         while not all(path.exists() and len(path.read_text(encoding="utf-8").split()) == 2 for path in running):
             assert time.monotonic() < deadline
             time.sleep(0.01)
+        interrupted.append(time.monotonic())
         raise KeyboardInterrupt
 
     def run(program: str, root: Path) -> str:
@@ -917,6 +919,8 @@ def test_probe_pool_interruption_kills_running_probes_and_starts_no_queued_one(
     with pytest.raises(KeyboardInterrupt):
         _run_module_probes([("A", _sleeping_probe(pid_files[0])), ("B", _sleeping_probe(pid_files[1]))], run, tmp_path)
 
+    # The probes sleep for a minute; the pool must stop them, not wait them out.
+    assert time.monotonic() - interrupted[0] < 15
     assert pid_files[1].exists() == (workers == 2)
     _assert_no_survivors(pid_files)
 
@@ -935,13 +939,13 @@ def test_probe_pool_termination_signal_kills_every_workers_process_group(tmp_pat
 
 
 @pytest.mark.skipif(os.name != "posix", reason="termination signals are POSIX-specific")
-def test_a_signal_as_the_probe_pool_starts_its_cleanup_does_not_skip_it(tmp_path: Path, monkeypatch) -> None:
-    # A worker fails with an error that is not a probe failure, and a SIGTERM
-    # lands as the pool first disarms its guard; the pool must still cancel
-    # and join every worker before the signal ends anything.
+def test_a_signal_during_the_probe_pools_wait_is_handled_outside_it(tmp_path: Path, monkeypatch) -> None:
+    # Raised inside wait(), the signal could leave a future's lock held and
+    # hang the join; the pool must let wait() return, then cancel and join
+    # every worker before the signal ends anything.
     pid_file = tmp_path / "a.pids"
-    disarm = _SignalGuard.disarm
     received: list[int] = []
+    returned: list[bool] = []
     joined: list[bool] = []
 
     class Pool(ThreadPoolExecutor):
@@ -949,32 +953,32 @@ def test_a_signal_as_the_probe_pool_starts_its_cleanup_does_not_skip_it(tmp_path
             super().shutdown(wait=wait, cancel_futures=cancel_futures)
             joined.append(wait)
 
-    def signal_on_first_disarm(self: _SignalGuard) -> None:
-        if self.armed and threading.current_thread() is threading.main_thread():
-            self._handle(signal.SIGTERM, None)
-        disarm(self)
-
-    def run(program: str, root: Path) -> str:
-        if program == "broken":
+    def signal_inside_wait(*args, **kwargs):
+        if not returned:
             deadline = time.monotonic() + 20
             while not (pid_file.exists() and len(pid_file.read_text(encoding="utf-8").split()) == 2):
                 assert time.monotonic() < deadline
                 time.sleep(0.01)
-            raise RuntimeError("worker broke")
+            signal.raise_signal(signal.SIGTERM)
+        result = wait(*args, **kwargs)
+        returned.append(True)
+        return result
+
+    def run(program: str, root: Path) -> str:
         return _run_bounded_command([sys.executable, "-c", program], cwd=root, timeout=60, context="test probe").stdout
 
-    monkeypatch.setattr("autoform_cli.skeleton._probe_workers", lambda jobs: jobs)
-    monkeypatch.setattr("autoform_cli.skeleton._SignalGuard.disarm", signal_on_first_disarm)
+    monkeypatch.setattr("autoform_cli.skeleton.wait", signal_inside_wait)
     monkeypatch.setattr("autoform_cli.skeleton.ThreadPoolExecutor", Pool)
     before = set(threading.enumerate())
     previous = signal.signal(signal.SIGTERM, lambda signum, frame: received.append(signum))
     try:
         with pytest.raises(SkeletonError, match="interrupted by SIGTERM"):
-            _run_module_probes([("A", _sleeping_probe(pid_file)), ("B", "broken")], run, tmp_path)
+            _run_module_probes([("A", _sleeping_probe(pid_file))], run, tmp_path)
         workers = [thread for thread in threading.enumerate() if thread not in before and thread.is_alive()]
     finally:
         signal.signal(signal.SIGTERM, previous)
 
+    assert returned == [True]
     assert received == [signal.SIGTERM]
     assert joined == [True]
     assert workers == []
@@ -994,7 +998,7 @@ def stall():
     time.sleep(60)
 
 
-if args[:1] == ["--rehash"] or args == ["env"]:
+if args[:1] == ["--rehash"]:
     sys.exit(0)
 if "-o" in args:
     if phase == "helper":
@@ -2622,7 +2626,7 @@ def test_lake_freshness_is_checked_once_before_one_probe_per_module(tmp_path: Pa
     assert sorted(command[4:] for command in calls[2:]) == [["Skel.Main"], ["Skel.Uses"]]
 
 
-@pytest.mark.parametrize("failure", ["exit", "timeout", "malformed"])
+@pytest.mark.parametrize("failure", ["exit", "killed", "timeout", "malformed"])
 def test_a_failed_module_probe_leaves_only_its_roots_unresolved(
     tmp_path: Path, monkeypatch, failure: str
 ) -> None:
@@ -2638,6 +2642,8 @@ def test_a_failed_module_probe_leaves_only_its_roots_unresolved(
                 "\n".join([_record("Skel.heavy_of_notation", found=False)] * 2), encoding="utf-8"
             )
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if failure == "killed":
+            return subprocess.CompletedProcess(command, -9, stdout="", stderr="")
         return subprocess.CompletedProcess(command, 1, stdout="", stderr="error: Skel.Uses broke")
 
     _fake_lake(monkeypatch, project, answer)
@@ -2652,6 +2658,7 @@ def test_a_failed_module_probe_leaves_only_its_roots_unresolved(
     assert issue.reason.startswith("probe of module Skel.Uses failed: ")
     assert {
         "exit": "error: Skel.Uses broke",
+        "killed": "the skeleton probe was killed by signal 9",
         "timeout": "rerun with --timeout <seconds>",
         "malformed": "duplicate records for Skel.heavy_of_notation",
     }[failure] in issue.reason
@@ -2745,17 +2752,27 @@ def test_a_failed_probes_reason_reads_the_same_on_every_run(tmp_path: Path, monk
     assert "<scratch>/AutoformSkeletonProbe.lean:3:0: error" in issue.reason
     assert "\nSkel/Uses.lean:1:0: note" in issue.reason and str(tmp_path) not in issue.reason
     assert "\n<scratch>\n" in issue.reason and "autoform-skeleton-" not in issue.reason
-    assert len(issue.reason) <= 2000 and issue.reason.endswith(" more characters]")
+    # Cut once, so the count covers everything Lean printed past the cut.
+    quoted = issue.reason.split("\n", 1)[1]
+    dropped = re.fullmatch(r"(?s).*\n\[(\d+) more characters\]", quoted)
+    assert len(quoted) <= 2000 and dropped and int(dropped.group(1)) > len("trace line\n") * 500 - 2000
 
 
-def test_a_failure_every_probe_would_share_stops_the_extraction(tmp_path: Path, monkeypatch) -> None:
+def test_a_stable_reason_leaves_paths_beside_the_project_as_lean_printed_them(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    text = f"{root}/Skel/A.lean:1:0 {root}-old/A.lean {root}ect/A.lean {root}.bak/A.lean {root}: {root}"
+    assert _stable_paths(text, root) == f"Skel/A.lean:1:0 {root}-old/A.lean {root}ect/A.lean {root}.bak/A.lean .: ."
+
+
+@pytest.mark.parametrize("noise", [0, 500], ids=["alone", "past-the-quoted-part"])
+def test_a_failure_every_probe_would_share_stops_the_extraction(tmp_path: Path, monkeypatch, noise: int) -> None:
     project = _project(tmp_path)
 
     def answer(modules, command, env):
         if "Skel.Uses" not in modules:
             return _answer_records(modules, command, env)
         olean = project / ".lake" / "packages" / "dep" / "Std" / "Vendor.olean"
-        stderr = f"error: object file '{olean}' of module Std.Vendor does not exist"
+        stderr = "trace line\n" * noise + f"error: object file '{olean}' of module Std.Vendor does not exist"
         return subprocess.CompletedProcess(command, 1, stdout="", stderr=stderr)
 
     _fake_lake(monkeypatch, project, answer)

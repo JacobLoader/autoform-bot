@@ -509,11 +509,7 @@ helpers are compiled with the project's toolchain and no project module in
 scope into a module named `autoform-skeleton-helper`, whose constants are all
 in the `AutoformSkeleton` namespace. Both names are reserved: a module of the
 project, a dependency, or `LEAN_PATH` that takes one makes each probe that
-imports it fail, and that probe's targets are unresolved with Lean's error.
-The compiled helper is cached under `$XDG_CACHE_HOME/autoform/probe-helper`
-(by default `~/.cache/autoform/probe-helper`) per toolchain and helper source;
-an entry that does not match its stored SHA-256 and the toolchain's Git hash
-is compiled again, nothing prunes the cache, and deleting it is always safe. A
+imports it fail, and that probe's targets are unresolved with Lean's error. A
 declaration's packet reads as it does to a file that imports its module,
 whichever other articles are extracted with it.
 That environment has the module's global notation, instances, and
@@ -591,25 +587,19 @@ material's full text.
 Run skeleton extraction only in a trusted checkout or an operating-system
 sandbox. Lake evaluates `lakefile.lean`, and the generated probe imports project
 code whose initializers, macros, and metaprograms may perform arbitrary IO and
-can forge probe output. Each probe runs the helper's code, which later
-extractions take from the cache, so a process that can write the cache can
-run code in later extractions in any project, including trusted ones outside
-a sandbox. A sandbox for an untrusted project must therefore deny writes to
-the cache directory that extractions outside the sandbox use; setting
-`XDG_CACHE_HOME` inside the sandbox moves only Autoform's own cache, not what
-the project's code can write.
-The timeout and output cap bound the direct batch
+can forge probe output. The timeout and output cap bound the direct batch
 command; on POSIX, Autoform also terminates its process group, for every
 probe, on every failure and on interruption. The Lake freshness check, the
-helper's lookup and build, and each probe have their own 600-second budget;
+helper's build, and each probe have their own 600-second budget;
 `--timeout SECONDS` sets the helper's and each probe's, which a large
 project may need. Probes run in parallel, one per CPU available to the
-process, at most eight. Their budgets are not one shared deadline, so a
-module's result matches extracting it alone, and an extraction can run for one
-probe budget per round of parallel probes. The parsed records, at most 512 Mi
-characters of semantic material per probed module, stay in memory until the
-report is built. These limits are resource controls, not a security or
-authenticity boundary.
+process and at most eight; on Python 3.13 and later, `PYTHON_CPU_COUNT` sets
+that CPU count. Each probe's budget is its own rather than a share of one
+deadline, so its result does not depend on which probes ran before it, and an
+extraction can run for one probe budget per round of parallel probes. The
+parsed records, at most 512 Mi characters of semantic
+material per probed module, stay in memory until the report is built. These
+limits are resource controls, not a security or authenticity boundary.
 
 Every skeleton carries a full SHA-256 **drift hash**. It is derived from
 canonical elaborated expressions for the root, every trusted declaration, each

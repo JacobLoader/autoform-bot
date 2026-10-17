@@ -84,8 +84,6 @@ _UNCAPTURED_ROOT_MODULE = re.compile(r"the impact probe (?:loaded|found) root-pa
 #: Bounds each probe process; extraction runs one per root module.
 DEFAULT_PROBE_TIMEOUT = 600.0
 
-#: Characters of Lean output a failure reason quotes.
-_FAILURE_DETAIL_LIMIT = 2000
 #: The Lake freshness check hashes every imported input, which on a Mathlib
 #: project can take minutes on its own, so it does not share the probe's budget.
 DEFAULT_FRESHNESS_TIMEOUT = 600.0
@@ -98,6 +96,8 @@ DEFAULT_PROBE_OUTPUT_LIMIT = 64 * 1024 * 1024
 #: The probe states shared subterms once; this bounds the characters of
 #: semantic material they may expand to in one probe.
 _PROBE_MATERIAL_LIMIT = 512 * 1024 * 1024
+#: Characters of Lean output a failure reason quotes.
+_FAILURE_DETAIL_LIMIT = 2000
 _PROCESS_TERMINATION_GRACE = 2.0
 #: Lake's exit status when ``--no-build`` finds a target that needs rebuilding.
 _LAKE_NO_BUILD_EXIT = 3
@@ -1597,20 +1597,31 @@ def path_of(module: str, libraries: tuple[LeanLibrary, ...], lean_root: Path) ->
     return None
 
 
-def _stable_detail(text: str, lean_root: Path, *scratch: Path) -> str:
-    """A failure reason that reads the same on every run, at bounded length.
+def _stable_paths(text: str, lean_root: Path, *scratch: Path) -> str:
+    """``text`` with the paths that change from run to run made stable.
 
     Each ``scratch`` directory, which changes on every run, reads as
     `<scratch>`, and paths inside the project read relative to it; paths
-    elsewhere, such as the toolchain's, stay as Lean printed them.
+    elsewhere, such as the toolchain's or a sibling directory's, stay as Lean
+    printed them.
     """
 
     replacements = {str(path): "<scratch>" for directory in scratch for path in (directory, directory.resolve())}
     for root in (lean_root, lean_root.resolve()):
         replacements[str(root) + os.sep] = ""
         replacements[str(root)] = "."
-    for old in sorted(replacements, key=len, reverse=True):
-        text = text.replace(old, replacements[old])
+    # A directory matches only where its name ends, so `/srv/proj` leaves `/srv/proj-old` alone.
+    pattern = "|".join(
+        re.escape(old) + ("" if old.endswith(os.sep) else r"(?![\w.-])")
+        for old in sorted(replacements, key=len, reverse=True)
+    )
+    return re.sub(pattern, lambda match: replacements[match.group()], text)
+
+
+def _stable_detail(text: str, lean_root: Path, *scratch: Path) -> str:
+    """``_stable_paths`` of a failure reason, cut to ``_FAILURE_DETAIL_LIMIT`` characters."""
+
+    text = _stable_paths(text, lean_root, *scratch)
     if len(text) <= _FAILURE_DETAIL_LIMIT:
         return text
     keep = _FAILURE_DETAIL_LIMIT - 64
@@ -1828,16 +1839,21 @@ def _build_probe_helper(lean_root: Path, directory: Path, *, timeout: float) -> 
     except _CommandTimedOut as exc:
         raise _ProbeEnvironmentError([f"{exc.issues[0]}; rerun with --timeout <seconds> for large projects"]) from exc
     if result.returncode != 0:
-        detail = _stable_detail((result.stderr or result.stdout).strip(), lean_root, directory)
-        _raise_if_core_module_shadowed(detail)
+        raw = (result.stderr or result.stdout).strip()
+        detail = _stable_detail(raw, lean_root, directory)
+        _raise_if_core_module_shadowed(raw, detail)
         raise _ProbeEnvironmentError([f"cannot build the skeleton probe helpers\n{detail}"])
     return directory
 
 
-def _raise_if_core_module_shadowed(detail: str, label: str = "skeleton probe") -> None:
-    """Name the dependency library at fault when Lean could not load a toolchain module."""
+def _raise_if_core_module_shadowed(output: str, detail: str, label: str = "skeleton probe") -> None:
+    """Name the dependency library at fault when Lean could not load a toolchain module.
 
-    shadowed = _SHADOWED_CORE_MODULE.search(detail)
+    ``output`` is Lean's whole output, searched because ``detail``, the
+    reason's shortened copy, could cut the refusal off.
+    """
+
+    shadowed = _SHADOWED_CORE_MODULE.search(output)
     if shadowed:
         root = shadowed.group(1).split(".", 1)[0]
         raise _ProbeEnvironmentError(
@@ -1911,11 +1927,14 @@ def run_probe(
     if result.returncode != 0:
         raw = (result.stderr or result.stdout).strip()
         detail = _stable_detail(raw, lean_root, *filter(None, (Path(scratch), helper)))
-        _raise_if_core_module_shadowed(detail, label)
+        _raise_if_core_module_shadowed(raw, detail, label)
         # Searched in the whole output: the shortened reason could cut the refusal off.
         uncaptured = _UNCAPTURED_ROOT_MODULE.search(raw)
         if uncaptured:
             raise SkeletonError([uncaptured.group()])
+        if result.returncode < 0:
+            # Most likely the out-of-memory killer, which leaves no output to explain it.
+            raise SkeletonError([f"the {label} was killed by signal {-result.returncode}\n{detail}".rstrip()])
         raise SkeletonError([f"the {label} failed; is the project built with `lake build`?\n{detail}"])
     return output or result.stdout
 
@@ -2505,9 +2524,12 @@ def _run_module_probes(
     with _signal_guard() as guard:
         try:
             futures = {pool.submit(probe, module, program): module for module, program in jobs}
-            guard.arm()
             pending = set(futures)
             while pending:
+                # Polled rather than armed: a signal raised inside wait() could
+                # leave a future's lock held, and the join below would hang.
+                if guard.received is not None:
+                    raise _CommandSignalled(guard.received)
                 done, pending = wait(pending, timeout=0.05, return_when=FIRST_COMPLETED)
                 for future in done:
                     try:
@@ -2516,14 +2538,7 @@ def _run_module_probes(
                         raise
                     except SkeletonError as exc:
                         results[futures[future]] = exc
-        except BaseException:
-            # Disarmed before anything else, so that a signal arriving now
-            # cannot skip the cancel and join below; it is delivered once they
-            # are done.
-            guard.disarm()
-            raise
         finally:
-            guard.disarm()
             cancelled.set()
             pool.shutdown(wait=True, cancel_futures=True)
     return results
@@ -2787,7 +2802,8 @@ def extract_graph_skeletons(
         for module in sorted(groups):
             result = results[module]
             if isinstance(result, SkeletonError):
-                failed_modules[module] = _stable_detail(f"probe of module {module} failed: {result}", lean_root)
+                # run_probe already cut Lean's output; a second cut would drop the end of what it kept.
+                failed_modules[module] = _stable_paths(f"probe of module {module} failed: {result}", lean_root)
             else:
                 records.update(result)  # type: ignore[arg-type]
 
@@ -2808,7 +2824,7 @@ def extract_graph_skeletons(
                 continue
             if "error" in record:
                 reason = f"the probe failed on this declaration: {record['error']}"
-                unresolved.append(UnresolvedTarget(node.id, name, _stable_detail(reason, lean_root)))
+                unresolved.append(UnresolvedTarget(node.id, name, _stable_paths(reason, lean_root)))
                 continue
             if not record.get("found"):
                 unresolved.append(
