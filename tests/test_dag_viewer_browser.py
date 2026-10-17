@@ -752,13 +752,26 @@ def test_a_result_neither_drawn_here_nor_safely_linked_selects_nothing(
 
 
 def test_a_browse_query_lists_only_this_scope(desktop_page: object, explorer_url: str) -> None:
-    """Whole-roadmap matches belong to the search dropdown, not under "Browse this scope"."""
+    """Whole-roadmap matches belong to the search dropdown, not under "Browse this scope".
+
+    The dropdown opened on every keystroke and covered the list being filtered,
+    so in Browse it opens only when asked: by Down from the search box, or the
+    summary's button, which a touch screen can reach.
+    """
     page = desktop_page
     _open_ready(page, explorer_url)
     search = _load_search_index(page)
     page.get_by_role("button", name="Browse").click()
     search.fill("theorem")
     playwright.expect(page.locator(".bp-dag-inventory-title")).to_have_text(["Target theorem"])
+    results = page.locator(".bp-dag-search-results")
+    playwright.expect(results).to_be_hidden()
+    search.press("ArrowDown")
+    playwright.expect(page.locator(".bp-dag-result").first).to_be_focused()
+    page.keyboard.press("Escape")
+    playwright.expect(results).to_be_hidden()
+    page.get_by_role("button", name="search the whole roadmap").click()
+    playwright.expect(results.locator(".bp-dag-result", has_text="Remote theorem")).to_be_visible()
 
 
 def test_global_search_jumps_to_the_smallest_context(desktop_page: object, explorer_url: str) -> None:
