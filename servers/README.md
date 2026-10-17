@@ -67,9 +67,10 @@ environment, is not found.
 `lean_diagnostic_messages` runs `lake --no-build lean` once per call and waits
 until Lean exits. When `LEAN_LSP_CMD` ends in `serve`, that command runs with
 `--no-build lean` in place of `serve`; otherwise the `lake` on `PATH` runs.
-Unbuilt or stale imports are reported with the modules to build, not built. At
-most `AUTOFORM_MAX_LEAN_PROJECTS` checks run at once. `lean_hover` uses the
-project's Lean server, which builds stale imports inside the call.
+Unbuilt or stale imports are reported, not built, and Lake names only the first
+modules to build. At most `AUTOFORM_MAX_LEAN_PROJECTS` checks run at once.
+`lean_hover` uses the project's Lean server, which builds stale imports inside
+the call.
 
 `LEAN_LSP_TIMEOUT` (60 seconds by default) bounds each
 `lean_diagnostic_messages` call, including waiting for a free Lean slot. For
