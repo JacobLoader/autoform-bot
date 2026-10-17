@@ -377,8 +377,8 @@ scope limits, JSON fields, nullability, and diagnostic codes.
 pairs. These are the pairs `project new` can lock offline; it does not resolve
 others, which it writes unlocked for `lake update`.
 
-Publishing a project runs four steps in order: validate, write the Mermaid
-graph into the vault, render the site source, then strict-build the site.
+Publishing a project runs four steps in order: validate, refresh the vault's
+dependency summary, render the site source, then strict-build the site.
 
 ```bash
 uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform check blueprint --lean-root .
@@ -1071,11 +1071,22 @@ board. A failed acquire or renew means the caller cannot prove ownership and
 must stop before committing or pushing protected work. Claims do not prove
 mathematical correctness and do not replace branch-level Git CAS.
 
-Write the Mermaid dependency graph into the vault, where Obsidian renders it:
+Refresh the vault's dependency summary, `blueprint/dependencies.md`:
 
 ```bash
 autoform-visualize blueprint
 ```
+
+The summary is plain Markdown built from the explorer's project map, so it
+reads the same in Obsidian, to an agent, and on GitHub where the repository
+tracks it (the scaffolded vault ignores it). It holds a table of statuses with
+their meanings; one row per chapter with its items, its work ready to pick up,
+and the chapters it depends on and is used by, marking a dependency only a
+proof needs; the articles themselves while the roadmap has at most 120; and how
+to open the explorer, which draws the whole graph. Its front matter carries
+`kind: graph` and `autoform_generated: true`. It replaces a missing page, one it
+wrote, or the Mermaid page earlier versions wrote, and refuses any other page
+with exit status 2.
 
 Build the publishable site source — a book overview, aggregate progress,
 statement boxes with collapsed dependency details, a multi-scale dependency
@@ -1155,6 +1166,10 @@ What an existing repository meets when it moves to this version:
    link is now `<scope>.html#node=<id>`.
 9. Setup leaves an existing `mkdocs.yml` alone. A large site can add Material's
    `navigation.prune` feature by hand, as the scaffolded configuration does.
+10. `autoform-visualize` writes a plain-Markdown dependency summary to
+   `blueprint/dependencies.md` in place of the Mermaid graph. It replaces a
+   missing page, its own, or the Mermaid page earlier versions wrote, and
+   refuses any other page with exit status 2.
 
 ## Validation
 

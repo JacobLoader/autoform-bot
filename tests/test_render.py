@@ -337,16 +337,15 @@ def test_the_site_publishes_no_second_copy_of_the_vault(tmp_path: Path) -> None:
     assert "blueprint/roadmap/top.md" in chapter
 
 
-def test_the_vault_graph_keeps_a_visible_legend(tmp_path: Path) -> None:
-    """Obsidian never loads this stylesheet, so a hover note is unreachable there."""
+def test_the_vault_summary_keeps_its_statuses_in_plain_markdown(tmp_path: Path) -> None:
+    """Obsidian never loads this stylesheet, so the site's legend markup would be inert there."""
     from autoform_cli.visualize import export_graph
 
     project = _project(tmp_path)
     document = export_graph(project / "blueprint").read_text(encoding="utf-8")
 
-    assert "bp-legend-icon" not in document
-    assert "## Legend" in document
-    assert 'class="bp-legend-grid"' in document
+    assert "| Status | Count | Meaning |" in document
+    assert "bp-legend" not in document and "<span" not in document
 
 
 def test_the_site_carries_its_own_mark(tmp_path: Path) -> None:

@@ -1184,7 +1184,8 @@ def test_roadmap_skill_commits_the_final_checked_pass(repo_root: Path) -> None:
         "`autoform check`",
         "`autoform audit`",
         "Fix the other `warning:` lines inside the adopted boundary as you would a finding",
-        "Commit the vault and refreshed graph only after this final validation",
+        "refresh the dependency summary with `autoform-visualize`",
+        "Commit the vault, with the refreshed summary where the repository tracks it, only after this final validation",
         "no `MAPPED` rows",
         "latest commit contains every change from the pass",
     ):

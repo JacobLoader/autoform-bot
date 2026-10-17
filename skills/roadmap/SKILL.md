@@ -245,15 +245,17 @@ contract, `blueprint/README.md`, and the repository `README.md`.
 ## Finish
 
 After the final edit, use the CLI reference to run `autoform check` and
-`autoform audit`, refresh the Mermaid graph, and resolve every finding
-introduced by this work or inside the adopted boundary. Report unrelated
+`autoform audit`, refresh the dependency summary with `autoform-visualize`,
+and resolve every finding introduced by this work or inside the adopted
+boundary. Report unrelated
 pre-existing findings instead of silently widening scope. A
 `catalog-unbounded-limit` or `catalog-unscoped-limit` warning describes
 existing Lean code and never fails the audit: report it, and change that code
 only when the user asks, through Formalize, rebuilding before anything is
 recorded. Fix the other `warning:` lines inside the adopted boundary as you
-would a finding. Commit the vault and refreshed graph only after this final
-validation; pushing is outward-facing and requires a user request.
+would a finding. Commit the vault, with the refreshed summary where the
+repository tracks it, only after this final validation; pushing is
+outward-facing and requires a user request.
 
 Finish only when the adopted boundary has no `MAPPED` rows, every `DECOMPOSED`
 area links source-grounded declaration articles, every `INVENTORIED` area links
