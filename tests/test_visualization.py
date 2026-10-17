@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from autoform_cli import mermaid
+from autoform_cli import graph_pages
 from autoform_cli.graph import load_graph
 from autoform_cli.status import MEANINGS, STATES, derive
 from autoform_cli.visualize import (
@@ -226,7 +226,7 @@ def test_the_legend_explains_readiness_without_naming_a_policy(tmp_path: Path) -
     _write_node(blueprint / "roadmap" / "unstated.md", "Unstated", declaration="theorem")
     statuses = derive(load_graph(blueprint))
 
-    legend = mermaid.render_legend(statuses)
+    legend = graph_pages.render_legend(statuses)
 
     assert [statuses[key].key for key in ("stated", "unstated")] == ["can_prove", "can_state"]
     assert "Statement is in Lean and nothing it needs is blocked, so the proof can start." in legend

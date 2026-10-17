@@ -1421,20 +1421,91 @@ def test_both_colour_schemes_are_published(tmp_path: Path) -> None:
     assert ".navbar" not in css
     assert "data-bs-theme" not in css
 
-    # A rendered diagram cannot be restyled, so the script owns both palettes
-    # and redraws when the scheme changes.
+    # A rendered diagram cannot be restyled, so the script redraws authored
+    # diagrams in Mermaid's theme for each scheme. Generated graphs are the
+    # explorer, so it injects no status palette.
     assert '"light"' in script and '"dark"' in script
     assert "data-md-color-scheme" in script
     assert "MutationObserver" in script
-    assert "bindFunctions" in script
-    for state in STATES:
-        assert f"classDef {state.key} fill:{state.fill}," in script
-        assert f"classDef {state.key} fill:{state.dark_fill}," in script
-    # Both palettes ship: the light chapter box and the dark one.
-    assert "classDef scope fill:#EBF2FE" in script
-    assert "classDef scope fill:#1C1D1F" in script
-    assert "classDef boundary" in script
-    assert "classDef focus" in script
+    assert "classDef" not in script
+
+
+_MERMAID_HARNESS = r"""
+const fs = require("fs");
+const vm = require("vm");
+const source = fs.readFileSync(process.argv[2], "utf8");
+
+async function run(blocks, preloaded) {
+  const calls = [], injected = [], observers = [];
+  let scheme = null;
+  const elements = blocks.map((text) => ({textContent: text, innerHTML: ""}));
+  const mermaid = {
+    initialize: (config) => calls.push(["initialize", config.securityLevel, config.htmlLabels, config.theme]),
+    render: (id, text) => {
+      calls.push(["render", text]);
+      return Promise.resolve({svg: "<svg>" + text + "</svg>", bindFunctions: () => calls.push(["bind"])});
+    },
+  };
+  const context = {
+    document: {
+      querySelectorAll: () => elements,
+      body: {getAttribute: () => scheme},
+      createElement: () => ({}),
+      head: {appendChild: (element) => injected.push(element)},
+    },
+    MutationObserver: function (callback) { observers.push(callback); this.observe = () => {}; },
+  };
+  if (preloaded) context.mermaid = mermaid;
+  vm.createContext(context);
+  vm.runInContext(source, context);
+  if (!preloaded && injected.length) { context.mermaid = mermaid; injected[0].onload(); }
+  await new Promise((resolve) => setImmediate(resolve));
+  // A switch to the dark scheme redraws every diagram, still locked down.
+  scheme = "slate";
+  observers.forEach((callback) => callback([{attributeName: "data-md-color-scheme"}]));
+  await new Promise((resolve) => setImmediate(resolve));
+  return {calls, sources: injected.map((element) => element.src), drawn: elements.map((element) => element.innerHTML)};
+}
+
+(async () => {
+  console.log(JSON.stringify({
+    none: await run([], false),
+    loaded: await run(["graph LR\n  a --> b"], false),
+    preloaded: await run(["graph TD\n  c --> d"], true),
+  }));
+})();
+"""
+
+
+def test_the_site_draws_authored_diagrams_locked_down_and_only_where_a_page_has_one(tmp_path: Path) -> None:
+    """Generated maps are the explorer, so every diagram is one an author wrote.
+
+    Strict mode drops click callbacks and labels draw as plain text, and a page
+    without a diagram never loads Mermaid, while a site configuration that
+    still loads it globally keeps working.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available")
+    script = tmp_path / "blueprint-mermaid.js"
+    script.write_text(render_module._mermaid_script(), encoding="utf-8")
+    harness = tmp_path / "harness.js"
+    harness.write_text(_MERMAID_HARNESS, encoding="utf-8")
+
+    result = json.loads(subprocess.run([node, str(harness), str(script)], capture_output=True, text=True, check=True).stdout)
+
+    assert result["none"] == {"calls": [], "sources": [], "drawn": []}
+    assert result["loaded"]["sources"] == [render_module.MERMAID_LIBRARY]
+    diagram = "graph LR\n  a --> b"
+    assert result["loaded"]["calls"] == [
+        ["initialize", "strict", False, "neutral"], ["render", diagram], ["bind"],
+        ["initialize", "strict", False, "dark"], ["render", diagram], ["bind"],
+    ]
+    assert result["loaded"]["drawn"] == [f"<svg>{diagram}</svg>"]
+    assert result["preloaded"]["sources"] == []
+    assert result["preloaded"]["calls"][:3] == [
+        ["initialize", "strict", False, "neutral"], ["render", "graph TD\n  c --> d"], ["bind"]
+    ]
 
 
 def test_the_generated_script_is_valid_javascript(tmp_path: Path) -> None:
@@ -1642,13 +1713,13 @@ def test_anchored_links_resolve_only_entries_that_are_read(
         for index in range(10_000)
     }
     calls: list[tuple[Path, Path, str]] = []
-    original_relative_link = render_module.mermaid.relative_link
+    original_relative_link = render_module.relative_link
 
     def relative_link(target: Path, output: Path, extension: str) -> str:
         calls.append((target, output, extension))
         return original_relative_link(target, output, extension)
 
-    monkeypatch.setattr(render_module.mermaid, "relative_link", relative_link)
+    monkeypatch.setattr(render_module, "relative_link", relative_link)
     links = render_module._anchored_links(targets, page)
 
     assert calls == []
@@ -2518,17 +2589,15 @@ def test_a_directory_link_uses_tree_even_when_the_repo_url_says_blob() -> None:
 
 
 def _count_relative_links(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
-    """Record the target of every `mermaid.relative_link` call."""
-    from autoform_cli import mermaid
-
+    """Record the target of every `relative_link` call render makes."""
     calls: list[Path] = []
-    relative_link = mermaid.relative_link
+    relative_link = render_module.relative_link
 
     def counting(target: Path, output: Path, link_extension: str) -> str:
         calls.append(target)
         return relative_link(target, output, link_extension)
 
-    monkeypatch.setattr(mermaid, "relative_link", counting)
+    monkeypatch.setattr(render_module, "relative_link", counting)
     return calls
 
 

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Sequence
 
 from . import graph_views, status
 from .graph import GraphValidationError, load_graph
-from .mermaid import relative_link
+from .markdown import relative_link
 
 if TYPE_CHECKING:
     from .graph import Graph

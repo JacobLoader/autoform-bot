@@ -33,7 +33,7 @@ import stat
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import html5lib
 import markdown as pymarkdown
@@ -1015,6 +1015,14 @@ def _is_hidden_path(path: Path, boundary: Path) -> bool:
     return _is_within(path, boundary) and any(part.startswith(".") for part in path.relative_to(boundary).parts)
 
 
+def relative_link(target: Path, output: Path, link_extension: str) -> str:
+    """Relative link from the page at *output* to *target*, with its suffix swapped."""
+    relative = Path(os.path.relpath(target.resolve(), output.resolve().parent))
+    if not relative.name:
+        # The page's own directory is ``.``, which has no name to take a suffix.
+        return quote(relative.as_posix(), safe="/")
+    return quote(relative.with_suffix(link_extension).as_posix(), safe="/")
+
 __all__ = [
     "EXTERNAL_SCHEMES",
     "FENCE",
@@ -1041,6 +1049,7 @@ __all__ = [
     "mask_code_and_comments",
     "mask_fences_and_comments",
     "published_tables",
+    "relative_link",
     "render_html",
     "render_tree",
     "rendered_visible_text",

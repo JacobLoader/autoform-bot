@@ -10,12 +10,13 @@ source of graph state.
 
 from __future__ import annotations
 
+import html
 from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from urllib.parse import quote
 
-from . import dag_viewer, mermaid
+from . import dag_viewer
 from .graph import Graph
 from .graph_views import (
     INVENTORY_STATUSES,
@@ -29,9 +30,11 @@ from .graph_views import (
     project_view,
     scope_views,
 )
-from .status import NodeStatus
+from .markdown import relative_link
+from .status import INVENTORY_STATES, MEANINGS, STATES, NodeStatus
 
 NodeLinks = Callable[[Path, Iterable[str]], Mapping[str, str]]
+
 #: The project explorer's payload and the search index, relative to the site root.
 PROJECT_PAYLOAD = "dependencies.json"
 SEARCH_INDEX = "dependencies/index.json"
@@ -286,7 +289,7 @@ def scope_page_href(
 ) -> str:
     """Link a node's scope page from *page*, selecting the node in the hash."""
     target = scope_page_path(destination, node_id, parent=parent)
-    return f"{mermaid.relative_link(target, Path(page), '.html')}#node={quote(node_id, safe='')}"
+    return f"{relative_link(target, Path(page), '.html')}#node={quote(node_id, safe='')}"
 
 
 def _write_page(
@@ -344,7 +347,7 @@ def _write_page(
         sections.extend([navigation, ""])
     # The legend rides on the lead sentence rather than sitting under the
     # explorer: it answers a question the reader asks once, not on every page.
-    tip = mermaid.render_legend_tip(statuses, _view_inventories(view))
+    tip = render_legend_tip(statuses, _view_inventories(view))
     sections.extend([f"{lead} {tip}".rstrip(), "", explorer, ""])
     if extra:
         sections.extend([extra, ""])
@@ -406,7 +409,7 @@ def _navigation(*items: tuple[str, str]) -> str:
 
 
 def _markdown_link(target: Path, page: Path) -> str:
-    return mermaid.relative_link(target, page, ".md")
+    return relative_link(target, page, ".md")
 
 
 def _published_link(target: Path, page: Path) -> str:
@@ -414,13 +417,13 @@ def _published_link(target: Path, page: Path) -> str:
     # parses, but never these, which reach the explorer as JSON.
     if target.name == "README.md":
         target = target.with_name("index.md")
-    return mermaid.relative_link(target, page, ".html")
+    return relative_link(target, page, ".html")
 
 
 def _viewer_script_link(page: Path, site_root: Path) -> str:
     """Link the viewer asset from an explicit publication root."""
 
-    return mermaid.relative_link(
+    return relative_link(
         site_root / dag_viewer.SCRIPT_PATH,
         page,
         ".js",
@@ -428,7 +431,7 @@ def _viewer_script_link(page: Path, site_root: Path) -> str:
 
 
 def _search_index_link(search_index: Path, page: Path) -> str:
-    return mermaid.relative_link(search_index, page, ".json")
+    return relative_link(search_index, page, ".json")
 
 
 def _scope_breadcrumbs(
@@ -459,4 +462,84 @@ def _scope_breadcrumbs(
     return tuple(items)
 
 
-__all__ = ["PROJECT_PAYLOAD", "SEARCH_INDEX", "scope_page_href", "scope_page_path", "write_graph_pages"]
+def render_legend(
+    statuses: dict[str, NodeStatus],
+    inventories: Mapping[str, int] | None = None,
+) -> str:
+    """Return a legend covering the states actually in use.
+
+    A Markdown table put this in a bordered box with a blank first heading over
+    the swatches, and left each column to size itself against its own longest
+    cell, so the swatch, the label and the count landed in a different place in
+    every row. This is one grid instead: the cells are emitted in reading order
+    and the columns line up because the grid, not the content, sets them.
+
+    *inventories* counts module catalogs by inventory status. A legend beside
+    counts that include catalogs lists those statuses after the states.
+    """
+    inventories = inventories or {}
+    used = {status.key for status in statuses.values()}
+    rows = [state for state in STATES if state.key in used]
+    rows.extend(state for state in INVENTORY_STATES if inventories.get(state.key))
+    if not rows:
+        return ""
+    counts = {state.key: 0 for state in STATES}
+    for status in statuses.values():
+        counts[status.key] += 1
+    counts.update(inventories)
+    cells = []
+    for state in rows:
+        # Colour comes from the stylesheet, so the legend follows the theme.
+        cells.append(
+            f'<span class="bp-swatch bp-swatch-{state.key}"></span>'
+            f'<span class="bp-legend-label">{html.escape(state.label)}</span>'
+            f'<span class="bp-legend-count">{counts[state.key]}</span>'
+            f'<span class="bp-legend-meaning">{html.escape(MEANINGS[state.key])}</span>'
+        )
+    return f'<div class="bp-legend-grid">{"".join(cells)}</div>'
+
+
+def render_legend_tip(
+    statuses: dict[str, NodeStatus],
+    inventories: Mapping[str, int] | None = None,
+) -> str:
+    """The legend behind a hover icon, for pages that only occasionally need it.
+
+    A graph page carried the legend in a disclosure captioned "What the colours
+    mean", which spent a headline-sized row on a question most readers never
+    ask, on every page, under every diagram. The same content hangs off an
+    icon instead.
+
+    Pure CSS: the icon is a real button, and the note shows on ``:hover`` and
+    on ``:focus-within``, so it opens by keyboard as well as by pointer. The
+    vault's dependency summary lists the statuses in a table instead, since
+    Obsidian has no stylesheet to open the note.
+    """
+    legend = render_legend(statuses, inventories)
+    if not legend:
+        return ""
+    icon = (
+        '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
+        '<circle cx="8" cy="8" r="7"/>'
+        '<path d="M8 7v4.5" /><circle cx="8" cy="4.6" r="0.9" class="bp-legend-dot"/>'
+        "</svg>"
+    )
+    return (
+        '<span class="bp-legend-tip">'
+        '<button type="button" class="bp-legend-icon" aria-describedby="bp-legend-note">'
+        f'{icon}<span class="bp-visually-hidden">What the colours mean</span>'
+        "</button>"
+        f'<span class="bp-legend-note" id="bp-legend-note" role="tooltip">{legend}</span>'
+        "</span>"
+    )
+
+
+__all__ = [
+    "PROJECT_PAYLOAD",
+    "SEARCH_INDEX",
+    "render_legend",
+    "render_legend_tip",
+    "scope_page_href",
+    "scope_page_path",
+    "write_graph_pages",
+]

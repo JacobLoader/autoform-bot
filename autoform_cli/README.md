@@ -1115,6 +1115,10 @@ one canvas. Every generated site projection uses the same deterministic
 JSON-derived Canvas and semantic-DOM explorer with search, filters, pan/zoom,
 and hash-routed node neighborhoods, so none inherits Mermaid's text, edge, or
 SVG-size ceilings. Authored Mermaid remains supported in the vault and book.
+The site draws an authored diagram in Mermaid's strict mode, with labels as
+plain text, and loads Mermaid only on a page that has one: click callbacks and
+HTML in labels do not work there, while a link to a URL does, through
+Mermaid's URL sanitizer.
 A persistent hierarchy rail keeps the current ancestry and immediate contents
 visible. The project overview groups readable topic cards by authored
 mathematical area and reveals only a selected topic's direct dependency
@@ -1124,7 +1128,9 @@ for a roadmap with neither a root article nor root leaves), and every formal
 statement links to the smallest explorer scope containing that item. Point
 `mkdocs.yml` at `docs_dir: site-src` and enable `md_in_html` plus a
 `pymdownx.superfences` mermaid fence; see the [repository
-example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml).
+example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml). The
+generated `javascripts/blueprint-mermaid.js` loads Mermaid itself, so the
+configuration lists that script but not the Mermaid library.
 
 This shared-explorer layout replaces the `dependencies/nodes/*.html` focus
 pages of earlier sites: a statement's dependency link is now
@@ -1170,6 +1176,12 @@ What an existing repository meets when it moves to this version:
    `blueprint/dependencies.md` in place of the Mermaid graph. It replaces a
    missing page, its own, or the Mermaid page earlier versions wrote, and
    refuses any other page with exit status 2.
+11. The site draws authored Mermaid diagrams in strict mode, with plain-text
+   labels, and only on pages that have one, so click callbacks and HTML in
+   labels stop working; links to URLs still work. A `mkdocs.yml` that loads
+   Mermaid from the CDN keeps working, and may drop that line once CI's
+   `AUTOFORM_REF` includes this change: a render pinned before it needs the
+   line to draw any diagram.
 
 ## Validation
 
