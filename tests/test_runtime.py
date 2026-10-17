@@ -13,6 +13,7 @@ from autoform_cli.runtime import (
     RUNTIME_AUTHORITY,
     RUNTIME_SCHEMA,
     RuntimeProjectionError,
+    _validate_runtime,
     build_runtime_graph,
     load_runtime_graph,
     resolve_runtime_paths,
@@ -388,6 +389,28 @@ def test_adapter_rejects_inconsistent_hand_built_graph_without_host_paths(tmp_pa
         "chapter/section/base: dependency union does not match typed dependencies",
     )
     assert str(tmp_path) not in str(error.value)
+
+
+def test_adapter_never_dispatches_a_hand_built_catalog_with_a_declaration(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    canonical = load_graph(project / "blueprint")
+    nodes = dict(canonical.nodes)
+    base = nodes["chapter/section/base"]
+    nodes[base.id] = replace(base, catalog="module")
+
+    runtime = build_runtime_graph(Graph(canonical.blueprint_dir, nodes), project_root=project)
+
+    assert not runtime.get(base.id).dispatchable
+
+
+def test_runtime_validation_rejects_a_dispatchable_catalog(tmp_path: Path) -> None:
+    runtime = load_runtime_graph(_project(tmp_path))
+    nodes = tuple(
+        replace(node, catalog="module") if node.id == "chapter/section/base" else node for node in runtime.nodes
+    )
+
+    with pytest.raises(RuntimeProjectionError, match="catalog node is dispatchable"):
+        _validate_runtime(replace(runtime, nodes=nodes))
 
 
 def test_adapter_rejects_a_hand_built_unknown_catalog_kind(tmp_path: Path) -> None:
