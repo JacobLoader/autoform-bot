@@ -29,6 +29,7 @@ from .graph import (
 )
 from .lean import (
     _DECLARATION,
+    _WANTED_KEYWORDS,
     Declaration,
     LeanSourceError,
     SourceIndex,
@@ -63,8 +64,6 @@ _MAX_ROOT_CHILDREN = 64
 _NODE_SIZE_FLOOR = 200
 _NODE_SIZE_MULTIPLE = 4
 
-#: Batteries' commands for a statement whose proof or construction is deferred.
-_WANTED_KEYWORDS = frozenset({"theorem_wanted", "proof_wanted", "def_wanted", "instance_wanted"})
 _THEOREM_KEYWORDS = frozenset({"lemma", "theorem", "theorem_wanted", "proof_wanted"})
 _DEF_KEYWORDS = frozenset({"def", "def_wanted", "irreducible_def"})
 
@@ -531,8 +530,15 @@ def _lean_findings(
         names = declaration_names(node.lean or "")
         resolved = []
         for name in names:
-            declaration = index.find(name)
-            if declaration is None:
+            if ambiguous := index.ambiguity(name):
+                findings.append(
+                    AuditFinding(
+                        article_path,
+                        "lean-target-ambiguous",
+                        f"Lean declaration target is defined more than once: {name} ({ambiguous})",
+                    )
+                )
+            elif (declaration := index.find(name)) is None:
                 reason = f"Lean declaration target was not found: {name}"
                 if node.catalog:
                     # The index records only names written after a declaration keyword.
@@ -610,7 +616,7 @@ def _lean_findings(
             )
 
         if resolved:
-            sizes[node_id] = sum(spans[body.name] for body in bodies)
+            sizes[node_id] = sum(spans[body] for body in bodies)
 
     findings.extend(_size_findings(graph, sizes))
     if warnings is not None:
@@ -785,19 +791,28 @@ def _catalog_limit_warnings(
     return warnings
 
 
-def _source_spans(index: SourceIndex) -> dict[str, int]:
+def _source_spans(index: SourceIndex) -> dict[Declaration, int]:
     """Measure each declaration's source span, up to the next declaration in its file.
 
     This is the retrospective size signal: unlike anything authored in the
     article, it is what the node actually cost once it was formalized.
     """
 
-    spans: dict[str, int] = {}
-    for declaration in index.declarations.values():
-        lines = index.declaration_lines[declaration.path]
+    declarations = {*index.declarations.values(), *(item for same in index.duplicates.values() for item in same)}
+    starts: dict[Path, list[int]] = {}
+    for declaration in declarations:
+        starts.setdefault(declaration.path, []).append(declaration.line)
+    tails: dict[Path, int] = {}
+    for path, lines in starts.items():
+        lines.sort()
+        tails[path] = index.line_counts.get(path, 0)
+
+    spans: dict[Declaration, int] = {}
+    for declaration in declarations:
+        lines = starts[declaration.path]
         following = bisect_right(lines, declaration.line)
-        end = lines[following] - 1 if following < len(lines) else index.line_counts.get(declaration.path, 0)
-        spans[declaration.name] = max(1, end - declaration.line + 1)
+        end = lines[following] - 1 if following < len(lines) else tails[declaration.path]
+        spans[declaration] = max(1, end - declaration.line + 1)
     return spans
 
 

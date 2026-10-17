@@ -625,10 +625,10 @@ environment rather than by the source text: its kernel face is an opaque
 constant, so the body a reader would see is not what Lean checks. The command
 exits nonzero when a `lean:` name is absent from the sources or from the built
 environment, or reaches a refused declaration; that name is unresolved for its article only, other articles still extract, and it writes nothing into the vault.
-A name that several indexed files declare, even when all but one of them
-declare it `private`, is unresolved without a probe, because the index cannot
-tell which one Lean binds; the reason names each of those files in sorted
-order.
+A name the sources define more than once, with no single declaration chosen
+by the rules under Validation, is unresolved without a probe; the reason lists
+the `path:line` of each of its declarations. A name with one public
+declaration beside private ones is probed in the public one's module.
 `--output` records the `autoform-skeleton/v4` report, which contains no
 timestamp or absolute path, for a later render or review to consume. The
 report identifies the exact blueprint, its complete target set, and whether
@@ -776,8 +776,9 @@ assigned `article_id` and reports the exact article, dependencies, source
 targets (except those the Runtime contract leaves out), Lean targets, blockers,
 article and graph source revisions, and claim
 target. The article revision hashes that article's bytes alone. A Lean target's
-`source_file` is relative to `--lean-root`, and null without one or when the
-local scan does not find the declaration. The scan skips build output and nested
+`source_file` is relative to `--lean-root`, and null without one, when the
+local scan does not find the declaration, or when it finds several with none
+chosen (see Validation). The scan skips build output and nested
 checkouts, meaning any subdirectory with a `.git` entry, such as a worker's
 worktree or a submodule. Blockers are unmet dependency IDs or one of
 `roadmap:not-a-formalizable-leaf`, `roadmap:missing-article-id`,
@@ -1101,10 +1102,10 @@ A `declaration` on a container article passes `check` with a warning, because
 nothing counts or schedules a container's own declaration; `audit` reports it
 as `formalizable-container`.
 With `--lean-root`, `check`
-also fails on a `lean:` name
-absent from the sources, as `leanblueprint checkdecls` does for LaTeX
-blueprints. It validates structure and leaves mathematical correctness to the
-agent and the Lean kernel.
+also fails on a `lean:` name that is absent from the sources (as
+`leanblueprint checkdecls` does for LaTeX blueprints) or defined more than
+once in them (see below). It validates structure and leaves mathematical
+correctness to the agent and the Lean kernel.
 
 Contracting that acyclic article graph into chapters or nested scopes can put
 an edge in both directions between two containers. Generated views retain and
@@ -1184,6 +1185,27 @@ command states a result whose proof or construction is deferred. `alias b :=
 a` records `b`, and `alias ⟨mp, mpr⟩ := a_iff` records each of its two names
 that is not `_`; the `:=` must be on the alias's line, and the target on that
 line or the next nonblank one.
+
+A name declared once has that declaration, even a private one. A name declared
+more than once has the one declaration among them that is neither written
+`private` nor a wanted command, which Batteries makes a private placeholder:
+a private declaration is local to its file, so every other module sees the
+public one. With two or more public declarations (a file no library builds
+counts too), or only private and wanted ones, the name has none. Then
+`check --lean-root` fails with `declaration defined more than once`,
+`render` warns (`--require-declarations` exits 1),
+`audit` reports `lean-target-ambiguous`, `skeleton` leaves it
+unresolved, and work and search report no `source_file`; each
+diagnostic lists the `path:line` of every declaration of the name, by path and
+then line. `work impact` locates a compiled constant
+in its own module's file among the declarations of its name. The rule sees
+only indexed declarations: a public one behind an unindexed prefix such as
+`open X in`, or written `«main»` where the article writes `main`, leaves a
+private one as the name's only declaration. In a file that starts with
+`module`, a declaration outside a `public section` and without `public` is
+private to Lean but public to the index, so such a name may be reported as
+defined more than once where Lean accepts it, or selected where Lean binds it
+nowhere outside its file.
 
 The Markdown files are the source of truth. Graphs and sites are derived views
 that may be regenerated at any time.
@@ -1419,8 +1441,8 @@ any that is neither an http(s) link nor a path inside the blueprint), `used_by`,
 `used_by_count`, `shared_title`, and `matched_fields`; `article_id`,
 `declaration`, `catalog`, and `mathlib_file` may be null. A Lean target has
 `declaration`, `source_file` (relative to `--lean-root`), and `line`; the last
-two are null without `--lean-root` or when the lexical scan does not find the
-name.
+two are null without `--lean-root`, when the lexical scan does not find the
+name, or when it finds several with none chosen (see Validation).
 `used_by` holds the first ten dependents by node ID, through statement or
 proof; `used_by_count` counts all. `shared_title` marks a title another article
 repeats and is advisory. `matched_fields` lists, best first and once each, the
