@@ -1286,12 +1286,12 @@ def _book_page_order(blueprint: Path, destination: Path, graph: Graph) -> list[P
                 raw = match.group("target")
                 bare = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
                 path = bare.partition("#")[0].partition("?")[0]
-                if not path or urlsplit(path).scheme or path.startswith("/"):
-                    continue
-                candidate = (source.parent / unquote(path)).resolve()
                 try:
+                    if not path or urlsplit(path).scheme or path.startswith("/"):
+                        continue
+                    candidate = (source.parent / unquote(path)).resolve()
                     candidate_relative = candidate.relative_to(blueprint)
-                except ValueError:
+                except ValueError:  # a target outside the vault, an unbalanced IPv6 bracket, or a decoded NUL
                     continue
                 if (
                     not candidate_relative.parts
@@ -2049,9 +2049,14 @@ def _rewrite_links(
         # kept as written, beside the path render moves.
         located, separator, fragment = bare.partition("#")
         path, asked, query = located.partition("?")
-        if not path or urlsplit(path).scheme or path.startswith("/"):
+        try:
+            if not path or urlsplit(path).scheme or path.startswith("/"):
+                return None
+            candidate = (source_dir / unquote(path)).resolve()
+        except ValueError:
+            # An unbalanced IPv6 bracket or a decoded NUL names no file to
+            # point at, so the link is published as written, like a URL.
             return None
-        candidate = (source_dir / unquote(path)).resolve()
         node_id = node_sources.get(candidate)
         if node_id is not None:
             href = _anchored_links({node_id: targets[node_id]}, page, extension=".md", hrefs=page_hrefs)[node_id]
@@ -2282,12 +2287,15 @@ def _place_environments(
             continue
         target = slot.group("target")
         path, separator, fragment = target.partition("#")
-        if not path and separator:
-            node_id = anchor_nodes.get(fragment)
-        elif not path or urlsplit(path).scheme or path.startswith("/"):
+        try:
+            if not path and separator:
+                node_id = anchor_nodes.get(fragment)
+            elif not path or urlsplit(path).scheme or path.startswith("/"):
+                node_id = None
+            else:
+                node_id = node_sources.get((source_dir / unquote(path)).resolve())
+        except ValueError:  # an unbalanced IPv6 bracket or a decoded NUL names no article
             node_id = None
-        else:
-            node_id = node_sources.get((source_dir / unquote(path)).resolve())
         if node_id is None or node_id not in environments or node_id in placed:
             output.append(line)
             continue
