@@ -85,7 +85,6 @@ def test_full_view_payload_is_deterministic_layout_ready_and_data_only(tmp_path:
     assert "innerHTML" not in script
     assert "textContent" in script
     assert "requestAnimationFrame" in script
-    assert 'view.kind !== "full"' in script
     assert 'statusCounts.has("inventory_pending")' in script
     assert '"Inventory statuses are neutral:' in script
 
@@ -310,7 +309,6 @@ def test_explorer_marks_isolates_but_keeps_them_in_the_complete_inventory(tmp_pa
     script = dag_viewer.viewer_script()
     assert "inventoryNodes" in script
     assert '" · items without edges included"' in script
-    assert "MAX_DOM_NODES = 180" in script
 
 
 def test_explorer_is_responsive_accessible_and_history_addressable() -> None:

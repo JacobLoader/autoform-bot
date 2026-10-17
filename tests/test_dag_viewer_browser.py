@@ -143,7 +143,7 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         for index in range(60)
     )
     view = GraphView(
-        kind="full",
+        kind="chapter",
         title="Standalone dependency explorer",
         nodes=nodes,
         edges=(
@@ -900,6 +900,20 @@ def test_direct_list_view_has_current_shown_and_hidden_counts(
     page.locator(".bp-dag-inventory").wait_for()
     playwright.expect(page.locator(".bp-dag-stats")).to_contain_text("1 of 63 shown")
     playwright.expect(page.locator(".bp-dag-hidden-button")).to_have_text("+62 hidden")
+
+
+def test_hidden_items_without_edges_stay_hidden_after_a_reload(desktop_page: object, explorer_url: str) -> None:
+    """The location records only that they are hidden, so a reload has to read that back."""
+    page = desktop_page
+    _open_ready(page, explorer_url)
+    isolates = page.get_by_role("checkbox", name="Show items without edges")
+    isolates.uncheck()
+    page.wait_for_function("location.hash === '#isolates=0'")
+
+    page.reload()
+    page.locator("[data-autoform-node-id]").first.wait_for()
+    playwright.expect(isolates).not_to_be_checked()
+    playwright.expect(page.locator(".bp-dag-hidden-button")).to_have_text("+60 hidden")
 
 
 def test_reselect_does_not_duplicate_history_and_back_restores_selection(
