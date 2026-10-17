@@ -539,7 +539,7 @@ class LeanLspSession:
     def _read_message(self, timeout: float = 5) -> dict | None:
         """Read one bounded JSON-RPC frame within one absolute deadline."""
         if not self.process or not self.process.stdout:
-            return None
+            raise RuntimeError("LSP process not running")
 
         import select as _select
 

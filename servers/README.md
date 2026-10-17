@@ -71,15 +71,19 @@ Unbuilt or stale imports are reported with the modules to build, not built. At
 most `AUTOFORM_MAX_LEAN_PROJECTS` checks run at once. `lean_hover` uses the
 project's Lean server, which builds stale imports inside the call.
 
-`LEAN_LSP_TIMEOUT` (60 seconds by default) bounds each call, including time
-spent waiting for a free Lean slot or behind other LSP calls on the same
-project. A call that runs out fails rather than returning partial results, and
-a hover that runs out also restarts the project's Lean server. The value must
-not exceed `AUTOFORM_MAX_LSP_REQUEST_SECONDS` (600 seconds by default) or the
-runtime refuses to start, and raising that maximum to 745 seconds or more also
-needs `AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` raised. Like the limits below, it is
-read when the runtime starts: run `uv run autoform-lean-runtime stop` after
-changing it.
+`LEAN_LSP_TIMEOUT` (60 seconds by default) bounds each
+`lean_diagnostic_messages` call, including waiting for a free Lean slot. For
+`lean_hover` its clock starts once the project's Lean server is running and
+covers waiting behind other hovers on the same project; waiting for a free
+project slot and starting or restarting the server count against
+`AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` instead, so a cold hover can take about 870
+seconds by default. A call that runs out fails rather than returning partial
+results, and a hover that runs out during its turn on the server also restarts
+it. `LEAN_LSP_TIMEOUT` must not exceed `AUTOFORM_MAX_LSP_REQUEST_SECONDS` (600
+seconds by default) or the runtime refuses to start, and raising that maximum to
+745 seconds or more also needs `AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` raised. Like
+the limits below, it is read when the runtime starts: run
+`uv run autoform-lean-runtime stop` after changing it.
 
 The private socket lives below `$XDG_RUNTIME_DIR/autoform`, falling back to a
 uid-specific directory in `/tmp`; the rotating runtime log is beside it.
