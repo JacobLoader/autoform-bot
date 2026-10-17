@@ -542,13 +542,30 @@ def test_atlas_hierarchy_keeps_topics_readable_and_details_out_of_the_way(
     playwright.expect(navigation).to_contain_text("Knowledge atlas")
     playwright.expect(navigation).to_contain_text("Geometry & Topology")
     playwright.expect(page.locator(".bp-dag-inspector")).to_be_hidden()
+    # The closed drawer still holds the overview. Topics count once, by their least-complete item,
+    # unlike the rings' items, and each status row carries the swatch and meaning the hidden page legend held.
+    playwright.expect(page.locator(".bp-dag-inspector h3", has_text="status")).to_have_text(
+        "Topics by least-complete status"
+    )
+    playwright.expect(
+        page.locator('.bp-dag-inspector .bp-dag-swatch[title="Proved, and every prerequisite is fully proved too."]')
+    ).to_have_count(1)
     stage_width = page.locator(".bp-dag-stage").bounding_box()["width"]
     topic_box = topic.bounding_box()
     assert topic_box is not None and topic_box["height"] >= 62 and topic_box["width"] >= 150
     assert "50%" not in topic.evaluate("element => getComputedStyle(element).borderRadius")
-    assert "conic-gradient" in topic.evaluate("element => getComputedStyle(element).backgroundImage")
+    ring = topic.evaluate("element => getComputedStyle(element).backgroundImage")
+    assert "conic-gradient" in ring
+    # The ring follows the legend's state order: finished green before ready-to-prove blue.
+    assert ring.index("rgb(34, 119, 58)") < ring.index("rgb(0, 100, 224)")
+    # The region is canvas text, which assistive technology never reads.
+    assert "Geometry & Topology" in (topic.get_attribute("aria-label") or "")
     topic.click()
     playwright.expect(page.locator(".bp-dag-inspector h2")).to_have_text("Topology")
+    playwright.expect(page.locator(".bp-dag-inspector .bp-dag-kicker")).to_have_text("Scope · Geometry & Topology")
+    playwright.expect(page.locator(".bp-dag-inspector h3", has_text="in this scope")).to_have_text(
+        "80 items in this scope"
+    )
     playwright.expect(page.locator(".bp-dag-summary")).to_contain_text(
         "continuity, deformation, and invariants"
     )
@@ -561,6 +578,14 @@ def test_atlas_hierarchy_keeps_topics_readable_and_details_out_of_the_way(
     playwright.expect(navigation.locator('[data-navigation-node-id="atlas/topology"]')).to_have_attribute(
         "aria-current", "true"
     )
+    # A topic made only of module inventories says so instead of its rolled-up planned status.
+    # The open drawer overlays the map, so this card is chosen without the pointer.
+    page.locator('[data-autoform-node-id="atlas/library"]').dispatch_event("click")
+    playwright.expect(page.locator(".bp-dag-status-pill")).to_have_text("inventory only")
+    # Contents names each topic's region, which the map paints only on the canvas.
+    page.get_by_role("button", name="Contents").click()
+    topology = page.locator(".bp-dag-inventory-row", has_text="Topology")
+    playwright.expect(topology.locator(".bp-dag-inventory-meta")).to_contain_text("Geometry & Topology")
 
 
 def test_a_view_of_topics_and_results_draws_readable_result_cards(desktop_page: object, explorer_url: str) -> None:
@@ -672,6 +697,12 @@ def test_choosing_from_contents_keeps_the_readers_place_and_focus(desktop_page: 
     playwright.expect(page.locator(".bp-dag-has-selection")).to_have_count(0)
     playwright.expect(row).to_be_focused()
     assert scroll.evaluate("element => element.scrollTop") == offset
+
+    # Back restores the selection and brings its row into view.
+    scroll.evaluate("element => { element.scrollTop = 0; }")
+    page.evaluate("history.back()")
+    playwright.expect(row).to_have_attribute("aria-current", "true")
+    playwright.expect(row).to_be_in_viewport()
 
 
 def test_a_node_chosen_on_a_phone_lands_above_the_open_sheet(mobile_page: object, explorer_url: str) -> None:
