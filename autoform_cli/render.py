@@ -1157,13 +1157,13 @@ class _SourceBase:
     ref: str
     relative: str
     spellings: Mapping[str, str] = field(default_factory=dict)
-    """Committed spellings of captured paths and their leading folders, keyed by NFC form, as links spell them."""
+    """Committed captured paths and their leading folders, keyed by NFC form, since a link spells a path as typed."""
 
     def href(self, tail: tuple[str, ...]) -> str:
         verb = "blob" if tail else "tree"
         parts = "/".join((self.relative, *tail)).split("/")
-        # The longest leading path with a committed spelling covers folders render did not capture,
-        # such as one holding only a `.gitkeep`.
+        # A folder with no captured file below it, such as one holding only a `.gitkeep`, has no entry of its own,
+        # so only the leading folders it shares with a captured file take their committed spelling.
         for depth in range(len(parts), 0, -1):
             committed = self.spellings.get(unicodedata.normalize("NFC", "/".join(parts[:depth])))
             if committed is not None:
