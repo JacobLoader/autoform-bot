@@ -1374,13 +1374,43 @@ def _translate_lakefile(root: Path) -> bytes:
 
 
 def module_of(path: Path, libraries: tuple[LeanLibrary, ...]) -> str | None:
-    """Return the Lean module name of a source file, or ``None`` if no library holds it."""
+    """Return the Lean module name of a source file, or ``None`` if no library builds it.
+
+    Lake builds only the modules a library's roots and globs make buildable, not
+    every file under its srcDir, so a stray file there has no module.
+    """
 
     resolved = path.resolve()
-    held = [lib.src_dir for lib in libraries if resolved != lib.src_dir and resolved.is_relative_to(lib.src_dir)]
-    if resolved.suffix != ".lean" or not held:
+    if resolved.suffix != ".lean":
         return None
-    return ".".join(resolved.relative_to(max(held, key=lambda src_dir: len(src_dir.parts))).with_suffix("").parts)
+    held = [lib for lib in libraries if resolved != lib.src_dir and resolved.is_relative_to(lib.src_dir)]
+    for library in sorted(held, key=lambda lib: len(lib.src_dir.parts), reverse=True):
+        module = ".".join(resolved.relative_to(library.src_dir).with_suffix("").parts)
+        if _builds(library, module):
+            return module
+    return None
+
+
+def _builds(library: LeanLibrary, module: str) -> bool:
+    """Whether Lake builds ``module`` for ``library``, as ``LeanLibConfig.isBuildableModule`` decides.
+
+    Lake finds, imports and builds a module by that rule, not by ``isLocalModule``:
+    a glob matches the module, or a root prefixes it and a glob matches that root.
+    Without ``globs``, each root is its own glob.
+    """
+
+    globs = library.globs or library.roots
+
+    def globbed(name: str) -> bool:
+        for glob in globs:
+            base, mode = (glob[:-2], glob[-1]) if glob.endswith((".*", ".+")) else (glob, "")
+            if (name == base and mode != "+") or (mode and name.startswith(f"{base}.")):
+                return True
+        return False
+
+    return globbed(module) or any(
+        (module == root or module.startswith(f"{root}.")) and globbed(root) for root in library.roots
+    )
 
 
 def path_of(module: str, libraries: tuple[LeanLibrary, ...], lean_root: Path) -> str | None:
@@ -2749,6 +2779,7 @@ def _validate_managed_output(path: Path, *, kind: str) -> tuple[int, int, str] |
     if not (
         isinstance(payload, dict)
         and payload.get("kind") == kind
+        and isinstance(payload.get("schema"), str)
         and (kind, payload.get("schema")) in MANAGED_OUTPUT_SCHEMAS
         and isinstance(payload.get(kind), list)
     ):

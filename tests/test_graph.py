@@ -462,6 +462,21 @@ def test_ignores_links_in_code_fences_and_other_sections(tmp_path: Path) -> None
     assert load_graph(blueprint).nodes["only"].dependencies == ()
 
 
+def test_reads_code_only_labels_and_references_defined_anywhere_on_the_page(tmp_path: Path) -> None:
+    """Issue #302: each of these renders as a link, so each is an edge."""
+    blueprint = tmp_path / "blueprint"
+    for name in ("code", "full", "shortcut"):
+        _node(blueprint, f"{name}.md", f"# {name.title()}\n")
+    _node(
+        blueprint,
+        "only.md",
+        "# Only\n\n## Depends on\n- [`Code.name`](code.md)\n- [Full][full]\n- [Shortcut] and [hidden]\n\n"
+        "## Notes\n[full]: full.md\n[shortcut]: shortcut.md\n\n```\n[hidden]: missing.md\n```\n",
+    )
+
+    assert load_graph(blueprint).nodes["only"].dependencies == ("code", "full", "shortcut")
+
+
 def test_a_comment_opener_inside_a_code_fence_hides_no_dependency(tmp_path: Path) -> None:
     # The page shows the section below the fence, so the graph must keep its edge.
     blueprint = tmp_path / "blueprint"
@@ -806,6 +821,28 @@ def test_check_cli_reports_validation_errors(tmp_path: Path) -> None:
     assert "error: bad: missing H1 title" in result.stdout
 
 
+def test_check_rejects_a_container_that_declares_something(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #221: audit reports this as formalizable-container, but the generated workflows run check.
+
+    A declaring README.md with nothing below it is a leaf, and a container below the top level is caught.
+    """
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "chapter/section/leaf.md", "# Leaf\n", declaration="theorem")
+    _node(blueprint, "chapter/other/README.md", "# Other\n", declaration="theorem")
+    assert main(["check", str(blueprint)]) == 0
+    capsys.readouterr()
+
+    _node(blueprint, "chapter/section/README.md", "# Section\n", declaration="theorem")
+
+    assert main(["check", str(blueprint)]) == 1
+    assert capsys.readouterr().out == (
+        "error: chapter/section: formalizable article has contained articles; declaration-sized articles must be "
+        "leaves; move the declaration and its lean, statement and proof fields into a leaf article\n"
+    )
+
+
 def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -830,6 +867,7 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
     (blueprint / "sources").mkdir()
     (blueprint / "sources" / "paper.md").write_text("# Paper\n", encoding="utf-8")
     sources += "- [Book](https://example.org/book)\n- [Author](mailto:author@example.org)\n"
+    sources += "- [Same paper](../.x/../sources/paper.md)\n"
     _node(blueprint, "result.md", sources)
 
     assert main(["check", str(blueprint)]) == 0
@@ -838,6 +876,21 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
         "warning: result: work and search omit this source target, which is neither an http(s) link "
         "nor a path inside the blueprint: 'mailto:author@example.org'"
     ]
+
+    # Issue #304: render omits hidden files, so a link that names one fails
+    # although the file exists.
+    for note in (".drafts/notes.md", "sources/.private/paper.md"):
+        (blueprint / note).parent.mkdir(exist_ok=True)
+        (blueprint / note).write_text("# Notes\n", encoding="utf-8")
+    hidden = "- [Draft](../.drafts/notes.md)\n- [Private](../sources/.private/paper.md)\n"
+    _node(blueprint, "result.md", sources + hidden)
+
+    hidden_reason = "source target names a hidden path, which render omits"
+    assert main(["check", str(blueprint)]) == 1
+    assert capsys.readouterr().out == (
+        f"error: result: {hidden_reason}: '../.drafts/notes.md'\n"
+        f"error: result: {hidden_reason}: '../sources/.private/paper.md'\n"
+    )
 
     (tmp_path / "slides.pdf").write_bytes(b"%PDF-1.4\n")
     rejected = (
@@ -904,6 +957,29 @@ def test_check_prints_its_warnings_after_the_whole_summary(
         "warning: base: work and search omit this source target, which is neither an http(s) link "
         "nor a path inside the blueprint: 'mailto:author@example.org'",
     ]
+
+
+def test_check_reads_links_with_a_code_only_label_or_a_reference(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #302: the site links both shapes, so check validates each target once and the graph keeps the edge."""
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "foo-bar.md", "# Foo bar\n", declaration="def")
+    _node(
+        blueprint,
+        "baz.md",
+        "# Baz\n\n## Depends on\n- [`Foo.bar`](foo-bar.md)\n\n"
+        "## Sources\n- [`il:thm:3.2`](../sources/missing.md)\n- [Paper, Lemma 1][paper]\n- [Paper, Lemma 2][paper]\n\n"
+        "[paper]: ../sources/paper.md\n",
+        declaration="theorem",
+    )
+
+    assert main(["check", str(blueprint)]) == 1
+    assert capsys.readouterr().out == (
+        "error: baz: source target does not resolve to a file: '../sources/missing.md'\n"
+        "error: baz: source target does not resolve to a file: '../sources/paper.md'\n"
+    )
+    assert load_graph(blueprint).nodes["baz"].dependencies == ("foo-bar",)
 
 
 def test_check_refuses_a_symlinked_readme_instead_of_hanging(tmp_path: Path) -> None:

@@ -15,18 +15,13 @@ import os
 import re
 import stat
 from dataclasses import MISSING, dataclass, fields, replace
-from html import unescape
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .lean import declaration_names
-from .markdown import mask_code_and_comments
+from .markdown import link_definitions, link_targets, mask_code_and_comments, visible_prose
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
-_LINK = re.compile(r"(?<!!)\[[^\]]+\]\(\s*(<[^>]+>|[^)\s]+)(?:\s+[^)]*)?\)")
-_INLINE_CODE = re.compile(r"(`+).*?\1")
-_MARKDOWN_LINK_TEXT = re.compile(r"!?\[([^\]]+)\]\([^)]*\)")
-_HTML_TAG = re.compile(r"<[^>]+>")
 ARTICLE_ID_PATTERN = re.compile(r"af_[0-9a-f]{24}\Z")
 _FRONTMATTER_KEYS = frozenset(
     {
@@ -304,7 +299,7 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
             not_ready=metadata.get("not_ready") in _TRUE,
             discussion=metadata.get("discussion"),
             origin=metadata.get("origin"),
-            sources=parsed_node.source_targets,
+            sources=tuple(dict.fromkeys(parsed_node.source_targets)),
             parent=parents[parsed_node.id],
             depth=_article_depth(parsed_node.id, parents),
             article_id=metadata.get("article_id"),
@@ -672,6 +667,8 @@ def _parse_node(node_id: str, path: Path, text: str) -> tuple[_ParsedNode | None
     # read them, so a section a reader sees never loses its links here, and a
     # link the page shows as code is not read as one.
     body = mask_code_and_comments(lines[body_start:])
+    # A reference link takes its target from a definition anywhere on the page.
+    references = link_definitions(body)
     for line in body:
         heading = _HEADING.match(line)
         if heading:
@@ -686,11 +683,7 @@ def _parse_node(node_id: str, path: Path, text: str) -> tuple[_ParsedNode | None
                 section = heading_key if level == 2 and heading_key in targets else None
             continue
         if section is not None:
-            for match in _LINK.finditer(_INLINE_CODE.sub("", line)):
-                target = match.group(1)
-                if target.startswith("<") and target.endswith(">"):
-                    target = target[1:-1]
-                targets[section].append(target)
+            targets[section].extend(link_targets(line, references))
 
     if title is None:
         issues.append(f"{node_id}: missing H1 title")
@@ -737,9 +730,7 @@ def _extract_summary(body: list[str], *, limit: int = 420) -> str | None:
             continue
         if excluded or text.startswith(("- ", "* ", "+ ", "> ", "|", "$$", "\\[", "<div")):
             continue
-        text = _MARKDOWN_LINK_TEXT.sub(r"\1", text)
-        text = _HTML_TAG.sub("", text).replace("**", "").replace("__", "")
-        text = unescape(text).strip()
+        text = visible_prose(text)
         if text:
             paragraph.append(text)
     if not paragraph:

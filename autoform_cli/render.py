@@ -72,9 +72,14 @@ _FENCE = re.compile(r"^ {0,3}(`{3,}(?=[^`]*$)|~{3,})")
 # A link label may itself contain a closing bracket, most commonly inside
 # inline mathematical code such as ``[0,1]^n``.  Only ``](`` closes the label.
 _LINK_LABEL_PART = r"(?:[^\]]|\](?!\())"
+#: An inline link. A bare destination or a title may hold one level of
+#: balanced parentheses, a quoted title may leave a `(` open, and an escaped
+#: parenthesis is text, as in Python-Markdown. `replace` drops the title of a
+#: link it moves, so a match that ran past the link's own `)` would drop text.
 _MARKDOWN_LINK = re.compile(
-    rf"(?<!!)\[(?P<label>{_LINK_LABEL_PART}*)\]"
-    r"\(\s*(?P<target>[^)\s]+)(?:\s+[^)]*)?\)"
+    rf"(?<!!)\[(?P<label>{_LINK_LABEL_PART}*)\]\(\s*"
+    r"(?P<target><[^>]+>|(?:\\.|[^\\()\s]|\((?:\\.|[^\\()\s])*\))+)"
+    r"""(?:\s+(?:"[^")]*"\s*|'[^')]*'\s*|(?:\\.|[^\\()]|\((?:\\.|[^\\()])*\))*))?\)"""
 )
 #: A reference-style link definition, `[label]: target "title"`. Markdown
 #: resolves `[Paper][paper]` through one of these, so a rewrite that only sees
@@ -1329,13 +1334,13 @@ def _book_page_order(blueprint: Path, destination: Path, graph: Graph) -> list[P
             for match in _MARKDOWN_LINK.finditer(line):
                 raw = match.group("target")
                 bare = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
-                path = bare.partition("#")[0]
-                if not path or urlsplit(path).scheme or path.startswith("/"):
-                    continue
-                candidate = (source.parent / unquote(path)).resolve()
+                path = bare.partition("#")[0].partition("?")[0]
                 try:
+                    if not path or urlsplit(path).scheme or path.startswith("/"):
+                        continue
+                    candidate = (source.parent / unquote(path)).resolve()
                     candidate_relative = candidate.relative_to(blueprint)
-                except ValueError:
+                except ValueError:  # a target outside the vault, an unbalanced IPv6 bracket, or a decoded NUL
                     continue
                 if (
                     not candidate_relative.parts
@@ -2155,32 +2160,55 @@ def _rewrite_links(
     def moved_target(raw: str) -> str | None:
         """Where *raw* should point once published, or None to leave it alone."""
         bare = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
-        path, separator, fragment = bare.partition("#")
-        if not path or urlsplit(path).scheme or path.startswith("/"):
+        # The query and fragment are not part of the file's name: they are
+        # kept as written, beside the path render moves.
+        located, separator, fragment = bare.partition("#")
+        path, asked, query = located.partition("?")
+        try:
+            if not path or urlsplit(path).scheme or path.startswith("/"):
+                return None
+            candidate = (source_dir / unquote(path)).resolve()
+        except ValueError:
+            # An unbalanced IPv6 bracket or a decoded NUL names no file to
+            # point at, so the link is published as written, like a URL.
             return None
-        candidate = (source_dir / unquote(path)).resolve()
         node_id = node_sources.get(candidate)
         if node_id is not None:
             href = anchored[node_id]
             if not targets[node_id][1] and separator:
                 href = f"{'' if href == '#' else href}#{fragment}"
-            return href
+            before, hashed, anchor = href.partition("#")  # the query goes before the anchor
+            return f"{before}{asked}{query}{hashed}{anchor}"
         if not _is_within(candidate, blueprint):
             # Nothing outside the blueprint is published: "" keeps only the text.
             return ""
         relative = candidate.relative_to(blueprint)
-        if sources_base is not None and relative.parts[:1] == (SOURCES_DIR,):
-            return f"{_source_href(sources_base, relative.parts[1:])}{separator}{fragment}"
+        # A repository link to a note the captured blueprint lacks would 404, so
+        # it stays site-relative, where a strict build reports the page missing.
+        if sources_base is not None and relative.parts[:1] == (SOURCES_DIR,) and os.path.exists(candidate):
+            return f"{_source_href(sources_base, relative.parts[1:])}{asked}{query}{separator}{fragment}"
         published = destination / relative
-        return f"{mermaid.relative_link(published, page, candidate.suffix)}{separator}{fragment}"
+        # Mermaid URLs are percent-encoded because they sit in generated
+        # JavaScript. This is Markdown: keep its decoded spelling so an
+        # unchanged link stays byte-for-byte unchanged, and ``bracketed`` can
+        # protect a moved path containing a space or parenthesis.
+        href = unquote(mermaid.relative_link(published, page, candidate.suffix))
+        return f"{href}{asked}{query}{separator}{fragment}"
+
+    def bracketed(href: str) -> str:
+        # A decoded path, or a query or fragment kept from angle brackets, can
+        # hold a space or a parenthesis. CommonMark allows no space in a bare
+        # destination, and Python-Markdown needs its parentheses balanced.
+        return f"<{href}>" if re.search(r"[\s()]", href) else href
 
     def replace(match: re.Match[str]) -> str:
-        href = moved_target(match.group("target"))
-        if href is None:
+        raw = match.group("target")
+        href = moved_target(raw)
+        if href is None or raw in (href, f"<{href}>"):  # nothing moved: keep the link as written
             return match.group(0)
         label = match.group("label")
         if href:
-            return f"[{label}]({href})"
+            return f"[{label}]({bracketed(href)})"
         # The label pattern lets a match start at an earlier "[" on the line,
         # such as the one in "$[0,1]$", so drop only the bracket that opens
         # this link and keep the earlier text as it was.
@@ -2203,6 +2231,9 @@ def _rewrite_links(
             href = moved_target(definition.group("target"))
             if href:
                 indent, label = definition.group("indent"), definition.group("label")
+                # Python-Markdown reads a definition's destination only up to
+                # whitespace, in angle brackets or not, so whitespace is encoded.
+                href = re.sub(r"\s", lambda space: quote(space.group()), href)
                 return f"{indent}[{label}]: {href}{definition.group('rest') or ''}"
             return line
         return _MARKDOWN_LINK.sub(replace, line)
@@ -2404,12 +2435,15 @@ def _place_environments(
             continue
         target = slot.group("target")
         path, separator, fragment = target.partition("#")
-        if not path and separator:
-            node_id = anchor_nodes.get(fragment)
-        elif not path or urlsplit(path).scheme or path.startswith("/"):
+        try:
+            if not path and separator:
+                node_id = anchor_nodes.get(fragment)
+            elif not path or urlsplit(path).scheme or path.startswith("/"):
+                node_id = None
+            else:
+                node_id = node_sources.get((source_dir / unquote(path)).resolve())
+        except ValueError:  # an unbalanced IPv6 bracket or a decoded NUL names no article
             node_id = None
-        else:
-            node_id = node_sources.get((source_dir / unquote(path)).resolve())
         if node_id is None or node_id not in environments or node_id in placed:
             output.append(line)
             continue

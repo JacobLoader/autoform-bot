@@ -621,7 +621,7 @@ environment, or reaches a refused declaration; that name is unresolved for its a
 A name that several indexed files declare, even when all but one of them
 declare it `private`, is unresolved without a probe, because the index cannot
 tell which one Lean binds; the reason names each of those files in sorted
-order. `unused-hypotheses` looks names up the same way.
+order.
 `--output` records the `autoform-skeleton/v4` report, which contains no
 timestamp or absolute path, for a later render or review to consume. The
 report identifies the exact blueprint, its complete target set, and whether
@@ -745,51 +745,6 @@ are staged before publication and a failed commit restores the previous set.
 This is failure atomicity, not simultaneous visibility across paths: each
 rename is atomic, but a reader opening several outputs during publication can
 briefly observe different generations.
-
-Report the hypotheses that a theorem's proof never uses:
-
-```bash
-autoform unused-hypotheses blueprint --lean-root .
-autoform unused-hypotheses blueprint --lean-root . --node chapter/main-result --json
-```
-
-A theorem can compile and be true while one of its hypotheses plays no part.
-Either the source states a hypothesis it does not need, or the formal statement
-says less than the source, so the hypothesis has nothing left to do, as when a
-statement assumes the supremum that the source derives from boundedness, or
-when a library convention such as `x / 0 = 0` covers a case the source excludes.
-
-For every theorem a `lean:` line names, the command reads its proof term and
-lists each propositional hypothesis that could be deleted, with its binder
-position and whether the proof uses it. A hypothesis the proof term never
-mentions can be deleted, and the same term proves what remains, so a
-`hypothesis-unused` finding is certain; a tactic that names the hypothesis,
-such as `simp [h]` or `clear h`, has to drop the name too. A hypothesis the proof does use may
-still be unnecessary, and a proof that is just another theorem counts as using
-every hypothesis it passes on. A hypothesis that the conclusion or a later
-binder mentions cannot be deleted and is not listed. A proof that itself
-contains `sorry` is not read; a complete proof that uses an open statement is.
-Findings are for a reviewer and never fail the run, since the source may state
-a hypothesis its theorem does not need; the command exits 1 only when a `lean:`
-name cannot be read: it is not found, several source files declare it, or it
-is an alias, whose proof only names its target. `--json` writes the
-`autoform-unused-hypotheses/v1` report.
-
-`lake build` already warns about some of these: Lean's `unusedVariables`
-linter names a hypothesis the proof never references, and `unusedSectionVars`
-names a section variable a theorem includes without needing. Neither reports a
-hypothesis named with a leading `_`, an unnamed instance argument of the
-theorem itself, the antecedent of `p → q`, or a binder such as `∀ n > 0`; this
-command does, so renaming a hypothesis to `_h` does not hide it. It also reports per article,
-for the reviewer of that article.
-
-Like `autoform skeleton`, it runs a small program with `lake env lean` after the
-same Lake freshness check, over the modules that hold the named theorems, and
-the same trust caveats apply: run it in a trusted checkout or a sandbox whose
-build is current. `--timeout SECONDS` sets the Lean run's budget, as for
-`autoform skeleton`. Nothing it reports enters the skeleton report,
-its packets, or their hashes, and findings name Lean hypotheses, so they stay
-out of the blind read-back route.
 
 Inspect the current Markdown-derived formalization frontier without creating a
 queue or scheduler state:
@@ -932,7 +887,7 @@ reached is no longer built. The report does not list such modules.
 
 JSON uses `autoform-module-import-impact/v1` and binds the graph with
 `module_graph_revision`; `module_scope` is `loaded-root-library-graph`.
-Required `claim_targets` contain only the selected article and a stable
+The import edit's `claim_targets` contain only the selected article and a stable
 `module_claim_target` resource, `lean-module/<lowercase-slug>-<sha256[:16]>`.
 `affected_claim_targets` are downstream warnings, not pre-emptive ownership
 requirements; `claim_keys` and `affected_claim_keys` match the JSON from
@@ -999,14 +954,14 @@ autoform claim release af_5b0e4d3c2a1f09e8d7c6b5a4
 autoform claim acquire af_5b0e4d3c2a1f09e8d7c6b5a4 af_0123456789abcdef01234567
 ```
 
-Claims are optional: use them when other people or sessions may work on the
-same project at the same time, or when the user asks. A single Formalize run
-needs none, because its lead keeps its workers apart. A claim excludes only
-workers that also claim, so on a shared project every worker uses them. Claim
-an article by the `claim_target` that `work context` reports. The board
-hashes whatever string it is given, so a claim on an article's path ID and one
-on its `article_id` do not exclude each other. Each concurrent agent needs its
-own worker ID, because a second acquire by the same owner succeeds. Where shell
+Claims are optional: use them when other people or sessions may work on the same
+project at the same time, or when the user asks. A single Formalize run needs
+none, because its lead keeps its workers apart. A claim excludes only workers
+that also claim, so on a shared project every worker uses them. Claim an article
+by the `claim_target` that `work context` reports. The board hashes whatever
+string it is given, so a claim on an article's path ID and one on its
+`article_id` do not exclude each other. Each concurrent agent needs its own
+worker ID, because a second acquire by the same owner succeeds. Where shell
 state does not persist between commands, as in agent tool calls, pass it with
 `--worker-id` on every command instead of exporting `AUTOFORM_WORKER_ID` once.
 Leases expire after 1500 seconds unless `--ttl` sets another length. Renew well
@@ -1072,13 +1027,16 @@ replaces a v3 one, while a v1 output must be deleted once by hand; the
 
 `autoform check` rejects cycles, missing targets, escaping paths, symbolic
 links anywhere under `roadmap/`, self-dependencies, cycles introduced at any
-rolled-up containment level,
+rolled-up containment level, a `declaration` on a container article,
 missing or multiple H1 titles, unsupported frontmatter keys, assertion values
 it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
-`mathlib: true`. An inline `## Sources` link to a local path must name a file
+`mathlib: true`. A `## Sources` link to a local path must name a file
 inside the blueprint, as `audit` also requires: a missing file, a directory, an
-invalid path, or a target outside the blueprint fails, and `audit` alone checks
+invalid path, or a target outside the blueprint fails. So does a target whose
+path as written, once its `..` steps are applied, has a part below the
+blueprint starting with `.`, unless the article citing it is hidden too,
+because render omits hidden files and directories. `audit` alone checks
 fragments and fails links with other schemes or a network location. Such a link
 passes `check` with a warning, because work and search leave it out; so does a
 `mathlib_file` that is not a portable relative path, which search reports as
@@ -1388,8 +1346,8 @@ each a list), `limit`, `total_matches`, and
 `node_id`, `article_id`, `article_path`, `article_revision`, `title`,
 `declaration`, `state`, `statement_text` (the authored Markdown),
 `lean_targets` (all of them), `mathlib`, `mathlib_declarations`,
-`mathlib_file`, `source_targets` (as the article writes them, minus any that is
-neither an http(s) link nor a path inside the blueprint), `used_by`,
+`mathlib_file`, `source_targets` (as the article writes them, once each, minus
+any that is neither an http(s) link nor a path inside the blueprint), `used_by`,
 `used_by_count`, `shared_title`, and `matched_fields`; `article_id`,
 `declaration`, and `mathlib_file` may be null. A Lean target has `declaration`,
 `source_file` (relative to `--lean-root`), and `line`; the last two are null
@@ -1902,14 +1860,15 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
 3. When using claims, claim the route's claim set with one
    `autoform claim acquire`. When it is refused, release everything and report
    the held claim as the blocker. After acquiring, re-run `work impact`; if the
-   set grew, release and start over with the larger set. With or without claims,
-   after rebasing onto the current shared branch and rebuilding, re-run
+   set grew, release and start over with the larger set. Without claims, a
+   Formalize subagent has its lead confirm the set instead. With or without
+   claims, after rebasing onto the current shared branch and rebuilding, re-run
    `work impact` once more; if the set grew, repair the new targets before
-   landing. When using claims, first acquire the whole larger set in one command
-   under the no-hold-and-wait rule of the [claim contract](#claim-contract).
-   Under the open policy, reproduce the CI audit as [open
-   statements](#open-statements) shows before landing. Land one commit, then
-   release any claims.
+   landing, after acquiring the whole larger set in one command under the
+   no-hold-and-wait rule of the [claim contract](#claim-contract) or, without
+   claims, after the lead confirms them. Under the open policy, reproduce the CI
+   audit as [open statements](#open-statements) shows before landing. Land one
+   commit, then release any claims.
 4. Contract: delete a deprecated X once it appears in `deprecated_unused` of
    `work impact R . --lean-root .`, meaning no declaration uses it and no
    other article's `lean:` names it, and drop it from R's `lean:` in the same

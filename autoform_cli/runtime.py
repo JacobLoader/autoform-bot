@@ -479,7 +479,10 @@ def _article_id(relative_blueprint: Path) -> str:
 
 
 def _source_target_is_confined(article: Path, target: str, blueprint: Path) -> bool:
-    split = urlsplit(target)
+    try:
+        split = urlsplit(target)
+    except ValueError:  # an unbalanced IPv6 bracket, for one
+        return False
     if split.scheme.casefold() in {"http", "https"}:
         return True
     if split.scheme or split.netloc:
@@ -493,7 +496,7 @@ def _source_target_is_confined(article: Path, target: str, blueprint: Path) -> b
         return False
     try:
         (article.parent / path).resolve().relative_to(blueprint)
-    except (OSError, ValueError):
+    except (OSError, RuntimeError, ValueError):  # RuntimeError: a symlink loop before Python 3.13
         return False
     return True
 

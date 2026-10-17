@@ -2970,6 +2970,8 @@ def test_only_a_complete_publication_manifest_hides_its_folder(
         "unfinished": {**complete, "complete": False},
         "web": {"name": "web app"},
         "padded": {**complete, "padding": "x" * 64},
+        "object-schema": {**complete, "schema": {}},
+        "array-schema": {**complete, "schema": []},
     }
     for folder, manifest in manifests.items():
         (tmp_path / folder / "Copy").mkdir(parents=True)
@@ -2982,6 +2984,8 @@ def test_only_a_complete_publication_manifest_hides_its_folder(
 
     assert sorted(path.as_posix() for path, _data in snapshot.source_files) == [
         "Proofs.lean",
+        "array-schema/Copy/Proofs.lean",
+        "object-schema/Copy/Proofs.lean",
         "padded/Copy/Proofs.lean",
         "unfinished/Copy/Proofs.lean",
         "web/Copy/Proofs.lean",

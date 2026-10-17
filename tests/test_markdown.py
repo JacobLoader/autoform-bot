@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import re
 from pathlib import Path
 
@@ -14,13 +15,13 @@ from autoform_cli.markdown import (
     content_lines,
     has_substance,
     is_placeholder,
-    link_targets,
     local_target_issue,
     markdown_anchors,
     markdown_links,
     mask_fences_and_comments,
     PublishedTable,
     published_tables,
+    render_html,
     rendered_visible_text,
     visible_prose,
 )
@@ -325,18 +326,57 @@ def test_a_bare_closing_fence_ends_the_block() -> None:
     assert [line for line in view.lines if line.strip()] == ["published"]
 
 
-def test_link_extraction_requires_a_closing_parenthesis() -> None:
-    assert link_targets("[Node](../roadmap/node.md)") == ("../roadmap/node.md",)
-    assert link_targets("[Node](<../roadmap/a b.md>)") == ("../roadmap/a b.md",)
-    assert link_targets("[Node](../roadmap/node.md") == ()
-    assert link_targets("`[Node](../roadmap/node.md)`") == ()
-    assert link_targets("![Figure](../image.png)") == ()
-
-
 def test_markdown_links_report_visible_links_with_line_numbers() -> None:
     text = "# Title\n\n[One](a.md)\n\n```\n[Two](b.md)\n```\n\n[Three](c.md)\n"
 
     assert markdown_links(text) == [(3, "a.md"), (9, "c.md")]
+
+
+#: Link forms paired with the targets the configured renderer links them to. A
+#: link the site publishes and the checks miss is never validated, so the scan
+#: must find each of these, and no link the site does not publish.
+LINK_CORPUS = [
+    ("[`Foo.bar`](a.md)", ["a.md"]),
+    ("[](a.md)", ["a.md"]),
+    ("`[Example](a.md)`", []),
+    ("[[1] Smith](a.md)", ["a.md"]),
+    (r"[\[1\] Smith](a.md)", ["a.md"]),
+    (r"\[Not a link](a.md)", []),
+    ("[![Badge](a.png)](b.md)", ["b.md"]),
+    ("[Paper][paper]\n\n[paper]: a.md", ["a.md"]),
+    ("[Paper][]\n\n[PAPER]: <a.md>", ["a.md"]),
+    ("[Paper] and [paper] [Other]\n\n[paper]: a.md", ["a.md", "a.md"]),
+    ("[Unknown][missing] and [unknown]", []),
+    ("[[a]] and [see [a]]\n\n[a]: x.md", []),
+    ("![x [a] y]\n\n[a]: x.md", ["x.md"]),
+    ("[x [b](c.md) y]", ["c.md"]),
+    ("[paper]: a.md", []),
+    ("[Paper][paper]\n\n```\n[paper]: a.md\n```", []),
+    ("[Paper][paper]\n\n    [paper]: a.md", []),
+    ("![Figure][fig]\n\n[fig]: a.png", []),
+    ("[One][x] and [Two](b.md)\n\n[x]: a.md\n[x]: c.md", ["c.md", "b.md"]),
+    (r"\\[x](a.md)", ["a.md"]),
+    (r"\![x](a.png)", ["a.png"]),
+    ("[Two  spaces]\n\n[two spaces]: a.md", ["a.md"]),
+    ("[Paper][two  spaces](b.md)\n\n[two spaces]: a.md", ["a.md"]),
+    ("- [Torsion](t.md) on $E[2]$\n\n[2]: ../sources/jones.md", ["t.md"]),
+    ("[Half-open $(0,1]$](h.md)", ["h.md"]),
+    (r"Index \([a]\) here" + "\n\n[a]: x.md", []),
+    ("[x][y][z](a.md)\n\n[z]: z.md", ["a.md"]),
+    ("[x [a][b] y][undefined]\n\n[b]: b.md", []),
+    ("[Paper][missing][b](x.md)\n\n[paper]: p.md\n[b]: b.md", ["p.md", "x.md"]),
+    ("[Node](<a b.md>)", ["a b.md"]),
+    ("[Node](a.md", []),
+    ("![Figure](a.png)", []),
+]
+
+
+@pytest.mark.parametrize(("source", "expected"), LINK_CORPUS)
+def test_links_are_the_ones_the_configured_renderer_publishes(source: str, expected: list[str]) -> None:
+    published = re.findall(r'<a href="([^"]*)"', render_html(source))
+
+    assert [html.unescape(href) for href in published] == expected
+    assert [target for _, target in markdown_links(source)] == expected
 
 
 def test_anchors_follow_headings_and_explicit_ids(tmp_path: Path) -> None:
@@ -389,6 +429,9 @@ def test_local_targets_are_resolved_against_the_boundary(tmp_path: Path) -> None
     source = tmp_path / "coverage" / "README.md"
     source.parent.mkdir()
     source.write_text("# Coverage\n", encoding="utf-8")
+    hidden = tmp_path / ".drafts" / "notes.md"
+    hidden.parent.mkdir()
+    hidden.write_text("# Notes\n", encoding="utf-8")
 
     def issue(target: str) -> str | None:
         problem = local_target_issue(source, target, tmp_path, label="coverage")
@@ -396,12 +439,40 @@ def test_local_targets_are_resolved_against_the_boundary(tmp_path: Path) -> None
 
     assert issue("../roadmap/node.md") is None
     assert issue("../roadmap/node.md#results") is None
+    assert issue("../.x/../roadmap/node.md") is None
     assert issue("https://example.invalid/page") is None
     assert issue("../roadmap/node.md#absent") == "coverage-anchor-not-found"
     assert issue("../roadmap/absent.md") == "coverage-not-found"
     assert issue("../../outside.md") == "coverage-escapes-blueprint"
+    assert issue("../.drafts/notes.md") == "hidden-coverage-target"
+    # Render publishes neither a hidden page nor its links.
+    assert local_target_issue(hidden, "#notes", tmp_path, label="coverage") is None
     assert issue("mailto:someone@example.invalid") == "unsupported-coverage-link"
     assert issue("//example.invalid/page") == "unsupported-coverage-link"
+
+
+def test_a_link_through_a_hidden_symlink_is_hidden(tmp_path: Path) -> None:
+    """Issue #304: render resolves links in a copy of the vault without symlinks.
+
+    `../.link/paper.md` reaches a published file through `.link`, a symlink to
+    `sources`, but render would link `.link/paper.md`, a page it never writes. The
+    hidden folder holding the vault does not count.
+    """
+    root = tmp_path / ".checkout"
+    for name in ("sources/paper.md", "roadmap/result.md"):
+        (root / name).parent.mkdir(parents=True)
+        (root / name).write_text("# Page\n", encoding="utf-8")
+    try:
+        (root / ".link").symlink_to("sources", target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    def issue(target: str) -> str | None:
+        problem = local_target_issue(root / "roadmap" / "result.md", target, root, label="source")
+        return None if problem is None else problem[0]
+
+    assert issue("../sources/paper.md") is None
+    assert issue("../.link/paper.md") == "hidden-source-target"
 
 
 def test_a_statement_runs_from_the_title_to_the_first_h2() -> None:
