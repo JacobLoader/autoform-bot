@@ -2775,6 +2775,7 @@ def _validate_managed_output(path: Path, *, kind: str) -> tuple[int, int, str] |
     if not (
         isinstance(payload, dict)
         and payload.get("kind") == kind
+        and isinstance(payload.get("schema"), str)
         and (kind, payload.get("schema")) in MANAGED_OUTPUT_SCHEMAS
         and isinstance(payload.get(kind), list)
     ):

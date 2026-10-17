@@ -2088,6 +2088,18 @@ def test_a_report_or_packet_manifest_that_cannot_be_decoded_is_refused(tmp_path:
     assert (packets / PACKET_MANIFEST).read_text(encoding="utf-8") == text
 
 
+@pytest.mark.parametrize("schema", [{}, []])
+def test_a_packet_manifest_whose_schema_is_not_a_string_is_refused(tmp_path: Path, schema: object) -> None:
+    packets = tmp_path / "packets"
+    packets.mkdir()
+    text = json.dumps({"kind": "packets", "schema": schema, "packets": []})
+    (packets / PACKET_MANIFEST).write_text(text, encoding="utf-8")
+
+    with pytest.raises(SkeletonError, match="refusing to overwrite non-Autoform packet output"):
+        write_packets(_fake_report(tmp_path), packets)
+    assert (packets / PACKET_MANIFEST).read_text(encoding="utf-8") == text
+
+
 def test_report_loader_refuses_a_lone_surrogate_as_unreadable(tmp_path: Path) -> None:
     text = _fake_report(tmp_path).to_json()
     assert '"lean_version":"' in text
