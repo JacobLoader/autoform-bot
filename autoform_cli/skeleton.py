@@ -1798,119 +1798,34 @@ def _probe_environment() -> dict[str, str]:
 
 
 def _build_probe_helper(lean_root: Path, directory: Path, *, timeout: float) -> Path:
-    """Compile the probe's helpers into ``directory``, or copy them from the cache, and return it.
+    """Compile the probe's helpers into ``directory`` and return it.
 
     The helpers are elaborated with the project's toolchain and no project
     module imported, so no project name, notation, or option reaches them; each
-    probe finds the module through ``LEAN_PATH``. ``timeout`` bounds the cache
-    lookup and the build together. A failure here concerns every probe.
+    probe finds the module through ``LEAN_PATH``. A failure here concerns every
+    probe.
     """
 
     lake = _lake_executable(lean_root)
-    deadline = time.monotonic() + timeout
-    text = _render_probe_helper()
     olean = directory / f"{_PROBE_HELPER_MODULE}.olean"
     try:
-        cache = _probe_helper_cache(lake, lean_root, text, timeout=timeout)
-        if cache is not None and _restore_probe_helper(*cache, olean):
-            return directory
         directory.mkdir(parents=True, exist_ok=True)
         source = directory / f"{_PROBE_HELPER_MODULE}.lean"
-        source.write_text(text, encoding="utf-8")
+        source.write_text(_render_probe_helper(), encoding="utf-8")
         result = _run_bounded_command(
             [lake, "env", "lean", f"--root={directory}", "-o", str(olean), str(source)],
             cwd=lean_root,
-            timeout=max(0.0, deadline - time.monotonic()),
+            timeout=timeout,
             context="building the skeleton probe helpers",
             env=_probe_environment(),
         )
     except _CommandTimedOut as exc:
-        raise _ProbeEnvironmentError(
-            [f"{exc.issues[0]} after {timeout:g} seconds; rerun with --timeout <seconds> for large projects"]
-        ) from exc
+        raise _ProbeEnvironmentError([f"{exc.issues[0]}; rerun with --timeout <seconds> for large projects"]) from exc
     if result.returncode != 0:
         detail = _stable_detail((result.stderr or result.stdout).strip(), lean_root, directory)
         _raise_if_core_module_shadowed(detail)
         raise _ProbeEnvironmentError([f"cannot build the skeleton probe helpers\n{detail}"])
-    if cache is not None:
-        _publish_probe_helper(olean, cache[0])
     return directory
-
-
-def _probe_helper_cache(lake: str, lean_root: Path, source: str, *, timeout: float) -> tuple[Path, str] | None:
-    """Return the file that caches this toolchain's build of ``source`` and the toolchain's Git hash, or None.
-
-    The key is the source, the Git hash ``lake env`` reports, and the size and
-    modification time of the toolchain's ``Lean.olean``, so a toolchain rebuilt
-    at the same commit gets its own entry. Nothing is cached when ``lake env``
-    fails or omits any of these, or the cache directory is not absolute.
-    """
-
-    env = _probe_environment()
-    # Lake reports an inherited LEAN_GITHASH in place of the toolchain's own.
-    env.pop("LEAN_GITHASH", None)
-    result = _run_bounded_command([lake, "env"], cwd=lean_root, timeout=timeout, context="lake env", env=env)
-    variables = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
-    githash, sysroot = variables.get("LEAN_GITHASH", ""), variables.get("LEAN_SYSROOT", "")
-    if result.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}", githash):
-        return None
-    base = os.environ.get("XDG_CACHE_HOME", "")
-    try:
-        core = os.stat(os.path.join(sysroot, "lib", "lean", "Lean.olean")) if os.path.isabs(sysroot) else None
-        cache = Path(base) if os.path.isabs(base) else Path.home() / ".cache"
-    except (OSError, RuntimeError):
-        return None
-    if core is None or not cache.is_absolute():
-        return None
-    key = hashlib.sha256(f"{githash}\0{core.st_size}\0{core.st_mtime_ns}\0{source}".encode()).hexdigest()
-    return cache / "autoform" / "probe-helper" / key, githash
-
-
-def _restore_probe_helper(cached: Path, githash: str, olean: Path) -> bool:
-    """Copy a cached helper build to ``olean`` if the entry is intact and ours, and say whether it was.
-
-    An entry is the compiled module followed by its SHA-256, so a damaged one
-    is a miss. So is a module whose header lacks the toolchain's Git hash: a
-    toolchain change during a build can publish another toolchain's build
-    under this key. Lean compares only that hash, so neither it nor this check
-    notices a change between two toolchains built from the same commit.
-    """
-
-    try:
-        captured = _read_snapshot_file(cached)
-    except SkeletonError:
-        return False
-    data = b"" if captured is None else captured[0]
-    module, digest = data[:-32], data[-32:]
-    if hashlib.sha256(module).digest() != digest or githash.encode() not in module[:128]:
-        return False
-    olean.parent.mkdir(parents=True, exist_ok=True)
-    olean.write_bytes(module)
-    return True
-
-
-def _publish_probe_helper(olean: Path, cached: Path) -> None:
-    """Store a fresh helper build as the entry ``cached``; a failure leaves the cache as it was.
-
-    The entry is renamed into place, so a reader gets the old entry or the new
-    one, and keeps the build's file mode, which ``mkstemp`` would restrict.
-    """
-
-    try:
-        module = olean.read_bytes()
-        cached.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary = tempfile.mkstemp(dir=cached.parent, prefix=".", suffix=".tmp")
-    except OSError:
-        return
-    try:
-        with os.fdopen(descriptor, "wb") as target:
-            target.write(module)
-            target.write(hashlib.sha256(module).digest())
-        shutil.copymode(olean, temporary)
-        os.replace(temporary, cached)
-    except OSError:
-        with contextlib.suppress(OSError):
-            os.unlink(temporary)
 
 
 def _raise_if_core_module_shadowed(detail: str, label: str = "skeleton probe") -> None:
