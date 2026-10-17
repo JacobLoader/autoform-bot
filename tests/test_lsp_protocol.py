@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
+import secrets
+import signal
 import subprocess
 import sys
 import threading
@@ -53,11 +56,17 @@ class _FakeProcess:
         return self.returncode
 
 
-def _owned_session(process: _FakeProcess) -> lsp.LeanLspSession:
+def _owned_session(process: _FakeProcess, token: str | None = None) -> lsp.LeanLspSession:
     session = lsp.LeanLspSession(lsp.LspConfig())
     session.process = process
     session._process_group_id = process.pid
+    session._token = token
     return session
+
+
+def _session_env(token: str) -> dict[str, str]:
+    """An environment carrying token, as start() gives the Lean server."""
+    return {**os.environ, lsp._SESSION_TOKEN_ENV: token}
 
 
 def _wait_until_gone(process: psutil.Process, timeout: float) -> bool:
@@ -96,6 +105,14 @@ def test_json_rpc_error_response_raises_protocol_error(monkeypatch):
     )
 
     with pytest.raises(lsp.LspProtocolError, match=r"\[-32603\]: initialization failed"):
+        session._read_response(1)
+
+
+def test_reading_a_response_without_a_process_fails_at_once():
+    # _read_message used to return None at once, so _read_response spun until its deadline.
+    session = lsp.LeanLspSession(lsp.LspConfig())
+
+    with pytest.raises(RuntimeError, match="LSP process not running"):
         session._read_response(1)
 
 
@@ -144,6 +161,28 @@ def test_start_rejects_an_unsupported_platform_before_spawning(monkeypatch):
 
     with pytest.raises(RuntimeError, match="POSIX"):
         lsp.LeanLspSession(lsp.LspConfig()).start()
+
+
+def test_start_gives_each_server_its_own_token(monkeypatch):
+    environments = []
+
+    def popen(*args, env, **kwargs):
+        environments.append(env)
+        return _FakeProcess()
+
+    monkeypatch.setattr(lsp.subprocess, "Popen", popen)
+    sessions = [lsp.LeanLspSession(lsp.LspConfig()) for _ in range(2)]
+    for session in sessions:
+        monkeypatch.setattr(session, "_send_request", lambda method, params: {})
+        monkeypatch.setattr(session, "_send_notification", lambda method, params: None)
+        session.start()
+
+    # A shared token would let one session's close stop the other's Lean.
+    tokens = [environment[lsp._SESSION_TOKEN_ENV] for environment in environments]
+    assert tokens == [session._token for session in sessions]
+    assert tokens[0] != tokens[1]
+    # Only the server gets it, not the runtime's REPL or diagnostics children.
+    assert lsp._SESSION_TOKEN_ENV not in os.environ
 
 
 def test_startup_transfers_failed_cleanup_without_losing_initialization_error(
@@ -273,6 +312,66 @@ def test_reap_retry_never_resignals_a_retired_group(monkeypatch):
 
     assert terminations == [process.pid]
     assert reap_calls == 2
+    assert session.process is None
+
+
+class _FakeTokenCarrier:
+    """A process a token scan reports, which records each signal and exits on it."""
+
+    def __init__(self, signals: list[str]) -> None:
+        self.signals = signals
+
+    def send_signal(self, signal_number: int) -> None:
+        self.signals.append(signal.Signals(signal_number).name)
+
+    def is_running(self) -> bool:
+        return False
+
+
+def test_abort_retries_the_token_sweep_before_reaping_the_leader(monkeypatch):
+    process = _FakeProcess()
+    session = _owned_session(process, "session-token")
+    events: list[str] = []
+    # Each scan of the first attempt finds a process carrying the token, so
+    # one is left after SIGKILL; the retry's first scan finds none.
+    scans = iter([[_FakeTokenCarrier(events)]] * 3)
+
+    def scan(token):
+        assert token == "session-token"
+        events.append("scan")
+        return next(scans, [])
+
+    def reap(owned):
+        events.append("reap")
+        owned.wait()
+
+    monkeypatch.setattr(lsp, "_processes_with_token", scan)
+    monkeypatch.setattr(lsp, "_terminate_process_group", lambda process_group_id: events.append("group"))
+    monkeypatch.setattr(lsp, "_reap_process", reap)
+    monkeypatch.setattr(lsp.time, "sleep", lambda delay: None)
+
+    session.abort()
+
+    # The scan after SIGKILL failed the first attempt. The retry did not signal
+    # the retired group again, and the leader was reaped only after a sweep
+    # found nothing left.
+    assert events == ["group", "scan", "SIGTERM", "scan", "SIGKILL", "scan", "scan", "reap"]
+    assert session.process is None
+
+
+def test_token_sweep_signals_only_what_its_latest_scan_found(monkeypatch):
+    # The first scan's process no longer carries the token at the second, as
+    # when its PID has passed to another process, so it gets no SIGKILL.
+    session = _owned_session(_FakeProcess(), "session-token")
+    signals: list[str] = []
+    scans = iter([[_FakeTokenCarrier(signals)], []])
+    monkeypatch.setattr(lsp, "_processes_with_token", lambda token: next(scans, []))
+    monkeypatch.setattr(lsp, "_terminate_process_group", lambda process_group_id: None)
+    monkeypatch.setattr(lsp, "_reap_process", lambda owned: owned.wait())
+
+    session.abort()
+
+    assert signals == ["SIGTERM"]
     assert session.process is None
 
 
@@ -435,6 +534,90 @@ def test_abort_refuses_to_signal_a_pre_reaped_leader_with_live_group(monkeypatch
     assert session._group_retired is False
 
 
+@pytest.mark.skipif(os.name != "posix", reason="native LSP backend requires POSIX groups")
+def test_token_scan_finds_only_the_processes_carrying_the_token():
+    token = secrets.token_hex(16)
+    untagged = {key: value for key, value in os.environ.items() if key != lsp._SESSION_TOKEN_ENV}
+    processes = {
+        name: subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], env=environment)
+        for name, environment in {
+            "this session": _session_env(token),
+            "another session": _session_env(secrets.token_hex(16)),
+            "no session": untagged,
+        }.items()
+    }
+    try:
+        # Popen returns once the child has exec'd, so its environment is set.
+        assert [process.pid for process in lsp._processes_with_token(token)] == [processes["this session"].pid]
+    finally:
+        for process in processes.values():
+            process.kill()
+            process.wait()
+
+
+def test_token_scan_leaves_out_processes_it_cannot_read(monkeypatch):
+    class Candidate:
+        def __init__(self, environment):
+            self.environment = environment
+
+        def environ(self):
+            if isinstance(self.environment, BaseException):
+                raise self.environment
+            return self.environment
+
+    tagged = {lsp._SESSION_TOKEN_ENV: "session-token"}
+    candidates = {
+        1: Candidate(tagged),
+        # Such as a setuid program the user runs: it may carry the token,
+        # but nothing shows that it does.
+        2: Candidate(psutil.AccessDenied(2)),
+        3: Candidate(psutil.ZombieProcess(3)),
+        4: Candidate(psutil.NoSuchProcess(4)),
+        os.getpid(): Candidate(tagged),
+    }
+    monkeypatch.setattr(psutil, "pids", lambda: list(candidates))
+    monkeypatch.setattr(psutil, "Process", lambda pid: candidates[pid])
+
+    assert lsp._processes_with_token("session-token") == [candidates[1]]
+
+
+def test_token_scan_fails_when_the_process_table_cannot_be_read(monkeypatch):
+    def unreadable():
+        raise PermissionError("cannot list processes")
+
+    monkeypatch.setattr(psutil, "pids", unreadable)
+
+    # The attempt fails, so close and abort retry instead of reaping the leader.
+    with pytest.raises(RuntimeError, match="cannot read the process table"):
+        lsp._processes_with_token("session-token")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [OSError(errno.EIO, "cannot read the environment"), SystemError("inconsistent process state")],
+    ids=["os-error", "system-error"],
+)
+def test_token_scan_fails_on_any_other_environment_error(monkeypatch, error):
+    class Candidate:
+        def environ(self):
+            raise error
+
+    monkeypatch.setattr(psutil, "pids", lambda: [1])
+    monkeypatch.setattr(psutil, "Process", lambda pid: Candidate())
+
+    # Only exited and unreadable processes are passed over; anything else
+    # fails the attempt, so close and abort retry.
+    with pytest.raises(type(error)):
+        lsp._processes_with_token("session-token")
+
+
+@pytest.mark.parametrize("token", [None, ""], ids=["none", "empty"])
+def test_token_scan_refuses_a_missing_token(token):
+    # A missing token would match every process without the variable.
+    with pytest.raises(ValueError, match="nonempty"):
+        lsp._processes_with_token(token)
+
+
 def test_concurrent_abort_and_close_serialize_owned_cleanup(monkeypatch):
     process = _FakeProcess()
     session = _owned_session(process)
@@ -556,6 +739,31 @@ _FAKE_WATCHDOG = (
 )
 
 
+def _start_crashing_wrapper(
+    watchdog: str, *, env: dict[str, str] | None = None, reports: int = 2
+) -> tuple[subprocess.Popen, dict[str, psutil.Process]]:
+    """Start watchdog under a wrapper that exits at once; return the wrapper and the reported processes by name."""
+    wrapper = (
+        "import subprocess, sys\n"
+        f"server = subprocess.Popen([sys.executable, '-c', {watchdog!r}])\n"
+        "print('server', server.pid, flush=True)\n"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", wrapper],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        env=env,
+        start_new_session=True,
+    )
+    assert process.stdout is not None
+    spawned = {}
+    for _ in range(reports):
+        name, pid = process.stdout.readline().split()
+        spawned[name] = psutil.Process(int(pid))
+    return process, spawned
+
+
 @pytest.mark.skipif(os.name != "posix", reason="native LSP backend requires POSIX groups")
 def test_abort_lets_the_watchdog_stop_workers_outside_the_group():
     process = subprocess.Popen(
@@ -567,6 +775,7 @@ def test_abort_lets_the_watchdog_stop_workers_outside_the_group():
     )
     assert process.stdout is not None
     worker = psutil.Process(int(process.stdout.readline().split()[1]))
+    # Without a token there is no sweep, so only the watchdog can stop the worker.
     session = _owned_session(process)
     try:
         session.retire()
@@ -584,23 +793,8 @@ def test_abort_lets_the_watchdog_stop_workers_outside_the_group():
 def test_abort_after_the_wrapper_crashed_still_reaches_the_watchdog():
     # Like lake serve dying under a live lean --server: the wrapper exits and
     # leaves the watchdog in the group, still reading the same stdin.
-    wrapper = (
-        "import subprocess, sys\n"
-        f"server = subprocess.Popen([sys.executable, '-c', {_FAKE_WATCHDOG!r}])\n"
-        "print('server', server.pid, flush=True)\n"
-    )
-    process = subprocess.Popen(
-        [sys.executable, "-c", wrapper],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
-    assert process.stdout is not None
-    spawned = {}
-    for _ in range(2):
-        name, pid = process.stdout.readline().split()
-        spawned[name] = psutil.Process(int(pid))
+    process, spawned = _start_crashing_wrapper(_FAKE_WATCHDOG)
+    # Without a token there is no sweep, so only the watchdog can stop the worker.
     session = _owned_session(process)
     try:
         assert _wait_until_gone(psutil.Process(process.pid), timeout=5), "LSP wrapper did not exit"
@@ -612,6 +806,135 @@ def test_abort_after_the_wrapper_crashed_still_reaches_the_watchdog():
         assert session.process is None
         assert _wait_until_gone(spawned["worker"], timeout=5)
         assert _wait_until_gone(spawned["server"], timeout=5)
+    finally:
+        for child in spawned.values():
+            _kill_quietly(child)
+        if session.process is not None:
+            session.abort()
+
+
+_FAKE_WORKER = (
+    "import subprocess, sys\n"
+    "build = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+    "print(build.pid, flush=True)\n"
+    "sys.stdin.read()\n"
+)
+# Like Lean's watchdog when a file worker exits on its exit notification before
+# shutdown gets to kill it: the worker's build keeps running in the worker's
+# group, and the watchdog exits without signalling that group.
+_SKIPPING_WATCHDOG = (
+    "import subprocess, sys\n"
+    "worker = subprocess.Popen(\n"
+    f"    [sys.executable, '-c', {_FAKE_WORKER!r}],\n"
+    "    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, start_new_session=True,\n"
+    ")\n"
+    "print('build', worker.stdout.readline().strip(), flush=True)\n"
+    "sys.stdin.read()\n"
+    "worker.stdin.close()\n"
+    "worker.wait()\n"
+)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="native LSP backend requires POSIX groups")
+@pytest.mark.parametrize("retired", [True, False], ids=["abort", "graceful"])
+def test_close_stops_a_build_the_watchdog_left_running(monkeypatch, retired):
+    token = secrets.token_hex(16)
+    process = subprocess.Popen(
+        [sys.executable, "-c", _SKIPPING_WATCHDOG],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        env=_session_env(token),
+        start_new_session=True,
+    )
+    assert process.stdout is not None
+    build = psutil.Process(int(process.stdout.readline().split()[1]))
+    session = _owned_session(process, token)
+    if retired:
+        session.retire()
+    else:
+        def shutdown(method, params, **kwargs):
+            # Stands in for Lean's shutdown request, which stops the workers
+            # as an EOF does; the watchdog is gone before retirement starts.
+            process.stdin.close()
+            _wait_until_gone(psutil.Process(process.pid), timeout=5)
+
+        monkeypatch.setattr(session, "_send_request", shutdown)
+        monkeypatch.setattr(session, "_send_notification", lambda method, params, **kwargs: None)
+    try:
+        session.close()
+
+        assert session.process is None
+        assert _wait_until_gone(build, timeout=0)
+    finally:
+        _kill_quietly(build)
+        if session.process is not None:
+            session.abort()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="native LSP backend requires POSIX groups")
+def test_close_stops_a_build_left_running_after_the_wrapper_crashed():
+    # Like lake serve dying under a live lean --server that then skips a
+    # worker: the watchdog and the build no longer descend from the leader.
+    token = secrets.token_hex(16)
+    process, spawned = _start_crashing_wrapper(_SKIPPING_WATCHDOG, env=_session_env(token))
+    session = _owned_session(process, token)
+    try:
+        assert _wait_until_gone(psutil.Process(process.pid), timeout=5), "LSP wrapper did not exit"
+
+        session.close()
+
+        assert session.process is None
+        assert _wait_until_gone(spawned["build"], timeout=0)
+    finally:
+        for child in spawned.values():
+            _kill_quietly(child)
+        if session.process is not None:
+            session.abort()
+
+
+# Like lean --server with a file open: the file worker runs in its own session
+# and starts a build, and neither reads from the server. The build ignores
+# SIGTERM before it reports, so only the sweep's SIGKILL stops it.
+_STUBBORN_BUILD = (
+    "import os, signal, time\n"
+    "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+    "print('build', os.getpid(), flush=True)\n"
+    "time.sleep(60)\n"
+)
+_ORPHANED_WORKER = (
+    "import subprocess, sys, time\n"
+    f"subprocess.Popen([sys.executable, '-c', {_STUBBORN_BUILD!r}])\n"
+    "time.sleep(60)\n"
+)
+_SERVER_WITH_A_WORKER = (
+    "import subprocess, sys\n"
+    f"worker = subprocess.Popen([sys.executable, '-c', {_ORPHANED_WORKER!r}], start_new_session=True)\n"
+    "print('worker', worker.pid, flush=True)\n"
+    "worker.wait()\n"
+)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="native LSP backend requires POSIX groups")
+def test_close_stops_workers_orphaned_before_close():
+    # Like lean --server dying before close starts, which leaked every time in
+    # #251: its worker and the worker's build run on, reparented, outside every
+    # group the session started, and no process left descends from the leader.
+    token = secrets.token_hex(16)
+    process, spawned = _start_crashing_wrapper(_SERVER_WITH_A_WORKER, env=_session_env(token), reports=3)
+    session = _owned_session(process, token)
+    try:
+        spawned["server"].kill()
+        assert _wait_until_gone(spawned["server"], timeout=5)
+        assert _wait_until_gone(psutil.Process(process.pid), timeout=5), "LSP wrapper did not exit"
+        assert not _wait_until_gone(spawned["worker"], timeout=0)
+        assert not _wait_until_gone(spawned["build"], timeout=0)
+
+        session.close()
+
+        assert session.process is None
+        assert _wait_until_gone(spawned["worker"], timeout=0)
+        assert _wait_until_gone(spawned["build"], timeout=0)
     finally:
         for child in spawned.values():
             _kill_quietly(child)
@@ -644,18 +967,23 @@ def _command_mentions(process: psutil.Process, text: str) -> bool:
 
 
 def _open_until(
-    session, project: Path, leader: psutil.Process, marker: str, descendants: set[psutil.Process]
+    session,
+    project: Path,
+    leader: psutil.Process,
+    marker: str,
+    descendants: set[psutil.Process],
+    module: str = "Main",
 ) -> None:
-    """Open Probe/Main.lean and record descendants until one's command mentions marker."""
-    main = project / "Probe" / "Main.lean"
+    """Open Probe/<module>.lean and record descendants until one's command mentions marker."""
+    source = project / "Probe" / f"{module}.lean"
     session._send_notification(
         "textDocument/didOpen",
         {
             "textDocument": {
-                "uri": main.as_uri(),
+                "uri": source.as_uri(),
                 "languageId": "lean4",
                 "version": 1,
-                "text": main.read_text(encoding="utf-8"),
+                "text": source.read_text(encoding="utf-8"),
             }
         },
     )
@@ -680,6 +1008,70 @@ def test_real_lean_abort_stops_file_workers(tmp_path):
     try:
         # A hover that runs out of time leaves the document open like this.
         _open_until(session, project, leader, "Slow.lean", descendants)
+
+        session.retire()
+        session.close()
+
+        assert session.process is None
+        assert [child for child in descendants if not _wait_until_gone(child, timeout=10)] == []
+    finally:
+        for child in descendants:
+            _kill_quietly(child)
+        if session.process is not None:
+            session.abort()
+
+
+@_requires_real_lean
+def test_real_lean_abort_stops_the_workers_of_every_open_file(tmp_path):
+    # Lean's watchdog kills workers in URI order and skips any that has
+    # already exited, so Second.lean's worker, which sorts after Main.lean's,
+    # can exit on its exit notification before its turn and leave its build
+    # running. Whether it does is a race, so this test can pass without the
+    # token sweep; the _SKIPPING_WATCHDOG tests cannot. Hover keeps at most one
+    # document open, so both files are opened directly.
+    project = _real_lean_project(
+        tmp_path / "abort-two",
+        "theorem probe : 1 + 1 = 2 := rfl\n",
+        Second="import Probe.Slow\n",
+        Slow="#eval IO.sleep 300000\n",
+    )
+    session = lsp.LeanLspSession(lsp.LspConfig(cwd=str(project), timeout=120))
+    session.start()
+    leader = psutil.Process(session.process.pid)
+    descendants: set[psutil.Process] = set()
+    try:
+        _open_until(session, project, leader, "--worker", descendants)
+        _open_until(session, project, leader, "Slow.lean", descendants, module="Second")
+
+        session.retire()
+        session.close()
+
+        assert session.process is None
+        assert [child for child in descendants if not _wait_until_gone(child, timeout=10)] == []
+    finally:
+        for child in descendants:
+            _kill_quietly(child)
+        if session.process is not None:
+            session.abort()
+
+
+@_requires_real_lean
+def test_real_lean_close_stops_workers_orphaned_before_close(tmp_path):
+    # Killing lean --server orphans its file worker, the worker's `lake
+    # setup-file` and the `lean ... -o` building Slow.lean, which keep
+    # running; #251 saw them outlive close every time.
+    project = _real_lean_project(tmp_path / "orphaned", "import Probe.Slow\n", Slow="#eval IO.sleep 300000\n")
+    session = lsp.LeanLspSession(lsp.LspConfig(cwd=str(project), timeout=120))
+    session.start()
+    leader = psutil.Process(session.process.pid)
+    descendants: set[psutil.Process] = set()
+    try:
+        _open_until(session, project, leader, "Slow.lean", descendants)
+        server = next(child for child in descendants if _command_mentions(child, "--server"))
+        server.kill()
+        assert _wait_until_gone(server, timeout=10)
+        builds = [child for child in descendants if _command_mentions(child, "Slow.lean")]
+        assert any(not _wait_until_gone(build, timeout=0) for build in builds), "the build died with the server"
 
         session.retire()
         session.close()

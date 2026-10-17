@@ -46,15 +46,15 @@ def source_links(graph: Graph, output: Path, link_extension: str) -> dict[str, s
 
 
 #: The class render gives each graph it publishes on the site, which it
-#: writes as raw HTML, as no article may: the site's diagram script draws
-#: these elements and no other Mermaid.
+#: writes as raw HTML, as no article may: the site's diagram script draws these
+#: with the loose security their links need, and every other diagram strictly.
 GRAPH_CLASS = "bp-graph"
 
 
 def published_graph(diagram: str) -> str:
     """The ```mermaid fenced block *diagram* as the element the site's
-    diagram script draws: its source, escaped as superfences escapes a
-    fence's, in a div of class ``mermaid`` and :data:`GRAPH_CLASS`."""
+    diagram script draws as render's own: its source, escaped as superfences
+    escapes a fence's, in a div of class ``mermaid`` and :data:`GRAPH_CLASS`."""
     source = diagram.removeprefix("```mermaid\n").removesuffix("\n```")
     return f'<div class="mermaid {GRAPH_CLASS}">{html.escape(source, quote=False)}</div>'
 
@@ -372,12 +372,12 @@ def render_page(
 __all__ = [
     "GRAPH_CLASS",
     "node_link",
-    "published_graph",
     "relative_link",
     "render_diagram",
     "render_legend",
     "render_legend_tip",
     "render_page",
+    "published_graph",
     "render_view_diagram",
     "source_links",
 ]

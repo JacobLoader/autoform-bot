@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,9 @@ from autoform_cli.graph import (
     _containment_cycles,
     load_graph,
 )
+from autoform_cli.graph_views import project_view
 from autoform_cli.runtime import RuntimeProjectionError, load_runtime_graph
+from autoform_cli.status import derive
 
 
 def _node_text(body: str, **metadata: str) -> str:
@@ -127,6 +130,9 @@ def test_resolves_links_relative_to_each_node(tmp_path: Path) -> None:
             _node_text("# Result\n## Depends on\n[x](../../outside.md)\n"),
             "escapes the blueprint directory",
         ),
+        (_node_text("# Result\n## Depends on\n[x](http://[oops/a.md)\n"), "relative Markdown path"),
+        (_node_text("# Result\n## Depends on\n[x](%00.md)\n"), "contains an invalid path"),
+        pytest.param(_node_text("# Result\n## Depends on\n[x](" + "a" * 300 + ".md)\n"), "does not exist", id="long-name"),
     ],
 )
 def test_rejects_invalid_nodes(tmp_path: Path, body: str, message: str) -> None:
@@ -136,6 +142,106 @@ def test_rejects_invalid_nodes(tmp_path: Path, body: str, message: str) -> None:
 
     with pytest.raises(GraphValidationError, match=message):
         load_graph(blueprint)
+
+
+def test_a_dependency_through_a_symlink_loop_is_reported_alike_on_every_python(tmp_path: Path) -> None:
+    # Before Python 3.13 resolving a loop raises; from 3.13 it returns the looping path.
+    blueprint = tmp_path / "blueprint"
+    links = "[x](../loop.md)\n[y](../../outer.md)\n[z](../away/loop.md)\n[w](../loop.md/../away/note.md)\n"
+    links += "[v](../hop0.md)\n[u](../chain0.md)\n"
+    _node(blueprint, "result.md", f"# Result\n## Depends on\n{links}")
+    (tmp_path / "away").mkdir()
+    (tmp_path / "away" / "note.md").write_text("# Note\n", encoding="utf-8")
+    try:
+        (blueprint / "loop.md").symlink_to("loop.md")
+        (tmp_path / "outer.md").symlink_to("outer.md")
+        # A loop behind a symbolic link that leaves the blueprint, and one before it.
+        (blueprint / "away").symlink_to(tmp_path / "away")
+        (tmp_path / "away" / "loop.md").symlink_to("loop.md")
+        # A loop and `..` 45 times over, then out of the blueprint, and a chain past the recursion limit.
+        for n in range(45):
+            (blueprint / f"hop{n}.md").symlink_to(f"loop.md/../hop{n + 1}.md")
+        (blueprint / "hop45.md").symlink_to("away/note.md")
+        for n in range(1000):
+            (blueprint / f"chain{n}.md").symlink_to(f"chain{n + 1}.md")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    with pytest.raises(GraphValidationError) as caught:
+        load_graph(blueprint)
+
+    assert caught.value.issues == (
+        "result: dependency target does not exist: '../loop.md'",
+        "result: dependency target escapes the blueprint directory: '../../outer.md'",
+        "result: dependency target escapes the blueprint directory: '../away/loop.md'",
+        "result: dependency target escapes the blueprint directory: '../loop.md/../away/note.md'",
+        "result: dependency target escapes the blueprint directory: '../hop0.md'",
+        "result: dependency target does not exist: '../chain0.md'",
+    )
+
+
+def test_check_passes_a_sources_link_that_reaches_its_file_through_loops(tmp_path: Path) -> None:
+    # Each `loop.md/..` resolves past the loop, as on Python 3.13. Before 3.13
+    # the runtime's own resolution of the link then raised.
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "result.md", "# Result\n\n## Sources\n\n- [Paper](../sources/s1.md)\n")
+    sources = blueprint / "sources"
+    sources.mkdir()
+    (sources / "paper.md").write_text("# Paper\n", encoding="utf-8")
+    try:
+        (sources / "loop.md").symlink_to("loop.md")
+        (sources / "s1.md").symlink_to("loop.md/../s2.md")
+        (sources / "s2.md").symlink_to("loop.md/../paper.md")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    assert main(["check", str(blueprint)]) == 0
+
+
+def test_a_dependency_through_a_link_that_cannot_be_read_does_not_exist(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "result.md", "# Result\n## Depends on\n[x](../locked/a.md)\n")
+    (tmp_path / "away").mkdir()
+    (tmp_path / "away" / "a.md").write_text("# A\n", encoding="utf-8")
+    unreadable_link(blueprint / "locked", tmp_path / "away")
+
+    with pytest.raises(GraphValidationError) as caught:
+        load_graph(blueprint)
+
+    assert caught.value.issues == ("result: dependency target does not exist: '../locked/a.md'",)
+
+
+def test_a_blueprint_behind_a_link_that_cannot_be_read_fails_once(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
+    # Every link in it would fail to resolve, so the blueprint fails instead.
+    _node(tmp_path / "real" / "blueprint", "result.md", "# Result\n## Depends on\n[x](other.md)\n")
+    _node(tmp_path / "real" / "blueprint", "other.md", "# Other\n")
+    unreadable_link(tmp_path / "via", tmp_path / "real")
+    blueprint = tmp_path / "via" / "blueprint"
+
+    with pytest.raises(GraphValidationError) as caught:
+        load_graph(blueprint)
+
+    assert caught.value.issues == (f"blueprint directory cannot be resolved: {blueprint}",)
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")
+def test_a_dependency_under_an_unreadable_directory_is_an_issue(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "result.md", "# Result\n## Depends on\n[x](../locked/a.md)\n")
+    locked = blueprint / "locked"
+    locked.mkdir()
+    locked.chmod(0)
+    try:
+        with pytest.raises(GraphValidationError) as caught:
+            load_graph(blueprint)
+    finally:
+        locked.chmod(0o755)
+
+    assert caught.value.issues == ("result: dependency target does not exist: '../locked/a.md'",)
 
 
 def test_rejects_self_edge(tmp_path: Path) -> None:
@@ -165,7 +271,7 @@ def test_rejects_cycle(tmp_path: Path) -> None:
         load_graph(blueprint)
 
 
-def test_rejects_cycle_created_only_by_chapter_contraction(tmp_path: Path) -> None:
+def test_keeps_acyclic_edges_that_form_a_cycle_only_after_chapter_contraction(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _roadmap_page(blueprint, "a/README.md", "# A\n")
     _roadmap_page(blueprint, "b/README.md", "# B\n")
@@ -181,8 +287,14 @@ def test_rejects_cycle_created_only_by_chapter_contraction(tmp_path: Path) -> No
         "# A last\n## Depends on\n[B middle](../b/middle.md)\n",
     )
 
-    with pytest.raises(GraphValidationError, match=r"rolled-up dependency cycle in root: a -> b -> a"):
-        load_graph(blueprint)
+    graph = load_graph(blueprint)
+
+    assert graph.nodes["b/middle"].dependencies == ("a/first",)
+    assert graph.nodes["a/last"].dependencies == ("b/middle",)
+    assert {(edge.source, edge.target) for edge in project_view(graph, derive(graph)).edges} == {
+        ("scope:a", "scope:b"),
+        ("scope:b", "scope:a"),
+    }
 
 
 def test_ignores_links_in_code_fences_and_other_sections(tmp_path: Path) -> None:
@@ -208,6 +320,21 @@ def test_ignores_links_in_code_fences_and_other_sections(tmp_path: Path) -> None
     )
 
     assert load_graph(blueprint).nodes["only"].dependencies == ()
+
+
+def test_reads_code_only_labels_and_references_defined_anywhere_on_the_page(tmp_path: Path) -> None:
+    """Issue #302: each of these renders as a link, so each is an edge."""
+    blueprint = tmp_path / "blueprint"
+    for name in ("code", "full", "shortcut"):
+        _node(blueprint, f"{name}.md", f"# {name.title()}\n")
+    _node(
+        blueprint,
+        "only.md",
+        "# Only\n\n## Depends on\n- [`Code.name`](code.md)\n- [Full][full]\n- [Shortcut] and [hidden]\n\n"
+        "## Notes\n[full]: full.md\n[shortcut]: shortcut.md\n\n```\n[hidden]: missing.md\n```\n",
+    )
+
+    assert load_graph(blueprint).nodes["only"].dependencies == ("code", "full", "shortcut")
 
 
 def test_a_comment_opener_inside_a_code_fence_hides_no_dependency(tmp_path: Path) -> None:
@@ -363,8 +490,6 @@ def test_splits_statement_and_proof_dependencies(tmp_path: Path) -> None:
         ({"mathlib": "maybe"}, "accepts only true or false"),
         ({"not_ready": "1"}, "accepts only true or false"),
         ({"origin": "unknown"}, "accepts cited, bridged, or background"),
-        ({"mathlib_file": "../Outside.lean"}, "'mathlib_file' must be a portable relative path"),
-        ({"mathlib_file": "C:/Mathlib/Basic.lean"}, "'mathlib_file' must be a portable relative path"),
     ],
 )
 def test_rejects_invalid_assertions(tmp_path: Path, metadata: dict[str, str], message: str) -> None:
@@ -524,6 +649,31 @@ def test_check_cli_reports_validation_errors(tmp_path: Path) -> None:
     assert "error: bad: missing H1 title" in result.stdout
 
 
+def test_check_warns_about_a_container_that_declares_something(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #221: audit reports this as formalizable-container, but the generated workflows run check.
+
+    The site still builds, so like #325's warnings it keeps the exit code. A declaring README.md with
+    nothing below it is a leaf, and a container below the top level is caught.
+    """
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "chapter/section/leaf.md", "# Leaf\n", declaration="theorem")
+    _node(blueprint, "chapter/other/README.md", "# Other\n", declaration="theorem")
+    assert main(["check", str(blueprint)]) == 0
+    assert "warning:" not in capsys.readouterr().out
+
+    _node(blueprint, "chapter/section/README.md", "# Section\n", declaration="theorem")
+
+    assert main(["check", str(blueprint)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("OK: ")
+    assert [line for line in lines if line.startswith("warning:")] == lines[-1:] == [
+        "warning: chapter/section: formalizable article has contained articles; declaration-sized articles must "
+        "be leaves; move the declaration and its lean, statement and proof fields into a leaf article"
+    ]
+
+
 def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -533,7 +683,8 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
     strict MkDocs failure naming the chapter page that absorbed the article; with
     the directory, a missing note became a repository link that 404s. Check now
     applies audit's rule that a Sources path names a file in the blueprint, and
-    refuses other schemes as every runtime command does; fragments stay with audit.
+    leaves fragments and other schemes to audit; it only warns that work and
+    search omit a link with another scheme.
     """
     blueprint = tmp_path / "blueprint"
     sources = "# Result\n\n## Sources\n\n- [Paper](../sources/paper.md#lemma-3)\n"
@@ -546,16 +697,36 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
 
     (blueprint / "sources").mkdir()
     (blueprint / "sources" / "paper.md").write_text("# Paper\n", encoding="utf-8")
-    sources += "- [Book](https://example.org/book)\n"
+    sources += "- [Book](https://example.org/book)\n- [Author](mailto:author@example.org)\n"
+    sources += "- [Same paper](../.x/../sources/paper.md)\n"
     _node(blueprint, "result.md", sources)
 
     assert main(["check", str(blueprint)]) == 0
-    capsys.readouterr()
+    # The note, its fragment and the https link stay in the projection.
+    assert [line for line in capsys.readouterr().out.splitlines() if line.startswith("warning:")] == [
+        "warning: result: work and search omit this source target, which is neither an http(s) link "
+        "nor a path inside the blueprint: 'mailto:author@example.org'"
+    ]
+
+    # Issue #304: render omits hidden files, so a link that names one fails
+    # although the file exists. Only a repository link reaches a hidden note
+    # under sources/, so check only warns about one that exists.
+    for note in (".drafts/notes.md", "sources/.private/paper.md"):
+        (blueprint / note).parent.mkdir(exist_ok=True)
+        (blueprint / note).write_text("# Notes\n", encoding="utf-8")
+    hidden = "- [Draft](../.drafts/notes.md)\n- [Private](../sources/.private/paper.md)\n"
+    _node(blueprint, "result.md", sources + hidden + "- [Lost](../sources/.private/lost.md)\n")
+
+    assert main(["check", str(blueprint)]) == 1
+    assert capsys.readouterr().out == (
+        "error: result: source target names a hidden path, which render omits: '../.drafts/notes.md'\n"
+        "error: result: source target does not resolve to a file: '../sources/.private/lost.md'\n"
+    )
 
     (tmp_path / "slides.pdf").write_bytes(b"%PDF-1.4\n")
     rejected = (
         "- [Notes](../sources/)\n- [Slides](../../slides.pdf)\n- [Bad](../sources/%00.md)\n"
-        "- [Author](mailto:author@example.org)\n"
+        "- [Host](http://[oops/paper.md)\n"
     )
     _node(blueprint, "result.md", sources + rejected)
 
@@ -564,8 +735,124 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
         "error: result: source target does not resolve to a file: '../sources/'\n"
         "error: result: source target escapes the blueprint directory: '../../slides.pdf'\n"
         "error: result: source target contains an invalid path: '../sources/%00.md'\n"
-        "error: result: source target is not a local file or an http(s) link: 'mailto:author@example.org'\n"
+        "error: result: source target is not a valid URL: 'http://[oops/paper.md'\n"
     )
+
+
+def test_check_warns_about_a_hidden_note_under_sources(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Render can link it to the repository, so unlike a hidden target elsewhere it resolves once committed."""
+    blueprint = tmp_path / "blueprint"
+    note = blueprint / "sources" / ".private" / "paper.md"
+    note.parent.mkdir(parents=True)
+    note.write_text("# Paper\n", encoding="utf-8")
+    _node(blueprint, "result.md", "# Result\n\n## Sources\n\n- [Private](../sources/.private/paper.md#lemma-3)\n")
+
+    assert main(["check", str(blueprint)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("OK: ")
+    assert [line for line in lines if line.startswith("warning:")] == lines[-1:] == [
+        "warning: result: source target names a hidden path, which only a repository link reaches, so it must be "
+        "committed: '../sources/.private/paper.md#lemma-3'"
+    ]
+
+
+def test_check_warns_about_a_mathlib_file_search_reports_as_null(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "result.md", "# Result\n", mathlib_file="../Outside.lean")
+    _node(blueprint, "kept.md", "# Kept\n", mathlib_file="Mathlib\\Kept.lean")
+
+    assert main(["check", str(blueprint)]) == 0
+    assert [line for line in capsys.readouterr().out.splitlines() if line.startswith("warning:")] == [
+        "warning: result: search reports mathlib_file as null, since it is not a portable relative path: "
+        "'../Outside.lean'"
+    ]
+
+
+def test_check_warns_about_an_article_whose_byte_order_mark_hides_its_frontmatter(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    marked = _node(blueprint, "result.md", "# Result\n", lean="Demo.result")
+    marked.write_bytes(b"\xef\xbb\xbf" + marked.read_bytes())
+    _node(blueprint, "kept.md", "# Kept\n", lean="Demo.kept")
+
+    assert main(["check", str(blueprint)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    # Like #325's warnings, it follows the whole summary.
+    assert lines[0].startswith("OK: ")
+    assert [line for line in lines if line.startswith("warning:")] == lines[-1:] == [
+        "warning: result: starts with a byte-order mark, so frontmatter on its first line is read as text "
+        "and its keys are ignored; remove the mark"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("other", "errors"),
+    [
+        ("private theorem Project.base : True := trivial\n", []),
+        (
+            "theorem Project.base : True := trivial\n",
+            ["error: base: declaration defined more than once in {root}: Project.base (A.lean:1, B.lean:2)"],
+        ),
+    ],
+)
+def test_check_resolves_a_name_beside_a_private_twin_and_rejects_two_public_ones(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], other: str, errors: list[str]
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "base.md", "# Base\n", lean="Project.base")
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    (lean_root / "A.lean").write_text(other, encoding="utf-8")
+    (lean_root / "B.lean").write_text("\ndef Project.base : Nat := 0\n", encoding="utf-8")
+
+    assert main(["check", str(blueprint), "--lean-root", str(lean_root)]) == (1 if errors else 0)
+    lines = capsys.readouterr().out.splitlines()
+    assert [line for line in lines if line.startswith("error:")] == [error.format(root=lean_root) for error in errors]
+
+
+def test_check_prints_its_warnings_after_the_whole_summary(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "base.md", "# Base\n\n## Sources\n\n- [Author](mailto:author@example.org)\n", lean="Project.base")
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    (lean_root / "Base.lean").write_text("def Project.base : Nat := 0\n", encoding="utf-8")
+
+    assert main(["check", str(blueprint), "--lean-root", str(lean_root)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert sum(line.startswith("warning:") for line in lines) == 1
+    assert lines[-2:] == [
+        "    1 declaration(s) resolved in the Lean sources",
+        "warning: base: work and search omit this source target, which is neither an http(s) link "
+        "nor a path inside the blueprint: 'mailto:author@example.org'",
+    ]
+
+
+def test_check_reads_links_with_a_code_only_label_or_a_reference(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #302: the site links both shapes, so check validates each target once and the graph keeps the edge."""
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "foo-bar.md", "# Foo bar\n", declaration="def")
+    _node(
+        blueprint,
+        "baz.md",
+        "# Baz\n\n## Depends on\n- [`Foo.bar`](foo-bar.md)\n\n"
+        "## Sources\n- [`il:thm:3.2`](../sources/missing.md)\n- [Paper, Lemma 1][paper]\n- [Paper, Lemma 2][paper]\n\n"
+        "[paper]: ../sources/paper.md\n",
+        declaration="theorem",
+    )
+
+    assert main(["check", str(blueprint)]) == 1
+    assert capsys.readouterr().out == (
+        "error: baz: source target does not resolve to a file: '../sources/missing.md'\n"
+        "error: baz: source target does not resolve to a file: '../sources/paper.md'\n"
+    )
+    assert load_graph(blueprint).nodes["baz"].dependencies == ("foo-bar",)
 
 
 def test_check_refuses_a_symlinked_readme_instead_of_hanging(tmp_path: Path) -> None:

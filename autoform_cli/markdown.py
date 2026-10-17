@@ -27,8 +27,9 @@ itself, so the two cannot drift apart unnoticed.
 from __future__ import annotations
 
 import html
+import os
 import re
-import xml.etree.ElementTree as etree
+import stat
 from dataclasses import dataclass
 from functools import lru_cache
 from itertools import groupby
@@ -37,65 +38,15 @@ from urllib.parse import unquote, urlsplit
 
 import html5lib
 import markdown as pymarkdown
-from markdown.extensions import Extension
-from markdown.inlinepatterns import BACKTICK_RE, BacktickInlineProcessor
-from markdown.util import AtomicString
+from markdown.blockprocessors import ReferenceProcessor
+from markdown.inlinepatterns import ReferenceInlineProcessor
+from pymdownx.arithmatex import RE_BRACKET_INLINE, RE_SMART_DOLLAR_INLINE
+from pymdownx.superfences import fence_div_format
 
 #: The class pymdownx.arithmatex gives each formula it finds in the site's
 #: Markdown. The page's MathJax reads these elements and no other text, so a
 #: title or the navigation shows its TeX as typed.
 FORMULA_CLASS = "arithmatex"
-
-
-class CodeFormula(BacktickInlineProcessor):
-    """Python-Markdown's code spans, and a formula written as code between
-    dollar signs, ``$`...`$``, the form GitHub also reads as a formula with
-    the code as its TeX, so that neither reads escapes or emphasis in it. The
-    code is read as CommonMark reads a code span, line breaks as spaces and
-    one space trimmed from each end, and a dollar sign after a letter, digit,
-    underscore, or backslash opens no formula, as on GitHub."""
-
-    def handleMatch(self, m: re.Match[str], data: str) -> tuple[etree.Element | str, int, int]:  # type: ignore[override]
-        start, end = m.start(0), m.end(0)
-        if not (
-            m.group(3)
-            and data[start - 1 : start] == "$" == data[end : end + 1]
-            and not re.match(r"[A-Za-z0-9_\\]", data[max(start - 2, 0) : start - 1])
-        ):
-            return super().handleMatch(m, data)
-        code = m.group(3).replace("\n", " ")
-        if len(code) > 2 and code[0] == code[-1] == " " and code.strip(" "):
-            code = code[1:-1]
-        formula = etree.Element("span", {"class": FORMULA_CLASS})
-        formula.text = AtomicString(f"\\({code}\\)")
-        return formula, start - 1, end + 1
-
-
-class FormulaExtension(Extension):
-    """The formulas GitHub reads with their TeX as written, ``$`...`$`` in a
-    line, as :class:`CodeFormula` reads it; a ```` ```math ```` fence is the
-    displayed one, which :func:`formula_fence` writes. The site's Markdown
-    and check's reading of it register them from here, so both take the same
-    spans for formulas."""
-
-    def extendMarkdown(self, md: pymarkdown.Markdown) -> None:
-        md.inlinePatterns.register(CodeFormula(BACKTICK_RE), "backtick", 190)
-
-
-def displayed_formula(source: str, tag: str) -> str:
-    """A ```` ```math ```` block, which GitHub shows as a displayed formula
-    with the block's text as its TeX: a display formula for MathJax, in a
-    ``tag`` element, with nothing of the fence's braces."""
-
-    return f'<{tag} class="{FORMULA_CLASS}">\\[\n' + html.escape(source, quote=False) + f"\n\\]</{tag}>"
-
-
-def formula_fence(source: str, *args: object, **kwargs: object) -> str:
-    """The site's ```` ```math ```` fence: :func:`displayed_formula` in the
-    ``<div>`` pymdownx.arithmatex gives a ``$$`` block."""
-
-    return displayed_formula(source, "div")
-
 
 #: The Markdown extensions the generated `mkdocs.yml` enables, and their
 #: settings. Anchor prediction builds a real converter from these, so the site's
@@ -108,14 +59,13 @@ SITE_EXTENSIONS: tuple[str, ...] = (
     "tables",
     "pymdownx.arithmatex",
     "pymdownx.superfences",
-    "autoform_cli.markdown:FormulaExtension",
 )
 SITE_EXTENSION_CONFIGS: dict[str, dict[str, object]] = {
     "toc": {"toc_depth": "2-3"},
     "pymdownx.arithmatex": {"generic": True},
     "pymdownx.superfences": {
         "custom_fences": [
-            {"name": "math", "class": FORMULA_CLASS, "format": formula_fence},
+            {"name": "mermaid", "class": "mermaid", "format": fence_div_format},
         ]
     },
 }
@@ -139,10 +89,26 @@ INLINE_CODE = re.compile(r"(`+).*?\1")
 #: content that is still fenced when the page renders.
 FENCE_CLOSE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
 
-#: A complete inline link. The closing parenthesis is required: a target such as
-#: ``[Node](../roadmap/node.md`` renders as literal text, so accepting it would
-#: let unrendered evidence satisfy a coverage disposition.
-LINK = re.compile(r"(?<!!)\[[^\]]+\]\(\s*(<[^>]+>|[^)\s]+)(?:\s+[^)]*)?\)")
+#: The destination of an inline link, just after its label. The closing
+#: parenthesis is required: a target such as ``[Node](../roadmap/node.md``
+#: renders as literal text, so accepting it would let unrendered evidence
+#: satisfy a coverage disposition.
+_INLINE_TARGET = re.compile(r"\(\s*(<[^>]+>|[^)\s]+)(?:\s+[^)]*)?\)")
+
+#: The second label of a full or collapsed reference link, ``[text][label]`` or
+#: ``[label][]``, as Python-Markdown reads it after the first.
+_REFERENCE_LABEL = ReferenceInlineProcessor.RE_LINK
+
+#: A reference definition, ``[label]: target "title"``, as the site's Markdown
+#: reads one.
+_LINK_DEFINITION = ReferenceProcessor.RE
+
+#: Inline math, which the site reads right after code spans and before any
+#: link, so a bracket inside it neither opens nor closes one.
+_INLINE_MATH = re.compile(f"(?:{RE_SMART_DOLLAR_INLINE}|{RE_BRACKET_INLINE})")
+
+#: A backslash escape that decides whether a bracket opens a link or an image.
+_BRACKET_ESCAPE = re.compile(r"\\[\\\[\]!]")
 
 #: An unordered or ordered list marker. Content indented under a list item is a
 #: continuation of that item, not an indented code block.
@@ -250,24 +216,112 @@ def content_lines(text: str) -> list[str]:
     return list(content(text).lines)
 
 
-def link_targets(value: str) -> tuple[str, ...]:
-    """Return the targets of every complete inline link in ``value``.
+def link_targets(value: str, references: dict[str, str] | None = None) -> tuple[str, ...]:
+    """Return the target of every link Python-Markdown reads in ``value``.
 
-    Inline code is ignored, so a link shown as an example inside backticks does
-    not count as a real reference. Angle-bracket targets are unwrapped.
+    Inline code is masked, not deleted, as the renderer reads it before links:
+    a link shown as an example inside backticks is no link, while a label that
+    is only code, ``[`Foo.bar`](foo.md)``, is still a label. Inline math is
+    masked the same way, since the site reads it before links too. Brackets
+    nest in a label and an escaped bracket is text. A reference link,
+    ``[text][label]``, ``[label][]`` or ``[label]``, takes its target from
+    ``references``, as :func:`link_definitions` reads them, and is no link
+    without a definition; a definition shows no link itself. Angle-bracket
+    targets are unwrapped, and images are not links.
     """
 
-    return tuple(
-        _unwrap_target(match.group(1)) for match in LINK.finditer(INLINE_CODE.sub("", value))
-    )
+    if _LINK_DEFINITION.match(value):
+        return ()
+    references = references or {}
+    # Code spans, then inline math, are read before any link. Brackets are
+    # matched with escapes masked; a target keeps its escapes.
+    code_masked = _INLINE_MATH.sub(_blank, INLINE_CODE.sub(_blank, value))
+    masked = _BRACKET_ESCAPE.sub(_blank, code_masked)
+    closing = _closing_brackets(masked)
+    targets: list[str] = []
+    # Python-Markdown reads full and collapsed references, inline links and
+    # shortcut references in that order, each in its own pass. A reference pass
+    # skips what it reads without a definition: both labels of a full or
+    # collapsed reference, the whole bracket pair of a shortcut one, so `[[1]]`
+    # links nothing even with `[1]` defined. Neither pass starts at `![`.
+    passed = spent = -1
+    start = masked.find("[")
+    while start >= 0:
+        close = closing.get(start)
+        image = masked[start - 1 : start] == "!"
+        link = None
+        if close is not None:
+            label = masked[start + 1 : close]
+            reference = _REFERENCE_LABEL.match(masked, close + 1) if start > passed else None
+            full = _WHITESPACE.sub(" ", (reference.group(1) or label).lower()) if reference else None
+            short = _WHITESPACE.sub(" ", label.lower())
+            inline = _INLINE_TARGET.match(code_masked, close + 1)
+            if reference and full not in references and not image:
+                passed = reference.end() - 1
+            if full in references:
+                link = references[full], reference.end()
+            elif inline is not None:
+                link = _unwrap_target(inline.group(1)), inline.end()
+            elif start > spent and short in references:
+                link = references[short], close + 1
+            elif not image:
+                spent = max(spent, close)
+        if link is None:
+            start = masked.find("[", start + 1)
+            continue
+        if not image:
+            targets.append(link[0])
+        start = masked.find("[", link[1])
+    return tuple(targets)
+
+
+def link_definitions(lines: list[str]) -> dict[str, str]:
+    """Return the target of each reference definition in ``lines``, by label.
+
+    ``lines`` are masked as :func:`mask_code_and_comments` or
+    :func:`content_lines` leave them, so a definition in code or a comment does
+    not count. A definition counts on a line of its own, and its label is
+    matched without regard to case. A later definition of a label replaces an
+    earlier one, as the site's Markdown reads them.
+    """
+
+    references: dict[str, str] = {}
+    for line in lines:
+        definition = _LINK_DEFINITION.match(line)
+        if definition is not None:
+            references[definition.group(1).strip().lower()] = definition.group(2).lstrip("<").rstrip(">")
+    return references
+
+
+def _closing_brackets(text: str) -> dict[int, int]:
+    """Map the index of each ``[`` in ``text`` to that of the ``]`` closing it."""
+
+    closing: dict[int, int] = {}
+    opened: list[int] = []
+    for index, character in enumerate(text):
+        if character == "[":
+            opened.append(index)
+        elif character == "]" and opened:
+            closing[opened.pop()] = index
+    return closing
+
+
+def _blank(match: re.Match[str]) -> str:
+    return " " * len(match.group(0))
 
 
 def markdown_links(text: str) -> list[tuple[int, str]]:
-    """Return ``(line number, target)`` for every visible link in ``text``."""
+    """Return ``(line number, target)`` for every visible link in ``text``.
 
+    A reference link is reported on its own line, with the target of its
+    definition anywhere in ``text``.
+    """
+
+    lines = content_lines(text)
+    references = link_definitions(lines)
     links: list[tuple[int, str]] = []
-    for line_number, line in enumerate(content_lines(text), start=1):
-        links.extend((line_number, target) for target in link_targets(line))
+    for line_number, line in enumerate(lines, start=1):
+        links.extend((line_number, target) for target in link_targets(line, references))
     return links
 
 
@@ -646,8 +700,8 @@ NOTES_BOX = "bp-thmnotes"
 #: MkDocs reads no leading line of the page as metadata either.
 PAGE_HEADER = "---\n{}\n---\n"
 
-#: An HTML comment with its end.
-_COMPLETE_HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+#: A code span, which shows a comment as typed, or an HTML comment with its end.
+_CODE_OR_COMMENT = re.compile(INLINE_CODE.pattern + r"|<!--(?s:.*?)-->")
 
 
 def published_lines(text: str) -> str:
@@ -669,8 +723,9 @@ def published_page(text: str) -> str:
     three below its line in the file, and without the HTML comments outside
     code, as :func:`published_lines` writes it.
 
-    A comment in a fenced or indented code block is shown as typed, so it
-    stays, as does a comment that never closes, which check refuses.
+    A comment in a code span or a fenced or indented code block is shown as
+    typed, so it stays, as does a comment that never closes, which check
+    warns about.
     """
 
     lines = text.splitlines()
@@ -683,7 +738,7 @@ def published_page(text: str) -> str:
     kept: list[str] = []
     for in_code, run in groupby(enumerate(body), key=lambda numbered: numbered[0] in code):
         block = "\n".join(line for _, line in run)
-        kept.append(block if in_code else _COMPLETE_HTML_COMMENT.sub("", block))
+        kept.append(block if in_code else _CODE_OR_COMMENT.sub(lambda found: found.group() if found[1] else "", block))
     return PAGE_HEADER + "\n" * start + published_lines("\n".join(kept))
 
 
@@ -697,9 +752,13 @@ def published_markdown(text: str) -> list[tuple[str, str]]:
     # MkDocs reads the header off, and the blank lines after it.
     page = text.removeprefix(PAGE_HEADER).lstrip("\n")
     pieces = [(page, page)]
-    for part, box in zip(statement_and_notes(text), (STATEMENT_BOX, NOTES_BOX), strict=True):
+    parts = statement_and_notes(text)
+    # Render converts both parts on their own before boxing them when either
+    # holds a "<", which the box's HTML reading could take for a tag.
+    alone = any("<" in part for part in parts)
+    for part, box in zip(parts, (STATEMENT_BOX, NOTES_BOX), strict=True):
         if part:
-            pieces.append((part, "\n".join(boxed(part, box))))
+            pieces.append((part, part if alone else "\n".join(boxed(part, box))))
     return pieces
 
 
@@ -795,6 +854,92 @@ def _anchors_from_body(body: str) -> frozenset[str]:
     return frozenset(html.unescape(found) for found in _HEADING_ID.findall(rendered))
 
 
+# More link spellings than any one path in a blueprint needs. On a
+# case-insensitive file system, each level of links can double the spellings
+# of the same link, and resolving them all would take exponential time.
+_MAX_LINKS = 4096
+
+
+def resolved_path(path: Path) -> Path | None:
+    """``path`` with its symbolic links resolved, or None if that fails or a link cannot be read.
+
+    On POSIX, `_realpath_posix` resolves it as Python 3.13's `os.path.realpath`
+    does, on every version: a symlink loop stays as written and the rest of the
+    path resolves past it. Before 3.13, `realpath` recurses once per link and
+    stops at a loop, applying the rest of the path's `..` steps as written, so
+    a link after the loop could lead out of the blueprint unresolved, and
+    `Path.resolve` raises when the path `realpath` returns still runs through a
+    loop. From 3.13 it runs too, because `realpath` keeps a link it cannot read
+    as written, so a target outside the blueprint would look inside. So a link
+    gets the same verdict on every supported version; callers still check where
+    it points and whether it is a file. Windows `realpath` applies `..` as
+    written on every version, as Windows itself does.
+    """
+
+    try:
+        if os.name == "nt":
+            return Path(os.path.realpath(path))
+        resolved = _realpath_posix(os.fspath(path))
+    except (OSError, ValueError):
+        # A NUL in the path, which callers check for first, `os.getcwd` failing
+        # for a relative path, or a path Windows refuses to resolve, such as one
+        # over its length limit.
+        return None
+    return None if resolved is None else Path(resolved)
+
+
+def _realpath_posix(path: str) -> str | None:
+    """Python 3.13's POSIX `os.path.realpath`, or None at a link it cannot read.
+
+    Each spelling of a link is read once. A link met again before its target is
+    resolved is a loop and stays as written; a later `..` leaves it again. A
+    part that cannot be looked up, missing or under a loop, also stays as
+    written, and the parts after it still resolve. Unlike 3.13, a link that
+    cannot be read leaves the path unresolved: macOS follows a link whose mode
+    forbids reading it, so keeping that link as written would hide where it
+    leads. A path that needs more than `_MAX_LINKS` spellings of links is not
+    resolved either.
+    """
+
+    pending: list[str | None] = path.split("/")[::-1]
+    resolved = "/" if path.startswith("/") else os.getcwd()
+    # Each link seen, mapped to its resolved target, or to None while that is pending.
+    links: dict[str, str | None] = {}
+    while pending:
+        name = pending.pop()
+        if name is None:
+            # The link popped next has its target resolved.
+            links[pending.pop()] = resolved
+            continue
+        if name in ("", "."):
+            continue
+        if name == "..":
+            resolved = resolved[: resolved.rindex("/")] or "/"
+            continue
+        joined = os.path.join(resolved, name)
+        try:
+            is_link = stat.S_ISLNK(os.lstat(joined).st_mode)
+        except OSError:
+            is_link = False
+        if not is_link:
+            resolved = joined
+            continue
+        if joined in links:
+            resolved = links[joined] or joined
+            continue
+        if len(links) >= _MAX_LINKS:
+            return None
+        try:
+            target = os.readlink(joined)
+        except OSError:
+            return None
+        if target.startswith("/"):
+            resolved = "/"
+        links[joined] = None
+        pending += [joined, None, *target.split("/")[::-1]]
+    return resolved
+
+
 def local_target_issue(
     source_path: Path,
     target: str,
@@ -802,14 +947,17 @@ def local_target_issue(
     *,
     label: str,
 ) -> tuple[str, str] | None:
-    """Return ``(code, reason)`` when a local link does not resolve.
+    """Return ``(code, reason)`` when a local link does not resolve, or names a hidden path.
 
     ``source_path`` is the file containing the link, ``boundary`` the directory
     the link may not escape. External schemes are the reader's problem and are
     reported as fine. A fragment on a Markdown target must name a real heading.
     """
 
-    split = urlsplit(target)
+    try:
+        split = urlsplit(target)
+    except ValueError:
+        return f"malformed-{label}-url", f"{label} link is not a valid URL: {target!r}"
     scheme = split.scheme.casefold()
     if scheme in EXTERNAL_SCHEMES:
         return None
@@ -822,21 +970,30 @@ def local_target_issue(
     if "\x00" in raw_path:
         return f"malformed-{label}-link", f"{label} link contains an invalid path: {target!r}"
     if not raw_path:
-        candidate = source_path.resolve()
+        candidate = source_path
     else:
         relative = Path(raw_path)
         if relative.is_absolute():
             return f"{label}-escapes-blueprint", f"{label} link escapes the blueprint: {target!r}"
-        candidate = (source_path.parent / relative).resolve()
+        candidate = source_path.parent / relative
+    candidate = resolved_path(candidate)
+    if candidate is None:
+        return f"{label}-not-found", f"{label} link does not resolve to a file: {target!r}"
 
     boundary = boundary.resolve()
     if not _is_within(candidate, boundary):
         return f"{label}-escapes-blueprint", f"{label} link escapes the blueprint: {target!r}"
-    try:
-        is_file = candidate.is_file()
-    except (OSError, ValueError):
-        return f"malformed-{label}-link", f"{label} link contains an invalid path: {target!r}"
-    if not is_file:
+    # Render resolves links in a copy of the vault that has no hidden paths and no
+    # symbolic links, so a link on a page it publishes breaks when the path it spells
+    # is hidden. `.x/../paper.md` still passes. Only a repository link reaches a
+    # hidden note under `sources/`, and render writes one when it links the other
+    # source notes there; that link resolves only once the note is committed, so it
+    # is reported too, and `check` only warns about it.
+    spelled = Path(os.path.normpath(source_path.parent.resolve() / raw_path))
+    if _is_hidden_path(spelled, boundary) and not _is_hidden_path(source_path.resolve(), boundary):
+        return f"hidden-{label}-target", f"{label} link names a hidden path, which render omits: {target!r}"
+    # Before Python 3.14, `Path.is_file` raises under an unreadable directory.
+    if not os.path.isfile(candidate):
         return f"{label}-not-found", f"{label} link does not resolve to a file: {target!r}"
     if split.fragment and candidate.suffix.casefold() == ".md":
         fragment = unquote(split.fragment)
@@ -1001,6 +1158,11 @@ def _is_within(path: Path, directory: Path) -> bool:
     return True
 
 
+def _is_hidden_path(path: Path, boundary: Path) -> bool:
+    """Whether a part of *path* below *boundary* starts with ".", so render omits it (its `_is_hidden`)."""
+    return _is_within(path, boundary) and any(part.startswith(".") for part in path.relative_to(boundary).parts)
+
+
 __all__ = [
     "DEPENDENCY_SECTIONS",
     "EXTERNAL_SCHEMES",
@@ -1009,7 +1171,6 @@ __all__ = [
     "FORMULA_CLASS",
     "HEADING",
     "INLINE_CODE",
-    "LINK",
     "NOTES_BOX",
     "PAGE_SUFFIXES",
     "SITE_EXTENSIONS",
@@ -1025,6 +1186,7 @@ __all__ = [
     "frontmatter_end",
     "has_substance",
     "is_placeholder",
+    "link_definitions",
     "link_targets",
     "local_target_issue",
     "markdown_anchors",
@@ -1041,6 +1203,7 @@ __all__ = [
     "render_html",
     "render_tree",
     "rendered_visible_text",
+    "resolved_path",
     "site_converter",
     "statement_and_notes",
     "strip_line_comments",

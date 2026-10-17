@@ -75,10 +75,14 @@ empty, since a library may already prove the result. The
 [library search rules](../formalize/references/library-search.md) give the
 details.
 If a library already proves a result, reuse that proof instead of proving the
-result again: the result keeps its article, and its proof cites the library
-declaration. If a proof needs a library result that has no article yet, add an
-article for it, proved from the library, and link it under `## Proof depends
-on`. A refusal (exit 2) is not an empty result: resolve what it reports without
+result again: the result keeps its article. If a proof needs a library result
+that has no article yet, add an article for it, proved from the library, and
+link it under `## Proof depends on`. Whenever an article reuses a shared
+library declaration, name it in its implementation note, not in the article,
+and leave `lean:` unset until the project declares the result, which Formalize
+does from the library declaration. `lean:` names only a declaration in the
+project's own Lean files, since `autoform check --lean-root` resolves no other.
+A refusal (exit 2) is not an empty result: resolve what it reports without
 adding the article, and search again, except that a refusal naming a library is
 handled as the library search rules say. A dependency link to a page not yet
 written causes one, so search for a batch of articles before writing the first.
@@ -101,6 +105,10 @@ Write milestone pages under `blueprint/roadmap/` by mathematical significance,
 then one fine article per coherent unit with one unique main result. Ground each
 statement and proof sketch in the source. Put genuine statement prerequisites
 under `## Depends on` and proof-only prerequisites under `## Proof depends on`.
+Never delete or reverse a genuine article edge to make a chapter-level or
+scope-level projection acyclic. The authored leaf DAG is the mathematical
+record; a coarser view may have relations in both directions and must present
+them honestly.
 Assign durable `article_id` metadata to new articles; run
 `autoform migrate article-ids blueprint --write` after creating the pages to
 add deterministic IDs.

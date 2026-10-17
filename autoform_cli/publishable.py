@@ -13,15 +13,18 @@ import markdown as markdown_renderer
 from markdown.extensions.attr_list import get_attrs_and_remainder
 
 from .markdown import (
+    FORMULA_CLASS,
     SITE_EXTENSION_CONFIGS,
     SITE_EXTENSIONS,
     INLINE_CODE,
+    PAGE_HEADER,
     content_lines,
     published_markdown,
     published_page,
 )
+from .mathjax import NEUTRALISED, TEX_MACROS
 
-__all__ = ["entity_name", "html_names", "publishable_article"]
+__all__ = ["entity_name", "html_names", "publishable_article", "shown_as_typed"]
 
 #: Raw HTML in CommonMark's grammar: open and closing tags, and the openers of
 #: comments, declarations, and processing instructions, closed or not.
@@ -108,8 +111,9 @@ def html_names(text: str) -> list[str]:
 _ATTRIBUTE_LIST = r"\{{:?[ ]*{}[ ]*\}}"
 
 
-def publishable_article(text: str) -> tuple[str, tuple[str, ...]]:
-    """The page a site may publish for an article, and what refuses it.
+def publishable_article(text: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """The page a site may publish for an article, what keeps it from being
+    published as written, and the notation its formulas define.
 
     Articles are Markdown and TeX. Raw HTML in one would reach the published
     page as markup that can restyle it, show an approval nobody gave, or run
@@ -117,35 +121,45 @@ def publishable_article(text: str) -> tuple[str, tuple[str, ...]]:
     templates. The page is :func:`~autoform_cli.markdown.published_page`'s:
     the frontmatter, which the theme would print unescaped, is replaced, and
     complete HTML comments outside code, a common way to leave a note, are
-    dropped rather than refused, so a comment a browser would end sooner than
+    dropped rather than reported, so a comment a browser would end sooner than
     the pattern does exposes nothing; one in code is shown as typed, as in the
-    vault. What remains is refused when :func:`_raw_html_errors` finds HTML in
+    vault. What remains is reported when :func:`_raw_html_errors` finds HTML in
     it outside code, or when the site's Markdown renderer would pass any of it
     through as raw HTML: the two parse markup differently, and the renderer's
     reading is what gets published. Every piece the site can publish is read,
     as :func:`~autoform_cli.markdown.published_markdown` gives it, so the text
     checked is the text published.
 
-    And it is refused for an attribute list, or a code fence's braces that do
+    And it is reported for an attribute list, or a code fence's braces that do
     more than name its language, which could give its text an id, a class or
     a style that makes it look like the site's own marks, cover the page, or
     be drawn as a diagram.
 
-    And it is refused for a link, an image, or a link definition, used or
+    And it is reported for a link, an image, or a link definition, used or
     not, that leads anywhere but the site's own pages and http, https, and
     mailto addresses: a ``javascript:`` or ``data:`` one runs or shows what
     it holds on the site's origin.
+
+    Render publishes a page with any of these as :func:`shown_as_typed`, and
+    check warns about each; neither stops. The notation is a separate list:
+    a formula that defines a command, or uses one the site turns off, shows
+    an error in red where it stands, and nothing else on the page changes.
     """
 
     visible = published_page(text)
     errors: list[str] = []
     attributes: list[tuple[str, str]] = []
+    defining: dict[str, None] = {}
     for source, markdown in published_markdown(visible):
         rendered, passed, assigned, unclosed, defined = _rendered_article(markdown)
         reading = _RenderedText()
         reading.feed(rendered)
         reading.close()
-        found = [_lines_naming(text, _named_markup(error)) + error for error in _raw_html_errors(source, reading.code)]
+        defining.update(dict.fromkeys(_TEX_DEFINITION.findall("\n".join(reading.formulas))))
+        # A formula the converter read is escaped as code is, so its text
+        # excuses the markup it spells, as a code span's does.
+        shown = [*reading.code, *reading.formulas]
+        found = [_lines_naming(text, _named_markup(error)) + error for error in _raw_html_errors(source, shown)]
         if passed and not found:
             blocks = dict.fromkeys(passed)
             shown = ", ".join(repr(block[:40]) for block in blocks)
@@ -185,7 +199,49 @@ def publishable_article(text: str) -> tuple[str, tuple[str, ...]]:
         errors.extend(found)
         attributes.extend(assigned)
     errors.extend(_attribute_errors(text, attributes))
-    return visible, tuple(dict.fromkeys(errors))
+    notation: tuple[str, ...] = ()
+    if defining:
+        named = [re.compile(re.escape(f"\\{name}") + "(?![A-Za-z])") for name in defining]
+        notation = (
+            _lines_naming(text, named)
+            + "formulas define or use "
+            + ", ".join(f"\\{name}" for name in defining)
+            + ": the site ignores notation an article defines and turns these commands off, so each shows "
+            + f"an error in red; put the project's notation in blueprint/{TEX_MACROS}",
+        )
+    return visible, tuple(dict.fromkeys(errors)), notation
+
+
+#: A command a formula would use to change the formulas around it, or one the
+#: site's MathJax turns off; :mod:`~autoform_cli.mathjax` lists why.
+_TEX_DEFINITION = re.compile(
+    r"\\("
+    + "|".join(
+        sorted(
+            {"newcommand", "renewcommand", "providecommand", "def", "gdef", "edef", "xdef", "let", "require"}
+            | set(NEUTRALISED),
+            key=len,
+            reverse=True,
+        )
+    )
+    + r")(?![A-Za-z])"
+)
+
+
+def shown_as_typed(text: str, *, page: bool = True) -> str:
+    """``text``, Markdown that :func:`publishable_article` reported, published
+    as typed: every character escaped in one preformatted block, under a note
+    that says why, so none of it becomes markup, a link, or a formula. With
+    ``page``, it is a whole page, which keeps the header that stands for its
+    frontmatter."""
+
+    note = (
+        '<p class="bp-as-typed-note">autoform render shows this text as typed: it holds markup the site does '
+        "not publish. Run <code>autoform check</code> to see what.</p>"
+    )
+    body = text.removeprefix(PAGE_HEADER) if page else text
+    block = f'{note}\n<pre class="bp-as-typed">{html.escape(body.strip(chr(10)), quote=False)}</pre>\n'
+    return (PAGE_HEADER + "\n" + block) if page else block
 
 
 #: The schemes a published link may name; one with none stays on the site.
@@ -369,7 +425,10 @@ class _RenderedText(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.code: list[str] = []
         self.destinations: list[str] = []
+        #: The TeX of each formula the site's MathJax reads.
+        self.formulas: list[str] = []
         self._open: list[str] = []
+        self._formula: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.destinations.extend(value for name, value in attrs if name in {"href", "src"} and value is not None)
@@ -377,14 +436,22 @@ class _RenderedText(HTMLParser):
             if not self._open:
                 self.code.append("")
             self._open.append(tag)
+        if self._formula or FORMULA_CLASS in (dict(attrs).get("class") or "").split():
+            if not self._formula:
+                self.formulas.append("")
+            self._formula.append(tag)
 
     def handle_endtag(self, tag: str) -> None:
         if tag in self._open:
             del self._open[len(self._open) - 1 - self._open[::-1].index(tag) :]
+        if tag in self._formula:
+            del self._formula[len(self._formula) - 1 - self._formula[::-1].index(tag) :]
 
     def handle_data(self, data: str) -> None:
         if self._open:
             self.code[-1] += data
+        if self._formula:
+            self.formulas[-1] += data
 
 
 def _bounded_references(text: str) -> str:

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import errno
 import hashlib
 import json
 import os
@@ -32,7 +33,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import psutil
 import tomli
@@ -50,6 +51,7 @@ from .lean import (
     index_project,
     resolve_lean_root,
 )
+from .markdown import resolved_path
 
 SKELETON_SCHEMA = "autoform-skeleton/v5"
 SEMANTIC_SCHEMA = "autoform-lean-expr/v4"
@@ -82,8 +84,6 @@ _UNCAPTURED_ROOT_MODULE = re.compile(r"the impact probe (?:loaded|found) root-pa
 #: Bounds each probe process; extraction runs one per root module.
 DEFAULT_PROBE_TIMEOUT = 600.0
 
-#: Characters of Lean output a failure reason quotes.
-_FAILURE_DETAIL_LIMIT = 2000
 #: The Lake freshness check hashes every imported input, which on a Mathlib
 #: project can take minutes on its own, so it does not share the probe's budget.
 DEFAULT_FRESHNESS_TIMEOUT = 600.0
@@ -96,6 +96,8 @@ DEFAULT_PROBE_OUTPUT_LIMIT = 64 * 1024 * 1024
 #: The probe states shared subterms once; this bounds the characters of
 #: semantic material they may expand to in one probe.
 _PROBE_MATERIAL_LIMIT = 512 * 1024 * 1024
+#: Characters of Lean output a failure reason quotes.
+_FAILURE_DETAIL_LIMIT = 2000
 _PROCESS_TERMINATION_GRACE = 2.0
 #: Lake's exit status when ``--no-build`` finds a target that needs rebuilding.
 _LAKE_NO_BUILD_EXIT = 3
@@ -1308,6 +1310,9 @@ def _run_registered_command(
         raise _CommandTimedOut([f"{context} timed out"])
     if output_limit < 1:
         raise ValueError("output_limit must be positive")
+    if os.name == "posix" and signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN:
+        # The kernel would reap the command as it exits, and Popen would then report status 0.
+        raise SkeletonError([f"{context} cannot run while SIGCHLD is ignored: its exit status would be lost"])
     process: subprocess.Popen[bytes] | None = None
     readers: list[threading.Thread] = []
     chunks: dict[str, list[bytes]] = {"stdout": [], "stderr": []}
@@ -1384,8 +1389,11 @@ def _run_registered_command(
                 raise _CommandTimedOut([f"{context} timed out after {timeout:g} seconds"])
             overflow.wait(min(0.05, remaining))
         _remember_descendants(process, descendants)
-        # A reap recorded elsewhere frees the group id, so it is not checked again.
-        group_alive = process.returncode is None and _process_group_has_live_members(process.pid)
+        if os.name == "posix" and process.returncode is not None:
+            # Reaped elsewhere, as when C code ignores SIGCHLD where signal.getsignal
+            # can't see it. Popen then reports status 0, and the group id is free.
+            raise SkeletonError([f"{context} was reaped outside the runner: its exit status is lost"])
+        group_alive = os.name == "posix" and _process_group_has_live_members(process.pid)
         _remember_tagged_processes(token, descendants, root_pid=process.pid)
         if group_alive or any(map(_process_is_alive, descendants.values())):
             raise SkeletonError([f"{context} left descendant processes running"])
@@ -1536,13 +1544,43 @@ def _translate_lakefile(root: Path) -> bytes:
 
 
 def module_of(path: Path, libraries: tuple[LeanLibrary, ...]) -> str | None:
-    """Return the Lean module name of a source file, or ``None`` if no library holds it."""
+    """Return the Lean module name of a source file, or ``None`` if no library builds it.
+
+    Lake builds only the modules a library's roots and globs make buildable, not
+    every file under its srcDir, so a stray file there has no module.
+    """
 
     resolved = path.resolve()
-    held = [lib.src_dir for lib in libraries if resolved != lib.src_dir and resolved.is_relative_to(lib.src_dir)]
-    if resolved.suffix != ".lean" or not held:
+    if resolved.suffix != ".lean":
         return None
-    return ".".join(resolved.relative_to(max(held, key=lambda src_dir: len(src_dir.parts))).with_suffix("").parts)
+    held = [lib for lib in libraries if resolved != lib.src_dir and resolved.is_relative_to(lib.src_dir)]
+    for library in sorted(held, key=lambda lib: len(lib.src_dir.parts), reverse=True):
+        module = ".".join(resolved.relative_to(library.src_dir).with_suffix("").parts)
+        if _builds(library, module):
+            return module
+    return None
+
+
+def _builds(library: LeanLibrary, module: str) -> bool:
+    """Whether Lake builds ``module`` for ``library``, as ``LeanLibConfig.isBuildableModule`` decides.
+
+    Lake finds, imports and builds a module by that rule, not by ``isLocalModule``:
+    a glob matches the module, or a root prefixes it and a glob matches that root.
+    Without ``globs``, each root is its own glob.
+    """
+
+    globs = library.globs or library.roots
+
+    def globbed(name: str) -> bool:
+        for glob in globs:
+            base, mode = (glob[:-2], glob[-1]) if glob.endswith((".*", ".+")) else (glob, "")
+            if (name == base and mode != "+") or (mode and name.startswith(f"{base}.")):
+                return True
+        return False
+
+    return globbed(module) or any(
+        (module == root or module.startswith(f"{root}.")) and globbed(root) for root in library.roots
+    )
 
 
 def path_of(module: str, libraries: tuple[LeanLibrary, ...], lean_root: Path) -> str | None:
@@ -1559,20 +1597,31 @@ def path_of(module: str, libraries: tuple[LeanLibrary, ...], lean_root: Path) ->
     return None
 
 
-def _stable_detail(text: str, lean_root: Path, *scratch: Path) -> str:
-    """A failure reason that reads the same on every run, at bounded length.
+def _stable_paths(text: str, lean_root: Path, *scratch: Path) -> str:
+    """``text`` with the paths that change from run to run made stable.
 
     Each ``scratch`` directory, which changes on every run, reads as
     `<scratch>`, and paths inside the project read relative to it; paths
-    elsewhere, such as the toolchain's, stay as Lean printed them.
+    elsewhere, such as the toolchain's or a sibling directory's, stay as Lean
+    printed them.
     """
 
     replacements = {str(path): "<scratch>" for directory in scratch for path in (directory, directory.resolve())}
     for root in (lean_root, lean_root.resolve()):
         replacements[str(root) + os.sep] = ""
         replacements[str(root)] = "."
-    for old in sorted(replacements, key=len, reverse=True):
-        text = text.replace(old, replacements[old])
+    # A directory matches only where its name ends, so `/srv/proj` leaves `/srv/proj-old` alone.
+    pattern = "|".join(
+        re.escape(old) + ("" if old.endswith(os.sep) else r"(?![\w.-])")
+        for old in sorted(replacements, key=len, reverse=True)
+    )
+    return re.sub(pattern, lambda match: replacements[match.group()], text)
+
+
+def _stable_detail(text: str, lean_root: Path, *scratch: Path) -> str:
+    """``_stable_paths`` of a failure reason, cut to ``_FAILURE_DETAIL_LIMIT`` characters."""
+
+    text = _stable_paths(text, lean_root, *scratch)
     if len(text) <= _FAILURE_DETAIL_LIMIT:
         return text
     keep = _FAILURE_DETAIL_LIMIT - 64
@@ -1766,125 +1815,45 @@ def _probe_environment() -> dict[str, str]:
 
 
 def _build_probe_helper(lean_root: Path, directory: Path, *, timeout: float) -> Path:
-    """Compile the probe's helpers into ``directory``, or copy them from the cache, and return it.
+    """Compile the probe's helpers into ``directory`` and return it.
 
     The helpers are elaborated with the project's toolchain and no project
     module imported, so no project name, notation, or option reaches them; each
-    probe finds the module through ``LEAN_PATH``. ``timeout`` bounds the cache
-    lookup and the build together. A failure here concerns every probe.
+    probe finds the module through ``LEAN_PATH``. A failure here concerns every
+    probe.
     """
 
     lake = _lake_executable(lean_root)
-    deadline = time.monotonic() + timeout
-    text = _render_probe_helper()
     olean = directory / f"{_PROBE_HELPER_MODULE}.olean"
     try:
-        cache = _probe_helper_cache(lake, lean_root, text, timeout=timeout)
-        if cache is not None and _restore_probe_helper(*cache, olean):
-            return directory
         directory.mkdir(parents=True, exist_ok=True)
         source = directory / f"{_PROBE_HELPER_MODULE}.lean"
-        source.write_text(text, encoding="utf-8")
+        source.write_text(_render_probe_helper(), encoding="utf-8")
         result = _run_bounded_command(
             [lake, "env", "lean", f"--root={directory}", "-o", str(olean), str(source)],
             cwd=lean_root,
-            timeout=max(0.0, deadline - time.monotonic()),
+            timeout=timeout,
             context="building the skeleton probe helpers",
             env=_probe_environment(),
         )
     except _CommandTimedOut as exc:
-        raise _ProbeEnvironmentError(
-            [f"{exc.issues[0]} after {timeout:g} seconds; rerun with --timeout <seconds> for large projects"]
-        ) from exc
+        raise _ProbeEnvironmentError([f"{exc.issues[0]}; rerun with --timeout <seconds> for large projects"]) from exc
     if result.returncode != 0:
-        detail = _stable_detail((result.stderr or result.stdout).strip(), lean_root, directory)
-        _raise_if_core_module_shadowed(detail)
+        raw = (result.stderr or result.stdout).strip()
+        detail = _stable_detail(raw, lean_root, directory)
+        _raise_if_core_module_shadowed(raw, detail)
         raise _ProbeEnvironmentError([f"cannot build the skeleton probe helpers\n{detail}"])
-    if cache is not None:
-        _publish_probe_helper(olean, cache[0])
     return directory
 
 
-def _probe_helper_cache(lake: str, lean_root: Path, source: str, *, timeout: float) -> tuple[Path, str] | None:
-    """Return the file that caches this toolchain's build of ``source`` and the toolchain's Git hash, or None.
+def _raise_if_core_module_shadowed(output: str, detail: str, label: str = "skeleton probe") -> None:
+    """Name the dependency library at fault when Lean could not load a toolchain module.
 
-    The key is the source, the Git hash ``lake env`` reports, and the size and
-    modification time of the toolchain's ``Lean.olean``, so a toolchain rebuilt
-    at the same commit gets its own entry. Nothing is cached when ``lake env``
-    fails or omits any of these, or the cache directory is not absolute.
+    ``output`` is Lean's whole output, searched because ``detail``, the
+    reason's shortened copy, could cut the refusal off.
     """
 
-    env = _probe_environment()
-    # Lake reports an inherited LEAN_GITHASH in place of the toolchain's own.
-    env.pop("LEAN_GITHASH", None)
-    result = _run_bounded_command([lake, "env"], cwd=lean_root, timeout=timeout, context="lake env", env=env)
-    variables = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
-    githash, sysroot = variables.get("LEAN_GITHASH", ""), variables.get("LEAN_SYSROOT", "")
-    if result.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}", githash):
-        return None
-    base = os.environ.get("XDG_CACHE_HOME", "")
-    try:
-        core = os.stat(os.path.join(sysroot, "lib", "lean", "Lean.olean")) if os.path.isabs(sysroot) else None
-        cache = Path(base) if os.path.isabs(base) else Path.home() / ".cache"
-    except (OSError, RuntimeError):
-        return None
-    if core is None or not cache.is_absolute():
-        return None
-    key = hashlib.sha256(f"{githash}\0{core.st_size}\0{core.st_mtime_ns}\0{source}".encode()).hexdigest()
-    return cache / "autoform" / "probe-helper" / key, githash
-
-
-def _restore_probe_helper(cached: Path, githash: str, olean: Path) -> bool:
-    """Copy a cached helper build to ``olean`` if the entry is intact and ours, and say whether it was.
-
-    An entry is the compiled module followed by its SHA-256, so a damaged one
-    is a miss. So is a module whose header lacks the toolchain's Git hash: a
-    toolchain change during a build can publish another toolchain's build
-    under this key. Lean compares only that hash, so neither it nor this check
-    notices a change between two toolchains built from the same commit.
-    """
-
-    try:
-        captured = _read_snapshot_file(cached)
-    except SkeletonError:
-        return False
-    data = b"" if captured is None else captured[0]
-    module, digest = data[:-32], data[-32:]
-    if hashlib.sha256(module).digest() != digest or githash.encode() not in module[:128]:
-        return False
-    olean.parent.mkdir(parents=True, exist_ok=True)
-    olean.write_bytes(module)
-    return True
-
-
-def _publish_probe_helper(olean: Path, cached: Path) -> None:
-    """Store a fresh helper build as the entry ``cached``; a failure leaves the cache as it was.
-
-    The entry is renamed into place, so a reader gets the old entry or the new
-    one, and keeps the build's file mode, which ``mkstemp`` would restrict.
-    """
-
-    try:
-        module = olean.read_bytes()
-        cached.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary = tempfile.mkstemp(dir=cached.parent, prefix=".", suffix=".tmp")
-    except OSError:
-        return
-    try:
-        with os.fdopen(descriptor, "wb") as target:
-            target.write(module)
-            target.write(hashlib.sha256(module).digest())
-        shutil.copymode(olean, temporary)
-        os.replace(temporary, cached)
-    except OSError:
-        with contextlib.suppress(OSError):
-            os.unlink(temporary)
-
-
-def _raise_if_core_module_shadowed(detail: str, label: str = "skeleton probe") -> None:
-    """Name the dependency library at fault when Lean could not load a toolchain module."""
-
-    shadowed = _SHADOWED_CORE_MODULE.search(detail)
+    shadowed = _SHADOWED_CORE_MODULE.search(output)
     if shadowed:
         root = shadowed.group(1).split(".", 1)[0]
         raise _ProbeEnvironmentError(
@@ -1958,11 +1927,14 @@ def run_probe(
     if result.returncode != 0:
         raw = (result.stderr or result.stdout).strip()
         detail = _stable_detail(raw, lean_root, *filter(None, (Path(scratch), helper)))
-        _raise_if_core_module_shadowed(detail, label)
+        _raise_if_core_module_shadowed(raw, detail, label)
         # Searched in the whole output: the shortened reason could cut the refusal off.
         uncaptured = _UNCAPTURED_ROOT_MODULE.search(raw)
         if uncaptured:
             raise SkeletonError([uncaptured.group()])
+        if result.returncode < 0:
+            # Most likely the out-of-memory killer, which leaves no output to explain it.
+            raise SkeletonError([f"the {label} was killed by signal {-result.returncode}\n{detail}".rstrip()])
         raise SkeletonError([f"the {label} failed; is the project built with `lake build`?\n{detail}"])
     return output or result.stdout
 
@@ -2503,58 +2475,49 @@ def _hash_module_files(
     return tuple(identities)
 
 
-def _available_cpus() -> int:
-    """The CPUs this process may run on, where the platform can say."""
-
-    if hasattr(os, "process_cpu_count"):
-        return os.process_cpu_count() or 1
-    if hasattr(os, "sched_getaffinity"):
-        return len(os.sched_getaffinity(0))
-    return os.cpu_count() or 1
-
-
 def _probe_workers(jobs: int) -> int:
     """How many probe processes run at once; see ``_MAX_PROBE_WORKERS``."""
 
-    return max(1, min(jobs, _MAX_PROBE_WORKERS, _available_cpus()))
+    if hasattr(os, "process_cpu_count"):
+        cpus = os.process_cpu_count()
+    elif hasattr(os, "sched_getaffinity"):
+        cpus = len(os.sched_getaffinity(0))
+    else:
+        cpus = os.cpu_count()
+    return max(1, min(jobs, _MAX_PROBE_WORKERS, cpus or 1))
 
 
-def _run_module_probes(
-    jobs: list[tuple[str, str]],
-    runner: ProbeRunner,
-    lean_root: Path,
-    read: Callable[[str, str], object] | None = None,
-) -> dict[str, object]:
-    """Run each module's probe in a bounded pool and collect its result.
+def _run_module_probes(modules: list[str], probe: Callable[[str], object]) -> dict[str, object]:
+    """Run ``probe(module)`` for each module in a bounded pool and collect the results.
 
-    ``read(module, output)`` turns a probe's output into its result in the
-    worker, as soon as the probe ends; without ``read`` the result is the
-    output. A ``SkeletonError`` from one probe is that module's result.
-    Anything else, an interrupt, a signal, or a ``_ProbeEnvironmentError``,
-    cancels the pool: every running command terminates its process tree and
-    every worker is joined before the error propagates. Each probe has the
-    budget ``runner`` enforces; a budget shared across the pool would make
-    which module fails depend on scheduling.
+    A ``SkeletonError`` from one probe is that module's result. Anything else,
+    an interrupt, a signal, or a ``_ProbeEnvironmentError``, cancels the pool:
+    every running command terminates its process tree and every worker is
+    joined before the error propagates. Each probe has the budget its command
+    enforces; a budget shared across the pool would make which module fails
+    depend on scheduling.
     """
 
     cancelled = threading.Event()
 
-    def probe(module: str, program: str) -> object:
+    def run(module: str) -> object:
         _PROBE_POOL.cancelled = cancelled
         try:
-            output = runner(program, lean_root)
+            return probe(module)
         finally:
             _PROBE_POOL.cancelled = None
-        return output if read is None else read(module, output)
 
     results: dict[str, object] = {}
-    pool = ThreadPoolExecutor(max_workers=_probe_workers(len(jobs)), thread_name_prefix="autoform-probe")
+    pool = ThreadPoolExecutor(max_workers=_probe_workers(len(modules)), thread_name_prefix="autoform-probe")
     with _signal_guard() as guard:
         try:
-            futures = {pool.submit(probe, module, program): module for module, program in jobs}
-            guard.arm()
+            futures = {pool.submit(run, module): module for module in modules}
             pending = set(futures)
             while pending:
+                # Polled rather than armed: a signal raised inside wait() could
+                # leave a future's lock held, and the join below would hang.
+                if guard.received is not None:
+                    raise _CommandSignalled(guard.received)
                 done, pending = wait(pending, timeout=0.05, return_when=FIRST_COMPLETED)
                 for future in done:
                     try:
@@ -2563,14 +2526,7 @@ def _run_module_probes(
                         raise
                     except SkeletonError as exc:
                         results[futures[future]] = exc
-        except BaseException:
-            # Disarmed before anything else, so that a signal arriving now
-            # cannot skip the cancel and join below; it is delivered once they
-            # are done.
-            guard.disarm()
-            raise
         finally:
-            guard.disarm()
             cancelled.set()
             pool.shutdown(wait=True, cancel_futures=True)
     return results
@@ -2597,8 +2553,9 @@ def extract_skeletons(
     returns Lean's standard output; the default runs ``lake env lean`` after one
     Lake freshness check and one build of the probe's helpers, and ``timeout``
     bounds that build and each probe. A custom ``runner`` bounds its own probes,
-    so it cannot be combined with ``timeout``. A declaration the lexical index
-    cannot place is reported as unresolved without running Lean, exactly as
+    so it cannot be combined with ``timeout``, and may be called from several
+    threads at once. A declaration the lexical index cannot place is reported
+    as unresolved without running Lean, exactly as
     ``autoform check --lean-root`` reports it.
     """
 
@@ -2752,13 +2709,9 @@ def locate_declaration(
 
     location = index.find(name)
     if location is None:
+        if ambiguous := index.ambiguity(name):
+            return None, f"declaration defined more than once in the Lean sources: {ambiguous}"
         return None, "declaration not found in the Lean sources"
-    if name in index.elsewhere:
-        # The lexical index cannot tell which of several declarations Lean binds
-        # a name to (one may be private, or in a file no target builds), so the
-        # name fails closed.
-        files = sorted(path.as_posix() for path in (location.path, *index.elsewhere[name]))
-        return None, f"several source files declare it: {', '.join(files)}"
     module = module_of(lean_root / location.path, libraries)
     if module is None:
         return None, f"source {location.path.as_posix()} is not built by any library target"
@@ -2824,21 +2777,23 @@ def extract_graph_skeletons(
     snapshot_started_ns: int | None = None
     if groups:
         project_roots = tuple(root for library in libraries for root in library.roots)
-        jobs = [
-            (module, render_probe(imports=(module,), roots=tuple(groups[module]), project_roots=project_roots))
+        programs = {
+            module: render_probe(imports=(module,), roots=tuple(groups[module]), project_roots=project_roots)
             for module in sorted(groups)
-        ]
+        }
         snapshot_started_ns = time.time_ns()
 
-        def read(module: str, output: str) -> dict[str, dict[str, object]]:
-            return parse_probe_output(output, expected_roots=tuple(groups[module]))
+        def probe(module: str) -> dict[str, dict[str, object]]:
+            # Parsed in the worker, as soon as the probe ends.
+            return parse_probe_output(runner(programs[module], lean_root), expected_roots=tuple(groups[module]))
 
         with contextlib.nullcontext() if probing is None else probing(tuple(sorted(groups))):
-            results = _run_module_probes(jobs, runner, lean_root, read)
+            results = _run_module_probes(list(programs), probe)
         for module in sorted(groups):
             result = results[module]
             if isinstance(result, SkeletonError):
-                failed_modules[module] = _stable_detail(f"probe of module {module} failed: {result}", lean_root)
+                # run_probe already cut Lean's output; a second cut would drop the end of what it kept.
+                failed_modules[module] = _stable_paths(f"probe of module {module} failed: {result}", lean_root)
             else:
                 records.update(result)  # type: ignore[arg-type]
 
@@ -2859,7 +2814,7 @@ def extract_graph_skeletons(
                 continue
             if "error" in record:
                 reason = f"the probe failed on this declaration: {record['error']}"
-                unresolved.append(UnresolvedTarget(node.id, name, _stable_detail(reason, lean_root)))
+                unresolved.append(UnresolvedTarget(node.id, name, _stable_paths(reason, lean_root)))
                 continue
             if not record.get("found"):
                 unresolved.append(
@@ -2934,9 +2889,11 @@ def source_passage(node: Node, blueprint: Path, *, issues: list[str] | None = No
 
     A ``## Sources`` link to a non-Markdown file inside the blueprint with a
     ``#L<start>-L<end>`` fragment names the exact source text the statement
-    came from. The first such link wins. Markdown targets are notes, not
-    passages, and are ignored here. When the first locator names no text there
-    is no passage, and the reason is appended to ``issues`` if given.
+    came from. The first such link wins. Markdown files are notes, not
+    passages, and are ignored here, but a link that names no regular file in
+    the blueprint is reported whatever its suffix, as check reports it. When
+    the first locator names no text there is no passage, and the reason is
+    appended to ``issues`` if given.
     """
 
     def broken(target: str, why: str) -> tuple[None, None]:
@@ -2945,15 +2902,46 @@ def source_passage(node: Node, blueprint: Path, *, issues: list[str] | None = No
         return None, None
 
     for target in node.sources:
-        parsed = urlsplit(target)
+        try:
+            parsed = urlsplit(target)
+        except ValueError:
+            continue
         if parsed.scheme or parsed.netloc:
             continue
-        match = _LINE_LOCATOR.fullmatch(parsed.fragment)
-        if match is None or not parsed.path or parsed.path.endswith(".md"):
+        path = unquote(parsed.path)
+        match = _LINE_LOCATOR.fullmatch(unquote(parsed.fragment))
+        if match is None or not path:
             continue
-        candidate = (node.path.parent / parsed.path).resolve()
+        if "\x00" in path:
+            return broken(target, "contains an invalid path")
+        candidate = resolved_path(node.path.parent / path)
+        if candidate is None:
+            return broken(target, "names a path that cannot be resolved")
         if not candidate.is_relative_to(blueprint.resolve()):
             return broken(target, "points outside the blueprint")
+        # Each way a locator's file cannot be read is this article's problem, so
+        # the other articles still extract.
+        try:
+            metadata = os.stat(candidate)
+        except OSError as error:
+            if error.errno in (errno.ELOOP, errno.ENAMETOOLONG):
+                return broken(target, "names a path that cannot be resolved")
+            if error.errno in (errno.EACCES, errno.EPERM):
+                return broken(target, "names a file that cannot be read")
+            return broken(target, "names a missing file")
+        if not stat.S_ISREG(metadata.st_mode):
+            return broken(target, "names something other than a regular file")
+        # As audit judges a link that names a file: a Markdown file, in any
+        # letter case, is a note, whose fragment names a heading.
+        if candidate.suffix.casefold() == ".md":
+            continue
+        if metadata.st_size > _SNAPSHOT_FILE_LIMIT:
+            return broken(target, f"names a file over the {_SNAPSHOT_FILE_LIMIT}-byte limit")
+        try:
+            # Opening it tests readability; `os.access` ignores Windows ACLs.
+            os.close(os.open(candidate, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)))
+        except OSError:
+            return broken(target, "names a file that cannot be read")
         try:
             captured = _read_snapshot_file(candidate)
             if captured is None:
@@ -2967,8 +2955,12 @@ def source_passage(node: Node, blueprint: Path, *, issues: list[str] | None = No
                 lines.pop()
         except (ValueError, UnicodeError):
             return broken(target, "names a file that is not readable UTF-8 text")
-        start = int(match.group(1))
-        end = int(match.group(2) or start)
+        try:
+            start = int(match.group(1))
+            end = int(match.group(2) or start)
+        except ValueError:
+            # By default `int` refuses more than 4,300 digits, far past any file's last line.
+            return broken(target, "names no lines of its file")
         if start < 1 or end < start or end > len(lines):
             return broken(target, "names no lines of its file")
         relative = candidate.relative_to(blueprint.resolve()).as_posix()
@@ -3232,6 +3224,7 @@ def _validate_managed_output(path: Path, *, kind: str) -> tuple[int, int, str] |
     if not (
         isinstance(payload, dict)
         and payload.get("kind") == kind
+        and isinstance(payload.get("schema"), str)
         and (kind, payload.get("schema")) in MANAGED_OUTPUT_SCHEMAS
         and isinstance(payload.get(kind), list)
     ):

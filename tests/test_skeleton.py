@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
 import os
@@ -11,7 +12,8 @@ import subprocess
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import replace
 from pathlib import Path
 
@@ -46,10 +48,7 @@ from autoform_cli.skeleton import (
     _PROBE_POOL,
     _PROCESS_TERMINATION_GRACE,
     _ProbeEnvironmentError,
-    _SignalGuard,
     _build_probe_helper,
-    _probe_helper_cache,
-    _publish_probe_helper,
     _declaration,
     _install_output,
     _join_readers,
@@ -58,6 +57,7 @@ from autoform_cli.skeleton import (
     _rename_no_replace,
     _run_bounded_command,
     _replace_outputs,
+    _stable_paths,
     _stage_output,
     _terminate_process_tree,
     _hash_module_files,
@@ -504,7 +504,6 @@ _OUTLIVED_BY_A_CHILD = (
 
 
 @pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX-specific")
-@pytest.mark.parametrize("sigchld", ["default", "ignored"])
 @pytest.mark.parametrize("waitid", [True, False], ids=["waitid", "zombie-status"])
 @pytest.mark.parametrize(
     ("program", "refusal"),
@@ -512,12 +511,11 @@ _OUTLIVED_BY_A_CHILD = (
     ids=["exits", "outlived", "timed-out"],
 )
 def test_bounded_command_signals_its_group_only_while_the_leader_is_unreaped(
-    tmp_path: Path, monkeypatch, program: str, refusal: str | None, waitid: bool, sigchld: str
+    tmp_path: Path, monkeypatch, program: str, refusal: str | None, waitid: bool
 ) -> None:
     # A reaped leader's process group id can pass to an unrelated group, which
     # a later killpg would then signal. Python before 3.13 has no os.waitid on
-    # macOS, where psutil's zombie status stands in, and a launcher that ignores
-    # SIGCHLD has the kernel reap every child as it exits.
+    # macOS, where psutil's zombie status stands in.
     leaders: dict[int, subprocess.Popen[bytes]] = {}
     popen, killpg = subprocess.Popen, os.killpg
 
@@ -543,16 +541,71 @@ def test_bounded_command_signals_its_group_only_while_the_leader_is_unreaped(
     monkeypatch.setattr("autoform_cli.skeleton.os.killpg", checked_killpg)
     if not waitid:
         monkeypatch.delattr(os, "waitid", raising=False)
-    previous = signal.signal(signal.SIGCHLD, signal.SIG_IGN if sigchld == "ignored" else signal.SIG_DFL)
+    if refusal is None:
+        assert _bounded(tmp_path, program).returncode == 0
+    else:
+        with pytest.raises(SkeletonError, match=refusal):
+            _bounded(tmp_path, program, **({"timeout": 1} if refusal == "timed out" else {}))
+    assert all(leader.returncode is not None for leader in leaders.values())
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGCHLD is POSIX-specific")
+def test_bounded_command_refuses_to_run_while_sigchld_is_ignored(tmp_path: Path) -> None:
+    # The kernel reaps each child as it exits and Popen reports status 0, so a
+    # failed run, such as Lake's stale-artifact exit 3, would read as a success.
+    previous = signal.signal(signal.SIGCHLD, signal.SIG_IGN)
     try:
-        if refusal is None:
-            assert _bounded(tmp_path, program).returncode == 0
-        else:
-            with pytest.raises(SkeletonError, match=refusal):
-                _bounded(tmp_path, program, **({"timeout": 1} if refusal == "timed out" else {}))
+        with pytest.raises(SkeletonError, match="cannot run while SIGCHLD is ignored"):
+            _bounded(tmp_path, "raise SystemExit(3)")
     finally:
         signal.signal(signal.SIGCHLD, previous)
-    assert all(leader.returncode is not None for leader in leaders.values())
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGCHLD is POSIX-specific")
+def test_cli_restores_the_default_sigchld_disposition() -> None:
+    # A launcher that ignores SIGCHLD would have the kernel reap every child,
+    # and Popen would report each exit status, failures included, as 0.
+    previous = signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+    try:
+        with pytest.raises(SystemExit):
+            main(["--help"])
+        assert signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL
+    finally:
+        signal.signal(signal.SIGCHLD, previous)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGCHLD is POSIX-specific")
+def test_bounded_command_refuses_a_command_reaped_outside_the_runner(tmp_path: Path) -> None:
+    # signal.getsignal can't see a disposition set from C, but the kernel still
+    # reaps the command as it exits, and Popen would report status 0.
+    libc_signal = ctypes.CDLL(None).signal
+    libc_signal.argtypes, libc_signal.restype = [ctypes.c_int, ctypes.c_void_p], ctypes.c_void_p
+    libc_signal(signal.SIGCHLD, 1)  # SIG_IGN
+    try:
+        with pytest.raises(SkeletonError, match="reaped outside the runner"):
+            _bounded(tmp_path, "raise SystemExit(3)")
+    finally:
+        signal.signal(signal.SIGCHLD, signal.getsignal(signal.SIGCHLD))  # back to what Python records
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX-specific")
+@pytest.mark.parametrize("waitid", [True, False], ids=["waitid", "zombie-status"])
+def test_bounded_command_kills_a_child_that_only_its_group_reveals(tmp_path: Path, monkeypatch, waitid: bool) -> None:
+    # A child that clears its environment escapes the token scan, and one the
+    # descendant snapshot misses leaves only the process group to find it.
+    child_pid = tmp_path / "child.pid"
+    program = (
+        "import pathlib, subprocess; "
+        "child = subprocess.Popen(['/usr/bin/env', '-i', '/bin/sleep', '30'], "
+        "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
+        f"pathlib.Path({str(child_pid)!r}).write_text(str(child.pid))"
+    )
+    monkeypatch.setattr("autoform_cli.skeleton._remember_descendants", lambda process, descendants: None)
+    if not waitid:
+        monkeypatch.delattr(os, "waitid", raising=False)
+    with pytest.raises(SkeletonError, match="left descendant processes running"):
+        _bounded(tmp_path, program)
+    _assert_dies(int(child_pid.read_text(encoding="utf-8")), "environment-free", "a run that found it")
 
 
 @pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX-specific")
@@ -847,6 +900,7 @@ def test_probe_pool_interruption_kills_running_probes_and_starts_no_queued_one(
     tmp_path: Path, monkeypatch, workers: int
 ) -> None:
     pid_files = [tmp_path / "a.pids", tmp_path / "b.pids"]
+    interrupted: list[float] = []
 
     def interrupt_once_the_workers_run(*args, **kwargs):
         deadline = time.monotonic() + 20
@@ -854,17 +908,20 @@ def test_probe_pool_interruption_kills_running_probes_and_starts_no_queued_one(
         while not all(path.exists() and len(path.read_text(encoding="utf-8").split()) == 2 for path in running):
             assert time.monotonic() < deadline
             time.sleep(0.01)
+        interrupted.append(time.monotonic())
         raise KeyboardInterrupt
 
-    def run(program: str, root: Path) -> str:
-        return _run_bounded_command([sys.executable, "-c", program], cwd=root, timeout=60, context="test probe").stdout
+    def probe(module: str) -> object:
+        return _bounded(tmp_path, _sleeping_probe(pid_files["AB".index(module)]), timeout=60)
 
     monkeypatch.setattr("autoform_cli.skeleton._probe_workers", lambda jobs: workers)
     monkeypatch.setattr("autoform_cli.skeleton.wait", interrupt_once_the_workers_run)
 
     with pytest.raises(KeyboardInterrupt):
-        _run_module_probes([("A", _sleeping_probe(pid_files[0])), ("B", _sleeping_probe(pid_files[1]))], run, tmp_path)
+        _run_module_probes(["A", "B"], probe)
 
+    # The probes sleep for a minute; the pool must stop them, not wait them out.
+    assert time.monotonic() - interrupted[0] < 15
     assert pid_files[1].exists() == (workers == 2)
     _assert_no_survivors(pid_files)
 
@@ -875,21 +932,21 @@ def test_probe_pool_termination_signal_kills_every_workers_process_group(tmp_pat
     pid_files = [tmp_path / "a.pids", tmp_path / "b.pids"]
     code = (
         "skeleton._probe_workers = lambda jobs: jobs; "
-        "run = lambda program, root: skeleton._run_bounded_command("
-        "[sys.executable, '-c', program], cwd=root, timeout=60, context='test probe').stdout; "
-        "skeleton._run_module_probes(list(zip(('A', 'B'), sys.argv[1:])), run, Path.cwd())"
+        "programs = dict(zip(('A', 'B'), sys.argv[1:])); "
+        "skeleton._run_module_probes(list(programs), lambda module: skeleton._run_bounded_command("
+        "[sys.executable, '-c', programs[module]], cwd=Path.cwd(), timeout=60, context='test probe'))"
     )
     _signal_driver(tmp_path, code, [_sleeping_probe(path) for path in pid_files], pid_files, (signum,))
 
 
 @pytest.mark.skipif(os.name != "posix", reason="termination signals are POSIX-specific")
-def test_a_signal_as_the_probe_pool_starts_its_cleanup_does_not_skip_it(tmp_path: Path, monkeypatch) -> None:
-    # A worker fails with an error that is not a probe failure, and a SIGTERM
-    # lands as the pool first disarms its guard; the pool must still cancel
-    # and join every worker before the signal ends anything.
+def test_a_signal_during_the_probe_pools_wait_is_handled_outside_it(tmp_path: Path, monkeypatch) -> None:
+    # Raised inside wait(), the signal could leave a future's lock held and
+    # hang the join; the pool must let wait() return, then cancel and join
+    # every worker before the signal ends anything.
     pid_file = tmp_path / "a.pids"
-    disarm = _SignalGuard.disarm
     received: list[int] = []
+    returned: list[bool] = []
     joined: list[bool] = []
 
     class Pool(ThreadPoolExecutor):
@@ -897,32 +954,32 @@ def test_a_signal_as_the_probe_pool_starts_its_cleanup_does_not_skip_it(tmp_path
             super().shutdown(wait=wait, cancel_futures=cancel_futures)
             joined.append(wait)
 
-    def signal_on_first_disarm(self: _SignalGuard) -> None:
-        if self.armed and threading.current_thread() is threading.main_thread():
-            self._handle(signal.SIGTERM, None)
-        disarm(self)
-
-    def run(program: str, root: Path) -> str:
-        if program == "broken":
+    def signal_inside_wait(*args, **kwargs):
+        if not returned:
             deadline = time.monotonic() + 20
             while not (pid_file.exists() and len(pid_file.read_text(encoding="utf-8").split()) == 2):
                 assert time.monotonic() < deadline
                 time.sleep(0.01)
-            raise RuntimeError("worker broke")
-        return _run_bounded_command([sys.executable, "-c", program], cwd=root, timeout=60, context="test probe").stdout
+            signal.raise_signal(signal.SIGTERM)
+        result = wait(*args, **kwargs)
+        returned.append(True)
+        return result
 
-    monkeypatch.setattr("autoform_cli.skeleton._probe_workers", lambda jobs: jobs)
-    monkeypatch.setattr("autoform_cli.skeleton._SignalGuard.disarm", signal_on_first_disarm)
+    def probe(module: str) -> object:
+        return _bounded(tmp_path, _sleeping_probe(pid_file), timeout=60)
+
+    monkeypatch.setattr("autoform_cli.skeleton.wait", signal_inside_wait)
     monkeypatch.setattr("autoform_cli.skeleton.ThreadPoolExecutor", Pool)
     before = set(threading.enumerate())
     previous = signal.signal(signal.SIGTERM, lambda signum, frame: received.append(signum))
     try:
         with pytest.raises(SkeletonError, match="interrupted by SIGTERM"):
-            _run_module_probes([("A", _sleeping_probe(pid_file)), ("B", "broken")], run, tmp_path)
+            _run_module_probes(["A"], probe)
         workers = [thread for thread in threading.enumerate() if thread not in before and thread.is_alive()]
     finally:
         signal.signal(signal.SIGTERM, previous)
 
+    assert returned == [True]
     assert received == [signal.SIGTERM]
     assert joined == [True]
     assert workers == []
@@ -942,7 +999,7 @@ def stall():
     time.sleep(60)
 
 
-if args[:1] == ["--rehash"] or args == ["env"]:
+if args[:1] == ["--rehash"]:
     sys.exit(0)
 if "-o" in args:
     if phase == "helper":
@@ -1032,29 +1089,29 @@ def test_a_signal_after_the_last_probe_is_delivered_before_the_report_is_built(t
 def test_a_probe_cancelled_before_its_process_starts_never_starts_it(tmp_path: Path, monkeypatch) -> None:
     # The pool is cancelled after a worker takes the probe and before it
     # starts the process.
-    def run(program: str, root: Path) -> str:
+    def probe(module: str) -> object:
         _PROBE_POOL.cancelled.set()
-        return _run_bounded_command([sys.executable, "-c", program], cwd=root, timeout=60, context="test probe").stdout
+        return _bounded(tmp_path, "pass")
 
     def popen(*args, **kwargs):
         raise AssertionError("a process started after the pool was cancelled")
 
     monkeypatch.setattr("autoform_cli.skeleton.subprocess.Popen", popen)
 
-    (result,) = _run_module_probes([("A", "pass")], run, tmp_path).values()
+    (result,) = _run_module_probes(["A"], probe).values()
 
-    assert isinstance(result, SkeletonError) and result.issues == ("test probe was cancelled",)
+    assert isinstance(result, SkeletonError) and result.issues == ("test command was cancelled",)
 
 
-def test_unreadable_probe_records_fail_only_that_probe(tmp_path: Path) -> None:
+def test_unreadable_probe_records_are_refused(tmp_path: Path) -> None:
     records = tmp_path / "records.out"
     records.write_bytes(PROBE_MARKER.encode() + b"\xff\n")
     with pytest.raises(SkeletonError, match="^the skeleton probe's records are not valid UTF-8$"):
         _read_probe_records(records, "skeleton probe")
     records.unlink()
     records.mkdir()
-    with pytest.raises(SkeletonError, match="^the unused-hypotheses probe's records could not be read: "):
-        _read_probe_records(records, "unused-hypotheses probe")
+    with pytest.raises(SkeletonError, match="^the impact probe's records could not be read: "):
+        _read_probe_records(records, "impact probe")
 
 
 def test_probe_workers_follow_the_cpus_available_to_the_process(monkeypatch) -> None:
@@ -1445,6 +1502,25 @@ def test_libraries_and_modules_follow_the_lake_source_directory(tmp_path: Path) 
     assert module_of(project / "lakefile.toml", libraries) is None
     assert path_of("Skel.Defs", libraries, project) == "src/Skel/Defs.lean"
     assert path_of("Skel.Missing", libraries, project) is None
+
+
+def test_a_file_no_library_selects_has_no_module(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "lakefile.toml").write_text(
+        'name = "Demo"\n\n[[lean_lib]]\nname = "Demo"\n\n[[lean_lib]]\nname = "Lib"\nglobs = ["Extra.+"]\n',
+        encoding="utf-8",
+    )
+
+    libraries = lean_libraries(project)
+
+    # Both libraries hold every file under the project, but Lake builds only
+    # what their roots and globs make buildable: Lib's glob leaves out its own root.
+    assert module_of(project / "Demo" / "Basic.lean", libraries) == "Demo.Basic"
+    assert module_of(project / "Extra" / "Sub.lean", libraries) == "Extra.Sub"
+    assert module_of(project / "Extra.lean", libraries) is None
+    assert module_of(project / "Lib" / "Foo.lean", libraries) is None
+    assert module_of(project / "v1" / "Old.lean", libraries) is None
 
 
 def test_a_package_without_library_targets_is_its_own_library(tmp_path: Path) -> None:
@@ -2132,8 +2208,20 @@ def test_probe_comment_ranges_must_cover_comments(tmp_path: Path, ranges: object
         ("../../sources/book.tex#L0-L1", "names no lines of its file"),
         ("../../sources/empty.tex#L1-L1", "names no lines of its file"),
         ("../../sources/missing.tex#L1-L1", "names a missing file"),
+        ("../../sources/missing.md#L1-L1", "names a missing file"),
+        ("../../sources/book.tex/inside.tex#L1-L1", "names a missing file"),
+        ("../../sources/chapter#L1-L1", "names something other than a regular file"),
+        ("../../sources/chapter.md#L1-L1", "names something other than a regular file"),
         ("../../sources/binary.tex#L1-L1", "not readable UTF-8 text"),
         ("../../../outside.tex#L1-L1", "points outside the blueprint"),
+        ("../../sources/loop.txt#L1-L1", "names a path that cannot be resolved"),
+        ("../../sources/loopdir/book.tex#L1-L1", "names a path that cannot be resolved"),
+        ("../../sources/away/loop.tex#L1-L1", "points outside the blueprint"),
+        ("../../sources/loop.txt/../away/secret.tex#L1-L1", "points outside the blueprint"),
+        pytest.param("../../sources/" + "a" * 300 + ".tex#L1-L1", "names a path that cannot be resolved", id="long-name"),
+        ("../../sources/bo\x00ok.tex#L1-L1", "contains an invalid path"),
+        ("../../sources/bo%00ok.tex#L1-L1", "contains an invalid path"),
+        pytest.param("../../sources/book.tex#L" + "1" * 5000, "names no lines of its file", id="5000-digits"),
     ],
 )
 def test_extraction_reports_a_locator_that_names_no_passage(tmp_path: Path, link: str, why: str) -> None:
@@ -2144,6 +2232,19 @@ def test_extraction_reports_a_locator_that_names_no_passage(tmp_path: Path, link
     (sources / "book.tex").write_text("one\ntwo\nthree\n", encoding="utf-8")
     (sources / "empty.tex").write_text("", encoding="utf-8")
     (sources / "binary.tex").write_bytes(b"\xff\xfe\n")
+    (sources / "chapter").mkdir()
+    (sources / "chapter.md").mkdir()
+    (tmp_path / "away").mkdir()
+    (tmp_path / "away" / "secret.tex").write_text("secret\n", encoding="utf-8")
+    try:
+        (sources / "loop.txt").symlink_to("loop.txt")
+        (sources / "loopdir").symlink_to("loopdir")
+        # A loop behind a symbolic link that leaves the blueprint.
+        (sources / "away").symlink_to(tmp_path / "away")
+        (tmp_path / "away" / "loop.tex").symlink_to("loop.tex")
+    except OSError:
+        if "loop" in link:
+            pytest.skip("symlinks are unavailable")
     (tmp_path / "outside.tex").write_text("outside\n", encoding="utf-8")
     article = blueprint / "roadmap" / "basics" / "determined.md"
     _replace_source(article, "## Depends on", f"## Sources\n\n- [book]({link})\n\n## Depends on")
@@ -2157,6 +2258,175 @@ def test_extraction_reports_a_locator_that_names_no_passage(tmp_path: Path, link
 
     _replace_source(article, link, "../../sources/book.tex#L2-L3")
     report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+    assert report.clean
+    assert report.nodes[0].passage == "two\nthree"
+
+
+@pytest.mark.parametrize(
+    ("link", "why"),
+    [
+        ("../../sources/hop0.tex#L1-L1", "points outside the blueprint"),
+        ("../../sources/loop.txt/../sub/back/../book.tex#L1-L1", "points outside the blueprint"),
+        ("../../sources/chain0.tex#L1-L1", "names a missing file"),
+        ("../../sources/dangling.tex#L1-L1", "names a missing file"),
+        ("../../sources/outside.tex#L1-L1", "points outside the blueprint"),
+    ],
+    ids=["loop-hops", "after-a-loop", "deep-chain", "dangling-to-markdown", "outside-markdown"],
+)
+def test_extraction_reports_a_locator_through_links_alike_on_every_python(tmp_path: Path, link: str, why: str) -> None:
+    # Before Python 3.13, `os.path.realpath` recurses once per link and stops at a loop.
+    project = _project(tmp_path)
+    blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
+    sources = blueprint / "sources"
+    (sources / "sub").mkdir(parents=True)
+    (sources / "book.tex").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    (tmp_path / "away").mkdir()
+    (tmp_path / "away" / "secret.md").write_text("# Secret\n", encoding="utf-8")
+    try:
+        (sources / "loop.txt").symlink_to("loop.txt")
+        (sources / "away").symlink_to(tmp_path / "away")
+        (sources / "sub" / "back").symlink_to("../away")
+        for n in range(45):
+            (sources / f"hop{n}.tex").symlink_to(f"loop.txt/../hop{n + 1}.tex")
+        (sources / "hop45.tex").symlink_to("away/secret.md")
+        for n in range(1000):
+            (sources / f"chain{n}.tex").symlink_to(f"chain{n + 1}.tex")
+        # A Markdown file is a note only once the link names it in the blueprint.
+        (sources / "dangling.tex").symlink_to("gone.md")
+        (sources / "outside.tex").symlink_to(tmp_path / "away" / "secret.md")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+    article = blueprint / "roadmap" / "basics" / "determined.md"
+    _replace_source(article, "## Depends on", f"## Sources\n\n- [book]({link})\n\n## Depends on")
+
+    report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+
+    assert not report.clean and report.nodes[0].declarations == ()
+    [unresolved] = report.unresolved
+    assert unresolved.reason.startswith("source locator ") and why in unresolved.reason
+
+
+@pytest.mark.parametrize("cited", ["locked/secret.tex", "locked"], ids=["through-the-link", "the-link-itself"])
+def test_extraction_reports_a_locator_through_a_link_it_cannot_read(
+    tmp_path: Path, cited: str, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
+    # macOS follows a link whose mode forbids reading it, so keeping it as
+    # written would hide where it leads.
+    project = _project(tmp_path)
+    blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
+    (blueprint / "sources").mkdir()
+    (tmp_path / "away").mkdir()
+    (tmp_path / "away" / "secret.tex").write_text("secret\n", encoding="utf-8")
+    target = tmp_path / "away" / "secret.tex" if cited == "locked" else tmp_path / "away"
+    unreadable_link(blueprint / "sources" / "locked", target)
+    article = blueprint / "roadmap" / "basics" / "determined.md"
+    _replace_source(article, "## Depends on", f"## Sources\n\n- [book](../../sources/{cited}#L1-L1)\n\n## Depends on")
+
+    report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+
+    [unresolved] = report.unresolved
+    assert unresolved.reason == f"source locator ../../sources/{cited}#L1-L1 names a path that cannot be resolved"
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")
+@pytest.mark.parametrize("locked", ["locked", "locked/book.tex"], ids=["unreadable-directory", "unreadable-file"])
+def test_extraction_reports_a_locator_it_cannot_read_without_stopping(tmp_path: Path, locked: str) -> None:
+    project = _project(tmp_path)
+    blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
+    (blueprint / "sources" / "locked").mkdir(parents=True)
+    (blueprint / "sources" / "locked" / "book.tex").write_text("one\n", encoding="utf-8")
+    article = blueprint / "roadmap" / "basics" / "determined.md"
+    link = "../../sources/locked/book.tex#L1-L1"
+    _replace_source(article, "## Depends on", f"## Sources\n\n- [book]({link})\n\n## Depends on")
+    path = blueprint / "sources" / locked
+    mode = path.stat().st_mode
+    path.chmod(0)
+    try:
+        report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+    finally:
+        path.chmod(mode)
+
+    # The article is unresolved and the report is still built, as for any other broken locator.
+    assert not report.clean and report.nodes[0].declarations == ()
+    [unresolved] = report.unresolved
+    assert unresolved.declaration == "Skel.observation_determined"
+    assert unresolved.reason == f"source locator {link} names a file that cannot be read"
+
+
+def test_extraction_reports_a_locator_over_the_size_limit_without_stopping(tmp_path: Path, monkeypatch) -> None:
+    project = _project(tmp_path)
+    blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
+    (blueprint / "sources").mkdir()
+    (blueprint / "sources" / "book.tex").write_text("line\n" * 1000, encoding="utf-8")
+    article = blueprint / "roadmap" / "basics" / "determined.md"
+    _replace_source(article, "## Depends on", "## Sources\n\n- [book](../../sources/book.tex#L1-L1)\n\n## Depends on")
+    # Above the project's own small input files, below the cited source.
+    monkeypatch.setattr("autoform_cli.skeleton._SNAPSHOT_FILE_LIMIT", 4096)
+
+    report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+
+    [unresolved] = report.unresolved
+    assert unresolved.reason == "source locator ../../sources/book.tex#L1-L1 names a file over the 4096-byte limit"
+
+    (blueprint / "sources" / "book.tex").write_text("line\n" * 819 + "x", encoding="utf-8")
+    report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+    assert report.clean and report.nodes[0].passage == "line"
+
+
+def test_extraction_reads_a_locator_as_check_and_audit_read_it(tmp_path: Path) -> None:
+    # Decoded, with a fragment alone skipped, and with a Markdown note in any
+    # letter case left to audit, whose fragment names a heading.
+    project = _project(tmp_path)
+    blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
+    sources = blueprint / "sources"
+    sources.mkdir()
+    (sources / "NOTES.MD").write_text("# Notes\n", encoding="utf-8")
+    (sources / "my book.tex").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    article = blueprint / "roadmap" / "basics" / "determined.md"
+    links = "- [here](#L1-L1)\n- [notes](../../sources/NOTES.MD#L1-L1)\n- [book](../../sources/my%20book.tex#L%32-L3)"
+    _replace_source(article, "## Depends on", f"## Sources\n\n{links}\n\n## Depends on")
+
+    report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+
+    assert report.clean
+    assert (report.nodes[0].passage, report.nodes[0].passage_locator) == ("two\nthree", "sources/my book.tex#L2-L3")
+
+
+def test_extraction_tells_a_note_by_the_file_a_link_resolves_to(tmp_path: Path) -> None:
+    # As audit does: a `.tex` link to a Markdown file is a note; a `.MD` link to `book.tex` is a locator.
+    project = _project(tmp_path)
+    blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
+    sources = blueprint / "sources"
+    sources.mkdir()
+    (sources / "book.tex").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    (sources / "notes.md").write_text("# Notes\n", encoding="utf-8")
+    try:
+        (sources / "notes.tex").symlink_to("notes.md")
+        (sources / "book.MD").symlink_to("book.tex")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+    article = blueprint / "roadmap" / "basics" / "determined.md"
+    links = "- [notes](../../sources/notes.tex#L1-L1)\n- [book](../../sources/book.MD#L2-L3)"
+    _replace_source(article, "## Depends on", f"## Sources\n\n{links}\n\n## Depends on")
+
+    report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+
+    assert report.clean
+    assert (report.nodes[0].passage, report.nodes[0].passage_locator) == ("two\nthree", "sources/book.tex#L2-L3")
+
+
+def test_extraction_skips_a_sources_link_it_cannot_parse(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
+    sources = blueprint / "sources"
+    sources.mkdir()
+    (sources / "book.tex").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    article = blueprint / "roadmap" / "basics" / "determined.md"
+    links = "- [host](http://[oops/book.tex#L1-L1)\n- [book](../../sources/book.tex#L2-L3)"
+    _replace_source(article, "## Depends on", f"## Sources\n\n{links}\n\n## Depends on")
+
+    report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+
     assert report.clean
     assert report.nodes[0].passage == "two\nthree"
 
@@ -2301,33 +2571,22 @@ def _two_module_blueprint(tmp_path: Path) -> Path:
     )
 
 
-def _fake_lake(
-    monkeypatch, project: Path, answer, *, lake_env: str = "", lake_env_status: int = 0
-) -> list[list[str]]:
+def _fake_lake(monkeypatch, project: Path, answer) -> list[list[str]]:
     """Run the default runner against a fake Lake; ``answer(modules, command, env)`` plays each probe.
 
     Each probe is recorded as its command followed by the modules it imports.
-    ``lake env`` prints ``lake_env`` and exits with ``lake_env_status``; by
-    default it names no toolchain, so the probe helpers are never cached. A
-    helper build writes the Git hash ``lake_env`` names, as Lean's module
-    header does, then its source's path, so a probe shows which build it imports.
     """
 
     (project / "lake-manifest.json").write_text("{}\n", encoding="utf-8")
     calls: list[list[str]] = []
     lock = threading.Lock()
-    githash = dict(line.split("=", 1) for line in lake_env.splitlines() if "=" in line).get("LEAN_GITHASH", "")
 
     def fake_run(command, *, env=None, **kwargs):
-        if command[1:] == ["env"]:
-            with lock:
-                calls.append(command)
-            return subprocess.CompletedProcess(command, lake_env_status, stdout=lake_env, stderr="")
         if command[1] == "--rehash" or "-o" in command:
             with lock:
                 calls.append(command)
             if "-o" in command:
-                Path(command[command.index("-o") + 1]).write_bytes(f"{githash} {command[-1]}".encode())
+                Path(command[command.index("-o") + 1]).write_bytes(b"")
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         modules = _probe_modules(Path(command[-1]).read_text(encoding="utf-8"))
         with lock:
@@ -2361,247 +2620,14 @@ def test_lake_freshness_is_checked_once_before_one_probe_per_module(tmp_path: Pa
 
     assert report.clean
     assert calls[0] == ["/bin/lake", "--rehash", "--no-build", "build", "Skel.Main", "Skel.Uses"]
-    # The helpers are built once, after the freshness check and the cache
-    # lookup, and before any probe.
-    assert calls[1] == ["/bin/lake", "env"]
-    assert calls[2][1:4] == ["env", "lean", f"--root={Path(calls[2][-1]).parent}"]
-    assert calls[2][-1].endswith("/autoform-skeleton-helper.lean")
-    assert all(command[1:3] == ["env", "lean"] and "-o" not in command for command in calls[3:])
-    assert sorted(command[4:] for command in calls[3:]) == [["Skel.Main"], ["Skel.Uses"]]
+    # The helpers are built once, after the freshness check and before any probe.
+    assert calls[1][1:4] == ["env", "lean", f"--root={Path(calls[1][-1]).parent}"]
+    assert calls[1][-1].endswith("/autoform-skeleton-helper.lean")
+    assert all(command[1:3] == ["env", "lean"] and "-o" not in command for command in calls[2:])
+    assert sorted(command[4:] for command in calls[2:]) == [["Skel.Main"], ["Skel.Uses"]]
 
 
-_GITHASH = "0123456789abcdef0123456789abcdef01234567"
-
-
-def _lake_env(tmp_path: Path, *, githash: str = _GITHASH) -> str:
-    """What ``lake env`` prints for a fake toolchain in ``tmp_path``, whose ``Lean.olean`` keys the cache too."""
-
-    core = tmp_path / "toolchain" / "lib" / "lean" / "Lean.olean"
-    if not core.exists():
-        core.parent.mkdir(parents=True)
-        core.write_bytes(b"")
-    return f"LEAN_GITHASH={githash}\nLEAN_SYSROOT={tmp_path / 'toolchain'}\n"
-
-
-def test_the_probe_helpers_are_compiled_once_per_toolchain_build_and_source(tmp_path: Path, monkeypatch) -> None:
-    cache = tmp_path / "cache"
-    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
-    project = _project(tmp_path)
-    blueprint = _two_module_blueprint(tmp_path)
-    helper = _render_probe_helper()
-    imported: list[bytes] = []
-
-    def answer(modules, command, env):
-        directory = Path(env["LEAN_PATH"].split(os.pathsep)[-1])
-        imported.append((directory / "autoform-skeleton-helper.olean").read_bytes())
-        return _answer_records(modules, command, env)
-
-    builds = []
-    core = tmp_path / "toolchain" / "lib" / "lean" / "Lean.olean"
-    for change in ("none", "none", "Git hash", "toolchain touched", "toolchain resized", "helper source"):
-        if change == "toolchain touched":
-            os.utime(core, ns=(1, 1))
-        elif change == "toolchain resized":
-            core.write_bytes(b"rebuilt")
-            os.utime(core, ns=(1, 1))
-        elif change == "helper source":
-            monkeypatch.setattr("autoform_cli.skeleton._render_probe_helper", lambda: helper + "\n")
-        githash = "f" * 40 if change == "Git hash" else _GITHASH
-        calls = _fake_lake(monkeypatch, project, answer, lake_env=_lake_env(tmp_path, githash=githash))
-        assert extract_skeletons(blueprint, lean_root=project).clean
-        builds.append([command[-1] for command in calls if "-o" in command])
-
-    assert [len(built) for built in builds] == [1, 0, 1, 1, 1, 1]
-    assert len(list((cache / "autoform" / "probe-helper").iterdir())) == 5
-    # The second extraction's probes import a copy of the first one's build.
-    assert imported[2:4] == [f"{_GITHASH} {builds[0][0]}".encode()] * 2
-
-
-def test_a_relative_xdg_cache_home_falls_back_to_the_home_cache(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("XDG_CACHE_HOME", "relative")
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    project = _project(tmp_path)
-    _fake_lake(monkeypatch, project, _answer_records, lake_env=_lake_env(tmp_path))
-
-    assert extract_skeletons(_two_module_blueprint(tmp_path), lean_root=project).clean
-
-    assert len(list((tmp_path / "home" / ".cache" / "autoform" / "probe-helper").iterdir())) == 1
-    assert not (tmp_path / "relative").exists()
-
-
-@pytest.mark.parametrize(
-    "case",
-    [
-        "no Git hash",
-        "short Git hash",
-        "no toolchain library",
-        "relative toolchain",
-        "failed lake env",
-        "relative home",
-        "unwritable cache",
-    ],
-)
-def test_the_probe_helpers_are_compiled_every_time_the_cache_cannot_serve(
-    tmp_path: Path, monkeypatch, case: str
-) -> None:
-    cache = tmp_path / "cache"
-    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
-    project = _project(tmp_path)
-    lake_env = _lake_env(tmp_path)
-    if case == "no Git hash":
-        lake_env = lake_env.replace(_GITHASH, "")
-    elif case == "short Git hash":
-        lake_env = lake_env.replace(_GITHASH, _GITHASH[:39])
-    elif case == "no toolchain library":
-        (tmp_path / "toolchain" / "lib" / "lean" / "Lean.olean").unlink()
-    elif case == "relative toolchain":
-        # Lake runs in the project, so a relative toolchain is not this directory's.
-        monkeypatch.chdir(tmp_path)
-        lake_env = lake_env.replace(f"LEAN_SYSROOT={tmp_path / 'toolchain'}", "LEAN_SYSROOT=toolchain")
-    elif case == "relative home":
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("XDG_CACHE_HOME")
-        monkeypatch.setenv("HOME", "home")
-    elif case == "unwritable cache":
-        cache.write_text("", encoding="utf-8")
-    calls = _fake_lake(
-        monkeypatch, project, _answer_records, lake_env=lake_env, lake_env_status=int(case == "failed lake env")
-    )
-    blueprint = _two_module_blueprint(tmp_path)
-
-    for _ in range(2):
-        assert extract_skeletons(blueprint, lean_root=project).clean
-
-    assert sum("-o" in command for command in calls) == 2
-    if case == "unwritable cache":
-        assert cache.read_text(encoding="utf-8") == ""
-    else:
-        assert not cache.exists() and not (tmp_path / "home").exists()
-
-
-@pytest.mark.parametrize(
-    "damage",
-    [
-        "truncated",
-        "altered",
-        "empty",
-        "empty module",
-        "another toolchain's build",
-        pytest.param("pipe", marks=pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs named pipes")),
-    ],
-)
-def test_a_damaged_or_foreign_cache_entry_is_compiled_again_and_replaced(
-    tmp_path: Path, monkeypatch, damage: str
-) -> None:
-    cache = tmp_path / "cache"
-    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
-    project = _project(tmp_path)
-    blueprint = _two_module_blueprint(tmp_path)
-    builds = []
-    for extraction in range(3):
-        if extraction == 1:
-            (entry,) = (cache / "autoform" / "probe-helper").iterdir()
-            data = entry.read_bytes()
-            # A toolchain change during a build can leave an intact entry built by another toolchain.
-            foreign = data[:-32].replace(_GITHASH.encode(), b"f" * 40)
-            entry.unlink()
-            if damage == "pipe":
-                os.mkfifo(entry)
-            else:
-                entry.write_bytes(
-                    {
-                        "truncated": data[:-1],
-                        "altered": b"x" + data[1:],
-                        "empty": b"",
-                        "empty module": hashlib.sha256(b"").digest(),
-                        "another toolchain's build": foreign + hashlib.sha256(foreign).digest(),
-                    }[damage]
-                )
-        calls = _fake_lake(monkeypatch, project, _answer_records, lake_env=_lake_env(tmp_path))
-        assert extract_skeletons(blueprint, lean_root=project).clean
-        builds.append(sum("-o" in command for command in calls))
-
-    assert builds == [1, 1, 0]
-
-
-@pytest.mark.parametrize("disk_full", [False, True], ids=["published", "disk-full"])
-def test_a_helper_build_replaces_the_cache_entry_whole_or_not_at_all(
-    tmp_path: Path, monkeypatch, disk_full: bool
-) -> None:
-    olean = tmp_path / "autoform-skeleton-helper.olean"
-    olean.write_bytes(b"new build")
-    olean.chmod(0o644)
-    entry = tmp_path / "cache" / "entry"
-    entry.parent.mkdir()
-    entry.write_bytes(b"old entry")
-    if disk_full:
-
-        def full_disk(source, target):
-            raise OSError("No space left on device")
-
-        monkeypatch.setattr("autoform_cli.skeleton.os.replace", full_disk)
-
-    with entry.open("rb") as reader:
-        replaced = entry.stat().st_ino
-        _publish_probe_helper(olean, entry)
-        # The new entry is renamed into place, so a reader of the old one keeps it.
-        assert reader.read() == b"old entry"
-
-    if disk_full:
-        assert entry.read_bytes() == b"old entry"
-    else:
-        assert entry.stat().st_ino != replaced
-        assert entry.read_bytes() == b"new build" + hashlib.sha256(b"new build").digest()
-        assert stat.S_IMODE(entry.stat().st_mode) == 0o644
-    assert os.listdir(entry.parent) == ["entry"]
-
-
-def test_an_inherited_lean_githash_does_not_key_the_cache(tmp_path: Path, monkeypatch) -> None:
-    report = _lake_env(tmp_path)
-
-    def fake_run(command, *, env, **kwargs):
-        # Lake reports an inherited LEAN_GITHASH in place of the toolchain's own.
-        stdout = report.replace(_GITHASH, env.get("LEAN_GITHASH", _GITHASH))
-        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
-
-    monkeypatch.setattr("autoform_cli.skeleton._run_bounded_command", fake_run)
-    monkeypatch.delenv("LEAN_GITHASH", raising=False)
-    entry = _probe_helper_cache("/bin/lake", tmp_path, "helper source", timeout=5)
-    monkeypatch.setenv("LEAN_GITHASH", "f" * 40)
-
-    assert entry is not None
-    assert _probe_helper_cache("/bin/lake", tmp_path, "helper source", timeout=5) == entry
-
-
-@pytest.mark.parametrize("stalled", ["lookup", "build"])
-def test_the_cache_lookup_and_the_helper_build_share_one_budget(
-    tmp_path: Path, monkeypatch, stalled: str
-) -> None:
-    (tmp_path / "lake-manifest.json").write_text("{}\n", encoding="utf-8")
-    budgets: list[float] = []
-
-    def fake_run(command, *, timeout, context, **kwargs):
-        budgets.append(timeout)
-        if command[1:] == ["env"] and stalled == "build":
-            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-        raise _CommandTimedOut([f"{context} timed out"])
-
-    times = iter((100.0, 103.0))
-    monkeypatch.setattr("autoform_cli.skeleton.shutil.which", lambda executable: "/bin/lake")
-    monkeypatch.setattr("autoform_cli.skeleton.time.monotonic", lambda: next(times))
-    monkeypatch.setattr("autoform_cli.skeleton._run_bounded_command", fake_run)
-
-    with pytest.raises(_ProbeEnvironmentError) as caught:
-        _build_probe_helper(tmp_path, tmp_path / "helper", timeout=5)
-    assert budgets == ([5] if stalled == "lookup" else [5, 2.0])
-    step = "lake env" if stalled == "lookup" else "building the skeleton probe helpers"
-    assert caught.value.issues == (
-        f"{step} timed out after 5 seconds; rerun with --timeout <seconds> for large projects",
-    )
-
-
-@pytest.mark.parametrize("failure", ["exit", "timeout", "malformed"])
+@pytest.mark.parametrize("failure", ["exit", "killed", "timeout", "malformed"])
 def test_a_failed_module_probe_leaves_only_its_roots_unresolved(
     tmp_path: Path, monkeypatch, failure: str
 ) -> None:
@@ -2617,6 +2643,8 @@ def test_a_failed_module_probe_leaves_only_its_roots_unresolved(
                 "\n".join([_record("Skel.heavy_of_notation", found=False)] * 2), encoding="utf-8"
             )
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if failure == "killed":
+            return subprocess.CompletedProcess(command, -9, stdout="", stderr="")
         return subprocess.CompletedProcess(command, 1, stdout="", stderr="error: Skel.Uses broke")
 
     _fake_lake(monkeypatch, project, answer)
@@ -2631,6 +2659,7 @@ def test_a_failed_module_probe_leaves_only_its_roots_unresolved(
     assert issue.reason.startswith("probe of module Skel.Uses failed: ")
     assert {
         "exit": "error: Skel.Uses broke",
+        "killed": "the skeleton probe was killed by signal 9",
         "timeout": "rerun with --timeout <seconds>",
         "malformed": "duplicate records for Skel.heavy_of_notation",
     }[failure] in issue.reason
@@ -2650,9 +2679,8 @@ def test_a_root_lean_declares_in_another_module_is_unresolved(tmp_path: Path) ->
 
 @pytest.mark.parametrize("passage", ["found", "broken"])
 def test_a_root_several_files_declare_fails_closed_naming_every_file(tmp_path: Path, passage: str) -> None:
-    # Lean accepts a private declaration beside a public one of the same name
-    # in another module, and two unrelated modules may each declare it; the
-    # lexical index cannot tell which one a probe would bind.
+    # Two unrelated modules may each declare a public name; the lexical index
+    # cannot tell which one a probe would bind.
     project = _project(tmp_path)
     for module, prefix, value in (("Cdup", "", "2 = 2"), ("Adup", "private ", "True"), ("Bdup", "", "1 = 1")):
         (project / "Skel" / f"{module}.lean").write_text(
@@ -2674,7 +2702,9 @@ def test_a_root_several_files_declare_fails_closed_naming_every_file(tmp_path: P
 
     assert report.nodes[0].declarations == ()
     (issue,) = report.unresolved
-    assert issue.reason.endswith("several source files declare it: Skel/Adup.lean, Skel/Bdup.lean, Skel/Cdup.lean")
+    assert issue.reason.endswith(
+        "declaration defined more than once in the Lean sources: Skel/Adup.lean:2, Skel/Bdup.lean:2, Skel/Cdup.lean:2"
+    )
     assert issue.reason.startswith("source locator ") == (passage == "broken")
 
 
@@ -2723,17 +2753,27 @@ def test_a_failed_probes_reason_reads_the_same_on_every_run(tmp_path: Path, monk
     assert "<scratch>/AutoformSkeletonProbe.lean:3:0: error" in issue.reason
     assert "\nSkel/Uses.lean:1:0: note" in issue.reason and str(tmp_path) not in issue.reason
     assert "\n<scratch>\n" in issue.reason and "autoform-skeleton-" not in issue.reason
-    assert len(issue.reason) <= 2000 and issue.reason.endswith(" more characters]")
+    # Cut once, so the count covers everything Lean printed past the cut.
+    quoted = issue.reason.split("\n", 1)[1]
+    dropped = re.fullmatch(r"(?s).*\n\[(\d+) more characters\]", quoted)
+    assert len(quoted) <= 2000 and dropped and int(dropped.group(1)) > len("trace line\n") * 500 - 2000
 
 
-def test_a_failure_every_probe_would_share_stops_the_extraction(tmp_path: Path, monkeypatch) -> None:
+def test_a_stable_reason_leaves_paths_beside_the_project_as_lean_printed_them(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    text = f"{root}/Skel/A.lean:1:0 {root}-old/A.lean {root}ect/A.lean {root}.bak/A.lean {root}: {root}"
+    assert _stable_paths(text, root) == f"Skel/A.lean:1:0 {root}-old/A.lean {root}ect/A.lean {root}.bak/A.lean .: ."
+
+
+@pytest.mark.parametrize("noise", [0, 500], ids=["alone", "past-the-quoted-part"])
+def test_a_failure_every_probe_would_share_stops_the_extraction(tmp_path: Path, monkeypatch, noise: int) -> None:
     project = _project(tmp_path)
 
     def answer(modules, command, env):
         if "Skel.Uses" not in modules:
             return _answer_records(modules, command, env)
         olean = project / ".lake" / "packages" / "dep" / "Std" / "Vendor.olean"
-        stderr = f"error: object file '{olean}' of module Std.Vendor does not exist"
+        stderr = "trace line\n" * noise + f"error: object file '{olean}' of module Std.Vendor does not exist"
         return subprocess.CompletedProcess(command, 1, stdout="", stderr=stderr)
 
     _fake_lake(monkeypatch, project, answer)
@@ -2764,6 +2804,44 @@ def test_environmental_failures_still_abort_a_per_module_extraction(tmp_path: Pa
     with pytest.raises(SkeletonError, match=r"build artifacts are stale; run `lake build Skel.Main Skel.Uses`"):
         extract_skeletons(_two_module_blueprint(tmp_path), lean_root=project)
     assert calls == [["/bin/lake", "--rehash", "--no-build", "build", "Skel.Main", "Skel.Uses"]]
+
+
+def test_a_helper_build_that_times_out_states_its_budget_once(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "lake-manifest.json").write_text("{}\n", encoding="utf-8")
+
+    def stall(command, *, timeout, context, **kwargs):
+        raise _CommandTimedOut([f"{context} timed out after {timeout:g} seconds"])
+
+    monkeypatch.setattr("autoform_cli.skeleton.shutil.which", lambda executable: "/bin/lake")
+    monkeypatch.setattr("autoform_cli.skeleton._run_bounded_command", stall)
+
+    with pytest.raises(_ProbeEnvironmentError) as caught:
+        _build_probe_helper(tmp_path, tmp_path / "helper", timeout=5)
+    assert caught.value.issues == (
+        "building the skeleton probe helpers timed out after 5 seconds; "
+        "rerun with --timeout <seconds> for large projects",
+    )
+
+
+def test_a_root_beside_a_private_twin_is_probed_in_its_public_module(tmp_path: Path) -> None:
+    # A private declaration is local to its file, so every other module binds the public one.
+    project = _project(tmp_path)
+    for module, prefix in (("Adup", "private "), ("Bdup", "")):
+        (project / "Skel" / f"{module}.lean").write_text(
+            f"namespace Skel\n{prefix}theorem dup : True := sorry\nend Skel\n", encoding="utf-8"
+        )
+    blueprint = _blueprint(tmp_path, lean={"dup": "Skel.dup"})
+    probes: list[str] = []
+
+    def runner(probe: str, root: Path) -> str:
+        probes.append(probe)
+        return ""
+
+    extract_skeletons(blueprint, lean_root=project, runner=runner)
+
+    (probe,) = probes
+    assert "import Skel.Bdup\n" in probe
+    assert "import Skel.Adup" not in probe
 
 
 def test_report_is_identical_across_checkout_roots(tmp_path: Path) -> None:
@@ -2927,6 +3005,18 @@ def test_a_report_or_packet_manifest_that_cannot_be_decoded_is_refused(tmp_path:
     packets = tmp_path / "packets"
     packets.mkdir()
     (packets / PACKET_MANIFEST).write_text(text, encoding="utf-8")
+    with pytest.raises(SkeletonError, match="refusing to overwrite non-Autoform packet output"):
+        write_packets(_fake_report(tmp_path), packets)
+    assert (packets / PACKET_MANIFEST).read_text(encoding="utf-8") == text
+
+
+@pytest.mark.parametrize("schema", [{}, []])
+def test_a_packet_manifest_whose_schema_is_not_a_string_is_refused(tmp_path: Path, schema: object) -> None:
+    packets = tmp_path / "packets"
+    packets.mkdir()
+    text = json.dumps({"kind": "packets", "schema": schema, "packets": []})
+    (packets / PACKET_MANIFEST).write_text(text, encoding="utf-8")
+
     with pytest.raises(SkeletonError, match="refusing to overwrite non-Autoform packet output"):
         write_packets(_fake_report(tmp_path), packets)
     assert (packets / PACKET_MANIFEST).read_text(encoding="utf-8") == text
@@ -3662,11 +3752,9 @@ def packet_project(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="module")
-def packet_report(packet_project: Path, _session_cache_home: Path) -> SkeletonReport:
+def packet_report(packet_project: Path) -> SkeletonReport:
     blueprint = _blueprint(packet_project.parent, lean={stem: case["root"] for stem, case in _PACKETS.items()})
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setenv("XDG_CACHE_HOME", str(_session_cache_home))
-        return extract_skeletons(blueprint, lean_root=packet_project)
+    return extract_skeletons(blueprint, lean_root=packet_project)
 
 
 # `throwError` and `trace[` are tokens of the modules the probe's helper imports, not of HelperTokens.
@@ -4581,29 +4669,12 @@ def test_dependency_module_under_a_core_name_is_bound(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
-@pytest.mark.parametrize("cache", ["cold", "warm"])
-def test_dependency_shadowing_a_toolchain_library_fails_closed(tmp_path: Path, monkeypatch, cache: str) -> None:
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    if cache == "warm":
-        # With no helper build to fail, the probe itself meets the hidden library.
-        (tmp_path / "clean").mkdir()
-        clean = _project(tmp_path / "clean")
-        _build(clean, "Skel.Main")
-        _build_probe_helper(clean, tmp_path / "helper", timeout=600)
+def test_dependency_shadowing_a_toolchain_library_fails_closed(tmp_path: Path) -> None:
     project = _project_with_core_named_dependency(tmp_path, "Std.Vendor")
     _build(project, "Skel.UsesDep")
-    commands: list[list[str]] = []
-    bounded = _run_bounded_command
-
-    def record(command, **kwargs):
-        commands.append(command)
-        return bounded(command, **kwargs)
-
-    monkeypatch.setattr("autoform_cli.skeleton._run_bounded_command", record)
 
     with pytest.raises(SkeletonError, match="cannot load toolchain module Std\\..*hides the toolchain's own `Std`"):
         _probe_declaration(project, "Skel.UsesDep.root", module="Skel.UsesDep")
-    assert any("-o" in command for command in commands) == (cache == "cold")
 
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")

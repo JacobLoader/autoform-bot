@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -1755,6 +1756,30 @@ def test_silent_connection_cannot_block_graceful_stop(runtime_dir, monkeypatch):
             thread.join(timeout=3)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="SIGCHLD is POSIX-specific")
+def test_serve_reads_real_exit_statuses_when_started_with_sigchld_ignored(runtime_dir, monkeypatch):
+    # On Linux the daemon keeps an ignored SIGCHLD from whatever started it. The
+    # kernel then reaps each child as it exits and Popen reports status 0, so
+    # Lake's exit 3 for unbuilt imports would read as a clean file.
+    from servers import lean_runtime
+    from servers.lean_client import runtime_paths_for_socket
+
+    statuses = []
+
+    def serve_forever(server, poll_interval=0.5):
+        statuses.append(subprocess.run([sys.executable, "-c", "raise SystemExit(3)"]).returncode)
+
+    monkeypatch.setattr(lean_runtime, "_configure_logging", lambda log_path: None)
+    monkeypatch.setattr(lean_runtime.LeanRuntimeServer, "serve_forever", serve_forever)
+    previous = signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+    try:
+        lean_runtime.serve(runtime_paths_for_socket(runtime_dir / "sigchld.sock"))
+        assert signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN
+    finally:
+        signal.signal(signal.SIGCHLD, previous)
+    assert statuses == [3]
+
+
 def test_connected_send_failure_is_never_retried(runtime_dir, monkeypatch):
     from servers import lean_client
 
@@ -1807,6 +1832,16 @@ def test_non_utf8_response_is_a_protocol_error(runtime_dir, monkeypatch):
 
     with pytest.raises(lean_client.LeanRuntimeProtocolError, match="invalid JSON"):
         client.request("repl.run", {"project_dir": "/lean", "code": "#check Nat"})
+
+
+def test_response_split_across_reads_is_reassembled():
+    chunks = [b'{"ok":', b" true}", b"\n"]
+
+    class SplitSocket:
+        def recv(self, size):
+            return chunks.pop(0) if chunks else b""
+
+    assert LeanRuntimeClient._read_line(SplitSocket()) == b'{"ok": true}'
 
 
 def test_response_timeout_is_never_retried(runtime_dir, monkeypatch):
@@ -1963,6 +1998,17 @@ def test_response_budget_reserves_nothing_for_cold_repl_slots(monkeypatch):
         LeanRuntimeConfig.from_environment()
 
 
+def test_response_budget_leaves_a_cold_hover_admission_time(monkeypatch):
+    # 900 - 745 - 30 leaves a cold hover at the cap exactly its 125-second
+    # start-and-close reserve, so any time spent before the check refuses it.
+    monkeypatch.setenv("AUTOFORM_MAX_LSP_REQUEST_SECONDS", "744")
+    assert LeanRuntimeConfig.from_environment().max_lsp_request_seconds == 744.0
+
+    monkeypatch.setenv("AUTOFORM_MAX_LSP_REQUEST_SECONDS", "745")
+    with pytest.raises(ValueError, match="too small for AUTOFORM_MAX_LSP_REQUEST_SECONDS"):
+        LeanRuntimeConfig.from_environment()
+
+
 def test_repl_admission_reserves_no_time_to_create_cold_slots(tmp_path):
     project = make_lake_project(tmp_path, "cold-slot-admission")
     # 900 - 861 - 30 leaves 9 seconds to admit the call below, enough because
@@ -1978,6 +2024,28 @@ def test_repl_admission_reserves_no_time_to_create_cold_slots(tmp_path):
             "repl.run",
             {"project_dir": str(project), "code": "#check Nat", "timeout": 861},
         ) == "Compiles successfully"
+    finally:
+        services.close()
+
+
+def test_a_cold_hover_at_the_largest_lsp_cap_is_admitted(tmp_path):
+    project = make_lake_project(tmp_path, "cold-hover-admission")
+    (project / "Main.lean").write_text("def main : IO Unit := pure ()\n", encoding="utf-8")
+
+    class Session(FakeLsp):
+        def hover(self, file_path, line, character):
+            return None
+
+    # 900 - 744 - 30 leaves one second beyond the 125-second start-and-close reserve.
+    services = LeanRuntimeServices(
+        runtime_config(lsp_timeout=744.0, max_lsp_request_seconds=744.0),
+        repl_factory=FakePool,
+        lsp_factory=Session,
+        start_sweepers=False,
+    )
+    try:
+        params = {"project_dir": str(project), "file_path": "Main.lean", "line": 0, "character": 0}
+        assert services.dispatch("lsp.hover", params).startswith("No hover information")
     finally:
         services.close()
 

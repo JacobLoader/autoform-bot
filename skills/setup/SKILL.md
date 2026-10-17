@@ -154,7 +154,8 @@ is also the repair path; it reports what it left alone. See the
 The site's MathJax configuration is not part of the vault: `autoform render`
 writes `javascripts/mathjax.js` on every build. Put the project's notation in
 `blueprint/tex-macros.json`, an object from macro names to MathJax `tex.macros`
-definitions; a definition written in an article shows in red on the site.
+definitions; a definition written in an article shows in red on the site, and
+`autoform check` warns about it.
 
 `init` pins the generated workflows to the Autoform commit that ran it, using a
 safe remote only when a cached remote-tracking ref contains that commit. It

@@ -13,18 +13,15 @@ import hashlib
 import os
 import re
 import stat
-from dataclasses import dataclass, field
-from pathlib import Path, PureWindowsPath
+from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .lean import declaration_names
-from .markdown import mask_code_and_comments
-from .snapshot import BlueprintSnapshot
+from .markdown import link_definitions, link_targets, mask_code_and_comments, resolved_path
 
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
-_LINK = re.compile(r"(?<!!)\[[^\]]+\]\(\s*(<[^>]+>|[^)\s]+)(?:\s+[^)]*)?\)")
-_INLINE_CODE = re.compile(r"(`+).*?\1")
 ARTICLE_ID_PATTERN = re.compile(r"af_[0-9a-f]{24}\Z")
 _FRONTMATTER_KEYS = frozenset(
     {
@@ -109,25 +106,14 @@ class Node:
 
 @dataclass(frozen=True, slots=True)
 class Graph:
-    """A validated blueprint graph, keyed by stable node id.
-
-    ``snapshot`` holds the bytes the graph was built from, keyed by canonical
-    path: every article it parsed. Text shown or judged beside the graph is
-    read from there, so it is always the state the graph describes.
-    """
+    """A validated blueprint graph, keyed by stable node id."""
 
     blueprint_dir: Path
     nodes: dict[str, Node]
-    snapshot: BlueprintSnapshot = field(default_factory=BlueprintSnapshot)
     #: ``open_statements: allowed`` in ``roadmap/README.md``: a theorem's
     #: statement may land with a ``sorry`` proof. Absent or ``forbidden`` keeps
     #: the strict policy, where CI rejects every ``sorry``.
     open_statements: bool = False
-
-    def article_text(self, node: Node) -> str:
-        """Return the text ``node`` was parsed from."""
-
-        return self.snapshot.text(node.path)
 
     @property
     def edge_count(self) -> int:
@@ -153,7 +139,6 @@ class _ParsedNode:
 class _NodeSource:
     id: str
     path: Path
-    content: bytes
     text: str
     source_sha256: str
 
@@ -161,7 +146,11 @@ class _NodeSource:
 def load_graph(blueprint_dir: str | Path) -> Graph:
     """Load and validate Markdown nodes beneath *blueprint_dir*."""
 
-    blueprint = Path(blueprint_dir).expanduser().resolve()
+    # As every link in it is resolved, so a link above it that cannot be read
+    # fails here once instead of failing every link.
+    blueprint = resolved_path(Path(blueprint_dir).expanduser())
+    if blueprint is None:
+        raise GraphValidationError([f"blueprint directory cannot be resolved: {blueprint_dir}"])
     if not blueprint.is_dir():
         raise GraphValidationError([f"blueprint directory does not exist: {blueprint}"])
 
@@ -173,7 +162,6 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
     issues.extend(discovery_issues)
     article_ids: dict[str, str] = {}
     source_hashes = {source.id: source.source_sha256 for source in sources}
-    files: dict[Path, bytes] = {}
     policy_page = (blueprint / "roadmap" / "README.md").resolve()
     open_statements = False
 
@@ -191,7 +179,6 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
             continue
         canonical_ids[canonical] = source.id
         node_ids[source.id] = canonical
-        files[canonical] = source.content
         node, node_issues = _parse_node(source.id, canonical, source.text)
         issues.extend(node_issues)
         if node is not None:
@@ -264,7 +251,7 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
             not_ready=metadata.get("not_ready") in _TRUE,
             discussion=metadata.get("discussion"),
             origin=metadata.get("origin"),
-            sources=parsed_node.source_targets,
+            sources=tuple(dict.fromkeys(parsed_node.source_targets)),
             parent=parents[parsed_node.id],
             depth=_article_depth(parsed_node.id, parents),
             article_id=metadata.get("article_id"),
@@ -273,13 +260,9 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
 
     if not issues:
         issues.extend(_find_cycles(nodes))
-    if not issues:
-        issues.extend(_find_rollup_cycles(nodes))
     if issues:
         raise GraphValidationError(issues)
-    return Graph(
-        blueprint_dir=blueprint, nodes=nodes, snapshot=BlueprintSnapshot(files), open_statements=open_statements
-    )
+    return Graph(blueprint_dir=blueprint, nodes=nodes, open_statements=open_statements)
 
 
 def _discover_nodes(blueprint: Path) -> tuple[list[_NodeSource], list[str]]:
@@ -332,7 +315,7 @@ def _discover_nodes(blueprint: Path) -> tuple[list[_NodeSource], list[str]]:
             issues.append(f"{node_id}: node file escapes the roadmap directory")
             continue
         sources.append(
-            _NodeSource(node_id, canonical, content, text, hashlib.sha256(content).hexdigest())
+            _NodeSource(node_id, canonical, text, hashlib.sha256(content).hexdigest())
         )
 
     issues.extend(_chapter_issues(roadmap_root))
@@ -547,7 +530,10 @@ def _parse_node(node_id: str, path: Path, text: str) -> tuple[_ParsedNode | None
     # Fences, comments and indented code are read as the page and the audit
     # read them, so a section a reader sees never loses its links here, and a
     # link the page shows as code is not read as one.
-    for line in mask_code_and_comments(lines[body_start:]):
+    body = mask_code_and_comments(lines[body_start:])
+    # A reference link takes its target from a definition anywhere on the page.
+    references = link_definitions(body)
+    for line in body:
         heading = _HEADING.match(line)
         if heading:
             level = len(heading.group(1))
@@ -561,11 +547,7 @@ def _parse_node(node_id: str, path: Path, text: str) -> tuple[_ParsedNode | None
                 section = heading_key if level == 2 and heading_key in targets else None
             continue
         if section is not None:
-            for match in _LINK.finditer(_INLINE_CODE.sub("", line)):
-                target = match.group(1)
-                if target.startswith("<") and target.endswith(">"):
-                    target = target[1:-1]
-                targets[section].append(target)
+            targets[section].extend(link_targets(line, references))
 
     if title is None:
         issues.append(f"{node_id}: missing H1 title")
@@ -671,20 +653,7 @@ def _normalize_value(node_id: str, line_number: int, key: str, value: str) -> tu
         if folded not in {"allowed", "forbidden"}:
             return value, f"{location}: 'open_statements' accepts allowed or forbidden"
         return folded, None
-    if key == "mathlib_file" and not _is_portable_relative_path(value):
-        return value, f"{location}: 'mathlib_file' must be a portable relative path"
     return value, None
-
-
-def _is_portable_relative_path(value: str) -> bool:
-    path = Path(value)
-    windows = PureWindowsPath(value)
-    return (
-        not path.is_absolute()
-        and not windows.is_absolute()
-        and ".." not in path.parts
-        and ".." not in windows.parts
-    )
 
 
 def _unquote_scalar(value: str) -> str:
@@ -699,20 +668,28 @@ def _resolve_target(
     blueprint: Path,
     canonical_ids: dict[Path, str],
 ) -> tuple[str | None, str | None]:
-    split = urlsplit(target)
+    try:
+        split = urlsplit(target)
+    except ValueError:
+        return None, f"{node.id}: dependency target must be a relative Markdown path: {target!r}"
     if split.scheme or split.netloc or split.query:
         return None, f"{node.id}: dependency target must be a relative Markdown path: {target!r}"
     raw_path = unquote(split.path)
     if not raw_path:
         return None, f"{node.id}: dependency target must name a Markdown file: {target!r}"
+    if "\x00" in raw_path:
+        return None, f"{node.id}: dependency target contains an invalid path: {target!r}"
     relative = Path(raw_path)
     if relative.is_absolute() or relative.suffix != ".md":
         return None, f"{node.id}: dependency target must be a relative .md file: {target!r}"
 
-    resolved = (node.path.parent / relative).resolve()
+    resolved = resolved_path(node.path.parent / relative)
+    if resolved is None:
+        return None, f"{node.id}: dependency target does not exist: {target!r}"
     if not _is_within(resolved, blueprint):
         return None, f"{node.id}: dependency target escapes the blueprint directory: {target!r}"
-    if not resolved.is_file():
+    # Before Python 3.14, `Path.is_file` raises under an unreadable directory.
+    if not os.path.isfile(resolved):
         return None, f"{node.id}: dependency target does not exist: {target!r}"
     dependency = canonical_ids.get(resolved)
     if dependency is None:
@@ -758,138 +735,6 @@ def _find_cycles(nodes: dict[str, Node]) -> list[str]:
                 if message not in seen_issues:
                     seen_issues.add(message)
                     issues.append(message)
-    return issues
-
-
-def _find_rollup_cycles(nodes: dict[str, Node]) -> list[str]:
-    """Reject cycles introduced by contracting articles at any hierarchy level."""
-    children: dict[str | None, list[str]] = {}
-    parents: dict[str, str | None] = {}
-    for node in nodes.values():
-        children.setdefault(node.parent, []).append(node.id)
-        parents[node.id] = node.parent
-
-    depths: dict[str, int] = {}
-    roots: dict[str, str] = {}
-    for node_id in nodes:
-        if node_id in depths:
-            continue
-        trail: list[str] = []
-        seen: set[str] = set()
-        current: str | None = node_id
-        while current is not None and current not in depths:
-            if current in seen or current not in parents:
-                raise ValueError("article containment is not a forest")
-            seen.add(current)
-            trail.append(current)
-            current = parents[current]
-        depth = depths[current] if current is not None else -1
-        root = roots[current] if current is not None else trail[-1]
-        for descendant in reversed(trail):
-            depth += 1
-            depths[descendant] = depth
-            roots[descendant] = root
-
-    ancestors: list[dict[str, str | None]] = [parents]
-    maximum_depth = max(depths.values(), default=0)
-    while 1 << len(ancestors) <= maximum_depth:
-        previous = ancestors[-1]
-        ancestors.append(
-            {node_id: previous[parent] if parent is not None else None for node_id, parent in previous.items()}
-        )
-
-    def lift(node_id: str, distance: int) -> str:
-        level = 0
-        while distance:
-            if distance & 1:
-                parent = ancestors[level][node_id]
-                if parent is None:
-                    raise ValueError("article containment depth is inconsistent")
-                node_id = parent
-            distance >>= 1
-            level += 1
-        return node_id
-
-    def lowest_common_ancestor(first: str, second: str) -> str | None:
-        if roots[first] != roots[second]:
-            return None
-        if depths[first] < depths[second]:
-            first, second = second, first
-        first = lift(first, depths[first] - depths[second])
-        if first == second:
-            return first
-        for level in range(len(ancestors) - 1, -1, -1):
-            first_parent = ancestors[level][first]
-            second_parent = ancestors[level][second]
-            if first_parent != second_parent:
-                if first_parent is None or second_parent is None:
-                    continue
-                first = first_parent
-                second = second_parent
-        return parents[first]
-
-    def direct_child(scope: str | None, node_id: str) -> str:
-        scope_depth = depths[scope] if scope is not None else -1
-        return lift(node_id, depths[node_id] - scope_depth - 1)
-
-    projections: dict[str | None, dict[str, set[str]]] = {}
-    for target in nodes.values():
-        for dependency in target.dependencies:
-            scope = lowest_common_ancestor(target.id, dependency)
-            if scope == target.id or scope == dependency:
-                continue
-            target_child = direct_child(scope, target.id)
-            source_child = direct_child(scope, dependency)
-            projections.setdefault(scope, {}).setdefault(target_child, set()).add(source_child)
-
-    issues: list[str] = []
-    seen_issues: set[str] = set()
-    for scope, siblings in children.items():
-        if len(siblings) < 2:
-            continue
-        projected = projections.get(scope)
-        if not projected:
-            continue
-        dependencies = {sibling: projected.get(sibling, set()) for sibling in siblings}
-        state: dict[str, int] = {}
-        stack: list[str] = []
-        stack_indexes: dict[str, int] = {}
-        ordered_dependencies = {
-            article_id: tuple(sorted(prerequisites)) for article_id, prerequisites in dependencies.items()
-        }
-
-        for root_id in sorted(dependencies):
-            if state.get(root_id, 0) != 0:
-                continue
-            state[root_id] = 1
-            stack_indexes[root_id] = len(stack)
-            stack.append(root_id)
-            frames = [(root_id, 0)]
-            while frames:
-                article_id, dependency_index = frames[-1]
-                prerequisites = ordered_dependencies[article_id]
-                if dependency_index == len(prerequisites):
-                    frames.pop()
-                    stack.pop()
-                    stack_indexes.pop(article_id)
-                    state[article_id] = 2
-                    continue
-
-                prerequisite = prerequisites[dependency_index]
-                frames[-1] = (article_id, dependency_index + 1)
-                prerequisite_state = state.get(prerequisite, 0)
-                if prerequisite_state == 0:
-                    state[prerequisite] = 1
-                    stack_indexes[prerequisite] = len(stack)
-                    stack.append(prerequisite)
-                    frames.append((prerequisite, 0))
-                elif prerequisite_state == 1:
-                    cycle = stack[stack_indexes[prerequisite] :] + [prerequisite]
-                    label = scope or "root"
-                    message = f"rolled-up dependency cycle in {label}: {' -> '.join(cycle)}"
-                    if message not in seen_issues:
-                        seen_issues.add(message)
-                        issues.append(message)
     return issues
 
 

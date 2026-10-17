@@ -25,7 +25,7 @@ from .claims import author_claim_key
 from .lean import IndexedSourceSnapshot, LeanSourceError, bind_project_source_snapshot, resolve_lean_root
 from .runtime import load_runtime_graph
 from .skeleton import LeanLibrary, SkeletonError, _lean_name_parts, _lean_requests, lean_libraries
-from .work import work_context
+from .work import select_work_item
 
 IMPACT_SCHEMA = "autoform-impact/v1"
 MODULE_IMPORT_IMPACT_SCHEMA = "autoform-module-import-impact/v1"
@@ -1337,8 +1337,9 @@ def _load_impact_evidence(
 ) -> _ImpactEvidence:
     """Load one freshness-bound roadmap, source, module, and Lean environment."""
 
-    source_revision, item = work_context(project_or_blueprint, selector)
     runtime = load_runtime_graph(project_or_blueprint)
+    source_revision = runtime.source_revision
+    item = select_work_item(runtime, selector)
     articles_by_id = {
         node.id: ImpactArticle(
             node.id,
@@ -1351,9 +1352,7 @@ def _load_impact_evidence(
         )
         for node in runtime.nodes
     }
-    selected = articles_by_id.get(item.node_id)
-    if runtime.source_revision != source_revision or selected is None:
-        raise ImpactError("the roadmap changed while it was read; rerun the command")
+    selected = articles_by_id[item.node_id]
     if require_default_declarations and not selected.declarations:
         raise ImpactError(f"{selected.id} names no lean: declaration; pass --declaration NAME")
 
@@ -1495,14 +1494,22 @@ def _locator(
     libraries: tuple[LeanLibrary, ...],
     snapshot: IndexedSourceSnapshot,
 ) -> Locator:
-    """Locate a constant through one captured index, else by its captured module path."""
+    """Locate a constant in its compiled module's file, with the line from the index, else through the index alone.
+
+    The compiled module says which of a name's declarations a record is, so a
+    private one beside a public twin is still located.
+    """
 
     def locate(record: ConstantRecord) -> tuple[str | None, int | None]:
         module_path = module_paths.get(_name_key(record.module))
-        declaration = snapshot.index.find(record.user_name or record.name)
-        if declaration is not None and module_path in (None, declaration.path.as_posix()):
-            return declaration.path.as_posix(), declaration.line
-        return module_path, None
+        name = record.user_name or record.name
+        if module_path is None:
+            declaration = snapshot.index.find(name)
+            return (None, None) if declaration is None else (declaration.path.as_posix(), declaration.line)
+        line = next(
+            (item.line for item in snapshot.index.occurrences(name) if item.path.as_posix() == module_path), None
+        )
+        return module_path, line
 
     module_paths = {_name_key(module): path for module, path in _module_source_paths(libraries, snapshot).items()}
     return locate
@@ -1618,10 +1625,10 @@ def format_module_import_impact(report: ModuleImportImpactReport) -> list[str]:
         )
     if report.affected_claim_targets:
         lines.append(
-            "Check active claims or semantic changes for: "
+            "Check other workers, live claims, or semantic changes for: "
             + _keyed(report.affected_claim_targets, report.affected_claim_keys)
         )
-    lines.append("Required claims for the import edit: " + _keyed(report.claim_targets, report.claim_keys))
+    lines.append("Claim targets of the import edit: " + _keyed(report.claim_targets, report.claim_keys))
     return lines
 
 

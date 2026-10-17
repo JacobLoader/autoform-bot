@@ -2,7 +2,7 @@
 
 ``autoform render`` writes ``javascripts/mathjax.js`` on every build, over the
 vault's copy; the script loads the one MathJax version it was written for and
-refuses any other. Project macros come from ``tex-macros.json`` and reach
+leaves formulas as typed under any other. Project macros come from ``tex-macros.json`` and reach
 article formulas only, and the commands that would let one formula change
 another, or color a symbol, are turned off.
 """
@@ -49,16 +49,18 @@ NEUTRALISED = (
 
 #: The ``javascripts/mathjax.js`` ``autoform init`` put in vaults before the
 #: renderer wrote its own, by SHA-256. An unedited copy is replaced on the site
-#: without a word; an edited one is refused, since its edits would be lost.
+#: without a word; an edited one is replaced with a warning, since its edits
+#: are lost.
 _SHIPPED_CONFIGURATIONS = frozenset({"e2fa0fa73dd367cad2f508055c6b6b45c771547aca6c3baae639ecd872112384"})
 
 _MACRO_NAME = re.compile(r"[A-Za-z]+")
 
 
 def mathjax_script(kept: bytes | None, macros: bytes | None) -> tuple[str, list[str]]:
-    """The ``javascripts/mathjax.js`` the site gets for a vault, and what
-    refuses it: an invalid ``tex-macros.json``, or an edited copy of the
-    configuration the vault used to keep.
+    """The ``javascripts/mathjax.js`` the site gets for a vault, and the
+    warnings about it: macros in ``tex-macros.json`` it leaves out, or an
+    edited copy of the configuration the vault used to keep, whose edits the
+    site loses.
 
     ``kept`` and ``macros`` are the bytes render captured at those two paths,
     ``None`` where it captured none, so the script is built from the
@@ -70,8 +72,8 @@ def mathjax_script(kept: bytes | None, macros: bytes | None) -> tuple[str, list[
         digest = hashlib.sha256(kept.replace(b"\r\n", b"\n")).hexdigest()
         if digest not in _SHIPPED_CONFIGURATIONS:
             issues.append(
-                f"{MATHJAX_SCRIPT}: autoform render writes the site's MathJax configuration, so the "
-                f"edits in this copy would be lost; move any tex.macros to {TEX_MACROS} and delete it"
+                f"{MATHJAX_SCRIPT}: autoform render writes the site's MathJax configuration over this "
+                f"copy, so its edits are lost; move any tex.macros to {TEX_MACROS} and delete it"
             )
     parsed, macro_issues = _tex_macros(macros)
     return _script(parsed), issues + macro_issues
@@ -79,11 +81,12 @@ def mathjax_script(kept: bytes | None, macros: bytes | None) -> tuple[str, list[
 
 def _tex_macros(data: bytes | None) -> tuple[dict[str, object], list[str]]:
     """The macros in ``data``, a ``tex-macros.json``'s bytes or ``None`` when
-    there is none, and what is wrong with them.
+    there is none, and what is wrong with the ones it leaves out.
 
     Each maps a name of letters to a body, to ``[body, arguments]``, or to
     ``[body, arguments, default]``, as MathJax's ``tex.macros`` does, and is
-    not one of :data:`NEUTRALISED`.
+    not one of :data:`NEUTRALISED`. A file that is no such object gives no
+    macros.
     """
 
     if data is None:
@@ -95,6 +98,7 @@ def _tex_macros(data: bytes | None) -> tuple[dict[str, object], list[str]]:
     if not isinstance(macros, dict):
         return {}, [f"{TEX_MACROS}: must be a JSON object from macro names to definitions"]
     issues: list[str] = []
+    kept: dict[str, object] = {}
     for name, definition in macros.items():
         if not _MACRO_NAME.fullmatch(name):
             issues.append(f"{TEX_MACROS}: {name!r} is not a macro name; use letters only")
@@ -111,12 +115,14 @@ def _tex_macros(data: bytes | None) -> tuple[dict[str, object], list[str]]:
         ):
             if not 0 <= definition[1] <= 9:
                 issues.append(f"{TEX_MACROS}: \\{name} takes {definition[1]} arguments; use 0 to 9")
+                continue
         elif not isinstance(definition, str):
             issues.append(
                 f"{TEX_MACROS}: \\{name} must be a body, [body, arguments], or [body, arguments, default]"
             )
             continue
-    return (macros if not issues else {}), issues
+        kept[name] = definition
+    return kept, issues
 
 
 def _unique_names(pairs: list[tuple[str, object]]) -> dict[str, object]:

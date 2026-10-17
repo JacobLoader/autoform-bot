@@ -104,11 +104,10 @@ CLI's output limit. The Python reader checks the limit again after exit. -/
 def emitRecord (cache : IO.Ref SemanticCache) (record : Json) : IO Unit := do
   let line := s!"{marker}{{record.compress}}\n"
   let total := (← cache.get).outputBytes + line.utf8ByteSize
-  if total > probeOutputLimit then
-    cache.modify fun c => {{ c with broken := true }}
-    throw <| IO.userError s!"lake env lean exceeded the {{probeOutputLimit}}-byte output limit"
-  cache.modify fun c => {{ c with outputBytes := total }}
   try
+    if total > probeOutputLimit then
+      throw <| IO.userError s!"lake env lean exceeded the {{probeOutputLimit}}-byte output limit"
+    cache.modify fun c => {{ c with outputBytes := total }}
     (← cache.get).output.putStr line
   catch e =>
     cache.modify fun c => {{ c with broken := true }}

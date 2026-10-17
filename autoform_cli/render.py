@@ -26,16 +26,19 @@ import unicodedata
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
+
+from markdown.treeprocessors import Treeprocessor
 
 from . import graph_pages, graph_views, mermaid, status
 from ._tree_snapshot import (
-    OpaqueDirectoryMarker,
     TreeChangedError,
     TreeSelection,
     TreeSnapshot,
     TreeSnapshotError,
+    _read_prefix,
     _update_digest,
     bind_directory_tree,
     descriptor_capture_supported,
@@ -43,6 +46,9 @@ from ._tree_snapshot import (
 from .coverage import COVERAGE_DISPOSITIONS, CoverageSummary, load_coverage
 from .graph import Graph, GraphValidationError, Node, _implementation_note_issues, load_graph
 from .lean import (
+    PUBLICATION_MANIFEST,
+    PUBLICATION_MANIFEST_MAX_BYTES,
+    PUBLICATION_SCHEMA,
     IndexedSourceSnapshot,
     LeanSourceError,
     SourceIndex,
@@ -55,17 +61,24 @@ from .lean import (
     snapshot_project_sources,
     verify_repository_snapshot,
 )
+from .markdown import site_converter
 from .markdown import content_lines as _content_lines
 from .markdown import mask_fences_and_comments
 from .markdown import NOTES_BOX, PAGE_HEADER, PAGE_SUFFIXES, STATEMENT_BOX, boxed, statement_and_notes
 from .markdown import outside_fences as _outside_fences
 from .mathjax import MATHJAX_SCRIPT, TEX_MACROS, mathjax_script
-from .publishable import publishable_article
-from .snapshot import BlueprintSnapshot
+from .publishable import publishable_article, shown_as_typed
 from .status import is_definition
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
-_MARKDOWN_LINK = re.compile(r"(?<!!)\[(?P<label>[^\]]*)\]\(\s*(?P<target>[^)\s]+)(?:\s+[^)]*)?\)")
+#: An inline link. A bare destination or a title may hold one level of
+#: balanced parentheses, a quoted title may leave a `(` open, and an escaped
+#: parenthesis is text, as in Python-Markdown. `replace` drops the title of a
+#: link it moves, so a match that ran past the link's own `)` would drop text.
+_MARKDOWN_LINK = re.compile(
+    r"(?<!!)\[(?P<label>[^\]]*)\]\(\s*(?P<target><[^>]+>|(?:\\.|[^\\()\s]|\((?:\\.|[^\\()\s])*\))+)"
+    r"""(?:\s+(?:"[^")]*"\s*|'[^')]*'\s*|(?:\\.|[^\\()]|\((?:\\.|[^\\()])*\))*))?\)"""
+)
 #: A reference-style link definition, `[label]: target "title"`. Markdown
 #: resolves `[Paper][paper]` through one of these, so a rewrite that only sees
 #: inline links leaves the destination behind and publishes a dead link.
@@ -78,12 +91,9 @@ _ARTICLE_SLOT = re.compile(
 )
 _SKIPPED_DIRECTORIES = frozenset({".obsidian", ".trash", ".git"})
 
+
 #: Transcriptions of the paper being formalised. Vault material, not chapters.
 SOURCES_DIR = "sources"
-PUBLICATION_MANIFEST = "publication.json"
-PUBLICATION_SCHEMA = "autoform-publication/v2"
-#: Render never writes a larger manifest, so the next render can always read it.
-PUBLICATION_MANIFEST_MAX_BYTES = 8 * 1024 * 1024
 #: Hidden siblings of the output: a site being built, a replaced one, or a backup.
 _STAGE_PREFIX = ".autoform-publication-"
 #: How a filesystem says it lacks an operation (an atomic exchange, a directory sync).
@@ -143,10 +153,6 @@ _PUBLICATION_SELECTION = TreeSelection(
     ),
     descend=lambda path: path.parts[0].casefold() == ".autoform"
     or not (_is_hidden(path) or _is_sensitive(path)),
-)
-#: Every site, stage, and backup carries this, so a Lean walk never indexes their copies.
-_PUBLICATION_MARKER = OpaqueDirectoryMarker(
-    PUBLICATION_MANIFEST, PUBLICATION_MANIFEST_MAX_BYTES, lambda data: _is_complete_publication(data)
 )
 
 #: How a ``declaration:`` value is announced in the statement box.
@@ -231,10 +237,12 @@ def _mermaid_script() -> str:
     and repeating it on a theme switch.
 
     Loose security is what enables the ``click`` links, and it also runs a
-    click's ``call`` as script and draws a label's markup. So the script draws
-    only the graphs render writes, of class :data:`~autoform_cli.mermaid.GRAPH_CLASS`
-    in raw HTML no article may hold, whose labels are escaped; a Mermaid block
-    the page got anywhere else is left as typed.
+    click's ``call`` as script and draws a label's markup. So only the graphs
+    render writes, of class :data:`~autoform_cli.mermaid.GRAPH_CLASS` in raw
+    HTML no article may hold, with escaped labels, are drawn loose; an
+    author's diagram is drawn strictly, its labels as text and with no click.
+    Diagrams are drawn one at a time, since the level is Mermaid's global
+    setting, and one that fails leaves the others drawn.
     """
     classdefs = json.dumps(
         {scheme: mermaid.classdef_lines(dark=scheme == "dark") for scheme in ("light", "dark")},
@@ -255,14 +263,20 @@ def _mermaid_script() -> str:
            mainBkg: "#FFFFFF", clusterBkg: "transparent", edgeLabelBackground: "#FFFFFF" }};
   }}
   mermaid.initialize({{
-    startOnLoad: false, securityLevel: "loose", theme: "neutral",
+    startOnLoad: false, securityLevel: "strict", theme: "neutral",
     fontFamily: FONT, themeVariables: variables("light")
   }});
 
   var counter = 0;
   var blocks = Array.prototype.map.call(
-    document.querySelectorAll("div.{mermaid.GRAPH_CLASS}"),
-    function (element) {{ return {{ element: element, source: element.textContent }}; }}
+    document.querySelectorAll(".mermaid"),
+    function (element) {{
+      return {{
+        element: element,
+        source: element.textContent,
+        generated: element.classList.contains("{mermaid.GRAPH_CLASS}")
+      }};
+    }}
   );
 
   function scheme() {{
@@ -271,18 +285,24 @@ def _mermaid_script() -> str:
 
   function draw() {{
     var mode = scheme();
-    mermaid.initialize({{
-      startOnLoad: false,
-      securityLevel: "loose",
-      theme: mode === "dark" ? "dark" : "neutral",
-      fontFamily: FONT,
-      themeVariables: variables(mode)
-    }});
+    var queue = Promise.resolve();
     blocks.forEach(function (block) {{
-      var source = block.source + "\\n" + CLASSDEFS[mode].join("\\n");
-      mermaid.render("bp-graph-" + counter++, source).then(function (result) {{
-        block.element.innerHTML = result.svg;
-        if (result.bindFunctions) result.bindFunctions(block.element);
+      queue = queue.then(function () {{
+        mermaid.initialize({{
+          startOnLoad: false,
+          securityLevel: block.generated ? "loose" : "strict",
+          theme: mode === "dark" ? "dark" : "neutral",
+          fontFamily: FONT,
+          themeVariables: variables(mode)
+        }});
+        // The palette is a flowchart's; an author's diagram may be any kind.
+        var source = block.generated ? block.source + "\\n" + CLASSDEFS[mode].join("\\n") : block.source;
+        return mermaid.render("bp-graph-" + counter++, source).then(function (result) {{
+          block.element.innerHTML = result.svg;
+          if (result.bindFunctions) result.bindFunctions(block.element);
+        }});
+      }}).catch(function (error) {{
+        console.error("autoform: a diagram could not be drawn", error);
       }});
     }});
   }}
@@ -311,6 +331,7 @@ class RenderReport:
     nodes: int = 0
     linked: int = 0
     unresolved: list[str] = field(default_factory=list)
+    """A message for each published declaration not found, or defined more than once, in the sources."""
     unchecked: bool = False
     """A published declaration was not looked up because the sources were not read."""
     warnings: list[str] = field(default_factory=list)
@@ -324,29 +345,34 @@ class PublicationError(ValueError):
         super().__init__("; ".join(self.issues))
 
 
-def publication_issues(graph: Graph, blueprint: Path, *, lean_root: str | Path | None = None) -> list[str]:
-    """What stops the site for ``graph`` being published, as ``autoform check``
-    reports it: the inputs render refuses to capture, and the issues
-    :func:`_publication` finds in the pages it would publish from them, as
-    render does. The repository coordinates, which decide whether source notes
-    are published, are found as render finds them by default, from
-    ``lean_root``, the blueprint's parent unless given, as if they name a
-    commit that holds the blueprint, as on a clean checkout.
+def publication_issues(graph: Graph, blueprint: Path) -> tuple[list[str], list[str]]:
+    """What ``autoform check`` reports about the site for ``graph``: the
+    warnings :func:`_publication` gives for the pages and files render would
+    publish, and what would stop render, the inputs it refuses to capture
+    among them. Source notes are read as pages wherever the site would link
+    them instead, so the verdict does not depend on the clone's remote.
     """
 
     blueprint = Path(blueprint).expanduser().resolve()
     try:
         snapshot = _capture_blueprint(blueprint)
     except PublicationError as exc:
-        return list(exc.issues)
-    try:
-        repo_root = Path(lean_root).expanduser().resolve() if lean_root is not None else blueprint.parent
-    except (OSError, RuntimeError, ValueError):
-        # check reports an unusable Lean root when it indexes the sources.
-        repo_root = blueprint.parent
-    sources_base = _sources_base(blueprint, repo_root, detect_repository_url(repo_root), detect_ref(repo_root), {})
-    files = _captured_files(snapshot, blueprint)
-    return _publication(graph, blueprint, files, destination=blueprint, sources_base=sources_base).issues
+        return [], list(exc.issues)
+    site = _publication(graph, blueprint, _captured_files(snapshot, blueprint), destination=blueprint, sources_base=None)
+    return site.warnings, site.errors
+
+
+@dataclass(frozen=True, slots=True)
+class BlueprintSnapshot:
+    """The captured blueprint's files, keyed by canonical absolute path, so
+    the pages render publishes and check reads are the bytes it captured."""
+
+    files: dict[Path, bytes] = field(default_factory=dict)
+
+    def text(self, path: Path) -> str:
+        """Return a captured file as UTF-8 text."""
+
+        return self.files[path].decode("utf-8")
 
 
 def _captured_files(snapshot: TreeSnapshot, root: Path) -> BlueprintSnapshot:
@@ -357,7 +383,7 @@ def _captured_files(snapshot: TreeSnapshot, root: Path) -> BlueprintSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class _Publication:
-    """What render publishes from a blueprint's own files, and what refuses it."""
+    """What render publishes from a blueprint's own files, and what it reports."""
 
     groups: dict[str, list[str]]
     #: Where each node is published: its page, and its anchor there.
@@ -373,7 +399,10 @@ class _Publication:
     #: The site's ``javascripts/mathjax.js``, built from the captured
     #: ``tex-macros.json`` the site publishes.
     script: str
-    issues: list[str]
+    #: What the site leaves out or shows as typed, which publishes nonetheless.
+    warnings: list[str]
+    #: Files in the way of render's own, which stop it.
+    errors: list[str]
 
 
 def _publication(
@@ -385,15 +414,15 @@ def _publication(
     sources_base: "_SourceBase | None",
 ) -> _Publication:
     """The pages and files the site for ``graph`` gets from ``snapshot``, and
-    the issues that refuse them: each page's, named by its node or its file,
-    then the MathJax configuration's.
+    what is reported about them: each page's warnings, named by its node or
+    its file, then the MathJax configuration's, and the files that stop render.
 
     Every page an author wrote is untrusted, so each is published as the
     text :func:`~autoform_cli.publishable.publishable_article` returns for it
-    once its links are resolved, and refused on that function's issues: the
-    text checked is the text published. Links resolve relative to pages, so
-    ``destination`` need only be where the site's files would go; check
-    passes the blueprint itself.
+    once its links are resolved, and as :func:`~autoform_cli.publishable.shown_as_typed`
+    when that function reports anything: the text checked is the text
+    published. Links resolve relative to pages, so ``destination`` need only
+    be where the site's files would go; check passes the blueprint itself.
     """
 
     # Nodes are published as environments on their milestone page, the way a
@@ -427,11 +456,12 @@ def _publication(
 
     def published(text: str, source: Path, page: Path, *, whole: bool = True) -> tuple[str, tuple[str, ...]]:
         """The page ``text`` is published as, or the part of ``page`` it is
-        unless ``whole``, and what refuses it. A chapter's page is its
-        narrative with render's own markup set between its lines, so each
-        stretch between is read too, as it sits there."""
+        unless ``whole``, and what keeps it from being published as written.
+        A chapter's page is its narrative with render's own markup set between
+        its lines, so each stretch between is read too, as it sits there. Its
+        notation goes straight to the warnings."""
 
-        page_text, found = publishable_article(
+        page_text, found, notation = publishable_article(
             _rewrite_links(
                 text,
                 source_dir=source.parent,
@@ -458,23 +488,27 @@ def _publication(
             )
             for stretch in _chapter_stretches(narrative, *layout):
                 found += publishable_article(stretch)[1]
-        return page_text, tuple(dict.fromkeys(found))
+        found = tuple(dict.fromkeys(found))
+        label = graph_ids.get(source.resolve()) or source.relative_to(blueprint).as_posix()
+        warnings.extend(f"{label}: {issue}" for issue in (*found, *notation))
+        if found:
+            warnings.append(f"{label}: the site shows it as typed until these are fixed")
+        return page_text, found
 
-    issues: list[str] = []
+    graph_ids = {node.path.resolve(): node_id for node_id, node in graph.nodes.items()}
+    warnings: list[str] = []
     articles: dict[Path, str] = {}
     statements: dict[str, tuple[str, str]] = {}
     for node_id, node in graph.nodes.items():
-        # The text the graph parsed, so a page shows the article its status
-        # describes.
+        # The captured bytes, the state the graph describes once capture checks it.
         leaf = node.formalizable and node_id not in containers
-        text, found = published(graph.article_text(node), node.path, targets[node_id][0], whole=not leaf)
-        issues.extend(f"{node_id}: {issue}" for issue in found)
+        text, found = published(snapshot.text(node.path), node.path, targets[node_id][0], whole=not leaf)
         # Narrative articles remain book pages. Only formalizable leaves are
         # consolidated into their containing article with stable anchors.
         if leaf:
-            statements[node_id] = statement_and_notes(text)
+            statements[node_id] = (shown_as_typed(text, page=False), "") if found else statement_and_notes(text)
         else:
-            articles[node.path.resolve()] = text
+            articles[node.path.resolve()] = shown_as_typed(text) if found else text
 
     files: dict[Path, str | bytes] = {}
     # Render writes its own file where a vault's copy of one of these would go.
@@ -492,30 +526,30 @@ def _publication(
             try:
                 written = snapshot.text(source)
             except UnicodeDecodeError:
-                issues.append(
-                    f"{relative.as_posix()}: is not UTF-8 text, as a Markdown page must be; save it as UTF-8"
+                warnings.append(
+                    f"{relative.as_posix()}: is not UTF-8 text, as a Markdown page must be, so the site leaves it "
+                    "out; save it as UTF-8"
                 )
                 continue
             text, found = published(written, source, destination / relative)
-            issues.extend(f"{relative.as_posix()}: {issue}" for issue in found)
-            files[source] = text
+            files[source] = shown_as_typed(text) if found else text
         elif relative.as_posix() in written_over:
             continue
         elif source.suffix.lower() in _STATIC_SUFFIXES:
             files[source] = snapshot.files[source]
         else:
-            issues.append(
-                f"{relative.as_posix()}: the site publishes no {source.suffix.lower() or 'extensionless'} "
-                "file, since a browser could run it as the site's own page; write it as Markdown, "
+            warnings.append(
+                f"{relative.as_posix()}: the site leaves out {source.suffix.lower() or 'extensionless'} "
+                "files, since a browser could run one as the site's own page; write it as Markdown, "
                 "save it as an image (PNG, JPEG, GIF, WebP), a PDF or plain text, "
                 "or keep it outside blueprint/"
             )
-    issues.extend(_in_the_way(blueprint, graph, snapshot))
-    script, script_issues = mathjax_script(
+    script, script_warnings = mathjax_script(
         snapshot.files.get(blueprint / MATHJAX_SCRIPT), snapshot.files.get(blueprint / TEX_MACROS)
     )
-    issues.extend(script_issues)
-    return _Publication(groups, targets, node_sources, files, statements, script, issues)
+    warnings.extend(script_warnings)
+    errors = _in_the_way(blueprint, graph, snapshot)
+    return _Publication(groups, targets, node_sources, files, statements, script, warnings, errors)
 
 
 def _site_paths(graph: Graph) -> tuple[str, ...]:
@@ -630,13 +664,13 @@ def render_site(
         expected = _destination_state(destination)
         # Without descriptor capture every Lean capture fails closed. The implicit
         # root is then not read and the site has no code links; an explicit Lean
-        # root asks for links, so it still fails.
+        # root asks for links, so it still fails. Like every Lean capture, this one
+        # skips each folder holding a complete publication.json: a finished site,
+        # mkdocs' copy of one, or a replaced site kept as a backup.
         indexed = lean_root is not None or descriptor_capture_supported()
         try:
             lean = (
-                snapshot_project_sources(
-                    repo_root, exclude_roots=(copy_root,), opaque_markers=(_PUBLICATION_MARKER,)
-                )
+                snapshot_project_sources(repo_root, exclude_roots=(copy_root,))
                 if indexed
                 else IndexedSourceSnapshot(SourceIndex(repo_root, {}, ""), revision="")
             )
@@ -737,14 +771,14 @@ def _render_pages(
     ref = linker.ref if linker.links_blueprint else None
     sources_base = _sources_base(blueprint, repo_root, linker.repository_url, ref, linker.spellings) if sources else None
     site = _publication(graph, blueprint, files, destination=destination, sources_base=sources_base)
-    if site.issues:
-        raise PublicationError(site.issues)
+    if site.errors:
+        raise PublicationError(site.errors)
     revisions = {"source_revision": source_revision, "lean_source_revision": lean_source_revision}
     # Written first, so a Lean walk by a concurrent render skips this stage;
     # rewritten with the file inventory once every page exists.
     _write_publication_manifest(destination, graph, linker, coverage=coverage, **revisions)
 
-    report = RenderReport(output_dir=destination)
+    report = RenderReport(output_dir=destination, warnings=list(site.warnings))
     groups, targets, node_sources = site.groups, site.targets, site.node_sources
     if not linker.indexed:
         # Only the declarations a page would link are lost. A blueprint that
@@ -931,18 +965,6 @@ def _is_hidden(relative: Path | PurePosixPath) -> bool:
     return any(part.startswith(".") for part in relative.parts)
 
 
-def _is_complete_publication(data: bytes) -> bool:
-    try:
-        value = json.loads(data)
-    except (ValueError, RecursionError):
-        return False
-    return (
-        isinstance(value, dict)
-        and value.get("schema") in {"autoform-publication/v1", PUBLICATION_SCHEMA}
-        and value.get("complete") is True
-    )
-
-
 @contextmanager
 def _private_copy(
     snapshot: TreeSnapshot, relative: Path = Path("blueprint"), prefix: str = ""
@@ -1032,7 +1054,7 @@ def _destination_state(path: Path) -> _State | None:
     try:  # bounded, and read before anything below it
         if stat.S_ISREG(os.lstat(path / PUBLICATION_MANIFEST).st_mode):
             with open(path / PUBLICATION_MANIFEST, "rb") as handle:
-                data = handle.read(PUBLICATION_MANIFEST_MAX_BYTES + 1)
+                data = _read_prefix(handle, PUBLICATION_MANIFEST_MAX_BYTES + 1)  # read(n) allocates n bytes first
             manifest = json.loads(data) if len(data) <= PUBLICATION_MANIFEST_MAX_BYTES else None
     except (OSError, ValueError, RecursionError):
         pass
@@ -1058,12 +1080,12 @@ def _destination_state(path: Path) -> _State | None:
     expected = {name: digest for name, digest in expected.items() if not _is_os_metadata(name)}
     try:
         with bind_directory_tree(path, expected_identity=identity) as tree:
-            snapshot = tree.capture()
+            snapshot = tree.capture(digests=True)
     except TreeSnapshotError as error:
         raise PublicationError([f"could not inspect the output directory: {error}"]) from error
     files = {
-        name: hashlib.sha256(data).hexdigest()
-        for name, data in snapshot.files
+        name: digest.hex()
+        for name, digest in snapshot.files
         if name != PUBLICATION_MANIFEST and not _is_os_metadata(name)
     }
     names = {*files, *dict(snapshot.symlinks), *dict(snapshot.special)}
@@ -1356,8 +1378,14 @@ def _sources_base(
         # The vault is outside the repository being linked, so no blob URL
         # describes it. Better no link than one that 404s.
         return None
-    spellings = {unicodedata.normalize("NFC", path): committed for path, committed in spellings.items()}
-    return _SourceBase(repository_url, ref, relative, spellings)
+    prefixes: dict[str, str] = {}
+    for path, committed in spellings.items():
+        # A link may name a folder as well as a note, so each leading path maps too.
+        parts, committed_parts = path.split("/"), committed.split("/")
+        for depth in range(1, len(parts) + 1):
+            prefix = unicodedata.normalize("NFC", "/".join(parts[:depth]))
+            prefixes.setdefault(prefix, "/".join(committed_parts[:depth]))
+    return _SourceBase(repository_url, ref, relative, prefixes)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1375,12 +1403,19 @@ class _SourceBase:
     ref: str
     relative: str
     spellings: Mapping[str, str] = field(default_factory=dict)
-    """Committed paths keyed by NFC form, since a link spells a note however its author typed it."""
+    """Committed captured paths and their leading folders, keyed by NFC form, since a link spells a path as typed."""
 
     def href(self, tail: tuple[str, ...]) -> str:
         verb = "blob" if tail else "tree"
-        path = "/".join((self.relative, *tail))
-        path = self.spellings.get(unicodedata.normalize("NFC", path), path)
+        parts = "/".join((self.relative, *tail)).split("/")
+        # A folder with no captured file below it, such as one holding only a `.gitkeep`, has no entry of its own,
+        # so only the leading folders it shares with a captured file take their committed spelling.
+        for depth in range(len(parts), 0, -1):
+            committed = self.spellings.get(unicodedata.normalize("NFC", "/".join(parts[:depth])))
+            if committed is not None:
+                parts[:depth] = committed.split("/")
+                break
+        path = "/".join(parts)
         return f"{self.repository_url}/{verb}/{self.ref}/{quote(path, safe='/')}"
 
 
@@ -1444,7 +1479,17 @@ def _write_publication_manifest(
         raise PublicationError(
             [f"generated publication manifest exceeds max_file_bytes={PUBLICATION_MANIFEST_MAX_BYTES}"]
         )
-    (destination / PUBLICATION_MANIFEST).write_bytes(encoded)
+    # Replaced, never truncated in place: a Lean capture that read an empty
+    # manifest would index the stage's copies.
+    temporary = destination / f".{PUBLICATION_MANIFEST}.{secrets.token_hex(8)}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    descriptor = os.open(temporary, flags, 0o666)  # the mode write_bytes gives
+    try:
+        with open(descriptor, "wb") as output:
+            output.write(encoded)
+        os.replace(temporary, destination / PUBLICATION_MANIFEST)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _group_nodes(graph: Graph) -> dict[str, list[str]]:
@@ -1510,13 +1555,13 @@ def _book_page_order(blueprint: Path, destination: Path, graph: Graph) -> list[P
             for match in _MARKDOWN_LINK.finditer(line):
                 raw = match.group("target")
                 bare = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
-                path = bare.partition("#")[0]
-                if not path or urlsplit(path).scheme or path.startswith("/"):
-                    continue
-                candidate = (source.parent / unquote(path)).resolve()
+                path = bare.partition("#")[0].partition("?")[0]
                 try:
+                    if not path or urlsplit(path).scheme or path.startswith("/"):
+                        continue
+                    candidate = (source.parent / unquote(path)).resolve()
                     candidate_relative = candidate.relative_to(blueprint)
-                except ValueError:
+                except ValueError:  # a target outside the vault, an unbalanced IPv6 bracket, or a decoded NUL
                     continue
                 if (
                     not candidate_relative.parts
@@ -1689,7 +1734,10 @@ def _render_structure_page(
     each file beside it. Directories are rows too, because they are what a
     chapter is; without them every `README.md` looks like every other one.
     """
-    links = _anchored_links(targets, page, extension=".md")
+    # These links sit inside raw HTML, so MkDocs never rewrites their source
+    # ``.md`` paths to the files it publishes. Name the published routes here,
+    # just as statement boxes and Mermaid links do.
+    links = _anchored_links(targets, page, extension=".html")
     by_path = {node.path.resolve(): node for node in graph.nodes.values()}
 
     def keep(relative: Path) -> bool:
@@ -2141,45 +2189,42 @@ def _anchored_links(
     page: Path,
     *,
     extension: str = ".html",
-    hrefs: dict[Path, str] | None = None,
 ) -> Mapping[str, str]:
     """Link every node to its statement on the published chapter page.
 
     Use ``.md`` for links MkDocs will parse -- it validates and rewrites those
     itself -- and ``.html`` for raw HTML and Mermaid, which it never sees. A
-    statement on the current page is just a fragment. Calls for the same page
-    and extension can share *hrefs*, so each target page is linked once across
-    all of them.
+    statement on the current page is just a fragment. Read only the nodes the
+    page shows: links are built when read, and iterating or copying the mapping
+    walks the whole graph on every page.
     """
-    return _PageLinks(targets, page, extension, {} if hrefs is None else hrefs)
+    return _PageLinks(targets, page, extension)
 
 
 class _PageLinks(Mapping[str, str]):
-    """The links from one page to every node, each built when first read.
+    """The links from one page to every node, each built when read.
 
     A page names a few nodes but *targets* holds the whole graph, and a site
     has a page per node, so building every link up front made rendering
     quadratic in the size of the graph.
     """
 
-    def __init__(self, targets: dict[str, tuple[Path, str]], page: Path, extension: str, hrefs: dict[Path, str]):
+    def __init__(self, targets: dict[str, tuple[Path, str]], page: Path, extension: str) -> None:
         self._targets = targets
         self._page = page
-        self._resolved_page = page.resolve()
+        self._resolved_page: Path | None = None
         self._extension = extension
-        self._hrefs = hrefs
-        self._links: dict[str, str] = {}
+        self._hrefs: dict[Path, str] = {}
 
     def __getitem__(self, node_id: str) -> str:
-        link = self._links.get(node_id)
-        if link is not None:
-            return link
         target, anchor = self._targets[node_id]
         # Many nodes share a chapter page, and resolving a path walks the disk,
         # so each target page is linked once. The current page is cached as ""
         # and links as a bare fragment.
         href = self._hrefs.get(target)
         if href is None:
+            if self._resolved_page is None:
+                self._resolved_page = self._page.resolve()
             if target.resolve() == self._resolved_page:
                 href = ""
             else:
@@ -2187,12 +2232,10 @@ class _PageLinks(Mapping[str, str]):
                 if self._extension == ".html":
                     href = _as_published(href)
             self._hrefs[target] = href
-        if href:
-            link = f"{href}#{anchor}" if anchor else href
-        else:
-            link = f"#{anchor}" if anchor else "#"
-        self._links[node_id] = link
-        return link
+        return f"{href}#{anchor}" if anchor else href or "#"
+
+    def __contains__(self, node_id: object) -> bool:
+        return node_id in self._targets
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._targets)
@@ -2211,29 +2254,6 @@ def _as_published(href: str) -> str:
     if path.name.lower() in {"readme.html", "index.html"}:
         return (path.parent / "index.html").as_posix()
     return href
-
-
-#: What a fragment render writes into a link destination may hold as it is,
-#: besides letters, digits, and ``-._~``: delimiters a URL gives a meaning and
-#: Markdown and HTML give none, and ``%``, which the author's own encoding
-#: starts with. Anything else is percent-encoded.
-_FRAGMENT_SAFE = "/%:?=@!+,;"
-#: The same for a whole URL render writes, which may also hold its fragment.
-_URL_SAFE = _FRAGMENT_SAFE + "#"
-
-
-def _destination(path: str, query: str | None = None, fragment: str | None = None) -> str:
-    """A link destination for the file ``path``, named as on disk, with its
-    ``query`` and ``fragment`` if it has them, percent-encoded so that it
-    ends no link, opens no tag, and starts no formula, whatever the path was
-    decoded from."""
-
-    written = quote(path, safe="/")
-    if query is not None:
-        written += "?" + quote(query, safe=_FRAGMENT_SAFE)
-    if fragment is not None:
-        written += "#" + quote(fragment, safe=_FRAGMENT_SAFE)
-    return written
 
 
 def _rewrite_links(
@@ -2259,10 +2279,9 @@ def _rewrite_links(
     such as a source note's evidence link to a Lean file, keeps its text and
     loses its target instead of dangling.
     """
-    # Most pages name a few nodes, so each node link is built where it is used.
-    # A coverage page can name most of the graph, so one cache serves the whole
-    # text and each target page it reaches is linked once.
-    page_hrefs: dict[Path, str] = {}
+    # A coverage page can name most of the graph, so one mapping serves the
+    # whole text and links each target page it reaches once.
+    links = _anchored_links(targets, page, extension=".md")
 
     def moved_target(raw: str) -> str | None:
         """Where *raw* should point once published, or None to leave it alone.
@@ -2273,40 +2292,52 @@ def _rewrite_links(
         bare = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
         # The query and fragment are not part of the file's name: they are
         # kept as written, beside the path render moves.
-        located, hashed, fragment = bare.partition("#")
+        located, separator, fragment = bare.partition("#")
         path, asked, query = located.partition("?")
-        if not path or urlsplit(path).scheme or path.startswith("/"):
-            return None
-        kept_query = query if asked else None
-        kept_fragment = fragment if hashed else None
         try:
+            if not path or urlsplit(path).scheme or path.startswith("/"):
+                return None
             candidate = (source_dir / unquote(path)).resolve()
-        except ValueError:  # a decoded NUL names no file, so the link is left as written
+        except ValueError:
+            # An unbalanced IPv6 bracket or a decoded NUL names no file to
+            # point at, so the link is published as written, like a URL.
             return None
         node_id = node_sources.get(candidate)
         if node_id is not None:
-            anchored = _anchored_links({node_id: targets[node_id]}, page, extension=".md", hrefs=page_hrefs)
-            href, anchor_separator, anchor = anchored[node_id].partition("#")
-            anchor_fragment = anchor if anchor_separator else None
-            if not targets[node_id][1] and hashed:
-                anchor_fragment = fragment
-            return _destination(href, kept_query, anchor_fragment)
+            href = links[node_id]
+            if not targets[node_id][1] and separator:
+                href = f"{'' if href == '#' else href}#{fragment}"
+            before, hashed, anchor = href.partition("#")  # the query goes before the anchor
+            return f"{before}{asked}{query}{hashed}{anchor}"
         if not _is_within(candidate, blueprint):
             # Nothing outside the blueprint is published: "" keeps only the text.
             return ""
         relative = candidate.relative_to(blueprint)
-        if sources_base is not None and relative.parts[:1] == (SOURCES_DIR,):
-            return quote(_source_href(sources_base, relative.parts[1:]), safe=_URL_SAFE) + _destination(
-                "", kept_query, kept_fragment
-            )
+        # A repository link to a note the captured blueprint lacks would 404, so
+        # it stays site-relative, where a strict build reports the page missing.
+        # The capture skips hidden files, so a hidden note keeps its repository
+        # link, which resolves once the note is committed, as check warns.
+        if (
+            sources_base is not None
+            and relative.parts[:1] == (SOURCES_DIR,)
+            and (os.path.exists(candidate) or _is_hidden(relative))
+        ):
+            return f"{_source_href(sources_base, relative.parts[1:])}{asked}{query}{separator}{fragment}"
         published = destination / relative
-        return _destination(mermaid.relative_link(published, page, candidate.suffix), kept_query, kept_fragment)
+        return f"{mermaid.relative_link(published, page, candidate.suffix)}{asked}{query}{separator}{fragment}"
+
+    def bracketed(href: str) -> str:
+        # A decoded path, or a query or fragment kept from angle brackets, can
+        # hold a space or a parenthesis. CommonMark allows no space in a bare
+        # destination, and Python-Markdown needs its parentheses balanced.
+        return f"<{href}>" if re.search(r"[\s()]", href) else href
 
     def replace(match: re.Match[str]) -> str:
-        href = moved_target(match.group("target"))
-        if href is None:
+        raw = match.group("target")
+        href = moved_target(raw)
+        if href is None or raw in (href, f"<{href}>"):  # nothing moved: keep the link as written
             return match.group(0)
-        return f"[{match.group('label')}]({href})" if href else match.group("label")
+        return f"[{match.group('label')}]({bracketed(href)})" if href else match.group("label")
 
     def rewrite(line: str) -> str:
         # A reference definition carries the destination for every `[x][label]`
@@ -2317,6 +2348,9 @@ def _rewrite_links(
             href = moved_target(definition.group("target"))
             if href:
                 indent, label = definition.group("indent"), definition.group("label")
+                # Python-Markdown reads a definition's destination only up to
+                # whitespace, in angle brackets or not, so whitespace is encoded.
+                href = re.sub(r"\s", lambda space: quote(space.group()), href)
                 return f"{indent}[{label}]: {href}{definition.group('rest') or ''}"
             return line
         return _MARKDOWN_LINK.sub(replace, line)
@@ -2491,12 +2525,15 @@ def _chapter_layout(
             continue
         target = slot.group("target")
         path, separator, fragment = target.partition("#")
-        if not path and separator:
-            node_id = anchor_nodes.get(fragment)
-        elif not path or urlsplit(path).scheme or path.startswith("/"):
+        try:
+            if not path and separator:
+                node_id = anchor_nodes.get(fragment)
+            elif not path or urlsplit(path).scheme or path.startswith("/"):
+                node_id = None
+            else:
+                node_id = node_sources.get((source_dir / unquote(path)).resolve())
+        except ValueError:  # an unbalanced IPv6 bracket or a decoded NUL names no article
             node_id = None
-        else:
-            node_id = node_sources.get((source_dir / unquote(path)).resolve())
         if node_id is None or node_id not in slotted or node_id in slots.values():
             continue
         slots[index] = node_id
@@ -2540,6 +2577,139 @@ def _chapter_stretches(narrative: str, lead: int, slots: dict[int, str]) -> list
     ]
 
 
+class _FenceSafeHtml(HTMLParser):
+    """Keep displayed fence markers from opening fences on the second pass.
+
+    HTML entities decode to the exact displayed code/TeX. Raw script/style
+    text is not entity-decoded by HTML, so it retains its original spelling.
+    """
+
+    _runs = re.compile(r"`{3,}|~{3,}")
+    _quoted = re.compile(r"(['\"])(.*?)\1", re.DOTALL)
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.parts: list[str] = []
+
+    @classmethod
+    def escaped(cls, value: str) -> str:
+        return cls._runs.sub(lambda match: "".join(f"&#{ord(char)};" for char in match.group()), value)
+
+    def handle_starttag(self, tag, attrs):
+        value = self.get_starttag_text()
+        # Quoted attribute values also decode entities; names are untouched.
+        self.parts.append(self._quoted.sub(
+            lambda match: match.group(1) + self.escaped(match.group(2)) + match.group(1), value
+        ))
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag):
+        self.parts.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        self.parts.append(data if self.cdata_elem else self.escaped(data))
+
+    def handle_entityref(self, name):
+        self.parts.append(f"&{name};")
+
+    def handle_charref(self, name):
+        self.parts.append(f"&#{name};")
+
+    def handle_comment(self, data):
+        self.parts.append(f"<!--{data}-->")
+
+    def handle_decl(self, decl):
+        self.parts.append(f"<!{decl}>")
+
+    def handle_pi(self, data):
+        self.parts.append(f"<?{data}>")
+
+    def unknown_decl(self, data):
+        self.parts.append(f"<![{data}{']]>' if data.startswith('CDATA[') else ']>'}")
+
+
+class _PublishedBodyLinks(Treeprocessor):
+    """Give parsed Markdown links their final URLs before they become HTML.
+
+    MkDocs does not rewrite links inside raw HTML. Authored raw HTML links are
+    not Markdown tree elements, so their spelling remains untouched.
+    """
+
+    def __init__(self, md):
+        super().__init__(md)
+        self.validation_targets: list[tuple[str, str]] = []
+
+    def run(self, root):
+        for element in root.iter():
+            if element.tag not in {"a", "img"}:
+                continue
+            key = "href" if element.tag == "a" else "src"
+            href = element.get(key, "")
+            try:
+                parts = urlsplit(href)
+            except ValueError:
+                self.validation_targets.append((element.tag, href))
+                continue
+            if not parts.scheme and not parts.netloc:
+                # Keep the original parsed link/image and .md destination for
+                # MkDocs' configured missing-file/anchor checks on the final
+                # page. Raw authored HTML links are not tree elements here.
+                self.validation_targets.append((element.tag, href))
+                if (element.tag == "a" and not parts.path.startswith("/")
+                        and parts.path.lower().endswith(".md") and "\0" not in unquote(parts.path)):
+                    path = _as_published(parts.path[:-3] + ".html")
+                    element.set("href", urlunsplit(parts._replace(path=path)))
+
+
+def _body_converter():
+    converter = site_converter()
+    # The final page assigns heading IDs once, across all its statements.
+    # attr_list still keeps an author's explicit {#id} here.
+    converter.treeprocessors.deregister("toc")
+    converter.treeprocessors.register(_PublishedBodyLinks(converter), "published-body-links", 5)
+    return converter
+
+
+def _protect_markdown_in_html(
+    text: str, *, references: Mapping[str, tuple[str, str]] | None = None, force: bool = False,
+) -> str:
+    """Parse an affected authored chunk before introducing HTML containers.
+
+    HTML extraction precedes arithmatex and indented code. Inside markdown=1,
+    r<n can consume the container's closing tag and lose its whole suffix.
+    Parsing the fragment first lets the configured Markdown engine distinguish
+    code, math, HTML and autolinks and emit the correct escaping for each.
+    The vault and generated wrapper/navigation markup are never rewritten.
+    """
+    if not force and "<" not in text:
+        return text
+    converter = _body_converter()
+    if references:
+        converter.references.update(references)
+    rendered = converter.convert(text)
+    if "```" in rendered or "~~~" in rendered:
+        protected = _FenceSafeHtml()
+        protected.feed(rendered)
+        protected.close()
+        rendered = "".join(protected.parts)
+    targets = converter.treeprocessors["published-body-links"].validation_targets
+    if targets:
+        # The visible fragment is raw HTML, which MkDocs does not validate.
+        # Native Markdown witnesses retain the original validation behavior,
+        # including images, decoded paths, queries, fragments and warning
+        # levels. A hidden subtree prevents extra layout or keyboard targets;
+        # whitespace-only labels add no visible text.
+        witnesses = []
+        for kind, href in dict.fromkeys(targets):
+            target = f"<{href}>" if "<" not in href and ">" not in href else href
+            witnesses.append(f"{'!' if kind == 'img' else ''}[ ]({target})")
+        rendered += '\n\n<div class="bp-body-link-validation" hidden markdown="1">\n\n'
+        rendered += "\n\n".join(witnesses) + "\n\n</div>"
+    return rendered
+
+
 def _render_environment(
     node: Node,
     *,
@@ -2560,6 +2730,19 @@ def _render_environment(
     # The statement as checked: the text the graph parsed, with its links
     # resolved from the chapter page it is published on.
     statement, remainder = statements[node.id]
+
+    # References in either chunk may be used by the other. If one chunk is
+    # preconverted, render both with the shared article context: otherwise its
+    # consumed definitions would leave the remaining Markdown links unresolved.
+    references = {}
+    affected = "<" in statement or "<" in remainder
+    if affected:
+        context = _body_converter()
+        context.convert("\n\n".join((statement, remainder)))
+        references = context.references
+    statement, remainder = (
+        _protect_markdown_in_html(part, references=references, force=affected) for part in (statement, remainder)
+    )
 
     code_links, implementation_rows, linked, unresolved = _lean_presentation(node, linker)
     context_link = _graph_context_link(node, page=page, destination=destination)
@@ -2645,9 +2828,14 @@ def _lean_presentation(
         elif location is not None:
             fallback.append(f'{code} <span class="bp-where">{html.escape(location.path.as_posix())}</span>')
             linked += 1
+        elif ambiguous := linker.index.ambiguity(name):
+            fallback.append(f'{code} <span class="bp-missing">defined more than once in the Lean sources</span>')
+            unresolved.append(
+                f"declaration defined more than once in the Lean sources: {node.id}: {name} ({ambiguous})"
+            )
         else:
             fallback.append(f'{code} <span class="bp-missing">not found in the Lean sources</span>')
-            unresolved.append(f"{node.id}: {name}")
+            unresolved.append(f"declaration not found in the Lean sources: {node.id}: {name}")
 
     code_links = f'<span class="bp-code-links">{"".join(icons)}</span>' if icons else ""
     rows = [("Lean", " · ".join(fallback))] if fallback else []
@@ -3380,9 +3568,13 @@ div.arithmatex {{ overflow-x: auto; }}
 /* Material caps every svg at its container's width, which would shrink a wide
    SVG formula until it cannot be read; it keeps the size TeX set instead. */
 mjx-container > svg {{ max-width: none !important; }}
-:is(p, h1, h2, h3, h4, h5, h6, ul, ol, td, th):has(mjx-container):not(.bp-readback *) {{
+:is(p, h1, h2, h3, h4, h5, h6, ul, ol, td, th):has(mjx-container) {{
   overflow-x: clip;
 }}
+/* A page or statement published as typed: its text wraps, and nothing in it
+   is markup. */
+.bp-as-typed-note {{ color: var(--bp-muted); font-size: 0.85em; }}
+.bp-as-typed {{ white-space: pre-wrap; overflow-wrap: anywhere; }}
 .bp-row {{ display: flex; gap: 0.75rem; }}
 .bp-key {{
   flex: 0 0 7.5rem;

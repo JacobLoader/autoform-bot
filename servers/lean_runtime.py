@@ -214,7 +214,7 @@ class LeanRuntimeConfig:
             + LSP_STARTUP_BUDGET
             + max_lsp_request_seconds
             + RUNTIME_SAFETY_SECONDS
-            > response_timeout
+            >= response_timeout
         ):
             raise ValueError(
                 "AUTOFORM_RUNTIME_RESPONSE_TIMEOUT is too small for "
@@ -1185,6 +1185,10 @@ def serve(paths: RuntimePaths) -> None:
     bound_identity: tuple[int, int] | None = None
     previous_handlers: dict[int, Any] = {}
     try:
+        # An ignored SIGCHLD, on Linux even one inherited from whatever started
+        # this daemon, has the kernel reap every child, and Popen would report
+        # each exit status as 0, so Lake's exit 3 would read as a clean file.
+        previous_handlers[signal.SIGCHLD] = signal.signal(signal.SIGCHLD, signal.SIG_DFL)
         try:
             info = paths.socket.lstat()
         except FileNotFoundError:

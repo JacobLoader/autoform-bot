@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
+import signal
 import subprocess
 import threading
 import time
@@ -22,6 +24,8 @@ from fastmcp.server import FastMCP
 
 from servers.lean_client import LeanRuntimeClient
 from servers.repl.core import (
+    REPL_ABORT_KILL_SECONDS,
+    REPL_ABORT_TERM_SECONDS,
     _process_group_has_live_members,
     _reap_process,
     _terminate_process_group,
@@ -41,6 +45,10 @@ MAX_LSP_MESSAGE_BYTES = 16 * 1024 * 1024
 LSP_EOF_GRACE_SECONDS = 2.0
 # How long close() waits for Lean to leave after shutdown and exit.
 LSP_SHUTDOWN_GRACE_SECONDS = 5.0
+# Names the random token start() puts in the Lean server's environment. Every
+# process the server starts inherits it, in any process group, orphaned or not,
+# unless a process between them starts it without the variable.
+_SESSION_TOKEN_ENV = "_AUTOFORM_LSP_SESSION_TOKEN"
 
 
 class LspProtocolError(RuntimeError):
@@ -69,6 +77,58 @@ class LspConfig:
     timeout: float = DEFAULT_LSP_TIMEOUT
 
 
+def _processes_with_token(token: str) -> list[Any]:
+    """Return the processes whose environment carries a session's token.
+
+    A process whose environment cannot be read is left out, so it is never
+    signalled: nothing shows that it is the session's. Lean and Lake run as
+    the user, who can read their environments; setuid programs the user runs,
+    such as ``login``, are unreadable at all times, so counting them would
+    fail every close. A process table that cannot be read fails the scan.
+    """
+    if not token:
+        # A missing token would match every process without the variable.
+        raise ValueError("a Lean LSP session token must be a nonempty string")
+    import psutil
+
+    try:
+        pids = psutil.pids()
+    except (OSError, psutil.Error) as error:
+        raise RuntimeError("cannot read the process table to find the Lean LSP session's processes") from error
+    found = []
+    for pid in pids:
+        if pid == os.getpid():
+            continue
+        try:
+            # The handle records the creation time before the environment is
+            # read, so it can only name the process that was read or an
+            # earlier one, which psutil then refuses to signal.
+            candidate = psutil.Process(pid)
+            environment = candidate.environ()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            # Exited or unreadable; a zombie reads as exited or empty.
+            continue
+        if environment.get(_SESSION_TOKEN_ENV) == token:
+            found.append(candidate)
+    return found
+
+
+def _wait_for_exit(processes: list[Any], deadline: float) -> None:
+    """Wait until every process has exited or become a zombie, or the deadline passes."""
+    import psutil
+
+    def running(process: Any) -> bool:
+        try:
+            return process.is_running() and process.status() != psutil.STATUS_ZOMBIE
+        except psutil.NoSuchProcess:
+            return False
+        except psutil.Error:
+            return True
+
+    while any(running(process) for process in processes) and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+
 class LeanLspSession:
     """Manages a Lean 4 language server subprocess via JSON-RPC."""
 
@@ -76,6 +136,8 @@ class LeanLspSession:
         self.config = config
         self.process: subprocess.Popen | None = None
         self._process_group_id: int | None = None
+        # Set by start(); every process the server starts carries it.
+        self._token: str | None = None
         self._group_retired = False
         self._retire_pending = False
         self._request_id = 0
@@ -92,6 +154,8 @@ class LeanLspSession:
             raise RuntimeError("Lean LSP transport requires a POSIX platform")
         env = os.environ.copy()
         env.pop("PYTHONPATH", None)
+        self._token = secrets.token_hex(16)
+        env[_SESSION_TOKEN_ENV] = self._token
         process: subprocess.Popen | None = None
         try:
             process = subprocess.Popen(
@@ -153,7 +217,7 @@ class LeanLspSession:
                     )
             else:
                 # Lean's watchdog starts each file worker in its own session
-                # and stops every worker group when its stdin closes. A TERM
+                # and stops worker groups itself when its stdin closes. A TERM
                 # first would kill the watchdog and orphan workers the group
                 # signal cannot reach. Close stdout too: the watchdog writes
                 # during that shutdown and handles a closed pipe, but would
@@ -173,6 +237,7 @@ class LeanLspSession:
             # retry must never signal a reused numeric PGID.
             self._group_retired = True
             self._process_group_id = None
+        self._stop_processes_with_token()
         _reap_process(process)
         for stream in (process.stdin, process.stdout):
             if stream is not None:
@@ -180,6 +245,39 @@ class LeanLspSession:
         self.process = None
         self._group_retired = False
         self._retire_pending = False
+
+    def _stop_processes_with_token(self) -> None:
+        """Terminate every live process that carries this session's token.
+
+        Lean's watchdog starts each file worker in its own session. As it
+        shuts down it skips a worker that has already exited, whose builds
+        keep running, and a watchdog that dies first orphans every worker.
+        None of them is in the server's group, but each carries the token.
+        Raise while any is left, so the caller retries before reaping the
+        leader.
+        """
+        token = self._token
+        if token is None:
+            return
+        import psutil
+
+        for signal_number, seconds in (
+            (signal.SIGTERM, REPL_ABORT_TERM_SECONDS),
+            (signal.SIGKILL, REPL_ABORT_KILL_SECONDS),
+        ):
+            processes = _processes_with_token(token)
+            if not processes:
+                return
+            for process in processes:
+                # psutil checks the PID's creation time before signalling, so a
+                # process that took over the PID after the scan is spared.
+                try:
+                    process.send_signal(signal_number)
+                except (OSError, psutil.Error):
+                    pass
+            _wait_for_exit(processes, time.monotonic() + seconds)
+        if _processes_with_token(token):
+            raise RuntimeError("processes started by the Lean LSP server are still running")
 
     def _abort_process(self) -> None:
         """Retry verified retirement without ever surrendering ownership."""
@@ -441,7 +539,7 @@ class LeanLspSession:
     def _read_message(self, timeout: float = 5) -> dict | None:
         """Read one bounded JSON-RPC frame within one absolute deadline."""
         if not self.process or not self.process.stdout:
-            return None
+            raise RuntimeError("LSP process not running")
 
         import select as _select
 
@@ -569,7 +667,7 @@ def create_lsp_server(runtime: LeanRuntimeClient) -> FastMCP:
         The runtime's LEAN_LSP_TIMEOUT (60 seconds by default) bounds the call,
         including any wait for a free Lean slot; a file that needs longer fails
         instead of returning partial diagnostics. Unbuilt imports are reported,
-        not built: build the listed modules and call again.
+        not built: build the file's imports and call again.
 
         Args:
             project_dir: Absolute path to the Lake project root.

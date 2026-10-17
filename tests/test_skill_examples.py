@@ -129,7 +129,7 @@ def test_import_edits_use_reported_scope_instead_of_a_blanket_ban(
     assert "`module_scope` is `loaded-root-library-graph`" in cli
     assert "`module_claim_target`" in cli
     assert "`lean-module/<lowercase-slug>-<sha256[:16]>`" in cli
-    assert "Required `claim_targets` contain only the selected article" in cli
+    assert "The import edit's `claim_targets` contain only the selected article" in cli
     assert "`affected_claim_targets`" in cli
     assert "downstream warnings, not pre-emptive ownership requirements" in cli
     assert "`claim_keys`" in cli
@@ -185,11 +185,12 @@ def test_import_edits_use_reported_scope_instead_of_a_blanket_ban(
 
 
 def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
-    """A run's lead keeps its workers apart, so claims are only for independent workers.
+    """A run's lead keeps its workers apart, so claims are only for other people and sessions.
 
-    A remote claim around `lake build` blocked other machines while missing the
-    real, machine-local conflict (#121): worktrees downloading into one Mathlib
-    cache at once. Builds take no claim, and the lead fills the cache first.
+    A remote claim around `lake build` made unrelated machines wait on each other,
+    while agents on one machine using different boards still downloaded into one
+    Mathlib cache at once (#121). Builds take no claim, and the lead fills the cache
+    first and asks the user if it cannot.
     """
 
     def read(relative: str) -> str:
@@ -201,12 +202,23 @@ def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
     assert "Within one run the lead keeps its workers apart" in formalize
     assert "no two workers, the lead included, hold the same target at once" in formalize
     assert (
-        "A worker holds its article's `claim_target` and the `claim_targets` it reported until its work lands "
-        "or it abandons the leaf without a candidate, so a handoff keeps them"
+        "A worker holds its article's `claim_target` and the `claim_targets` the lead confirmed until its work "
+        "lands or it abandons the leaf without a candidate, so a handoff keeps them"
     ) in formalize
     assert "reports the new targets to the lead before editing" in formalize
     assert "goes ahead only once the lead confirms that no other worker holds them" in formalize
-    assert "A subagent that cannot wait for the lead's answer stops and reports instead" in formalize
+    assert "A subagent that cannot wait for the lead's answer commits its work, stops, and reports instead" in formalize
+    assert "the lead answers when it dispatches the leaf again from that commit" in formalize
+    assert "otherwise send the lead the report's `claim_targets` and `affected_claim_targets`" in formalize
+    assert "In a run without claims, send the lead that report's `affected_claim_targets`" in formalize
+    assert "land the edit only once the lead confirms that no other worker holds them" in formalize
+    assert "without the lead's answer, or when integration fails, report the branch and commit" in formalize
+    assert "so capture a fresh baseline of that article on the shared branch" in formalize
+    assert "If the rerun fails too, ask the user before creating worktrees" in formalize
+    assert "dispatch no more at once than its memory can build for" in formalize
+    assert "Before choosing none, run `autoform claim list` once" in formalize
+    assert "an unexpired claim on the board means another session uses them" in formalize
+    assert "if the command fails, as it does in a checkout without an `origin`, tell the user" in formalize
     assert "the lead checks them when it confirms the edit's new targets and again before the edit lands" in formalize
     assert "If workers would wait on each other, the lead has one of them give up what it holds" in formalize
     assert "re-run `autoform work import-impact` on the result; if integration brought in a change" in formalize
@@ -218,12 +230,15 @@ def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
     assert "Claims are optional" in cli
     assert "builds take no claim" in cli
     assert "use them when other people or sessions may work on the same project at the same time" in cli
+    assert "Without claims, a Formalize subagent has its lead confirm the set instead" in cli
+    assert "or, without claims, after the lead confirms them" in cli
     assert "Claims are optional" in read("AGENTS.md")
     claims = (repo_root / "skills/formalize/references/claims.md").read_text(encoding="utf-8")
     assert "They replace asking the lead" in " ".join(claims.split())
     headings = {line[3:].lower().replace(" ", "-") for line in claims.splitlines() if line.startswith("## ")}
     anchors = re.findall(r"references/claims\.md#([a-z-]+)", formalize)
-    assert len(anchors) == 3 and set(anchors) <= headings, anchors
+    assert {"acquire-and-renew", "import-edits", "integration-and-handoff"} <= set(anchors), anchors
+    assert set(anchors) <= headings, set(anchors) - headings
     for relative in (
         "skills/formalize/SKILL.md",
         "skills/formalize/references/claims.md",
@@ -1317,11 +1332,33 @@ def test_roadmap_states_the_library_search_without_the_link(repo_root: Path) -> 
     assert "Search the pinned Mathlib checkout and every usable shared library before planning a replacement" in flat
 
 
+def test_roadmap_leaves_lean_unset_for_a_library_declaration(repo_root: Path) -> None:
+    """A library declaration goes in the implementation note, and `lean:` waits for the project's declaration.
+
+    `autoform check --lean-root` resolves `lean:` only in the project's own Lean files. In a trial (#349),
+    Roadmap set `lean:` to the library declarations it found; check could not find them, so it imported the
+    modules and rebuilt, then moved the names into the articles' prose instead of their implementation notes
+    (a comment on #346 records this).
+    """
+
+    blocks = (repo_root / "skills/roadmap/SKILL.md").read_text(encoding="utf-8").split("\n\n")
+    search = next(" ".join(block.split()) for block in blocks if "`autoform search`" in block)
+    sentences = re.split(r"(?<=\.) ", search)
+    # These check that each instruction is present, in one sentence of the search rule, not how it is worded.
+    assert any("implementation note" in s and "unset" in s and "Formalize" in s for s in sentences), sentences
+    assert any("`lean:`" in s and "project" in s and "--lean-root" in s for s in sentences), sentences
+    # The rules Roadmap defers to have Formalize record `lean:` once the project's declaration exists.
+    reference = (repo_root / "skills/formalize/references/library-search.md").read_text(encoding="utf-8")
+    own = next(p for p in (" ".join(b.split()) for b in reference.split("\n\n")) if "own result" in p)
+    assert "`lean:` records its name on acceptance" in own
+
+
 def test_skills_search_shared_libraries_and_say_what_to_do_with_a_hit(repo_root: Path) -> None:
     """A library hit prevents a second proof only if the agent searches the library and knows what to do.
 
     The rules live once, in Formalize's reference page; the three search paragraphs link to it and carry
     only what changes how they read: search the libraries too, and a library refusal is not a blocker.
+    Roadmap's also says how a hit is reused, since its agents did not open the link in trials.
     """
 
     reference_path = repo_root / "skills/formalize/references/library-search.md"
@@ -1469,7 +1506,7 @@ def test_example_workflows_match_the_scaffold_templates(repo_root: Path) -> None
 
     substitutions = {
         "{{AUTOFORM_SOURCE_YAML}}": '"https://github.com/facebookresearch/autoform-bot.git"',
-        "{{AUTOFORM_REF_YAML}}": '"c994d83f9fab1f40d69b2f279d4c62ca937a0186"',
+        "{{AUTOFORM_REF_YAML}}": '"0288506b87e2e2f70b7446bf0cf7145006138d74"',
     }
     template_dir = repo_root / "autoform_cli/templates/github/workflows"
     example_dir = repo_root / _EXAMPLE / ".github/workflows"

@@ -3,9 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
-import autoform_cli.__main__ as cli
 from autoform_cli.__main__ import main
 from autoform_cli.runtime import load_runtime_graph
 
@@ -126,21 +123,13 @@ def _with_body(blueprint: Path, body: str) -> Path:
     return blueprint
 
 
-def test_check_judges_the_articles_its_graph_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
-    """The verdict is about the articles the graph parsed; markup written after
-    the load is judged by the next check, never paired with the earlier parse."""
+def test_check_warns_about_markup_the_site_shows_as_typed(tmp_path: Path, capsys) -> None:
+    """Markup a published page could run is reported, and check still passes:
+    the site shows the page as typed until it is fixed."""
 
-    blueprint = _clean_blueprint(tmp_path)
-    load = cli.load_graph
+    blueprint = _with_body(_clean_blueprint(tmp_path), "<script>alert(1)</script>")
 
-    def load_then_edit(*args: object, **kwargs: object) -> object:
-        graph = load(*args, **kwargs)
-        _with_body(blueprint, "<script>alert(1)</script>")
-        return graph
-
-    monkeypatch.setattr(cli, "load_graph", load_then_edit)
-    assert main(["check", str(blueprint)]) == 0, capsys.readouterr().out
-    monkeypatch.undo()
-
-    assert main(["check", str(blueprint)]) == 1
-    assert "error: result: line 9: raw HTML is not allowed: <script>" in capsys.readouterr().out
+    assert main(["check", str(blueprint)]) == 0
+    out = capsys.readouterr().out
+    assert "warning: result: line 9: raw HTML is not allowed: <script>" in out
+    assert "warning: result: the site shows it as typed until these are fixed" in out

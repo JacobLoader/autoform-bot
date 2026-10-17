@@ -11,7 +11,6 @@ from autoform_cli.audit import audit_blueprint, audit_graph
 from autoform_cli.elaboration_limits import limits_in_force
 from autoform_cli.graph import Graph, Node, load_graph
 from autoform_cli.lean import LeanSourceError, index_project
-from autoform_cli.snapshot import BlueprintSnapshot
 
 
 def _ensure_chapter(blueprint: Path, relative: str) -> None:
@@ -360,15 +359,11 @@ def test_container_note_audit_handles_deep_containment_iteratively(
             proof_formalized=index == 1_199,
             lean="Project.result" if index == 1_199 else None,
         )
-    graph = Graph(
-        blueprint_dir=blueprint,
-        nodes=nodes,
-        snapshot=BlueprintSnapshot({node.path: b"" for node in nodes.values()}),
-    )
+    graph = Graph(blueprint_dir=blueprint, nodes=nodes)
     monkeypatch.setattr(
         audit_module,
         "_read_article",
-        lambda _text: audit_module._ArticleShape("A precise mathematical statement.", True),
+        lambda _path: audit_module._ArticleShape("A precise mathematical statement.", True),
     )
 
     result = audit_graph(graph, coverage_findings=[])
@@ -466,6 +461,10 @@ def test_audit_validates_local_source_links_without_network_access(tmp_path: Pat
     source = blueprint / "sources" / "paper.md"
     source.parent.mkdir(parents=True)
     source.write_text("# Paper\n\n## Theorem\n", encoding="utf-8")
+    (blueprint / ".drafts").mkdir()
+    (blueprint / ".drafts" / "notes.md").write_text("# Notes\n", encoding="utf-8")
+    (blueprint / "sources" / ".private").mkdir()
+    (blueprint / "sources" / ".private" / "paper.md").write_text("# Paper\n", encoding="utf-8")
     _article(
         blueprint,
         "chapter/result.md",
@@ -475,10 +474,14 @@ def test_audit_validates_local_source_links_without_network_access(tmp_path: Pat
             "../../sources/paper.md#theorem",
             "../../sources/missing.md",
             "../../../outside.md",
+            "../../.drafts/notes.md",
+            # Check only warns about this one; audit, the stricter gate, still reports it.
+            "../../sources/.private/paper.md",
             "https://example.invalid/paper",
             "ftp://example.invalid/paper",
             "//example.invalid/paper",
             "%00",
+            "http://[oops/paper",
         ),
     )
 
@@ -489,12 +492,70 @@ def test_audit_validates_local_source_links_without_network_access(tmp_path: Pat
     findings = _finding_map(blueprint)["roadmap/chapter/result.md"]
 
     assert findings == [
+        ("hidden-source-target", "source link names a hidden path, which render omits: '../../.drafts/notes.md'"),
+        (
+            "hidden-source-target",
+            "source link names a hidden path, which render omits: '../../sources/.private/paper.md'",
+        ),
         ("malformed-source-link", "source link contains an invalid path: '%00'"),
+        ("malformed-source-url", "source link is not a valid URL: 'http://[oops/paper'"),
         ("source-escapes-blueprint", "source link escapes the blueprint: '../../../outside.md'"),
         ("source-not-found", "source link does not resolve to a file: '../../sources/missing.md'"),
         ("unsupported-source-link", "source link uses a network location: '//example.invalid/paper'"),
         ("unsupported-source-link", "source link uses unsupported scheme: 'ftp://example.invalid/paper'"),
     ]
+
+
+def test_audit_reports_a_source_link_through_a_symlink_loop_alike_on_every_python(tmp_path: Path) -> None:
+    # Before Python 3.13 resolving a loop raises; from 3.13 it returns the looping path.
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    (blueprint / "sources").mkdir()
+    (tmp_path / "away").mkdir()
+    (tmp_path / "away" / "note.txt").write_text("outside\n", encoding="utf-8")
+    try:
+        (blueprint / "sources" / "loop.md").symlink_to("loop.md")
+        (tmp_path / "outer.md").symlink_to("outer.md")
+        # A loop behind a symbolic link that leaves the blueprint, and one before it.
+        (blueprint / "sources" / "away").symlink_to(tmp_path / "away")
+        (tmp_path / "away" / "loop.md").symlink_to("loop.md")
+        # A loop and `..` 45 times over, then out of the blueprint, and a chain past the recursion limit.
+        for n in range(45):
+            (blueprint / "sources" / f"hop{n}.txt").symlink_to(f"loop.md/../hop{n + 1}.txt")
+        (blueprint / "sources" / "hop45.txt").symlink_to("away/note.txt")
+        for n in range(1000):
+            (blueprint / "sources" / f"chain{n}.txt").symlink_to(f"chain{n + 1}.txt")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+    sources = ("../sources/loop.md", "../../outer.md", "../sources/away/loop.md", "../sources/loop.md/../away/note.txt")
+    sources += ("../sources/hop0.txt", "../sources/chain0.txt")
+    _article(blueprint, "result.md", declaration="theorem", origin="cited", sources=sources)
+
+    assert _finding_map(blueprint)["roadmap/result.md"] == [
+        ("source-escapes-blueprint", "source link escapes the blueprint: '../../outer.md'"),
+        ("source-escapes-blueprint", "source link escapes the blueprint: '../sources/away/loop.md'"),
+        ("source-escapes-blueprint", "source link escapes the blueprint: '../sources/hop0.txt'"),
+        ("source-escapes-blueprint", "source link escapes the blueprint: '../sources/loop.md/../away/note.txt'"),
+        ("source-not-found", "source link does not resolve to a file: '../sources/chain0.txt'"),
+        ("source-not-found", "source link does not resolve to a file: '../sources/loop.md'"),
+    ]
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")
+def test_audit_reports_a_source_link_under_an_unreadable_directory_as_missing(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    sources = ("../sources/locked/paper.txt",)
+    _article(blueprint, "result.md", declaration="theorem", origin="cited", sources=sources)
+    locked = blueprint / "sources" / "locked"
+    locked.mkdir(parents=True)
+    locked.chmod(0)
+    try:
+        findings = _finding_map(blueprint)["roadmap/result.md"]
+    finally:
+        locked.chmod(0o755)
+
+    assert findings == [("source-not-found", "source link does not resolve to a file: '../sources/locked/paper.txt'")]
 
 
 def test_audit_rejects_missing_markdown_source_anchor(tmp_path: Path) -> None:
@@ -550,6 +611,36 @@ def test_audit_validates_lean_targets_only_when_root_is_supplied(tmp_path: Path)
     ]
     assert with_lean["roadmap/wrong-kind.md"] == [
         ("lean-target-kind-mismatch", "Lean target kind def does not match declaration intent theorem")
+    ]
+
+
+def test_audit_checks_the_public_declaration_beside_an_earlier_private_twin(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    _article(blueprint, "result.md", declaration="theorem", statement="formalized", lean="Project.result")
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    (lean_root / "A.lean").write_text("private def Project.result : Nat := 1\n", encoding="utf-8")
+    (lean_root / "B.lean").write_text("theorem Project.result : True := trivial\n", encoding="utf-8")
+
+    assert "roadmap/result.md" not in _finding_map(blueprint, lean_root=lean_root)
+
+
+def test_audit_reports_a_target_defined_more_than_once_and_checks_nothing_else_of_it(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    _article(blueprint, "result.md", declaration="theorem", statement="formalized", lean="Project.result")
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    (lean_root / "A.lean").write_text("def Project.result : Nat := 1\n", encoding="utf-8")
+    (lean_root / "B.lean").write_text("private def Project.result : Nat := 1\n", encoding="utf-8")
+    (lean_root / "C.lean").write_text("\ndef Project.result : Nat := 1\n", encoding="utf-8")
+
+    assert _finding_map(blueprint, lean_root=lean_root)["roadmap/result.md"] == [
+        (
+            "lean-target-ambiguous",
+            "Lean declaration target is defined more than once: Project.result (A.lean:1, B.lean:1, C.lean:2)",
+        )
     ]
 
 
@@ -849,7 +940,25 @@ def test_an_alias_ends_the_source_span_of_the_declaration_above_it(tmp_path: Pat
         "theorem big : True := by\n  trivial\nalias small := big\n\n", encoding="utf-8"
     )
 
-    assert audit_module._source_spans(index_project(lean_root)) == {"big": 2, "small": 2}
+    spans = audit_module._source_spans(index_project(lean_root))
+    assert {declaration.name: span for declaration, span in spans.items()} == {"big": 2, "small": 2}
+
+
+def test_a_private_twin_ends_the_source_span_of_the_declaration_above_it(tmp_path: Path) -> None:
+    lean_root = tmp_path / "lean"
+    lean_root.mkdir()
+    # The public twin sorts before Big.lean.
+    (lean_root / "A.lean").write_text("theorem helper : True := trivial\n", encoding="utf-8")
+    (lean_root / "Big.lean").write_text(
+        "theorem big : True := by\n  trivial\nprivate theorem helper : True := by\n  trivial\n", encoding="utf-8"
+    )
+
+    spans = audit_module._source_spans(index_project(lean_root))
+    assert sorted((key.path.as_posix(), key.line, span) for key, span in spans.items()) == [
+        ("A.lean", 1, 1),
+        ("Big.lean", 1, 2),
+        ("Big.lean", 3, 2),
+    ]
 
 
 def test_audit_reports_unbounded_and_inherited_elaboration_limits(tmp_path: Path) -> None:
@@ -1406,39 +1515,6 @@ def test_an_explicit_attr_list_anchor_resolves(tmp_path: Path) -> None:
     codes = {finding.code for finding in audit_blueprint(blueprint).findings}
 
     assert "source-anchor-not-found" not in codes
-
-
-def test_audit_reads_article_text_only_as_its_graph_parsed_it(tmp_path: Path, monkeypatch) -> None:
-    """An article rewritten after the graph was loaded is not audited as a blend.
-
-    Before the write the article has no '## Depends on' section; the write adds
-    one but marks the proof formalized without the statement. Each state has a
-    finding, but the old metadata beside the new text has none, so auditing that
-    blend would report a clean roadmap that no file ever held. The audit judges
-    the state the graph loaded.
-    """
-    blueprint = tmp_path / "blueprint"
-    _coverage(blueprint)
-    _article(blueprint, "result.md", depends=False, declaration="theorem")
-    assert _finding_map(blueprint) == {
-        "roadmap/result.md": [
-            ("missing-depends-section", "formalizable article has no explicit '## Depends on' section")
-        ]
-    }
-
-    def load_then_rewrite(*args, **kwargs):
-        graph = load_graph(*args, **kwargs)
-        _article(blueprint, "result.md", declaration="theorem", proof="formalized")
-        return graph
-
-    monkeypatch.setattr("autoform_cli.audit.load_graph", load_then_rewrite)
-    findings = _finding_map(blueprint)
-    monkeypatch.undo()
-
-    assert {path: [code for code, _reason in items] for path, items in findings.items()} == {
-        "roadmap/result.md": ["missing-depends-section"]
-    }
-    assert {code for code, _reason in _finding_map(blueprint)["roadmap/result.md"]} == {"invalid-graph"}
 
 
 @pytest.mark.parametrize(

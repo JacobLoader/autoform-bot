@@ -8,9 +8,9 @@ import json
 import os
 import re
 import shutil
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
-from urllib.parse import quote
 
 import pytest
 
@@ -18,7 +18,7 @@ from autoform_cli.__main__ import main
 from autoform_cli.graph import load_graph
 from autoform_cli.markdown import site_converter, statement_and_notes
 from autoform_cli.mathjax import NEUTRALISED, mathjax_script
-from autoform_cli.publishable import publishable_article
+from autoform_cli.publishable import publishable_article, shown_as_typed
 from autoform_cli.render import _GENERATED_FILES, PublicationError, _site_paths, render_site
 from autoform_cli.scaffold import scaffold_project
 from tests.test_render import _project
@@ -61,14 +61,23 @@ def _render(blueprint: Path) -> Path:
     return out
 
 
-def _refused(blueprint: Path, capsys: pytest.CaptureFixture[str], reason: str, match: str | None = None) -> None:
-    """Check fails naming reason, and render refuses the blueprint, with match
-    in its message when one is given."""
+def _warned(
+    blueprint: Path, capsys: pytest.CaptureFixture[str], reason: str, *, stops_render: bool = False
+) -> Path | None:
+    """Check passes and warns naming ``reason``. Render then publishes the
+    site, with the same warning, and returns it; or, ``stops_render``, it
+    stops naming ``reason`` before writing anything."""
 
-    assert main(["check", str(blueprint)]) == 1
+    assert main(["check", str(blueprint)]) == 0
     assert reason in capsys.readouterr().out
-    with pytest.raises(PublicationError, match=re.escape(match) if match else None):
-        _render(blueprint)
+    out = blueprint.parents[1] / "out"
+    if stops_render:
+        with pytest.raises(PublicationError, match=re.escape(reason)):
+            render_site(blueprint, out, lean_root=blueprint.parent)
+        return None
+    report = render_site(blueprint, out, lean_root=blueprint.parent)
+    assert any(reason in warning for warning in report.warnings), report.warnings
+    return out
 
 
 def _settings(script: str) -> dict:
@@ -110,21 +119,30 @@ def test_the_page_turns_off_tex_that_reaches_past_its_own_formula() -> None:
     assert {"label", "mmlToken", "DeclareMathOperator", "newtagform", "mathtoolsset"} <= set(NEUTRALISED)
 
 
-@pytest.mark.parametrize("mkdocs", ["scaffolded", "example"])
-def test_mkdocs_loads_mathjax_only_through_the_rendered_script(tmp_path: Path, mkdocs: str) -> None:
-    """Neither a new project nor the example keeps a copy of the script or
-    names a MathJax release of its own."""
+def test_mkdocs_lists_the_rendered_script_before_mathjax(tmp_path: Path) -> None:
+    """A new project keeps no copy of the script, and mkdocs.yml lists the
+    rendered script before the MathJax bundle, so the script configures
+    MathJax before the bundle starts, and the bundle is the release the
+    script checks for."""
 
-    if mkdocs == "scaffolded":
-        scaffold_project(tmp_path, title="Finite Flat")
-        project = tmp_path
-    else:
-        project = _EXAMPLE
-    configuration = (project / "mkdocs.yml").read_text(encoding="utf-8")
+    scaffold_project(tmp_path, title="Finite Flat")
+    configuration = (tmp_path / "mkdocs.yml").read_text(encoding="utf-8")
 
-    assert "  - javascripts/mathjax.js\n" in configuration
-    assert "mathjax@" not in configuration
-    assert not (project / "blueprint/javascripts/mathjax.js").exists()
+    assert configuration.index("  - javascripts/mathjax.js\n") < configuration.index(f"  - {_BUNDLE}\n")
+    assert not (tmp_path / "blueprint/javascripts/mathjax.js").exists()
+
+
+def test_the_generated_script_is_valid_javascript(tmp_path: Path) -> None:
+    """Nothing typesets a formula if the script does not parse, and the page
+    shows no more than a console error."""
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available")
+    script = _render(_vault(tmp_path, macros=json.dumps(_MACROS))) / "javascripts/mathjax.js"
+
+    result = subprocess.run([node, "--check", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("newline", ["\n", "\r\n"])
@@ -138,14 +156,15 @@ def test_a_configuration_init_wrote_is_replaced_without_a_word(tmp_path: Path, n
     assert _settings(script)["page"]["packages"] == _PAGE_PACKAGES
 
 
-def test_an_edited_configuration_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Its edits would be lost, so neither check nor render goes ahead."""
+def test_an_edited_configuration_is_replaced_with_a_warning(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Its edits are lost, so check and render say so, and the site gets the
+    script render writes."""
 
     kept = _SCAFFOLDED.replace("  tex: {\n", '  tex: {\n    macros: {RR: "\\\\mathbb{R}"},\n')
     blueprint = _vault(tmp_path, kept=kept)
-    reason = "move any tex.macros to tex-macros.json and delete it"
 
-    _refused(blueprint, capsys, reason, reason)
+    site = _warned(blueprint, capsys, "move any tex.macros to tex-macros.json and delete it")
+    assert _settings((site / "javascripts/mathjax.js").read_text(encoding="utf-8"))["page"]["macros"] == _OFF
 
 
 def _changed_after_capture(monkeypatch: pytest.MonkeyPatch, change: Callable[[], object]) -> None:
@@ -184,22 +203,25 @@ def test_check_and_render_use_the_macros_they_captured(
     assert _settings((site / "javascripts/mathjax.js").read_text(encoding="utf-8"))["page"]["macros"] == {**published, **_OFF}
 
 
-def test_macros_made_valid_after_capture_are_still_refused(
+def test_macros_made_valid_after_capture_are_still_left_out(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Invalid macros captured are refused even if the file is fixed before
-    the script is built, so the site never publishes a script without the
-    macros beside a tex-macros.json that has none."""
+    """Invalid macros captured are left out, with a warning, even if the file
+    is fixed before the script is built, so the script always matches the
+    tex-macros.json published beside it."""
 
     blueprint = _vault(tmp_path, macros="{")
     macros = blueprint / "tex-macros.json"
     _changed_after_capture(monkeypatch, lambda: macros.write_text(json.dumps(_MACROS), encoding="utf-8"))
 
-    assert main(["check", str(blueprint)]) == 1
-    assert "tex-macros.json: not valid JSON" in capsys.readouterr().out
+    assert main(["check", str(blueprint)]) == 0
+    assert "warning: tex-macros.json: not valid JSON" in capsys.readouterr().out
     macros.write_text("{", encoding="utf-8")
-    with pytest.raises(PublicationError, match="tex-macros.json: not valid JSON"):
-        _render(blueprint)
+    report = render_site(blueprint, blueprint.parents[1] / "out", lean_root=blueprint.parent)
+    site = report.output_dir
+    assert any("tex-macros.json: not valid JSON" in warning for warning in report.warnings)
+    assert (site / "tex-macros.json").read_text(encoding="utf-8") == "{"
+    assert _settings((site / "javascripts/mathjax.js").read_text(encoding="utf-8"))["page"]["macros"] == _OFF
 
 
 
@@ -222,11 +244,20 @@ _NESTED = '{"RR": ' + "[" * 100_000 + "]" * 100_000 + "}"
         ('{"f": ["#1", true]}', "\\f must be a body, [body, arguments], or [body, arguments, default]"),
     ],
 )
-def test_project_macros_that_cannot_be_used_are_refused(macros: str, reason: str) -> None:
-    """Check and render refuse on these issues, as the edited and the
-    captured configurations above show."""
+def test_project_macros_that_cannot_be_used_are_left_out(macros: str, reason: str) -> None:
+    """Check and render warn about these, as the edited and the captured
+    configurations above show."""
 
     assert any(reason in issue for issue in mathjax_script(None, macros.encode())[1])
+
+
+def test_the_macros_that_can_be_used_are_kept_beside_one_left_out() -> None:
+    """One bad macro does not take the project's other notation off the site."""
+
+    script, warnings = mathjax_script(None, json.dumps({**_MACROS, "R R": "x", "label": "y"}).encode())
+
+    assert len(warnings) == 2
+    assert _settings(script)["page"]["macros"] == {**_MACROS, **_OFF}
 
 def _directory_with_a_file(path: Path) -> None:
     path.mkdir(parents=True)
@@ -267,12 +298,12 @@ def test_the_guarded_paths_are_every_file_render_writes(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("make", [_directory_with_a_file, _symlink, _fifo], ids=["directory", "symlink", "fifo"])
-def test_something_other_than_a_file_where_render_writes_one_is_refused(
+def test_something_other_than_a_file_where_render_writes_one_stops_render(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], make
 ) -> None:
     """One rule covers every file render writes, and the macros file it reads:
-    a directory there, captured with what it holds, is named by check, and
-    render refuses it before writing rather than stopping half way with an
+    a directory there, captured with what it holds, is named by check's
+    warnings, and render stops before writing rather than half way with an
     OSError. Capture refuses a symlink or special file anywhere but at a name
     it keeps out of the site, which it never reads."""
 
@@ -291,7 +322,7 @@ def test_something_other_than_a_file_where_render_writes_one_is_refused(
         _fifo: lambda relative: f"refusing non-regular blueprint publication input: {relative}: ",
     }[make]
 
-    assert main(["check", str(blueprint)]) == 1
+    assert main(["check", str(blueprint)]) == 0
     out = capsys.readouterr().out
     assert [
         relative
@@ -309,11 +340,11 @@ def test_something_other_than_a_file_where_render_writes_one_is_refused(
     ],
     ids=["directory", "file"],
 )
-def test_what_render_captured_in_the_way_is_refused_once_gone(
+def test_what_render_captured_in_the_way_stops_it_once_gone(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make, reason: str
 ) -> None:
     """Render copies what it captured, so a directory or file it captured in
-    the way of a page it writes is refused even when the disk no longer has
+    the way of a page it writes stops it even when the disk no longer has
     it by the time the paths are checked."""
 
     blueprint = _vault(tmp_path)
@@ -326,21 +357,16 @@ def test_what_render_captured_in_the_way_is_refused_once_gone(
 
 
 @pytest.mark.parametrize("folder", ["dependencies", "dependencies/nodes", "javascripts", "stylesheets", "assets"])
-def test_a_file_where_render_needs_a_folder_is_refused(
+def test_a_file_where_render_needs_a_folder_stops_render(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], folder: str
 ) -> None:
     blueprint = _vault(tmp_path)
     _file(blueprint / folder)
-    reason = f"{folder}: is a file, where autoform render needs a folder for {folder}/"
 
-    _refused(blueprint, capsys, reason, reason)
-
+    _warned(blueprint, capsys, f"{folder}: is a file, where autoform render needs a folder for {folder}/", stops_render=True)
 
 
-_OPENED = (
-    "raw HTML is not allowed: the site would read a < before a letter as the start of a tag, and publish "
-    "'</div>' after it as HTML; in a formula, put a space after <, as in $a < b$"
-)
+
 _ATTRIBUTE_RULE = "is not allowed: it would give the text an id, a class, or a style of its own; delete it"
 #: An article's frontmatter, so the lines named count it as the file does.
 _TOP = "---\ndeclaration: theorem\n---\n\n# Top\n\n"
@@ -350,7 +376,6 @@ _TOP = "---\ndeclaration: theorem\n---\n\n# Top\n\n"
     ("article", "reason"),
     [
         ("First.\n\nThen <b>bold</b>.", "line 9: raw HTML is not allowed: <b>, </b>;"),
-        ("First.\n\nThen $a<b$.", f"line 9: {_OPENED}"),
         ("First.\n\nA remark.\n{: .bp-mark }", f"line 10: attribute list {{: .bp-mark }} {_ATTRIBUTE_RULE}"),
         ("First.\n\nSee [x](javascript:alert(1)).", "line 9: links are not allowed to javascript: addresses"),
         pytest.param(
@@ -360,16 +385,16 @@ _TOP = "---\ndeclaration: theorem\n---\n\n# Top\n\n"
         ),
     ],
 )
-def test_a_refusal_names_the_line_of_the_article(article: str, reason: str) -> None:
+def test_a_warning_names_the_line_of_the_article(article: str, reason: str) -> None:
     assert any(error.startswith(reason) for error in publishable_article(f"{_TOP}{article}\n")[1])
 
 
 @pytest.mark.parametrize("frontmatter", ["---\n---\n\n", ""], ids=["frontmatter", "none"])
-def test_a_refusal_in_a_chapter_names_the_chapter_and_the_line(
+def test_a_warning_in_a_chapter_names_the_chapter_and_the_line(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], frontmatter: str
 ) -> None:
     """Check reads a chapter whole and in the stretches between its
-    statements, and both readings name the line in the file, so a refusal is
+    statements, and both readings name the line in the file, so a finding is
     reported once, whatever the header render puts in place of the
     frontmatter."""
 
@@ -379,34 +404,12 @@ def test_a_refusal_in_a_chapter_names_the_chapter_and_the_line(
     chapter.write_text(f"{frontmatter}{body}\nLast, <b>x</b>.\n", encoding="utf-8")
     line = len(chapter.read_text(encoding="utf-8").splitlines())
 
-    assert main(["check", str(blueprint)]) == 1
-    refused = [found for found in capsys.readouterr().out.splitlines() if found.startswith("error: roadmap:")]
-    assert refused == [f"error: roadmap: line {line}: raw HTML is not allowed: <b>, </b>; {_RAW_HTML_FIX}"]
-
-
-# The forms GitHub shows as formulas with their TeX as written.
-_PROTECTED = "Inline $`a \\leq b`$, and displayed:\n\n```math\n\\sum_{i<n} i\n```"
-_PROTECTED_HTML = ('<span class="arithmatex">\\(a \\leq b\\)</span>', '<div class="arithmatex">\\[\n\\sum_{i&lt;n} i\n\\]</div>')
-
-
-def test_the_protected_formula_forms_are_formulas_on_the_site(tmp_path: Path) -> None:
-    """GitHub shows $`...`$ and a ```math fence as formulas, and the site's
-    Markdown, which mkdocs.yml configures as check does, reads them so too,
-    rather than as a dollar sign and code, and a code block."""
-
-    text, errors = publishable_article(_PROTECTED)
-    reading = site_converter().convert(text)
-
-    assert errors == ()
-    assert all(formula in reading for formula in _PROTECTED_HTML)
-    assert "<code" not in reading
-    blueprint = _vault(tmp_path)
-    _with_article(blueprint, _PROTECTED)
     assert main(["check", str(blueprint)]) == 0
-    pages = [page.read_text(encoding="utf-8") for page in _render(blueprint).rglob("*.md")]
-    (page,) = [page for page in pages if "a \\leq b" in page]
-    assert all(formula in site_converter().convert(page) for formula in _PROTECTED_HTML)
-
+    warned = [found for found in capsys.readouterr().out.splitlines() if found.startswith("warning: roadmap:")]
+    assert warned == [
+        f"warning: roadmap: line {line}: raw HTML is not allowed: <b>, </b>; {_RAW_HTML_FIX}",
+        "warning: roadmap: the site shows it as typed until these are fixed",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -427,13 +430,34 @@ def test_the_protected_formula_forms_are_formulas_on_the_site(tmp_path: Path) ->
         "``` { .lean }\nx\n```",
         '```lean title="Main.lean" linenums="1"\nx\n```',
         '```{.lean hl_lines="1"}\nx\n```',
-        # Nothing on the site draws a Mermaid block it did not write.
+        # An authored diagram is drawn.
         "```mermaid\ngraph LR\n  A --> B\n```",
         "Render draws the `mermaid` graphs.",
     ],
 )
-def test_what_an_article_may_still_say_is_accepted(article: str) -> None:
+def test_what_an_article_may_still_say_is_published_as_written(article: str) -> None:
     assert publishable_article(f"# Top\n\n{article}\n")[1] == ()
+
+
+@pytest.mark.parametrize(
+    ("article", "named", "line"),
+    [
+        ("$\\newcommand{\\RR}{\\mathbb{R}} \\RR$ and $x \\label{one}$.", "\\newcommand, \\label", 3),
+        ("$$\n\\DeclareMathOperator{\\rank}{rank}\n$$", "\\DeclareMathOperator", 4),
+    ],
+)
+def test_a_formula_that_defines_notation_is_reported_apart(article: str, named: str, line: int) -> None:
+    """The site ignores notation an article defines, so such a formula shows
+    an error in red; the page itself is published as written. Prose that
+    names a command, outside a formula, is not reported."""
+
+    _page, errors, notation = publishable_article(f"# Top\n\n{article}\n\nProse names \\def.\n")
+
+    assert errors == ()
+    assert notation == (
+        f"line {line}: formulas define or use {named}: the site ignores notation an article defines and turns these "
+        "commands off, so each shows an error in red; put the project's notation in blueprint/tex-macros.json",
+    )
 
 @pytest.mark.parametrize(
     ("article", "reason"),
@@ -463,7 +487,7 @@ _RAW_HTML_FIX = (
         ("base", "A remark.\n{.bp-statement}", f"base: line 14: attribute list {{.bp-statement}} {_ATTRIBUTE_RULE}"),
     ],
 )
-def test_a_refusal_names_the_page_and_says_how_to_write_it(
+def test_a_warning_names_the_page_and_says_how_to_write_it(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], relative: str, written: str, expected: str
 ) -> None:
     """The fix for raw HTML says how Markdown writes what HTML is reached for."""
@@ -474,8 +498,8 @@ def test_a_refusal_names_the_page_and_says_how_to_write_it(
     else:
         (blueprint / relative).write_text(written, encoding="utf-8")
 
-    assert main(["check", str(blueprint)]) == 1
-    assert expected in capsys.readouterr().out
+    assert main(["check", str(blueprint)]) == 0
+    assert f"warning: {expected}" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -493,20 +517,21 @@ def test_tags_after_a_declaration_on_the_same_line_are_named(article: str, names
 
 
 @pytest.mark.parametrize(
-    ("article", "line"),
+    "article",
     [
-        ("Intro.\n\nLet $a<b$ hold.", 3),
-        ("Intro.\n\n$$\\sum_{i<n} x$$", 3),
-        ("Intro.\n\n$$\n\\sum_{i<n}\n$$", 4),
+        "Intro.\n\nLet $a<b$ hold.",
+        "Intro.\n\n$$\\sum_{i<n} x$$",
+        "Intro.\n\n$$\n\\sum_{i<n}\n$$",
+        "Intro.\n\nFor $a<b>c$, and only r<n.",
     ],
 )
-def test_a_tag_only_the_site_reads_in_a_formula_is_named_by_its_line(article: str, line: int) -> None:
-    """A < before a letter in a formula is no tag to the pattern check reads
-    HTML with, but the site's converter opens one there and publishes the
-    markup render puts after the text as HTML. The refusal names the line
-    the < is on, and how a formula keeps clear of it."""
+def test_a_comparison_in_a_statement_is_published_as_written(article: str) -> None:
+    """Render converts a statement holding a < on its own before boxing it,
+    and the converter reads a formula first, so neither a comparison in a
+    formula nor a bare r<n opens a tag; a formula's text excuses the markup
+    it spells, as code does."""
 
-    assert publishable_article(article)[1] == (f"line {line}: {_OPENED}",)
+    assert publishable_article(article)[1] == ()
 
 
 @pytest.mark.parametrize(
@@ -517,7 +542,7 @@ def test_a_tag_only_the_site_reads_in_a_formula_is_named_by_its_line(article: st
         ("&#x" + "f" * 39000 + ";", "&#xfffffffffffff... (39004 characters) (U+FFFD REPLACEMENT CHARACTER)"),
     ],
 )
-def test_a_long_character_reference_is_refused_by_name(reference: str, shown: str) -> None:
+def test_a_long_character_reference_is_named_short(reference: str, shown: str) -> None:
     """Python converts no number of more than 4300 digits, and a message that
     repeats one is no use."""
 
@@ -542,7 +567,7 @@ def test_a_long_character_reference_is_refused_by_name(reference: str, shown: st
     ],
 )
 def test_markdown_the_site_converter_renders_is_checked_for_raw_html(markup: str, reason: str | None) -> None:
-    """Markdown the site's own converter renders, which reads HTML, is refused
+    """Markdown the site's own converter renders, which reads HTML, is reported
     for any HTML in it outside code, which it shows as typed, and for a
     character reference without its semicolon, which that converter completes."""
 
@@ -561,6 +586,21 @@ def _published(page: Path) -> str:
     from mkdocs.utils.meta import get_data
 
     return site_converter().convert(get_data(page.read_text(encoding="utf-8"))[0])
+
+
+def test_text_shown_as_typed_is_inert_on_the_site() -> None:
+    """Everything in a page or a box published as typed is text: no tag,
+    link, emphasis, or formula survives the site's converter, and blank lines
+    stay inside the one block."""
+
+    page = shown_as_typed(publishable_article(f"# T\n\n{_FORGED}\n\n\n*emph* [l](javascript:x) $a<b$\n")[0])
+    box = shown_as_typed(f"Statement {_FORGED}", page=False)
+
+    assert page.startswith("---\n{}\n---\n")
+    for published in (site_converter().convert(page.removeprefix("---\n{}\n---\n")), site_converter().convert(box)):
+        assert "<script" not in published and "<em>" not in published and "href" not in published
+        assert published.count('<pre class="bp-as-typed">') == 1
+        assert '<p class="bp-as-typed-note">' in published
 
 
 def test_a_statement_keeps_the_indent_check_read_it_with(tmp_path: Path) -> None:
@@ -585,59 +625,22 @@ _ENCODED_MARKUP = (
     "%3Cspan%20class%3D%22bp-mark%22%3EFORGED%3C/span%3E.md)."
 )
 
-_CHARACTERS = [")", "<", ">", '"', "\n", "`", "[", "]", "(", "$", "*", "\\", " "]
-_WEB = "[Mathlib](https://leanprover-community.github.io/x.html)"
-_KEPT = (
-    "[the paper](../sources.md#lemma-3), [its text](../sources.md?plain=1#lemma-3), "
-    "[as text](../sources.md?plain=1), [below](#later)"
-)
-
-
-def test_a_link_render_moves_keeps_its_destination_encoded(tmp_path: Path) -> None:
+def test_a_link_whose_target_decodes_to_markup_publishes_none(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Render resolves a relative link's target decoded, as the file system
-    names it, and writes path and fragment back encoded, in a link that stays
-    a link, on every kind of page: a target that decodes to a parenthesis and
-    tags is a dead link, not a script and a mark, and an angle-bracketed
-    destination that loses its brackets is not split. Links between articles,
-    into the sources, to an anchor, and out of the site keep their
-    destinations, and a query stays out of the file's name, so the strict
-    build still finds the file."""
+    names it, and writes it back. Check reads each page with its links moved,
+    so a target that decodes to a parenthesis and tags, which would end the
+    link and spell out a script and a status mark, is reported, and the site
+    shows the page as typed."""
 
     blueprint = _vault(tmp_path)
-    (blueprint / "sources.md").write_text("# Paper\n", encoding="utf-8")
-    moved = [(quote(f"a{character}b", safe=""), quote(character, safe="")) for character in _CHARACTERS]
-    _with_article(
-        blueprint,
-        "\n\n".join(
-            [
-                f"See [the base](base.md), [its section](base.md#notes), {_KEPT}, [the chapter](README.md), and {_WEB}.",
-                *(f"See [here]({target}.md) and [there](#{fragment}x)." for target, fragment in moved),
-                "See [x](../sources.md#a<b`c).\n\nSee [y][r].\n\n[r]: <../sources.md#a) b<c`d>",
-                _ENCODED_MARKUP,
-            ]
-        ),
-    )
-    chapter = blueprint / "roadmap/README.md"
-    chapter.write_text(
-        chapter.read_text(encoding="utf-8").replace("main result.", f"main result, {_ENCODED_MARKUP}"), encoding="utf-8"
-    )
     (blueprint / "notes.md").write_text(f"# Notes\n\nThe notes, {_ENCODED_MARKUP}\n", encoding="utf-8")
 
-    site = _render(blueprint)
-
-    written = (site / "roadmap/README.md").read_text(encoding="utf-8")
-    assert f"See [the base](#base), [its section](#base), {_KEPT}, [the chapter](#), and {_WEB}." in written
-    page, notes = _published(site / "roadmap/README.md"), _published(site / "notes.md")
-    for target, fragment in moved:
-        assert f'<a href="{target}.md">here</a>' in page and f'<a href="#{fragment}x">there</a>' in page
-    assert '<a href="../sources.md#a%3Cb%60c">x</a>' in page
-    assert '<a href="../sources.md#a%29%20b%3Cc%60d">y</a>' in page
-    markup = (
-        '<a href="%29%3Cscript%3Edocument.title%3D1%3C/script%3E%3Cspan%20class%3D%22bp-mark%22%3EFORGED'
-        '%3C/span%3E.md">here</a>'
-    )
-    assert (page.count(markup), notes.count(markup)) == (2, 1)
-    assert not any("<script" in html or "FORGED</span>" in html for html in (page, notes))
+    site = _warned(blueprint, capsys, "notes.md: the site shows it as typed until these are fixed")
+    notes = _published(site / "notes.md")
+    assert "<script" not in notes and "FORGED</span>" not in notes
+    assert '<pre class="bp-as-typed">' in notes
 
 
 def _with_base_notes(blueprint: Path, notes: str) -> None:
@@ -663,19 +666,18 @@ def test_a_fence_left_open_cannot_run_into_the_next_article(
     the whole page: a fence one leaves open would run through render's own
     markup, its status marks included, and end at the next leaf's first
     fence, so the code that leaf was checked with would be published live.
-    Check refuses the open fence, by its line, and render publishes
-    nothing."""
+    Check reports the open fence, by its line, and the site shows that
+    leaf's box as typed, so the other leaf's code stays code."""
 
     blueprint = _vault(tmp_path)
     _with_base_notes(blueprint, f"{fence}\n")
     _with_article(blueprint, f"The main result.\n\n{fence}\n{_FORGED} $\\gdef\\x{{1}}$\n{fence}")
 
-    assert main(["check", str(blueprint)]) == 1
-    out = capsys.readouterr().out
-    assert "base: line 13: code fence is not closed" in out
-    assert f"close it with a line of {fence}" in out
-    with pytest.raises(PublicationError, match="code fence is not closed"):
-        _render(blueprint)
+    site = _warned(blueprint, capsys, "base: line 13: code fence is not closed")
+    published = _published(site / "roadmap/README.md")
+    assert "<script" not in published and '<span class="bp-mark">FORGED' not in published
+    assert published.count('<span class="bp-mark"') == 2
+    assert published.count('<pre class="bp-as-typed">') == 1
 
 
 def test_a_chapter_is_read_in_the_stretches_its_page_has(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -688,8 +690,9 @@ def test_a_chapter_is_read_in_the_stretches_its_page_has(tmp_path: Path, capsys:
     blueprint = _vault(tmp_path)
     _with_narrative(blueprint, f"## Definitions\n\n`a\n- [Base](base.md)\nb` and `c {_FORGED} d`")
 
-    reason = "roadmap: line 12: raw HTML is not allowed: <span>, </span>, <script>"
-    _refused(blueprint, capsys, reason, "raw HTML is not allowed")
+    site = _warned(blueprint, capsys, "roadmap: line 12: raw HTML is not allowed: <span>, </span>, <script>")
+    published = _published(site / "roadmap/README.md")
+    assert "<script" not in published and '<span class="bp-mark">FORGED' not in published
 
 
 def test_a_chapter_cannot_leave_a_fence_open_over_its_statements(
@@ -701,8 +704,8 @@ def test_a_chapter_cannot_leave_a_fence_open_over_its_statements(
     blueprint = _vault(tmp_path)
     _with_narrative(blueprint, "## Definitions\n\n````\n\n- [Base](base.md)")
 
-    assert main(["check", str(blueprint)]) == 1
-    assert "roadmap: line 10: code fence is not closed" in capsys.readouterr().out
+    assert main(["check", str(blueprint)]) == 0
+    assert "warning: roadmap: line 10: code fence is not closed" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("notes", ["> ```\n> quoted\n", "- item\n\n    ```\n    indented\n"])
@@ -756,10 +759,10 @@ _SHOWN = {
 def test_only_a_file_a_browser_only_shows_is_published(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Render copies a vault's other files into the site as they are, so an
     HTML page, an SVG or a script there would be the site's own markup the
-    moment a reader followed a link to it. Check refuses any file not of a
-    kind a browser only shows, by its path, and render publishes nothing; a
-    figure, a PDF, a bibliography, plain text, and a copy of an asset render
-    writes over still pass."""
+    moment a reader followed a link to it. The site leaves out any file not
+    of a kind a browser only shows, and check and render name each by its
+    path; a figure, a PDF, a bibliography, plain text, and a copy of an asset
+    render writes over are published."""
 
     blueprint = _vault(tmp_path)
     (blueprint / "stylesheets").mkdir()
@@ -768,14 +771,11 @@ def test_only_a_file_a_browser_only_shows_is_published(tmp_path: Path, capsys: p
         (blueprint / relative).parent.mkdir(parents=True, exist_ok=True)
         (blueprint / relative).write_bytes(content)
 
-    assert main(["check", str(blueprint)]) == 1
-    refused = {line.split(": ")[1] for line in capsys.readouterr().out.splitlines() if "the site publishes no " in line}
-    assert refused == set(_RUNNABLE)
-    with pytest.raises(PublicationError):
-        _render(blueprint)
-    for relative in _RUNNABLE:
-        (blueprint / relative).unlink()
+    assert main(["check", str(blueprint)]) == 0
+    left_out = {line.split(": ")[1] for line in capsys.readouterr().out.splitlines() if "the site leaves out " in line}
+    assert left_out == set(_RUNNABLE)
     site = _render(blueprint)
+    assert not any((site / relative).exists() for relative in _RUNNABLE)
     assert all((site / relative).read_bytes() == content for relative, content in _SHOWN.items())
     assert "display: none" not in (site / "stylesheets/blueprint.css").read_text(encoding="utf-8")
 
@@ -793,15 +793,15 @@ def test_only_a_file_a_browser_only_shows_is_published(tmp_path: Path, capsys: p
         ("roadmap", "## Definitions\n\n[home](javascript:alert(1))\n\n- [Base](base.md)", "javascript"),
     ],
 )
-def test_a_link_that_could_run_script_is_refused(
+def test_a_link_that_could_run_script_is_never_published(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], where: str, written: str, scheme: str
 ) -> None:
     """A link to a ``javascript:`` or ``data:`` address runs what it holds on
     the site's origin when a reader follows it, whatever the case of its
     scheme, and a link definition no link on its own text uses may be used
-    by another text on the page. Check refuses every link and definition
+    by another text on the page. Check reports every link and definition
     that leads anywhere but the site's own pages and http, https, and
-    mailto addresses, and render publishes nothing."""
+    mailto addresses, and the site shows its page as typed."""
 
     blueprint = _vault(tmp_path)
     if where == "base":
@@ -811,11 +811,11 @@ def test_a_link_that_could_run_script_is_refused(
     else:
         (blueprint / where).write_text(written, encoding="utf-8")
 
-    assert main(["check", str(blueprint)]) == 1
+    assert main(["check", str(blueprint)]) == 0
     out = capsys.readouterr().out
     assert re.search(rf"{re.escape(where)}: lines? \d+.*: links are not allowed to {scheme}: addresses", out), out
-    with pytest.raises(PublicationError, match=f"links are not allowed to {scheme}:"):
-        _render(blueprint)
+    page = _published(_render(blueprint) / ("roadmap/README.md" if where in {"base", "roadmap"} else where))
+    assert f'="{scheme}' not in page.lower()
 
 
 @pytest.mark.parametrize(
@@ -857,7 +857,7 @@ def test_check_judges_the_text_render_publishes(tmp_path: Path, monkeypatch: pyt
 
     judged: list[str] = []
 
-    def recording(text: str) -> tuple[str, tuple[str, ...]]:
+    def recording(text: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
         judged.append(text)
         return publishable_article(text)
 
@@ -873,7 +873,7 @@ def test_check_judges_the_text_render_publishes(tmp_path: Path, monkeypatch: pyt
     assert not any("base.md" in text or "roadmap/top.md" in text for text in judged)
 
 
-_UNSAFE_PAGE = "<script>document.title='X'</script>\n\nText\n{: .bp-readback .bp-readback-current }\n"
+_UNSAFE_PAGE = "<script>document.title='X'</script>\n\nText\n{: .bp-mark .bp-thmcontent }\n"
 
 
 @pytest.mark.parametrize("relative", ["README.md", "coverage/README.md", "notes.md", "more/notes.mdown"])
@@ -881,9 +881,9 @@ def test_a_page_that_is_not_an_article_is_held_to_the_same_rules(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], relative: str
 ) -> None:
     """The landing page, the coverage contract, and any other Markdown page
-    are published on the site's origin as articles are, so check refuses
-    script and attribute lists in them, naming the file, and render refuses
-    to publish them."""
+    are published on the site's origin as articles are, so check reports
+    script and attribute lists in them, naming the file, and the site shows
+    them as typed."""
 
     blueprint = _vault(tmp_path)
     page = blueprint / relative
@@ -891,13 +891,16 @@ def test_a_page_that_is_not_an_article_is_held_to_the_same_rules(
     before = page.read_text(encoding="utf-8") if page.exists() else "# Notes\n"
     page.write_text(f"{before.rstrip()}\n\n{_UNSAFE_PAGE}", encoding="utf-8")
 
-    assert main(["check", str(blueprint)]) == 1
+    assert main(["check", str(blueprint)]) == 0
     out = capsys.readouterr().out
     lines = len(before.rstrip().splitlines()) + 2
-    assert f"error: {relative}: line {lines}: raw HTML is not allowed: <script>, </script>" in out
-    assert f"error: {relative}: line {lines + 3}: attribute list {{: .bp-readback .bp-readback-current }}" in out
-    with pytest.raises(PublicationError):
-        _render(blueprint)
+    assert f"warning: {relative}: line {lines}: raw HTML is not allowed: <script>, </script>" in out
+    assert f"warning: {relative}: line {lines + 3}: attribute list {{: .bp-mark .bp-thmcontent }}" in out
+    published = (_render(blueprint) / relative).read_text(encoding="utf-8")
+    assert "<script>" not in published
+    # The landing page keeps only the parts of its text render places around its dashboard.
+    if relative != "README.md":
+        assert "&lt;script&gt;document.title='X'&lt;/script&gt;" in published
 
 
 def test_the_landing_page_is_checked_without_the_dashboard_render_adds(tmp_path: Path) -> None:
@@ -910,12 +913,12 @@ def test_the_landing_page_is_checked_without_the_dashboard_render_adds(tmp_path:
     assert '<div class="bp-landing"' in (_render(blueprint) / "README.md").read_text(encoding="utf-8")
 
 
-def test_a_page_that_is_not_utf8_is_refused_by_name(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_a_page_that_is_not_utf8_is_left_out_by_name(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     blueprint = _vault(tmp_path)
     (blueprint / "notes.md").write_bytes(b"# Notes\n\n\xff\n")
 
-    assert main(["check", str(blueprint)]) == 1
-    assert "error: notes.md: is not UTF-8 text, as a Markdown page must be; save it as UTF-8" in capsys.readouterr().out
+    site = _warned(blueprint, capsys, "notes.md: is not UTF-8 text, as a Markdown page must be, so the site leaves it out")
+    assert not (site / "notes.md").exists()
 
 
 def test_the_scaffolded_pages_pass_the_page_check(tmp_path: Path) -> None:
@@ -925,7 +928,7 @@ def test_the_scaffolded_pages_pass_the_page_check(tmp_path: Path) -> None:
     scaffold_project(tmp_path, title="Finite Flat")
     blueprint = tmp_path / "blueprint"
 
-    assert publication_issues(load_graph(blueprint), blueprint) == []
+    assert publication_issues(load_graph(blueprint), blueprint) == ([], [])
 
 
 _HTML = "raw HTML is not allowed: <span>, </span>, <script>, </script>"
@@ -950,10 +953,8 @@ def test_a_chapter_is_checked_whole_with_its_dependency_section(
     chapter = blueprint / "roadmap/README.md"
     chapter.write_text(chapter.read_text(encoding="utf-8") + f"\n## Depends on\n\n    x = 1\u2028{_FORGED}\n", encoding="utf-8")
 
-    assert main(["check", str(blueprint)]) == 1
-    assert f"roadmap: line 19: {_HTML}" in capsys.readouterr().out
-    with pytest.raises(PublicationError, match="roadmap: line 19: "):
-        _render(blueprint)
+    site = _warned(blueprint, capsys, f"roadmap: line 19: {_HTML}")
+    assert "<script" not in _published(site / "roadmap/README.md")
 
 
 def test_frontmatter_never_reaches_the_built_page(tmp_path: Path) -> None:
@@ -1011,7 +1012,7 @@ def test_the_box_publishes_the_statement_and_notes_check_reads(article: str, exp
 @pytest.mark.parametrize(
     ("article", "shown"),
     [
-        ("Claim.\n{: .bp-readback .bp-readback-current }", "{: .bp-readback .bp-readback-current }"),
+        ("Claim.\n{: .bp-mark .bp-thmcontent }", "{: .bp-mark .bp-thmcontent }"),
         ('Claim.\n{: style="position:fixed;inset:0;z-index:1000" }', '{: style="position:fixed;inset:0;z-index:1000" }'),
         (
             "Claim.\n{: #autorun tabindex=\"-1\" autofocus=\"autofocus\" onfocus=\"document.title='x'\" }",
@@ -1027,7 +1028,7 @@ def test_the_box_publishes_the_statement_and_notes_check_reads(article: str, exp
         ("## Result {: #bp-mark }", "{: #bp-mark }"),
     ],
 )
-def test_an_attribute_list_is_refused(article: str, shown: str) -> None:
+def test_an_attribute_list_is_reported(article: str, shown: str) -> None:
     """An attribute list could make an article's text look like a card, a
     mark, or an approval, take the id of the site's own element, or cover
     the page; a heading's id comes from its title."""
@@ -1043,15 +1044,15 @@ _FENCE_RULE = 'a code fence may only name its language, as in "```lean" or "```{
 @pytest.mark.parametrize(
     ("article", "shown"),
     [
-        ("```{.text .bp-readback .bp-readback-current}\nApproved.\n```", "{.text .bp-readback .bp-readback-current}"),
+        ("```{.text .bp-mark .bp-thmcontent}\nApproved.\n```", "{.text .bp-mark .bp-thmcontent}"),
         ("```text {.bp-mark #claim data-kind=result}\nx\n```", "{.bp-mark #claim data-kind=result}"),
         ('```text {style="position:fixed;inset:0;z-index:1000"}\nx\n```', '{style="position:fixed;inset:0;z-index:1000"}'),
         ("``` { .lean #anchor }\nx\n```", "{ .lean #anchor }"),
         ("- item\n\n    ```{.text .bp-mark}\n    x\n    ```", "{.text .bp-mark}"),
-        ("> ~~~{.text .bp-graph}\n> graph LR\n> ~~~", "{.text .bp-graph}"),
+        ("> ~~~{.text .mermaid}\n> graph LR\n> ~~~", "{.text .mermaid}"),
     ],
 )
-def test_a_fence_header_that_sets_more_than_a_language_is_refused(article: str, shown: str) -> None:
+def test_a_fence_header_that_sets_more_than_a_language_is_reported(article: str, shown: str) -> None:
     """A class, an id, or another attribute in a fence's braces lands on the
     code block's element, as one in an attribute list does, so it could make
     the block look like a card or a mark, cover the page, or be drawn as a
@@ -1064,9 +1065,9 @@ def test_a_fence_header_that_sets_more_than_a_language_is_refused(article: str, 
 
 
 
-def test_a_fence_that_imitates_a_graph_render_drew_is_refused() -> None:
-    """The site's diagram script draws an element of the class render marks
-    its graphs with."""
+def test_a_fence_that_imitates_a_graph_render_drew_is_reported() -> None:
+    """The site draws an element of the class render marks its own graphs
+    with in loose mode, so an article cannot claim the class."""
 
     errors = publishable_article("# Top\n\n```{.text .mermaid .bp-graph}\ngraph LR\n```\n")[1]
 
@@ -1103,5 +1104,5 @@ def test_every_formula_paints_inside_its_own_band(tmp_path: Path) -> None:
     assert "max-width: none !important" in rules["mjx-container > svg"]
     # Across, ink stops at the edge of the block an article formula is in; a
     # card's blocks are left to scroll with it.
-    block = rules[":is(p, h1, h2, h3, h4, h5, h6, ul, ol, td, th):has(mjx-container):not(.bp-readback *)"]
+    block = rules[":is(p, h1, h2, h3, h4, h5, h6, ul, ol, td, th):has(mjx-container)"]
     assert "overflow-x: clip" in block and "overflow-y" not in block

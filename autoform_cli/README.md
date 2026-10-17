@@ -66,8 +66,8 @@ and the published theorem box both read that span. A fence closes only on a
 bare fence line. A fence that never closes is read as plain text when its
 article is inspected alone, so it hides no heading or dependency link there,
 but on a chapter page it can pair with a later article's closing fence and hide
-everything between them, so `check` and `render` refuse one at the margin (see
-[Validation](#validation)). The audit reports a fence with no closing line as
+everything between them, so `check` warns about one at the margin and the site
+shows that page as typed (see [Validation](#validation)). The audit reports a fence with no closing line as
 `unclosed-code-fence`. A later bare fence line of the same character and at
 least the opener's length closes it here, though the page asks for the opener's
 exact length and indent, so close each fence with its own line. The page can
@@ -328,12 +328,9 @@ uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform-visualize blueprint
 uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform render blueprint \
   --output site-src --lean-root . --require-declarations
 uv run --with mkdocs --with mkdocs-material --with mkdocs-literate-nav \
-  --with pymdown-extensions --with "<AUTOFORM_PLUGIN_ROOT>" mkdocs build --strict
+  --with pymdown-extensions mkdocs build --strict
 uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform dashboard . --site-dir site
 ```
-
-The build needs autoform too: `mkdocs.yml` reads formulas with its Markdown
-extension, `autoform_cli.markdown:FormulaExtension`.
 
 Drop `--require-declarations` when reviewing work in progress, where a
 statement may name a Lean declaration that does not exist yet. On native
@@ -513,11 +510,7 @@ helpers are compiled with the project's toolchain and no project module in
 scope into a module named `autoform-skeleton-helper`, whose constants are all
 in the `AutoformSkeleton` namespace. Both names are reserved: a module of the
 project, a dependency, or `LEAN_PATH` that takes one makes each probe that
-imports it fail, and that probe's targets are unresolved with Lean's error.
-The compiled helper is cached under `$XDG_CACHE_HOME/autoform/probe-helper`
-(by default `~/.cache/autoform/probe-helper`) per toolchain and helper source;
-an entry that does not match its stored SHA-256 and the toolchain's Git hash
-is compiled again, nothing prunes the cache, and deleting it is always safe. A
+imports it fail, and that probe's targets are unresolved with Lean's error. A
 declaration's packet reads as it does to a file that imports its module,
 whichever other articles are extracted with it.
 That environment has the module's global notation, instances, and
@@ -552,17 +545,18 @@ constant, so the body a reader would see is not what Lean checks. The command
 exits nonzero when a `lean:` name is absent from the sources or from the built
 environment, or reaches a refused declaration; that name is unresolved for its article only, other articles still extract, and it writes nothing into the vault.
 Each name is probed in the module whose source the lexical index finds it in;
-a name Lean declares in another module is unresolved too. A name that several
-indexed files declare, even when all but one of them declare it `private`, is
-unresolved without a probe, because the index cannot tell which one Lean binds;
-the reason names each of those files in sorted order. `unused-hypotheses` looks
-names up the same way.
-A probe that fails on its own (a nonzero exit, a timeout, or malformed or
-ambiguous records) likewise leaves only its module's targets unresolved, with
-the reason, and an error the probe meets while reading one declaration leaves
-only that declaration unresolved. A reason quotes at most 2,000 characters of
-Lean's output, shows the probe's temporary directory as `<scratch>` and
-project paths relative to the project, and so reads the same on every run.
+a name Lean declares in another module is unresolved too. A name the sources
+define more than once, with no single declaration chosen by the rules under
+Validation, is unresolved without a probe; the reason lists the `path:line` of
+each of its declarations. A name with one public declaration beside private
+ones is probed in the public one's module.
+A probe that fails on its own (a nonzero exit, a kill by a signal, a timeout,
+or malformed or ambiguous records) likewise leaves only its module's targets
+unresolved, with the reason, and an error the probe meets while reading one
+declaration leaves only that declaration unresolved. A reason quotes at most
+2,000 characters of Lean's output, shows the probe's temporary directory as
+`<scratch>` and project paths relative to the project, and so reads the same
+on every run.
 The output and material limits apply to a whole probe, so a module whose
 selected declarations together pass one fails as a whole: a declaration that
 resolves when selected alone can be unresolved beside its module's other
@@ -595,25 +589,19 @@ material's full text.
 Run skeleton extraction only in a trusted checkout or an operating-system
 sandbox. Lake evaluates `lakefile.lean`, and the generated probe imports project
 code whose initializers, macros, and metaprograms may perform arbitrary IO and
-can forge probe output. Each probe runs the helper's code, which later
-extractions take from the cache, so a process that can write the cache can
-run code in later extractions in any project, including trusted ones outside
-a sandbox. A sandbox for an untrusted project must therefore deny writes to
-the cache directory that extractions outside the sandbox use; setting
-`XDG_CACHE_HOME` inside the sandbox moves only Autoform's own cache, not what
-the project's code can write.
-The timeout and output cap bound the direct batch
+can forge probe output. The timeout and output cap bound the direct batch
 command; on POSIX, Autoform also terminates its process group, for every
 probe, on every failure and on interruption. The Lake freshness check, the
-helper's lookup and build, and each probe have their own 600-second budget;
+helper's build, and each probe have their own 600-second budget;
 `--timeout SECONDS` sets the helper's and each probe's, which a large
 project may need. Probes run in parallel, one per CPU available to the
-process, at most eight. Their budgets are not one shared deadline, so a
-module's result matches extracting it alone, and an extraction can run for one
-probe budget per round of parallel probes. The parsed records, at most 512 Mi
-characters of semantic material per probed module, stay in memory until the
-report is built. These limits are resource controls, not a security or
-authenticity boundary.
+process and at most eight; on Python 3.13 and later, `PYTHON_CPU_COUNT` sets
+that CPU count. Each probe's budget is its own rather than a share of one
+deadline, so its result does not depend on which probes ran before it, and an
+extraction can run for one probe budget per round of parallel probes. The
+parsed records, at most 512 Mi characters of semantic
+material per probed module, stay in memory until the report is built. These
+limits are resource controls, not a security or authenticity boundary.
 
 Every skeleton carries a full SHA-256 **drift hash**. It is derived from
 canonical elaborated expressions for the root, every trusted declaration, each
@@ -725,68 +713,27 @@ that cannot be parsed outside their file are marked `-- source not shown`.
 A statement's source passage can travel with it. A `## Sources` link to a
 non-Markdown file inside the blueprint with a `#L<start>-L<end>` fragment, for
 example `../../../sources/lebl-ra/ch-real-nums.tex#L693-L714`, names the exact
-text the statement came from. External URLs are skipped. A first local locator
-that names no text, because it points outside the blueprint, names a missing
-file or non-UTF-8 text, or names no lines of it, leaves the article's
-declarations unresolved. `--passages DIR` writes those passages beside
-the packets, one per article, in a separate, disjoint managed directory. It
-requires `--packets`. Each article directory also holds `article.lean`, the
-joint packet of every declaration the article
-names, because a source theorem is often formalized by several declarations
-together and each alone is honestly incomplete. A judge of faithfulness is
-given the article packet and its passage; an auditor asked what one
-declaration asserts is given that declaration's packet alone.
+text the statement came from. External URLs are skipped, and so is a link with
+such a fragment to a Markdown file, in any letter case, which is a note; one
+that names no regular file in the blueprint counts as a locator whatever its
+suffix. A first local locator that names no text, because it points outside
+the blueprint, names an invalid path, a symlink loop, a link that cannot be
+read, a missing, unreadable or oversized file, something other than a regular
+file, or non-UTF-8 text, or names no lines of it, leaves the article's
+declarations unresolved while the other articles still extract.
+`--passages DIR` writes those passages beside the packets, one per article, in
+a separate, disjoint managed directory. It requires `--packets`. Each article
+directory also holds `article.lean`, the joint packet of every declaration the
+article names, because a source theorem is often formalized by several
+declarations together and each alone is honestly incomplete. A judge of
+faithfulness is given the article packet and its passage; an auditor asked what
+one declaration asserts is given that declaration's packet alone.
 
 When `--output`, `--packets`, and `--passages` are combined, all three outputs
 are staged before publication and a failed commit restores the previous set.
 This is failure atomicity, not simultaneous visibility across paths: each
 rename is atomic, but a reader opening several outputs during publication can
 briefly observe different generations.
-
-Report the hypotheses that a theorem's proof never uses:
-
-```bash
-autoform unused-hypotheses blueprint --lean-root .
-autoform unused-hypotheses blueprint --lean-root . --node chapter/main-result --json
-```
-
-A theorem can compile and be true while one of its hypotheses plays no part.
-Either the source states a hypothesis it does not need, or the formal statement
-says less than the source, so the hypothesis has nothing left to do, as when a
-statement assumes the supremum that the source derives from boundedness, or
-when a library convention such as `x / 0 = 0` covers a case the source excludes.
-
-For every theorem a `lean:` line names, the command reads its proof term and
-lists each propositional hypothesis that could be deleted, with its binder
-position and whether the proof uses it. A hypothesis the proof term never
-mentions can be deleted, and the same term proves what remains, so a
-`hypothesis-unused` finding is certain; a tactic that names the hypothesis,
-such as `simp [h]` or `clear h`, has to drop the name too. A hypothesis the proof does use may
-still be unnecessary, and a proof that is just another theorem counts as using
-every hypothesis it passes on. A hypothesis that the conclusion or a later
-binder mentions cannot be deleted and is not listed. A proof that itself
-contains `sorry` is not read; a complete proof that uses an open statement is.
-Findings are for a reviewer and never fail the run, since the source may state
-a hypothesis its theorem does not need; the command exits 1 only when a `lean:`
-name cannot be read: it is not found, several source files declare it, or it
-is an alias, whose proof only names its target. `--json` writes the
-`autoform-unused-hypotheses/v1` report.
-
-`lake build` already warns about some of these: Lean's `unusedVariables`
-linter names a hypothesis the proof never references, and `unusedSectionVars`
-names a section variable a theorem includes without needing. Neither reports a
-hypothesis named with a leading `_`, an unnamed instance argument of the
-theorem itself, the antecedent of `p → q`, or a binder such as `∀ n > 0`; this
-command does, so renaming a hypothesis to `_h` does not hide it. It also reports per article,
-for the reviewer of that article.
-
-Like `autoform skeleton`, it runs a small program with `lake env lean` after the
-same Lake freshness check, over the modules that hold the named theorems, and
-the same trust caveats apply: run it in a trusted checkout or a sandbox whose
-build is current. `--timeout SECONDS` sets the Lean run's budget, as for
-`autoform skeleton`. Nothing it reports enters the skeleton report,
-its packets, or their hashes, and findings name Lean hypotheses, so they stay
-out of the blind read-back route.
 
 Inspect the current Markdown-derived formalization frontier without creating a
 queue or scheduler state:
@@ -808,10 +755,12 @@ stated, a definition's also for its proof prerequisites, which its body uses,
 and the proof phase for every prerequisite to be stated. `work
 context` accepts the path-derived node ID (see Articles and containment) or an
 assigned `article_id` and reports the exact article, dependencies, source
-targets, Lean targets, blockers, article and graph source revisions, and claim
+targets (except those the Runtime contract leaves out), Lean targets, blockers,
+article and graph source revisions, and claim
 target. The article revision hashes that article's bytes alone. A Lean target's
-`source_file` is relative to `--lean-root`, and null without one or when the
-local scan does not find the declaration. The scan skips build output and nested
+`source_file` is relative to `--lean-root`, and null without one, when the
+local scan does not find the declaration, or when it finds several with none
+chosen (see Validation). The scan skips build output and nested
 checkouts, meaning any subdirectory with a `.git` entry, such as a worker's
 worktree or a submodule. Blockers are unmet dependency IDs or one of
 `roadmap:not-a-formalizable-leaf`, `roadmap:missing-article-id`,
@@ -928,7 +877,7 @@ reached is no longer built. The report does not list such modules.
 
 JSON uses `autoform-module-import-impact/v1` and binds the graph with
 `module_graph_revision`; `module_scope` is `loaded-root-library-graph`.
-Required `claim_targets` contain only the selected article and a stable
+The import edit's `claim_targets` contain only the selected article and a stable
 `module_claim_target` resource, `lean-module/<lowercase-slug>-<sha256[:16]>`.
 `affected_claim_targets` are downstream warnings, not pre-emptive ownership
 requirements; `claim_keys` and `affected_claim_keys` match the JSON from
@@ -995,14 +944,14 @@ autoform claim release af_5b0e4d3c2a1f09e8d7c6b5a4
 autoform claim acquire af_5b0e4d3c2a1f09e8d7c6b5a4 af_0123456789abcdef01234567
 ```
 
-Claims are optional: use them when other people or sessions may work on the
-same project at the same time, or when the user asks. A single Formalize run
-needs none, because its lead keeps its workers apart. A claim excludes only
-workers that also claim, so on a shared project every worker uses them. Claim
-an article by the `claim_target` that `work context` reports. The board
-hashes whatever string it is given, so a claim on an article's path ID and one
-on its `article_id` do not exclude each other. Each concurrent agent needs its
-own worker ID, because a second acquire by the same owner succeeds. Where shell
+Claims are optional: use them when other people or sessions may work on the same
+project at the same time, or when the user asks. A single Formalize run needs
+none, because its lead keeps its workers apart. A claim excludes only workers
+that also claim, so on a shared project every worker uses them. Claim an article
+by the `claim_target` that `work context` reports. The board hashes whatever
+string it is given, so a claim on an article's path ID and one on its
+`article_id` do not exclude each other. Each concurrent agent needs its own
+worker ID, because a second acquire by the same owner succeeds. Where shell
 state does not persist between commands, as in agent tool calls, pass it with
 `--worker-id` on every command instead of exporting `AUTOFORM_WORKER_ID` once.
 Leases expire after 1500 seconds unless `--ttl` sets another length. Renew well
@@ -1047,18 +996,23 @@ with links to declaration maps, one-hop local contexts, and the complete DAG.
 Every graph article returns to the book, and every formal statement links to
 its local context. Each graph is written as raw HTML of class `bp-graph`,
 which no article may hold, and `javascripts/blueprint-mermaid.js` draws those
-elements and no other Mermaid. A title is shown in a graph as typed, and a
-link, made from file and folder names, is percent-encoded, so a name can
-neither end Mermaid's string nor make the link a `javascript:` URL. Point
-`mkdocs.yml` at `docs_dir: site-src` and enable `md_in_html`; see the
-[repository example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml).
+with the loose security their links need; a ```` ```mermaid ```` diagram an
+article holds is drawn strictly, its labels as text and with no click. A title
+is shown in a graph as typed, and a link, made from file and folder names, is
+percent-encoded, so a name can neither end Mermaid's string nor make the link
+a `javascript:` URL. Point `mkdocs.yml` at
+`docs_dir: site-src` and enable `md_in_html` plus a `pymdownx.superfences`
+mermaid fence; see the [repository
+example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml).
 
 `render` also writes `javascripts/mathjax.js`, the site's MathJax
-configuration, on every build; list it in `mkdocs.yml` and nothing else for
-MathJax. It loads MathJax 3.2.2, the release its TeX settings were checked
-against, and refuses to typeset with any other. The articles on a page share
-one TeX input, with the packages base, ams, noundefined, boldsymbol, and
-mathtools, and the project's macros from `blueprint/tex-macros.json`, written
+configuration, on every build; `mkdocs.yml` lists it before the MathJax
+bundle, as `autoform init` writes both. It expects MathJax 3.2.2, the release
+its TeX settings were checked against, loads it itself when no bundle is
+listed, and leaves formulas as typed under any other release. The articles on
+a page share one TeX input, with the packages base, ams, noundefined,
+boldsymbol, and mathtools, and the project's macros from
+`blueprint/tex-macros.json`, written
 as MathJax's `tex.macros` is: a name maps to a body, `[body, arguments]`, or
 `[body, arguments, default]`. So that no formula changes another or colors a
 symbol like the site's status marks, that input turns off `\label`,
@@ -1066,12 +1020,12 @@ symbol like the site's status marks, that input turns off `\label`,
 commands of mathtools, and `\mathtoolsset`: each shows in red and does nothing,
 however a formula or a macro reaches it, as `\newcommand`, `\def`, `\require`,
 and any other command those packages do not define already do. A macro may not
-take one of their names. `check` and `render` judge and build the script from
+take one of their names; `check` and `render` warn about a macro they leave
+out. They judge and build the script from
 the copy of `tex-macros.json` that `render` reads once and publishes beside it,
 so an edit made during a render reaches neither. That input reads only the
 formulas the site's Markdown marks, such as
-`$...$` or `$$...$$` in an article, or `` $`...`$ `` and a ```` ```math ````
-fence, the forms GitHub also shows as formulas. Other text, such as a
+`$...$` or `$$...$$` in an article. Other text, such as a
 statement's title in its heading, a `discussion:` value, the lead on the home
 page, the navigation, and a table of contents, is shown as typed, TeX and all.
 Every formula paints only within its own line and the block that holds it,
@@ -1083,16 +1037,17 @@ A project scaffolded before `render` wrote that file keeps a
 `blueprint/javascripts/mathjax.js` and lists the MathJax bundle in `mkdocs.yml`
 after it. It needs no edits: `render` replaces a copy `autoform init` wrote
 with its own, and the script finds MathJax already loaded and checks its
-version instead of loading it. A copy edited since is refused, since the edits
-would be lost; move its macros to `tex-macros.json` and delete it.
+version instead of loading it. A copy edited since is replaced too, with a
+warning, since its edits are lost; move its macros to `tex-macros.json` and
+delete it.
 `render` writes `stylesheets/blueprint.css`, `javascripts/blueprint-mermaid.js`,
 and `assets/autoform.svg` over the vault's copies the same way, and writes
 `SUMMARY.md`, `structure.md`, `publication.json`, the `dependencies.md` and
 `dependencies/` graph pages, and the chapter pages it consolidates. A
 directory holding a file at any of these paths, at `tex-macros.json`, or at the
 stale `dependencies.html`, `graph.html`, or `progress.md` it keeps out of the
-site, or a file where one of their folders goes, is refused by `check` and
-`render` with the path it is at, before anything is written.
+site, or a file where one of their folders goes, stops `render` with the path
+it is at, before anything is written; `check` warns about it.
 
 Besides its Markdown pages, a vault publishes only files a browser shows or
 offers to save and runs nothing in: images (`.png`, `.jpg`, `.jpeg`, `.gif`,
@@ -1100,46 +1055,66 @@ offers to save and runs nothing in: images (`.png`, `.jpg`, `.jpeg`, `.gif`,
 `.json`, `.bib`, `.tex`, and `.lean` files, whatever the case of the suffix.
 Render copies them into the site as they are. Any other file under
 `blueprint/`, such as an `.html` page, an `.svg`, a script, or a stylesheet,
-would be the site's own markup once a reader followed a link to it, so
-`check` and `render` refuse it by its path: write it as Markdown, save it as
-an image, a PDF, or plain text, or keep it outside `blueprint/`. A copy of one
+would be the site's own markup once a reader followed a link to it, so the
+site leaves it out, and `check` and `render` warn about it by its path: write
+it as Markdown, save it as an image, a PDF, or plain text, or keep it outside
+`blueprint/`. A Markdown page that is not UTF-8 is left out with a warning too. A copy of one
 of the files render writes, listed above, is not published; render's own is.
 
-The site's Markdown reads `` $`...`$ `` and a ```` ```math ```` fence with
-`autoform_cli.markdown:FormulaExtension` and a `math` fence formatted by
-`autoform_cli.markdown.formula_fence`, which `mkdocs.yml` lists. A project
-scaffolded before then shows both as code until its `mkdocs.yml` and
-`.github/workflows/blueprint-pages.yml` get those lines from `autoform init`'s
-templates.
 
 ## Validation
 
-`autoform check` rejects cycles, missing targets, escaping paths, symbolic
-links anywhere under `roadmap/`, self-dependencies, cycles introduced at any
-rolled-up containment level,
+`autoform check` rejects cycles between authored articles, missing targets,
+escaping paths, symbolic links anywhere under `roadmap/`, self-dependencies,
 missing or multiple H1 titles, unsupported frontmatter keys, assertion values
 it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
-`mathlib: true`. An inline `## Sources` link to a local path must name a file
+`mathlib: true`. A `## Sources` link to a local path must name a file
 inside the blueprint, as `audit` also requires: a missing file, a directory, an
-invalid path, or a target outside the blueprint fails. A link with a scheme
-other than http(s), or a network location, fails too, as every runtime command
-refuses it; `audit` alone checks fragments. With `--lean-root`
-it also fails on a `lean:` name
-absent from the sources, as `leanblueprint checkdecls` does for LaTeX
-blueprints. It also refuses, naming the file and the line, what a published
-page could use to run script or pass for the site's own markup:
+invalid path or URL, or a target outside the blueprint fails. So does a target
+whose path as written, once its `..` steps are applied, has a part below the
+blueprint starting with `.`, unless the article citing it is hidden too,
+because render omits hidden files and directories. Under `sources/`, such a
+target passes `check` with a warning instead, and `audit` still reports it:
+only a repository link reaches the note, and render writes one when it links
+the other source notes there, so the note must be committed. `audit` alone checks
+fragments and fails links with other schemes or a network location. Such a link
+passes `check` with a warning, because work and search leave it out; so does a
+`mathlib_file` that is not a portable relative path, which search reports as
+null. A byte-order mark at the start of an article hides whatever opens its
+first line: frontmatter there is read as text, so its keys are ignored, and
+`check` warns about the mark when the article otherwise loads; an H1 title
+there is missed, and `check` fails the article as missing one.
+A `declaration` on a container article passes `check` with a warning, because
+nothing counts or schedules a container's own declaration; `audit` reports it
+as `formalizable-container`.
+With `--lean-root`, `check`
+also fails on a `lean:` name that is absent from the sources (as
+`leanblueprint checkdecls` does for LaTeX blueprints) or defined more than
+once in them (see below). It validates structure and leaves mathematical
+correctness to the agent and the Lean kernel.
+
+Contracting that acyclic article graph into chapters or nested scopes can put
+an edge in both directions between two containers. Generated views retain and
+draw both relations: an authored dependency is not deleted merely to make a
+coarser projection acyclic.
+
+`check` also warns, naming the file and the line, about what a published page
+could use to run script or pass for the site's own markup. None of it fails
+`check` or stops `render`: `render` publishes such a page, or such a statement
+in its box, as typed, every character escaped in one preformatted block under
+a note, until the warning is fixed.
 
 - Raw HTML: a tag, a character reference, an unclosed comment, or anything the
   site's Markdown would pass through as HTML. Write it in Markdown, or in code
   to show it as typed; in a formula, put a space after `<`. A complete
-  `<!-- ... -->` comment outside code is left out of the page, and one in a code
-  block is code, shown as typed. A reference a browser shows as typed, such as
-  the `&D;` in `R&D;`, is allowed.
+  `<!-- ... -->` comment outside code is left out of the page, and one in code
+  is shown as typed. A reference a browser shows as typed, such as the `&D;`
+  in `R&D;`, is fine.
 - A link, an image, or a link definition, used or not, to anything but the
   site's own pages or an `http:`, `https:`, or `mailto:` address, in any case:
   a `javascript:` or `data:` one would run or show what it holds on the site's
-  origin. An address shown in code is allowed.
+  origin. An address shown in code is fine.
 - An attribute list, which could give text an id, a class, or a style that
   makes it look like the site's own markup, such as a status mark; a heading's
   id comes from its title. The braces of a code fence may only name its
@@ -1150,22 +1125,23 @@ page could use to run script or pass for the site's own markup:
   page, so it would run on through what `render` puts after it, status marks
   included, to the next fence on the page; close it.
 
-TeX is the site's MathJax's to judge (see above), and a ```` ```mermaid ````
-fence is shown as code, since the site draws only the graphs `render` writes.
+`check` also warns about a formula that defines a command, such as
+`\newcommand`, `\def`, or `\DeclareMathOperator`, or uses one the site turns
+off, such as `\label`. The site's MathJax ignores notation an article defines
+(see above), so such a formula shows an error in red and the rest of the page
+is published as written; put the project's notation in
+`blueprint/tex-macros.json`.
 `check` reads each page as `render` publishes it: its relative links pointed at
 the pages and anchors they land on, every line break Python reads (a form feed
 or U+2028 among them) as a new line, its frontmatter replaced by a header of
 `render`'s own, since the theme prints a page's metadata unescaped, a statement
 in its box with its indentation kept, and a chapter's narrative in the
 stretches between the statements `render` puts in place of their links. Every
-Markdown page the site publishes is held to these rules: articles, the landing
-page `blueprint/README.md` (the text you wrote, before `render` adds its
-dashboard), `coverage/README.md`, and any other. `render` writes a moved link's
-target percent-encoded, so a target such as `%3Cscript%3E.md` stays a link and
-adds no markup. `render` refuses the same pages, so the site never publishes
-markup that an article's reviewer read as text and the owners of its theme
-never saw. It validates structure and leaves mathematical correctness to the
-agent and the Lean kernel.
+Markdown page the site publishes is read this way: articles, the landing page
+`blueprint/README.md` (the text you wrote, before `render` adds its
+dashboard), `coverage/README.md`, source notes, and any other. So the site
+never publishes markup that an article's reviewer read as text and the owners
+of its theme never saw.
 
 Source-aware `--lean-root` inspection requires directory-descriptor traversal.
 Platforms without that capability, including Windows, fail closed instead of
@@ -1185,19 +1161,26 @@ rather than indexing what it could, when an entry it must read cannot be read
 safely: a `.lean` file that cannot be read, a folder that cannot be listed or
 searched, a `.lean` entry that is a symbolic link or a special file (editor
 lock links named `.#*.lean` are skipped), or an unreadable `manifest.json`
-below the root, which is read to recognize skeleton output folders. `render`
-also stops at an unreadable `publication.json` below the root, which it reads
-to recognize rendered sites. These stops apply in every folder the walk
+below the root, which is read to recognize skeleton output folders, or an
+unreadable `publication.json` below the root, which is read to recognize
+rendered sites. These stops apply in every folder the walk
 enters, so an unreadable folder of unrelated files inside the Lean root stops
 indexing too; other files are never read. `render` without `--lean-root` uses
 the blueprint's parent folder as the Lean root. To clear a stop, fix the
 permissions, or move the entry out of the Lean root or into a folder the walk
 skips: `.direnv`, `.git`, `.lake`, `.obsidian`, `.trash`, `.venv`,
 `build`, a folder below the root that holds a `.git` entry, a
-recognized skeleton output folder, or, for `render`, a rendered site. There is
-no command-line option to exclude other folders. The skipped folder names and
-the `manifest.json`, `publication.json` and `.git` names match in any letter
-case, except `build`, which must be lowercase. The `.lean` suffix must match
+recognized skeleton output folder, or a folder below the root that holds a
+complete `publication.json`, such as a rendered site or the `mkdocs` copy of
+one. Every command skips these folders, so `render` and the other commands
+index the same files. `render` marks the site it is writing before it copies
+any file into it, so a command that indexes during a render skips it too.
+`mkdocs build` empties `site/` and then copies files in name order, so `site/`
+can hold copies before its `publication.json`; a command that indexes during
+the build can read them, so run it again once the build is done. There is no
+command-line option to exclude other folders. The skipped folder names and the
+`manifest.json`, `publication.json` and `.git` names match in any letter case,
+except `build`, which must be lowercase. The `.lean` suffix must match
 exactly, so `A.LEAN` is not indexed.
 
 A capture rechecks only what the index uses: each captured `.lean` file must
@@ -1233,6 +1216,27 @@ command states a result whose proof or construction is deferred. `alias b :=
 a` records `b`, and `alias ⟨mp, mpr⟩ := a_iff` records each of its two names
 that is not `_`; the `:=` must be on the alias's line, and the target on that
 line or the next nonblank one.
+
+A name declared once has that declaration, even a private one. A name declared
+more than once has the one declaration among them that is neither written
+`private` nor a wanted command, which Batteries makes a private placeholder:
+a private declaration is local to its file, so every other module sees the
+public one. With two or more public declarations (a file no library builds
+counts too), or only private and wanted ones, the name has none. Then
+`check --lean-root` fails with `declaration defined more than once`,
+`render` warns (`--require-declarations` exits 1),
+`audit` reports `lean-target-ambiguous`, `skeleton` leaves it
+unresolved, and work and search report no `source_file`; each
+diagnostic lists the `path:line` of every declaration of the name, by path and
+then line. `work impact` locates a compiled constant
+in its own module's file among the declarations of its name. The rule sees
+only indexed declarations: a public one behind an unindexed prefix such as
+`open X in`, or written `«main»` where the article writes `main`, leaves a
+private one as the name's only declaration. In a file that starts with
+`module`, a declaration outside a `public section` and without `public` is
+private to Lean but public to the index, so such a name may be reported as
+defined more than once where Lean accepts it, or selected where Lean binds it
+nowhere outside its file.
 
 The Markdown files are the source of truth. Graphs and sites are derived views
 that may be regenerated at any time.
@@ -1430,11 +1434,13 @@ each a list), `limit`, `total_matches`, and
 `node_id`, `article_id`, `article_path`, `article_revision`, `title`,
 `declaration`, `state`, `statement_text` (the authored Markdown),
 `lean_targets` (all of them), `mathlib`, `mathlib_declarations`,
-`mathlib_file`, `source_targets` (as the article writes them), `used_by`,
+`mathlib_file`, `source_targets` (as the article writes them, once each, minus
+any that is neither an http(s) link nor a path inside the blueprint), `used_by`,
 `used_by_count`, `shared_title`, and `matched_fields`; `article_id`,
 `declaration`, and `mathlib_file` may be null. A Lean target has `declaration`,
 `source_file` (relative to `--lean-root`), and `line`; the last two are null
-without `--lean-root` or when the lexical scan does not find the name.
+without `--lean-root`, when the lexical scan does not find the name, or when it
+finds several with none chosen (see Validation).
 `used_by` holds the first ten dependents by node ID, through statement or
 proof; `used_by_count` counts all. `shared_title` marks a title another article
 repeats and is advisory. `matched_fields` lists, best first and once each, the
@@ -1943,14 +1949,15 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
 3. When using claims, claim the route's claim set with one
    `autoform claim acquire`. When it is refused, release everything and report
    the held claim as the blocker. After acquiring, re-run `work impact`; if the
-   set grew, release and start over with the larger set. With or without claims,
-   after rebasing onto the current shared branch and rebuilding, re-run
+   set grew, release and start over with the larger set. Without claims, a
+   Formalize subagent has its lead confirm the set instead. With or without
+   claims, after rebasing onto the current shared branch and rebuilding, re-run
    `work impact` once more; if the set grew, repair the new targets before
-   landing. When using claims, first acquire the whole larger set in one command
-   under the no-hold-and-wait rule of the [claim contract](#claim-contract).
-   Under the open policy, reproduce the CI audit as [open
-   statements](#open-statements) shows before landing. Land one commit, then
-   release any claims.
+   landing, after acquiring the whole larger set in one command under the
+   no-hold-and-wait rule of the [claim contract](#claim-contract) or, without
+   claims, after the lead confirms them. Under the open policy, reproduce the CI
+   audit as [open statements](#open-statements) shows before landing. Land one
+   commit, then release any claims.
 4. Contract: delete a deprecated X once it appears in `deprecated_unused` of
    `work impact R . --lean-root .`, meaning no declaration uses it and no
    other article's `lean:` names it, and drop it from R's `lean:` in the same
@@ -2006,7 +2013,11 @@ doctor, separate from any future worker fleet or machine-capability preflight.
 deeply immutable in-memory schema `autoform-runtime/v3`. Its declared authority
 is `markdown-articles`: the adapter copies hierarchy, typed statement and proof
 dependencies, authored assertions, derived progress, provenance, and optional
-local Lean source locations, but it provides no persistence or write API.
+local Lean source locations, but it provides no persistence or write API. A
+source target that is neither an http(s) link nor a path inside the blueprint,
+and a `mathlib_file` that is not a portable relative path, are left out rather
+than refused. `check` fails on a local path outside the blueprint and warns
+about the rest.
 `RuntimeGraph.as_dict()` and `to_json()` are deterministic compatibility
 snapshots for consumers, not an authored or generated graph file. Autoform never
 creates, synchronizes, or treats `graph.json` as an authority.
