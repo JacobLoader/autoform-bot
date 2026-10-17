@@ -728,9 +728,11 @@ def _is_complete_publication(data: bytes) -> bool:
         value = json.loads(data)
     except (ValueError, RecursionError):
         return False
+    schema = value.get("schema") if isinstance(value, dict) else None
     return (
         isinstance(value, dict)
-        and value.get("schema") in {"autoform-publication/v1", *_REPLACEABLE_SCHEMAS}
+        and isinstance(schema, str)
+        and schema in {"autoform-publication/v1", *_REPLACEABLE_SCHEMAS}
         and value.get("complete") is True
     )
 

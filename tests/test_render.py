@@ -991,7 +991,7 @@ def test_book_navigation_is_bottom_only_and_never_crosses_into_project_views(tmp
     summary = (tmp_path / "out/SUMMARY.md").read_text(encoding="utf-8")
     assert summary.count("[Dependency explorer](dependencies.md)") == 1
     assert "Full dependency graph" not in summary
-    assert "dependencies/full.md" not in summary
+    assert summary.count("[Browse all mathematics](dependencies/full.md)") == 1
 
 
 def test_links_naming_a_node_file_follow_it_onto_the_chapter(tmp_path: Path) -> None:
