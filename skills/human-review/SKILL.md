@@ -39,17 +39,17 @@ GitHub Pages is served on loopback with local-only live claim badges. Provide
 the overview, including its progress summary, plus the relevant project,
 chapter, nested-scope, and statement-context links. Every generated site route
 uses the same Canvas plus semantic-DOM viewer. Open its full-page route and move
-from project clusters to a chapter, a nested scope, then a searched statement
-and its immediate dependencies. Never begin with a fitted all-repository node
-cloud: global search enters the statement's smallest useful scope, while
-breadcrumbs and Back return to the project overview.
+from the project's topics to a chapter, a nested scope, then a searched
+statement and its immediate dependencies. Global search enters the statement's
+smallest useful scope, while breadcrumbs and Back return to the project
+overview.
 
 Judge the explorer as a mathematical knowledge map, not navigation chrome.
 Authored mathematical regions and prose should control the atlas and reading
 panel. Regions come only from authored `area:` or `blueprint/atlas.json`;
-folders that only file or paginate pages never become regions. Containment
-shows as regions and dependency as arrows, and a level with no authored
-dependency edges says so instead of fabricating relations.
+folders that only file or paginate pages never become regions. Areas show as
+regions, containment as topics you open, and dependency as arrows; a level with
+no authored dependency edges says so instead of fabricating relations.
 
 Guide the review from coarse to fine: declared scope and exclusions, milestone
 book, landing-page progress summary, cross-chapter graph, chapter graph, then

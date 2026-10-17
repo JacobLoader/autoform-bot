@@ -65,12 +65,12 @@ def test_human_review_distinguishes_roadmap_progress_from_source_scope(
     assert "same site deployed to\nGitHub Pages" in skill
     assert "local-only live claim badges" in skill
     assert "full-page route" in normalized
-    assert "Never begin with a fitted all-repository node cloud" in normalized
+    assert "move from the project's topics to a chapter" in normalized
     assert "smallest useful scope" in normalized
     assert "mathematical knowledge map, not navigation chrome" in normalized
     assert "Regions come only from authored `area:` or `blueprint/atlas.json`" in normalized
     assert "folders that only file or paginate pages never become regions" in normalized
-    assert "Containment shows as regions and dependency as arrows" in normalized
+    assert "Areas show as regions, containment as topics you open, and dependency as arrows" in normalized
     assert "no authored dependency edges says so" in normalized
     assert "overview, progress, project graph" not in skill
 
@@ -372,7 +372,7 @@ def test_development_guidance_requires_fail_closed_local_safety(repo_root: Path)
     assert "Full-viewport knowledge maps" in contract_text
     assert "authored mathematical areas and prose to drive regions and reading panels" in contract_text
     assert "containment and dependency distinct" in contract_text
-    assert "provenance folders as facets, never geometry" in contract_text
+    assert "regions come only from authored areas, never from folders or paths" in contract_text
     assert "Never fit the whole repository" in contract_text
     assert "Run `make test-browser` for any explorer change" in contract_text
 
