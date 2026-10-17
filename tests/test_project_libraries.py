@@ -29,14 +29,15 @@ def _release_package_names(release_id: str) -> set[str]:
     return {entry["name"].casefold() for entry in manifest["packages"]}
 
 
-def test_bundled_atlas_entry_is_the_pinned_test_fork() -> None:
+def test_bundled_atlas_entry_is_offered_at_its_published_index() -> None:
     atlas = load_library_catalog().get("atlas")
 
     assert atlas is not None
-    assert atlas.git == "https://github.com/zibo-yang/atlas-lean"
-    assert atlas.commit == "0ca59c787215c3638311b0a14af59aaae3208f6b"
+    assert atlas.git == "https://github.com/facebookresearch/atlas-lean"
+    # The commit the tag autoform-index/64c2773ffad3 adds the index in.
+    assert atlas.commit == "d2d6fc8d34f246eb9acdcca2c1c4085800db6d74"
     assert atlas.release == "lean-v4.34.1-mathlib-v4.34.1"
-    assert atlas.offered is False
+    assert atlas.offered is True
     assert set(atlas.module_roots) == {
         "MathlibExt", "CSLibExt", "WantedExt", "MathlibExtTest", "CSLibExtTest", "Cslib", "CslibTests"
     }
@@ -97,7 +98,7 @@ _ATLAS = ("libraries", 0)
         _mutated((*_ATLAS, "manifest_packages"), []),
         _mutated((*_ATLAS, "manifest_packages", 0, "rev"), "1" * 40),
         _mutated((*_ATLAS, "manifest_packages", 0, "inputRev"), "main"),
-        _mutated((*_ATLAS, "manifest_packages", 0, "url"), "https://github.com/facebookresearch/atlas-lean"),
+        _mutated((*_ATLAS, "manifest_packages", 0, "url"), "https://github.com/zibo-yang/atlas-lean"),
         _mutated((*_ATLAS, "manifest_packages", 1, "inherited"), False),
         _mutated((*_ATLAS, "manifest_packages", 0), "atlas"),
     ],
