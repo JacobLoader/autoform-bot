@@ -391,6 +391,14 @@ def _offline(page: object, site_url: str) -> object:
     return page
 
 
+def _open_site(page: object, site_url: str, path: str) -> object:
+    """Open a page of the built site, offline, once its explorer has drawn a node."""
+    _offline(page, site_url)
+    page.goto(f"{site_url}/{path}")
+    page.locator(".bp-dag-node").first.wait_for()
+    return page
+
+
 def _open_ready(page: object, explorer_url: str) -> None:
     page.goto(f"{explorer_url}/index.html")
     page.locator(".bp-dag-stage").wait_for()
@@ -398,11 +406,11 @@ def _open_ready(page: object, explorer_url: str) -> None:
     playwright.expect(page.locator("main")).to_have_count(1)
 
 
-def _load_search_index(page: object) -> object:
-    """Focus the search box and wait until the whole-roadmap index has loaded."""
+def _load_search_index(page: object, entries: int = 64) -> object:
+    """Focus the search box and wait until the whole-roadmap index of *entries* records has loaded."""
     search = page.locator(".bp-dag-search")
     search.focus()
-    playwright.expect(search).to_have_attribute("placeholder", "Search 64 roadmap entries")
+    playwright.expect(search).to_have_attribute("placeholder", f"Search {entries} roadmap entries")
     return search
 
 
@@ -769,9 +777,7 @@ def test_a_result_neither_drawn_here_nor_safely_linked_selects_nothing(
 
     page.route("**/search.json", add_unlinked_record)
     _open_ready(page, explorer_url)
-    search = page.locator(".bp-dag-search")
-    search.focus()
-    playwright.expect(search).to_have_attribute("placeholder", "Search 65 roadmap entries")
+    search = _load_search_index(page, 65)
     search.fill("Unlinked")
     url = page.url
     page.locator(".bp-dag-result", has_text="Unlinked result").click()
@@ -1016,10 +1022,8 @@ def test_a_published_canvas_covers_exactly_its_stage(
     desktop_page: object, site_url: str, viewport: dict[str, int]
 ) -> None:
     """Site CSS once gave the canvas a 30rem floor, stretching drawings away from short stages' nodes."""
-    page = _offline(desktop_page, site_url)
-    page.set_viewport_size(viewport)
-    page.goto(f"{site_url}/dependencies.html")
-    page.locator(".bp-dag-node").first.wait_for()
+    desktop_page.set_viewport_size(viewport)
+    page = _open_site(desktop_page, site_url, "dependencies.html")
     canvas = page.locator(".bp-dag-canvas").bounding_box()
     stage = page.locator(".bp-dag-stage").bounding_box()
     assert canvas is not None and stage is not None
@@ -1030,18 +1034,14 @@ def test_a_published_canvas_covers_exactly_its_stage(
 def test_the_published_landing_map_leaves_one_finger_scrolling_to_the_page(
     mobile_page: object, site_url: str
 ) -> None:
-    page = _offline(mobile_page, site_url)
-    page.goto(f"{site_url}/index.html")
+    page = _open_site(mobile_page, site_url, "index.html")
     canvas = page.locator(".bp-dag-canvas")
-    canvas.wait_for()
     assert canvas.evaluate("element => getComputedStyle(element).touchAction") != "none"
 
 
 def test_the_published_landing_explorer_sits_unframed_in_its_card(mobile_page: object, site_url: str) -> None:
     """The explorer drew a second border, rounded corners and a shadow inside the card, under its title."""
-    page = _offline(mobile_page, site_url)
-    page.goto(f"{site_url}/index.html")
-    page.locator(".bp-dag-stage").wait_for()
+    page = _open_site(mobile_page, site_url, "index.html")
     viewer = page.locator(".bp-map .bp-dag-viewer")
     frame = viewer.evaluate(
         "element => ['borderTopWidth', 'borderTopLeftRadius', 'boxShadow'].map(key => getComputedStyle(element)[key])"
@@ -1052,7 +1052,8 @@ def test_the_published_landing_explorer_sits_unframed_in_its_card(mobile_page: o
 
 def test_on_a_phone_the_status_filter_and_search_results_open_in_view(mobile_page: object, site_url: str) -> None:
     """The Status popover opened past the screen's left edge, and the toolbar's popovers painted under the sheet."""
-    page = _offline(mobile_page, site_url)
+    # The selection opens the sheet over the lower half of the screen.
+    page = _open_site(mobile_page, site_url, "dependencies/chapters/algebra.html#node=algebra%2Fresult")
 
     def lengthen_the_index(route: object) -> None:
         index = route.fetch().json()
@@ -1063,9 +1064,6 @@ def test_on_a_phone_the_status_filter_and_search_results_open_in_view(mobile_pag
         route.fulfill(json=index)
 
     page.route("**/dependencies/index.json", lengthen_the_index)
-    # The selection opens the sheet over the lower half of the screen.
-    page.goto(f"{site_url}/dependencies/chapters/algebra.html#node=algebra%2Fresult")
-    page.locator(".bp-dag-node").first.wait_for()
 
     page.locator(".bp-dag-filter-summary").tap()
     popover = page.locator(".bp-dag-filter-popover")
@@ -1081,9 +1079,7 @@ def test_on_a_phone_the_status_filter_and_search_results_open_in_view(mobile_pag
         }"""
     )
 
-    search = page.locator(".bp-dag-search")
-    search.focus()
-    playwright.expect(search).to_have_attribute("placeholder", "Search 27 roadmap entries")
+    search = _load_search_index(page, 27)
     search.fill("Result")
     # The lowest result the dropdown shows lies over the sheet, so it is the one to hit.
     lowest = page.evaluate(
@@ -1103,9 +1099,7 @@ def test_on_a_phone_the_status_filter_and_search_results_open_in_view(mobile_pag
 
 def test_a_phones_chapter_explorer_gives_its_breadcrumb_a_line_of_its_own(mobile_page: object, site_url: str) -> None:
     """The textbook link and kind pill shared the crumbs' line, cutting the chapter's name and Book's target short."""
-    page = _offline(mobile_page, site_url)
-    page.goto(f"{site_url}/dependencies/chapters/algebra.html")
-    page.locator(".bp-dag-node").first.wait_for()
+    page = _open_site(mobile_page, site_url, "dependencies/chapters/algebra.html")
     current = page.locator('.bp-dag-breadcrumb [aria-current="page"]')
     playwright.expect(current).to_have_text("Algebra")
     assert current.evaluate("element => element.scrollWidth <= element.clientWidth")
@@ -1114,9 +1108,7 @@ def test_a_phones_chapter_explorer_gives_its_breadcrumb_a_line_of_its_own(mobile
 
 
 def test_the_published_atlas_hides_the_isolate_toggle(desktop_page: object, site_url: str) -> None:
-    page = _offline(desktop_page, site_url)
-    page.goto(f"{site_url}/dependencies.html")
-    page.locator(".bp-dag-node").first.wait_for()
+    page = _open_site(desktop_page, site_url, "dependencies.html")
     playwright.expect(page.locator(".bp-dag-isolated")).to_be_hidden()
 
 
@@ -1124,9 +1116,7 @@ def test_published_explorer_controls_keep_their_own_styles_under_material(
     desktop_page: object, site_url: str
 ) -> None:
     """Material's typeset rules stacked the breadcrumb and drew the status filter as an admonition."""
-    page = _offline(desktop_page, site_url)
-    page.goto(f"{site_url}/dependencies/chapters/algebra.html")
-    page.locator(".bp-dag-node").first.wait_for()
+    page = _open_site(desktop_page, site_url, "dependencies/chapters/algebra.html")
 
     crumbs = page.locator(".bp-dag-breadcrumb li")
     playwright.expect(crumbs).to_have_count(3)
@@ -1190,9 +1180,7 @@ def test_a_published_chapter_explorer_links_its_textbook_chapter_and_keeps_its_h
     desktop_page: object, site_url: str
 ) -> None:
     """Script hides the page heading and navigation behind the explorer, so the explorer carries them."""
-    page = _offline(desktop_page, site_url)
-    page.goto(f"{site_url}/dependencies/chapters/algebra.html")
-    page.locator(".bp-dag-node").first.wait_for()
+    page = _open_site(desktop_page, site_url, "dependencies/chapters/algebra.html")
     playwright.expect(page.locator(".bp-dag-book")).to_have_attribute("href", "../../roadmap/algebra/index.html")
     playwright.expect(page.locator(".bp-dag-book")).to_be_visible()
     playwright.expect(page.get_by_role("heading", level=1)).to_have_text("Algebra dependencies")
@@ -1200,9 +1188,7 @@ def test_a_published_chapter_explorer_links_its_textbook_chapter_and_keeps_its_h
 
 def test_slash_on_the_published_landing_page_opens_site_search(desktop_page: object, site_url: str) -> None:
     """The embedded explorer answers its shortcuts only while it has focus, so "/" stays Material's."""
-    page = _offline(desktop_page, site_url)
-    page.goto(f"{site_url}/index.html")
-    page.locator(".bp-dag-node").first.wait_for()
+    page = _open_site(desktop_page, site_url, "index.html")
     page.keyboard.press("/")
     playwright.expect(page.locator("input.md-search__input")).to_be_focused()
 
