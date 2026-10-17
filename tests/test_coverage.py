@@ -700,6 +700,18 @@ def test_evidence_validation_ignores_decorated_placeholders_and_fake_links(tmp_p
     assert "DECOMPOSED coverage evidence has no link to an existing roadmap article" not in reasons
 
 
+def test_a_link_labelled_only_with_code_certifies_decomposition(tmp_path: Path) -> None:
+    """Issue #302: the page links the declaration's name, so the link counts."""
+    blueprint = tmp_path / "blueprint"
+    _article(blueprint, "main.md")
+    _contract(blueprint, "| Main theorem | DECOMPOSED | Proved in [`Main.thm`](../roadmap/main.md) |\n")
+
+    summary, issues = load_coverage(blueprint)
+
+    assert issues == ()
+    assert summary is not None and summary.complete
+
+
 def test_rejects_evidence_whose_only_content_is_a_comment_or_code_span(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _contract(
@@ -801,14 +813,16 @@ def test_malformed_evidence_paths_are_reported_without_raising(tmp_path: Path) -
     blueprint = tmp_path / "blueprint"
     _contract(
         blueprint,
-        "| Malformed | DECOMPOSED | [Bad](../roadmap/bad%00path.md) |\n",
+        "| Malformed | DECOMPOSED | [Bad](../roadmap/bad%00path.md) |\n"
+        "| Unparsable | DECOMPOSED | [Host](http://[oops/a.md) |\n",
     )
 
     summary, issues = load_coverage(blueprint)
 
     assert summary is None
     assert [issue.reason for issue in issues] == [
-        "coverage link contains an invalid path: '../roadmap/bad%00path.md'"
+        "coverage link contains an invalid path: '../roadmap/bad%00path.md'",
+        "coverage link is not a valid URL: 'http://[oops/a.md'",
     ]
 
 

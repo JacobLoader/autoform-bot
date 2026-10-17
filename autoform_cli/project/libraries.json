@@ -3,21 +3,21 @@
   "libraries": [
     {
       "name": "atlas",
-      "git": "https://github.com/zibo-yang/atlas-lean",
-      "commit": "0ca59c787215c3638311b0a14af59aaae3208f6b",
+      "git": "https://github.com/facebookresearch/atlas-lean",
+      "commit": "d2d6fc8d34f246eb9acdcca2c1c4085800db6d74",
       "release": "lean-v4.34.1-mathlib-v4.34.1",
-      "offered": false,
+      "offered": true,
       "module_roots": ["CSLibExt", "CSLibExtTest", "Cslib", "CslibTests", "MathlibExt", "MathlibExtTest", "WantedExt"],
       "manifest_packages": [
         {
-          "url": "https://github.com/zibo-yang/atlas-lean",
+          "url": "https://github.com/facebookresearch/atlas-lean",
           "type": "git",
           "subDir": null,
           "scope": "",
-          "rev": "0ca59c787215c3638311b0a14af59aaae3208f6b",
+          "rev": "d2d6fc8d34f246eb9acdcca2c1c4085800db6d74",
           "name": "atlas",
           "manifestFile": "lake-manifest.json",
-          "inputRev": "0ca59c787215c3638311b0a14af59aaae3208f6b",
+          "inputRev": "d2d6fc8d34f246eb9acdcca2c1c4085800db6d74",
           "inherited": false,
           "configFile": "lakefile.toml"
         },

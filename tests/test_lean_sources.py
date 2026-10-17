@@ -8,6 +8,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import types
 from collections.abc import Callable
 from pathlib import Path
 
@@ -21,7 +22,6 @@ from autoform_cli._tree_snapshot import (
     TreeCaptureLimits,
     TreeChangedError,
     TreeSelection,
-    TreeSnapshot,
     TreeSnapshotError,
     bind_directory_tree,
 )
@@ -171,6 +171,305 @@ def test_records_the_declaring_line(tmp_path: Path) -> None:
     assert index.find("Outer.alpha").line == 6
     assert index.find("Outer.alpha").path == Path("Project/Basic.lean")
     assert index.find("Outer.alpha").keyword == "def"
+
+
+@pytest.mark.parametrize(
+    ("keyword", "body"),
+    [
+        ("theorem", ": True := trivial"),
+        ("lemma", ": True := trivial"),
+        ("def", ": Nat := 7"),
+        ("abbrev", ": Nat := 7"),
+        ("opaque", ": Nat := 7"),
+        ("axiom", ": True"),
+        ("instance", ": Inhabited Nat := ⟨7⟩"),
+        ("structure", "where\n  value : Nat"),
+    ],
+)
+def test_declaration_identifier_can_follow_its_keyword_on_the_next_line(
+    tmp_path: Path, keyword: str, body: str
+) -> None:
+    source = f"import Mathlib\nnamespace Outer\n{keyword}\n  result {body}\nend Outer\n"
+    index = _index(tmp_path, source)
+
+    assert set(index.declarations) == {"Outer.result"}
+    declaration = index.find("Outer.result")
+    assert declaration.line == 3
+    assert declaration.keyword == keyword
+    assert index.line_counts == {Path("Project/Basic.lean"): len(source.splitlines())}
+
+
+def test_comments_between_keyword_and_quoted_name_preserve_namespace_and_modifiers(tmp_path: Path) -> None:
+    source = "\n".join(
+        [
+            "namespace Outer.Inner",
+            "@[simp] protected",
+            "theorem -- its identifier follows the comment",
+            "/- namespace Ghost",
+            "   /- theorem hidden : True := trivial -/",
+            "   #exit",
+            "end Ghost -/",
+            "  «with -- and /- and .» : True := trivial",
+            "end Outer.Inner",
+            "theorem afterwards : True := trivial",
+        ]
+    )
+    index = _index(tmp_path, source)
+
+    assert set(index.declarations) == {"Outer.Inner.«with -- and /- and .»", "afterwards"}
+    declaration = index.find("Outer.Inner.«with -- and /- and .»")
+    assert declaration.line == 3
+    assert declaration.protected
+
+
+def test_multiline_literals_do_not_supply_declaration_names_or_namespaces(tmp_path: Path) -> None:
+    source = '\n'.join(
+        [
+            'def message : String := r#"',
+            'namespace Ghost',
+            'theorem',
+            '  imaginary : True := trivial',
+            'end Ghost',
+            '"#',
+            'namespace Real',
+            'theorem',
+            '  actual : True := trivial',
+            'end Real',
+        ]
+    )
+    index = _index(tmp_path, source)
+
+    assert set(index.declarations) == {"message", "Real.actual"}
+    assert index.find("Real.actual").line == 8
+
+
+def test_declaration_scan_view_preserves_coordinates_and_original_literal_bytes(tmp_path: Path) -> None:
+    source = 'def «name -- /-» : String := r#"α\nnamespace Ghost\ntheorem\n  imaginary : True"#\n'
+    stripped = lean_module._without_lean_comments(source)
+    scan_view = lean_module._without_lean_comments(source, mask_literals=True)
+    snapshot = snapshot_project_sources(_index(tmp_path, source).root)
+
+    assert stripped == source
+    assert len(scan_view) == len(stripped)
+    assert [i for i, char in enumerate(scan_view) if char == "\n"] == [
+        i for i, char in enumerate(stripped) if char == "\n"
+    ]
+    assert "«name -- /-»" in scan_view
+    assert "namespace Ghost" not in scan_view
+    assert snapshot.source_files == ((Path("Project/Basic.lean"), source.encode("utf-8")),)
+
+
+def test_alias_identifier_and_target_can_each_follow_on_the_next_line(tmp_path: Path) -> None:
+    source = "\n".join(
+        [
+            "import Batteries.Tactic.Alias",
+            "namespace Outer",
+            "theorem base : True := trivial",
+            "protected",
+            "alias",
+            "  renamed :=",
+            "    base",
+            "end Outer",
+        ]
+    )
+    index = _index(tmp_path, source)
+
+    declaration = index.find("Outer.renamed")
+    assert declaration.line == 5
+    assert declaration.protected
+    assert declaration.alias == Alias(("Outer.base", "base"), atomic=True, iff=False)
+    assert index.reached(declaration) == index.find("Outer.base")
+
+
+def test_iff_alias_pair_can_follow_its_keyword_on_the_next_line(tmp_path: Path) -> None:
+    source = (
+        "import Batteries.Tactic.Alias\nnamespace Outer\ntheorem base : True ↔ True := Iff.rfl\n"
+        "protected\nalias\n  ⟨forward, backward⟩ :=\n    base\nend Outer\n"
+    )
+    index = _index(tmp_path, source)
+
+    assert set(index.declarations) == {"Outer.base", "Outer.forward", "Outer.backward"}
+    for name in ("Outer.forward", "Outer.backward"):
+        declaration = index.find(name)
+        assert declaration.line == 5
+        assert declaration.protected
+        assert declaration.alias == Alias(("Outer.base", "base"), atomic=True, iff=True)
+
+
+def test_unfinished_keyword_does_not_take_the_next_command_as_its_name(tmp_path: Path) -> None:
+    index = _index(tmp_path, "namespace Outer\ntheorem\ndef actual : Nat := 7\nend Outer\n")
+
+    assert set(index.declarations) == {"Outer.actual"}
+
+    stopped = _index(tmp_path, "theorem\n#exit\ndef unread : Nat := 7\n")
+    assert stopped.declarations == {}
+    assert stopped.line_counts == {Path("Project/Basic.lean"): 1}
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "#check Nat",
+        "#print Nat",
+        "#unrecognized_command",
+        "open Nat",
+        "variable (x : Nat)",
+        "set_option pp.universes true",
+        "attribute [simp] Nat.add_zero",
+        "export Nat (succ)",
+        "universe u",
+        "include x",
+        "omit x",
+        "syntax \"custom\" : command",
+        "example : True := trivial",
+        "initialize value : Nat ← pure 7",
+        "run_cmd pure ()",
+        "run_elab do pure ()",
+        "run_meta pure ()",
+        'local notation "X" => Nat',
+        'scoped notation "X" => Nat',
+        "public import Mathlib",
+        "public meta import Mathlib",
+        "@[deprecated] initialize value : Nat ← pure 7",
+        "private unsafe initialize value : Nat ← pure 7",
+        '@[simp] scoped postfix:70 "!" => Nat.succ',
+        'local prefix:70 "!" => Nat.succ',
+        'macro_rules | `(custom) => `(Nat)',
+        'elab_rules : command | `(custom) => pure ()',
+        "assert_not_exists absent",
+        "assert_not_imported Mathlib",
+        "deprecated_module",
+        "deprecated_syntax syntaxName",
+        "docs_to_verso Nat",
+        "init_quot",
+        "unlock_limits",
+        'register_tactic_tag tag "description"',
+        "tactic_extension tag",
+        'recommended_spelling "and" for "∧" in [And]',
+        "gen_injective_theorems% Nat",
+        "with_weak_namespace Nat #check Nat",
+        "register_error_explanation code explanation",
+        "set_library_suggestions ()",
+        "seal Nat.add",
+        "unseal Nat.add",
+        'binder_predicate x " > " y:term => `($x > $y)',
+        "aux_def value : Nat := 7",
+        "norm_cast_add_elim Nat.add_zero",
+        "register_linter_set checks := linter.unusedVariables",
+        "register_label_attr label",
+        "register_sym_simp_attr rules",
+        "ensure_eval_term_instance Nat",
+        "declare_core_config_elab elabName Config",
+        "simproc_decl simplify (Nat.succ _) := fun _ => pure .continue",
+        "cbv_simproc_decl simplify (Nat.succ _) := fun _ => pure .continue",
+        "unif_hint (x : Nat) where ⊢ x ≟ x",
+        "register_sym_simp simpVariant where\n  maxSteps := 100",
+        "grind_pattern lemmaName => Nat.succ",
+    ],
+)
+def test_unfinished_keyword_does_not_take_a_nondeclaration_command_name(tmp_path: Path, command: str) -> None:
+    source = f"namespace Outer\ntheorem\n{command}\ndef actual : Nat := 7\nend Outer\n"
+    index = _index(tmp_path, source)
+
+    assert set(index.declarations) == {"Outer.actual"}
+    assert index.find("Outer.actual").line == 3 + len(command.splitlines())
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "open'", "open!", "public?", "variable₁", "variable'", "attribute'", "set_option'", "run_cmd'", "run_elab'",
+        "local'", "scoped'", "public'", "initialize'", "requires", "ensures",
+        "«open»", "«#check»", "«run_cmd»", "«local»", "«@[deprecated]»",
+        "Qualified.open", "Qualified.local", "Qualified.run_elab", "«Qualified.open».value",
+        "α₁", "ℕ_value", "𝒜_value",
+    ],
+)
+def test_multiline_names_are_not_rejected_by_a_command_token_prefix(tmp_path: Path, name: str) -> None:
+    source = f"namespace Outer\ndef\n  {name} : Nat := 7\ntheorem actual : True := trivial\nend Outer\n"
+    index = _index(tmp_path, source)
+
+    assert set(index.declarations) == {f"Outer.{name}", "Outer.actual"}
+    assert index.find(f"Outer.{name}").line == 2
+
+
+@pytest.mark.parametrize(
+    "following",
+    [
+        "@decoration",
+        "not_a_name/part : Nat := 7",
+        "not_a_name+part : Nat := 7",
+        "123 : Nat := 7",
+        "custom => Nat",
+        "custom do pure ()",
+        "custom binders => Nat",
+        "custom (x : Nat) => Nat",
+        "custom (x : Nat] : Nat := 7",
+    ],
+)
+def test_multiline_continuation_requires_identifier_and_signature_syntax(tmp_path: Path, following: str) -> None:
+    source = f"namespace Outer\ntheorem\n{following}\ndef actual : Nat := 7\nend Outer\n"
+    index = _index(tmp_path, source)
+
+    assert set(index.declarations) == {"Outer.actual"}
+    assert index.find("Outer.actual").line == 4
+
+
+@pytest.mark.parametrize(
+    ("keyword", "name", "signature"),
+    [
+        ("def", "identity", "x : Nat := x"),
+        ("def", "identity", "{α : Type u} (x : α) : α := x"),
+        ("def", "identity", "{α : Type u}\n    (x : α) : α := x"),
+        ("def", "identity", "{α : Type u}\n    [Inhabited α] : α := default"),
+        ("theorem", "self_eq", "(x : Nat\n    ) : x = x := rfl"),
+        ("theorem", "self_eq", "(«x)» : Nat) : «x)» = «x)» := rfl"),
+        ("def", "identity", ".{u} {α : Type u} (x : α) := x"),
+        ("def", "zero", ":= 0"),
+        ("def", "zero", "\n    : Nat := 0"),
+        ("def", "isZero", "| 0 => true\n    | _ => false"),
+        ("structure", "Child", "extends Parent where\n    value : Nat"),
+    ],
+)
+def test_multiline_declaration_names_keep_legal_signature_continuations(
+    tmp_path: Path, keyword: str, name: str, signature: str
+) -> None:
+    separator = "" if signature.startswith(".{") else " "
+    source = (
+        f"namespace Outer\n@[simp] protected\n{keyword}\n  {name}{separator}{signature}\n"
+        "theorem actual : True := trivial\nend Outer\n"
+    )
+    index = _index(tmp_path, source)
+
+    assert set(index.declarations) == {f"Outer.{name}", "Outer.actual"}
+    declaration = index.find(f"Outer.{name}")
+    assert declaration.line == 3
+    assert declaration.keyword == keyword
+    assert declaration.protected
+
+
+def test_decorated_declaration_after_unfinished_keyword_keeps_its_own_line(tmp_path: Path) -> None:
+    source = (
+        "namespace Outer\ntheorem\n@[simp] protected def actual : Nat := 7\n"
+        "@[simp] protected\ntheorem\n  next : True := trivial\nend Outer\n"
+    )
+    index = _index(tmp_path, source)
+
+    assert set(index.declarations) == {"Outer.actual", "Outer.next"}
+    assert index.find("Outer.actual").line == 3
+    assert index.find("Outer.actual").keyword == "def"
+    assert index.find("Outer.actual").protected
+    assert index.find("Outer.next").line == 5
+    assert index.find("Outer.next").keyword == "theorem"
+    assert index.find("Outer.next").protected
+
+
+def test_anonymous_multiline_instance_does_not_become_a_named_declaration(tmp_path: Path) -> None:
+    source = "instance\n  : Inhabited Nat := ⟨7⟩\ntheorem\n  actual : True := trivial\n"
+    index = _index(tmp_path, source)
+
+    assert set(index.declarations) == {"actual"}
+    assert index.find("actual").line == 3
 
 
 def test_sections_do_not_add_to_the_namespace(tmp_path: Path) -> None:
@@ -1479,7 +1778,7 @@ def test_selected_verification_recurses_in_three_frames_per_folder(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Lean capture sets no max_depth, so the frames verification spends per
+    # Capture has no depth limit, so the frames verification spends per
     # folder level decide how deep a tree fits under the recursion limit.
     _require_descriptor_capture()
     folder = tmp_path / "d" / "d" / "d" / "d"
@@ -1505,6 +1804,31 @@ def test_selected_verification_recurses_in_three_frames_per_folder(
 
     assert snapshot.index.find("deep") is not None
     assert [frames_at_level[level + 1] - frames_at_level[level] for level in range(4)] == [3, 3, 3, 3]
+
+
+def test_selected_verification_calls_back_through_a_plain_function(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A C-implemented callback such as functools.partial adds no Python frame,
+    # so the frame count above misses it, but it spends CPython's separate C
+    # recursion budget at every folder level of verification.
+    _require_descriptor_capture()
+    (tmp_path / "d").mkdir()
+    (tmp_path / "d" / "Deep.lean").write_text("def deep : Nat := 0\n")
+    callbacks: list[type] = []
+    recheck = tree_snapshot_module._recheck_scanned_directory
+
+    def recording_recheck(*args: object, **kwargs: object) -> object:
+        if kwargs.get("verify_kept") is not None:
+            callbacks.append(type(kwargs["verify_kept"]))
+        return recheck(*args, **kwargs)
+
+    monkeypatch.setattr(tree_snapshot_module, "_recheck_scanned_directory", recording_recheck)
+
+    snapshot_project_sources(tmp_path)
+
+    assert callbacks and set(callbacks) == {types.FunctionType}
 
 
 @pytest.mark.parametrize(
@@ -1857,7 +2181,7 @@ def test_portable_capture_rejects_a_restored_nested_directory_redirection(
             displaced.rename(nested)
             restored += 1
 
-    original_names = tree_snapshot_module._capture_path_names
+    original_names = tree_snapshot_module._capture_directory_names
     original_read = tree_snapshot_module._read_portable_file
     original_signature = tree_snapshot_module._stat_signature
 
@@ -1881,7 +2205,7 @@ def test_portable_capture_rejects_a_restored_nested_directory_redirection(
         return signature
 
     _use_portable_capture(monkeypatch)
-    monkeypatch.setattr(tree_snapshot_module, "_capture_path_names", redirect_then_list)
+    monkeypatch.setattr(tree_snapshot_module, "_capture_directory_names", redirect_then_list)
     monkeypatch.setattr(tree_snapshot_module, "_read_portable_file", read_then_restore)
     monkeypatch.setattr(tree_snapshot_module, "_stat_signature", coarse_directory_signature)
     bound = BoundDirectoryTree(
@@ -2399,267 +2723,6 @@ def test_malformed_manifest_value_does_not_escape_source_indexing(
     assert index.find("visible") is not None
 
 
-def _synthetic_snapshot(
-    *,
-    directories: tuple[str, ...] = ("",),
-    files: tuple[tuple[str, bytes], ...] = (),
-    symlinks: tuple[tuple[str, str], ...] = (),
-) -> TreeSnapshot:
-    """Build a snapshot by hand, with no special entries, placeholders, or identities."""
-    return TreeSnapshot(
-        root_identity=(1, 1),
-        directories=directories,
-        files=files,
-        symlinks=symlinks,
-        special=(),
-        placeholders=(),
-        omitted=(),
-        identities=(),
-    )
-
-
-@pytest.mark.parametrize(
-    "relative",
-    [
-        "../escaped.txt",
-        "C:escaped.txt",
-        "C:/escaped.txt",
-        "NUL",
-        "NUL.txt",
-        "NUL .txt",
-        "trailing.",
-        "trailing ",
-        "invalid?.txt",
-        "control\x01.txt",
-    ],
-)
-def test_snapshot_materialization_rejects_non_relative_paths(
-    tmp_path: Path,
-    relative: str,
-) -> None:
-    snapshot = _synthetic_snapshot(files=((relative, b"escaped\n"),))
-    destination = tmp_path / "destination"
-
-    with pytest.raises(TreeSnapshotError, match="unsafe materialization path"):
-        snapshot.materialize_regular_files(destination)
-
-    assert not destination.exists()
-    assert not (tmp_path / "escaped.txt").exists()
-
-
-@pytest.mark.parametrize(
-    ("files", "directories"),
-    [
-        ((("A.txt", b"first"), ("a.txt", b"second")), ("",)),
-        ((("parent", b"file"), ("parent/child", b"child")), ("",)),
-        ((("a/child", b"child"),), ("", "A")),
-        ((), ("", "a/b")),
-    ],
-)
-def test_snapshot_materialization_rejects_aliases_and_type_conflicts(
-    tmp_path: Path,
-    files: tuple[tuple[str, bytes], ...],
-    directories: tuple[str, ...],
-) -> None:
-    snapshot = _synthetic_snapshot(directories=directories, files=files)
-    destination = tmp_path / "destination"
-
-    with pytest.raises(TreeSnapshotError, match="materialization path"):
-        snapshot.materialize_regular_files(destination)
-
-    assert not destination.exists()
-
-
-def test_snapshot_materialization_orders_valid_directory_records(tmp_path: Path) -> None:
-    snapshot = _synthetic_snapshot(
-        directories=("", "a/b", "a"),
-        files=(("a/b/result.txt", b"result\n"),),
-    )
-    destination = tmp_path / "destination"
-
-    snapshot.materialize_regular_files(destination)
-
-    assert (destination / "a/b/result.txt").read_bytes() == b"result\n"
-
-
-def test_snapshot_materialization_root_swap_never_redirects_bytes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    snapshot = _synthetic_snapshot(directories=("", "nested"), files=(("result.txt", b"captured\n"),))
-    destination = tmp_path / "destination"
-    displaced = tmp_path / "displaced"
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    swapped = False
-
-    def swap_root() -> None:
-        nonlocal swapped
-        destination.rename(displaced)
-        destination.symlink_to(outside, target_is_directory=True)
-        swapped = True
-
-    _on_checkpoint(monkeypatch, "after-materialization-directory-open", swap_root, relative="")
-    try:
-        with pytest.raises(TreeSnapshotError, match="materialization"):
-            snapshot.materialize_regular_files(destination)
-        assert swapped
-        assert not (outside / "result.txt").exists()
-    finally:
-        if destination.is_symlink():
-            destination.unlink()
-        if displaced.exists():
-            for child in displaced.iterdir():
-                child.unlink()
-            displaced.rmdir()
-
-
-def test_snapshot_materialization_nested_swap_never_redirects_bytes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    snapshot = _synthetic_snapshot(
-        directories=("", "nested"),
-        files=(("nested/result.txt", b"captured\n"),),
-    )
-    destination = tmp_path / "destination"
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    displaced = destination / "nested-displaced"
-
-    def swap_nested() -> None:
-        (destination / "nested").rename(displaced)
-        (destination / "nested").symlink_to(outside, target_is_directory=True)
-
-    _on_checkpoint(monkeypatch, "after-materialization-directory-open", swap_nested, relative="nested")
-    try:
-        with pytest.raises(TreeSnapshotError, match="materialization"):
-            snapshot.materialize_regular_files(destination)
-        assert not (outside / "result.txt").exists()
-    finally:
-        linked = destination / "nested"
-        if linked.is_symlink():
-            linked.unlink()
-        if displaced.exists():
-            displaced.rmdir()
-        if destination.exists():
-            destination.rmdir()
-
-
-def test_snapshot_materialization_retries_short_writes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    snapshot = _synthetic_snapshot(files=(("result.txt", b"captured bytes\n"),))
-    destination = tmp_path / "destination"
-    original_write = tree_snapshot_module.os.write
-
-    def short_write(descriptor: int, data) -> int:
-        return original_write(descriptor, bytes(data[:1]))
-
-    monkeypatch.setattr(tree_snapshot_module.os, "write", short_write)
-
-    snapshot.materialize_regular_files(destination)
-
-    assert (destination / "result.txt").read_bytes() == b"captured bytes\n"
-
-
-def test_snapshot_materialization_closes_descriptors_after_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    snapshot = _synthetic_snapshot(
-        directories=("", "nested"),
-        files=(("nested/result.txt", b"captured\n"),),
-    )
-    destination = tmp_path / "destination"
-    original_open = tree_snapshot_module.os.open
-    original_write = tree_snapshot_module.os.write
-    opened: list[int] = []
-    writes = 0
-
-    def tracked_open(*args, **kwargs):
-        descriptor = original_open(*args, **kwargs)
-        opened.append(descriptor)
-        return descriptor
-
-    def fail_second_write(descriptor: int, data) -> int:
-        nonlocal writes
-        writes += 1
-        if writes == 1:
-            return original_write(descriptor, bytes(data[:1]))
-        raise OSError(errno.EIO, "injected materialization failure")
-
-    monkeypatch.setattr(tree_snapshot_module.os, "open", tracked_open)
-    monkeypatch.setattr(tree_snapshot_module.os, "write", fail_second_write)
-
-    with pytest.raises(TreeSnapshotError, match="materialized safely"):
-        snapshot.materialize_regular_files(destination)
-
-    assert opened
-    assert writes == 2
-    for descriptor in opened:
-        with pytest.raises(OSError):
-            os.fstat(descriptor)
-    assert not destination.exists()
-
-
-@pytest.mark.parametrize(
-    "attack",
-    ["replace", "overwrite", "inject", "chmod", "hardlink"],
-)
-def test_snapshot_materialization_rejects_final_tree_tampering(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    attack: str,
-) -> None:
-    snapshot = _synthetic_snapshot(
-        directories=("", "nested"),
-        files=(("first.txt", b"first\n"), ("second.txt", b"second\n")),
-    )
-    destination = tmp_path / "destination"
-    attacked = False
-
-    def tamper_before_second_file() -> None:
-        nonlocal attacked
-        if attacked:
-            return
-        attacked = True
-        first = destination / "first.txt"
-        if attack == "replace":
-            first.unlink()
-            first.write_bytes(b"evil!\n")
-        elif attack == "overwrite":
-            first.write_bytes(b"evil!\n")
-        elif attack == "inject":
-            (destination / "injected.lean").write_text("def injected : Nat := 0\n")
-        elif attack == "chmod":
-            destination.chmod(0o777)
-            (destination / "nested").chmod(0o777)
-            first.chmod(0o666)
-        else:
-            os.link(first, tmp_path / "outside-link")
-
-    _on_checkpoint(
-        monkeypatch,
-        "before-materialization-file-open",
-        tamper_before_second_file,
-        relative="second.txt",
-    )
-    try:
-        with pytest.raises(TreeSnapshotError):
-            snapshot.materialize_regular_files(destination)
-        assert attacked
-    finally:
-        outside_link = tmp_path / "outside-link"
-        if outside_link.exists():
-            outside_link.unlink()
-        if destination.exists():
-            for child in destination.iterdir():
-                child.rmdir() if child.is_dir() else child.unlink()
-            destination.rmdir()
-
-
 def test_outer_managed_marker_hides_everything_below_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3136,6 +3199,42 @@ def test_oversized_managed_manifest_leaves_its_directory_indexed_at_its_read_bou
     # The engine refuses bytes past the bound before it asks the recognizer.
     assert observed_lengths == []
     assert index.find("oversizedPacket") is not None
+
+
+def test_only_a_complete_publication_manifest_hides_its_folder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Render copies a blueprint's Lean files into its site and mkdocs copies the
+    # site again, manifest included; both copies go stale when the source changes.
+    complete = {"complete": True, "schema": "autoform-publication/v2"}
+    manifests = {
+        "site-src": complete,
+        "site": complete,
+        "legacy": {**complete, "schema": "autoform-publication/v1"},
+        "unfinished": {**complete, "complete": False},
+        "web": {"name": "web app"},
+        "padded": {**complete, "padding": "x" * 64},
+        "object-schema": {**complete, "schema": {}},
+        "array-schema": {**complete, "schema": []},
+    }
+    for folder, manifest in manifests.items():
+        (tmp_path / folder / "Copy").mkdir(parents=True)
+        (tmp_path / folder / "publication.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (tmp_path / folder / "Copy" / "Proofs.lean").write_text("theorem stale : True := trivial\n")
+    (tmp_path / "Proofs.lean").write_text("theorem renamed : True := trivial\n")
+    monkeypatch.setattr(lean_module, "PUBLICATION_MANIFEST_MAX_BYTES", 64, raising=False)
+
+    snapshot = snapshot_project_sources(tmp_path)
+
+    assert sorted(path.as_posix() for path, _data in snapshot.source_files) == [
+        "Proofs.lean",
+        "array-schema/Copy/Proofs.lean",
+        "object-schema/Copy/Proofs.lean",
+        "padded/Copy/Proofs.lean",
+        "unfinished/Copy/Proofs.lean",
+        "web/Copy/Proofs.lean",
+    ]
 
 
 def test_irreducible_definitions_are_indexed(tmp_path: Path) -> None:

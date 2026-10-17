@@ -54,7 +54,51 @@ _DECLARATION = re.compile(
     r"^\s*(?:@\[[^\]]*\]\s*)*"
     r"(?:(?:public|private|protected|noncomputable|partial|unsafe|scoped|local)\s+)*"
     r"(theorem|lemma|def|abbrev|instance|structure|class|inductive|opaque|axiom|irreducible_def"
-    r"|theorem_wanted|proof_wanted|def_wanted|instance_wanted|alias)\s+(.+)$"
+    r"|theorem_wanted|proof_wanted|def_wanted|instance_wanted|alias)\b(?:\s+(.*))?$"
+)
+# Core command heads and their modifiers cannot supply a declaration's name.
+# Compare complete identifiers: `open'`, `Qualified.open` and `«open»` are names.
+# These cover the core command parsers and their stock syntax extensions. The
+# continuation grammar below also rejects syntax that cannot follow a
+# declaration identifier, without assuming every command extension is known.
+_COMMAND_HEADS = frozenset(
+    {
+        "abbrev", "add_decl_doc", "alias", "assert_not_exists", "assert_not_imported",
+        "attribute", "aux_def", "axiom", "binder_predicate", "builtin_cbv_simproc",
+        "builtin_cbv_simproc_decl", "builtin_dsimproc", "builtin_dsimproc_decl",
+        "builtin_grind_propagator", "builtin_initialize", "builtin_simproc",
+        "builtin_simproc_decl", "cbv_simproc", "cbv_simproc_decl", "class", "coinductive",
+        "declare_bitwise_int_theorems", "declare_bitwise_uint_theorems",
+        "declare_command_config_elab", "declare_command_config_elab_legacy",
+        "declare_config_elab", "declare_config_elab_legacy", "declare_core_config_elab",
+        "declare_eval_bin", "declare_eval_bin_bitwise", "declare_eval_bin_bool_pred",
+        "declare_int_theorems", "declare_simp_like_tactic", "declare_sint_simprocs",
+        "declare_syntax_cat", "declare_term_config_elab", "declare_uint_simprocs",
+        "declare_uint_theorems", "def", "def_eval_config_item", "def_wanted",
+        "deprecated_module", "deprecated_syntax", "derive_eval_expr_instance_using_meta_eval",
+        "deriving", "docs_to_verso", "dsimproc", "dsimproc_decl", "elab", "elab_rules",
+        "elab_stx_quot", "end", "end_local_scope", "ensure_eval_expr_instance",
+        "ensure_eval_term_expr_instances", "ensure_eval_term_instance", "example",
+        "export", "gen_cnstr_fns", "grind_annotated", "grind_pattern", "grind_propagator",
+        "import", "include", "inductive",
+        "infix", "infixl", "infixr", "init_grind_norm", "init_quot", "initialize", "irreducible_def",
+        "instance", "instance_wanted", "lemma", "macro", "macro_rules",
+        "make_elab_grind_config", "make_elab_simp_config", "module",
+        "mutual", "namespace", "norm_cast_add_elim", "notation", "omit", "opaque", "open",
+        "postfix", "postprocess_traces", "prefix", "prelude", "proof_wanted", "recommended_spelling",
+        "register_builtin_option", "register_error_explanation", "register_option",
+        "register_grind_attr", "register_label_attr", "register_linter_set", "register_simp_attr",
+        "register_sym_dsimp", "register_sym_simp", "register_sym_simp_attr", "register_tactic_tag",
+        "register_try?_tactic", "reprove", "run_cmd", "run_elab", "run_meta",
+        "run_tac", "seal", "section", "set_library_suggestions", "set_option",
+        "show_panel_widgets", "simproc", "simproc_decl", "store_traces_as", "structure",
+        "syntax", "tactic_extension", "test_extern", "theorem", "theorem_wanted",
+        "unif_hint", "universe", "unlock_limits", "unseal", "variable", "wait_for_cancel_once_command",
+        "with_weak_namespace",
+    }
+)
+_COMMAND_MODIFIERS = frozenset(
+    {"public", "private", "protected", "meta", "noncomputable", "unsafe", "partial", "nonrec", "local", "scoped"}
 )
 _IGNORED_DIRECTORIES = frozenset(
     {
@@ -85,6 +129,12 @@ MANAGED_OUTPUT_SCHEMAS = frozenset(
         ("passages", PASSAGE_SCHEMA),
     }
 )
+#: Render marks each finished site with this manifest. ``mkdocs`` copies it
+#: into its own output, so both folders hold rendered copies, never sources.
+PUBLICATION_MANIFEST = "publication.json"
+PUBLICATION_SCHEMA = "autoform-publication/v2"
+#: Render never writes a larger manifest, so the next render can always read it.
+PUBLICATION_MANIFEST_MAX_BYTES = 8 * 1024 * 1024
 
 @dataclass(frozen=True, slots=True)
 class Alias:
@@ -332,20 +382,17 @@ def snapshot_project_sources(
     *,
     exclude_roots: Iterable[str | Path] = (),
     limits: TreeCaptureLimits = TreeCaptureLimits(),
-    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
 ) -> IndexedSourceSnapshot:
     """Read each Lean source once and derive its index and revision together.
 
     A bind or capture that races a concurrent edit is retried a bounded number
-    of times. Callers may name markers of generated directory formats they own;
-    a directory holding one is never indexed.
+    of times.
     """
 
     bound, snapshot = _open_stable_project_sources(
         root,
         exclude_roots=tuple(exclude_roots),
         limits=limits,
-        opaque_markers=opaque_markers,
     )
     bound.close()
     return snapshot
@@ -356,7 +403,6 @@ def _open_stable_project_sources(
     *,
     exclude_roots: tuple[str | Path, ...],
     limits: TreeCaptureLimits,
-    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
 ) -> tuple[BoundProjectSources, IndexedSourceSnapshot]:
     """Open and capture a Lean root, retrying a bounded number of changed attempts.
 
@@ -375,7 +421,6 @@ def _open_stable_project_sources(
                 root,
                 exclude_roots=exclude_roots,
                 limits=limits,
-                opaque_markers=opaque_markers,
             )
             return bound, bound.capture()
         except BaseException as error:
@@ -434,7 +479,6 @@ def open_project_sources(
     *,
     exclude_roots: Iterable[str | Path] = (),
     limits: TreeCaptureLimits = TreeCaptureLimits(),
-    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
 ) -> BoundProjectSources:
     """Open a retained Lean source root; the caller must close it.
 
@@ -455,9 +499,7 @@ def open_project_sources(
             exclude_roots,
             root_identity=tree.identity,
         )
-        tree.selection = _lean_tree_selection(
-            excluded, limits=limits, opaque_markers=opaque_markers
-        )
+        tree.selection = _lean_tree_selection(excluded, limits=limits)
         tree.verify()
     except BaseException:
         tree.close()
@@ -525,7 +567,6 @@ def _lean_tree_selection(
     excluded: tuple[PurePosixPath, ...],
     *,
     limits: TreeCaptureLimits = TreeCaptureLimits(),
-    opaque_markers: tuple[OpaqueDirectoryMarker, ...] = (),
 ) -> TreeSelection:
     return TreeSelection(
         include=lambda path, mode: _lean_snapshot_includes(
@@ -553,7 +594,14 @@ def _lean_tree_selection(
                 _MANAGED_OUTPUT_MANIFEST_BYTE_LIMIT,
                 _is_managed_output_manifest_bytes,
             ),
-            *opaque_markers,
+            # A rendered site, and mkdocs' copy of one, holds copies of the
+            # blueprint's files. Render marks its stage before copying into it;
+            # mkdocs can copy files into site/ before it copies the manifest.
+            OpaqueDirectoryMarker(
+                PUBLICATION_MANIFEST,
+                PUBLICATION_MANIFEST_MAX_BYTES,
+                _is_complete_publication,
+            ),
         ),
     )
 
@@ -660,6 +708,19 @@ def _is_managed_output_manifest_bytes(data: bytes) -> bool:
     )
 
 
+def _is_complete_publication(data: bytes) -> bool:
+    try:
+        value = json.loads(data)
+    except (ValueError, RecursionError):
+        return False
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("schema"), str)
+        and value.get("schema") in {"autoform-publication/v1", PUBLICATION_SCHEMA}
+        and value.get("complete") is True
+    )
+
+
 def _update_source_digest(digest, relative: Path, data: bytes) -> None:
     encoded = os.fsencode(relative.as_posix())
     digest.update(len(encoded).to_bytes(8, "big"))
@@ -674,7 +735,7 @@ def _scan(text: str, relative: Path) -> tuple[list[Declaration], int]:
     namespaces: list[str] = []
     scopes: list[str | None] = []
 
-    lines = _without_lean_comments(text).splitlines()
+    lines = _without_lean_comments(text, mask_literals=True).splitlines()
     for number, line in enumerate(lines, start=1):
         if not line.strip():
             continue
@@ -705,6 +766,21 @@ def _scan(text: str, relative: Path) -> tuple[list[Declaration], int]:
         declaration_match = _DECLARATION.match(line)
         if declaration_match:
             keyword = declaration_match.group(1)
+            body = declaration_match.group(2)
+            body_index = number - 1
+            name = None
+            if not body:
+                body_index = next((later for later in range(number, len(lines)) if lines[later].strip()), len(lines))
+                if body_index == len(lines):
+                    continue
+                body = lines[body_index].lstrip()
+                if keyword == "alias":
+                    if _ALIAS.match(body) is None:
+                        continue
+                else:
+                    name = _continuation_name(body)
+                    if name is None:
+                        continue
             # Modifiers may also stand on the lines above the keyword.
             header = [line[: declaration_match.start(1)]]
             for above in range(number - 2, -1, -1):
@@ -713,12 +789,12 @@ def _scan(text: str, relative: Path) -> tuple[list[Declaration], int]:
                 header.append(lines[above])
             protected = "protected" in _ATTRIBUTE_LIST.sub(" ", " ".join(header)).split()
             if keyword == "alias":
-                following = next((lines[later] for later in range(number, len(lines)) if lines[later].strip()), "")
+                following = next((lines[later] for later in range(body_index + 1, len(lines)) if lines[later].strip()), "")
                 found.extend(
-                    _aliases(declaration_match.group(2), following, namespaces, relative, number, protected)
+                    _aliases(body, following, namespaces, relative, number, protected)
                 )
                 continue
-            name = _name_token(declaration_match.group(2))
+            name = name or _name_token(body)
             if name is None:
                 continue
             found.append(Declaration(_qualified(namespaces, name), relative, number, keyword, protected))
@@ -746,6 +822,77 @@ def _name_token(text: str) -> str | None:
 
     match = _NAME_TOKEN.match(text)
     return match.group() if match and text[match.end() : match.end() + 1] not in ("«", "»") else None
+
+
+# Lean's isIdFirst/isIdRest (Init.Meta.Defs): ASCII letters plus the listed
+# letter-like blocks; later characters also admit digits, primes and subscripts.
+_ID_LETTER = (
+    r"A-Za-z_\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u017f"
+    r"\u0391-\u039f\u03a1-\u03a2\u03a4-\u03a9\u03b1-\u03ba\u03bc-\u03fb"
+    r"\u1f00-\u1ffe\u2100-\u214f\U0001d49c-\U0001d59f"
+)
+_ID_REST = rf"[{_ID_LETTER}0-9'!?\u2080-\u2089\u2090-\u209c\u1d62-\u1d6a\u2c7c]*"
+_ID_COMPONENT = rf"(?:«[^«»]*»|[{_ID_LETTER}]{_ID_REST})"
+_CONTINUATION_IDENTIFIER = re.compile(rf"{_ID_COMPONENT}(?:\.{_ID_COMPONENT})*")
+_SIGNATURE_WORDS = frozenset({"where", "extends", "requires", "ensures"})
+_NAME_FORBIDDEN = _COMMAND_HEADS | _COMMAND_MODIFIERS | {"where", "extends", "by", "do", "in", "let", "match"}
+_BINDER_CLOSERS = {"(": ")", "{": "}", "[": "]", "⦃": "⦄"}
+
+
+def _continuation_name(text: str) -> str | None:
+    """Read a name followed by a possible declaration signature, not another command.
+
+    Only the new keyword-on-its-own-line case uses this conservative guard.
+    A name may stand alone or be followed by universe parameters, binders, a
+    type or a declaration value. A bracketed binder may continue on later
+    lines; source indexing does not elaborate its contents. Attribute lists,
+    command modifiers and arbitrary punctuation cannot be identifiers here.
+    """
+
+    match = _CONTINUATION_IDENTIFIER.match(text)
+    if match is None or match.group() in _NAME_FORBIDDEN:
+        return None
+    name = match.group()
+    rest = text[match.end() :]
+    if rest.startswith(".{"):
+        # declId's universe list belongs to the signature, not the public name.
+        rest = rest[1:]
+    while rest.strip():
+        rest = rest.lstrip()
+        if rest.startswith((":", "|")):
+            return name
+        if rest[0] in _BINDER_CLOSERS:
+            closers: list[str] = []
+            position = 0
+            while position < len(rest):
+                char = rest[position]
+                if char == "«":
+                    end = rest.find("»", position + 1)
+                    if end == -1:
+                        return None
+                    position = end + 1
+                    continue
+                if char in _BINDER_CLOSERS:
+                    closers.append(_BINDER_CLOSERS[char])
+                elif char in _BINDER_CLOSERS.values():
+                    if not closers or char != closers.pop():
+                        return None
+                    if not closers:
+                        break
+                position += 1
+            if closers:
+                return name  # This binder can finish on a later line.
+            rest = rest[position + 1 :]
+            continue
+        binder = _CONTINUATION_IDENTIFIER.match(rest)
+        if binder is None:
+            return None
+        if binder.group() in _SIGNATURE_WORDS:
+            return name
+        if binder.group() in _NAME_FORBIDDEN:
+            return None
+        rest = rest[binder.end() :]
+    return name
 
 
 #: A name as ``alias`` takes one: it starts with a letter, ``_`` or ``«``.
@@ -812,11 +959,21 @@ _LITERAL_EVENT = re.compile(r"""["»'\\{]""")
 _COMMENT_EVENT = re.compile(r"-/|/-")
 
 
-def _without_lean_comments(text: str) -> str:
-    """Remove nested Lean comments, keeping strings intact and newlines in place."""
+def _without_lean_comments(text: str, *, mask_literals: bool = False) -> str:
+    """Remove nested Lean comments, preserving literals or blanking them for declaration scanning.
+
+    Blanking preserves character positions and newlines, including across
+    interpolations. Guillemets delimit identifiers, so those stay intact.
+    """
 
     out: list[str] = []
     stack: list[list] = []  # [closer, interpolated] for a string, [None, depth] for `{…}` in `s!"…"`
+
+    def append(fragment: str, literal: bool = False) -> None:
+        # A raw string never reaches the stack, so its branch passes literal=True.
+        in_literal = literal or any(frame[0] not in {None, "»"} for frame in stack)
+        out.append(re.sub(r"[^\r\n]", " ", fragment) if mask_literals and in_literal else fragment)
+
     index = 0
     while index < len(text):
         top = stack[-1] if stack else None
@@ -824,29 +981,30 @@ def _without_lean_comments(text: str) -> str:
         events = _LITERAL_EVENT if literal else _CODE_EVENT if top is None else _INTERPOLATION_EVENT
         event = events.search(text, index)
         if event is None:
-            out.append(text[index:])
+            append(text[index:])
             break
-        out.append(text[index : event.start()])
+        append(text[index : event.start()])
         index = event.start()
         char = text[index]
         if literal:
             close, interpolated = top
             if close in {'"', "'"} and char == "\\":
-                out.append(text[index : index + 2])
+                append(text[index : index + 2])
                 index += 2
                 continue
+            # Append before popping, so blanking covers the closer.
+            append(char)
             if char == close:
                 stack.pop()
             elif interpolated and char == "{":
                 stack.append([None, 1])
-            out.append(char)
             index += 1
             continue
         if text.startswith("--", index):
             newline = text.find("\n", index + 2)
             if newline < 0:
                 break
-            out.append("\n")
+            append("\n")
             index = newline + 1
             continue
         if text.startswith("/-", index):
@@ -858,7 +1016,7 @@ def _without_lean_comments(text: str) -> str:
                 if not depth:
                     index = pair.end()
                     break
-            out.append(" " + "\n" * text.count("\n", start, index))
+            append(" " + "\n" * text.count("\n", start, index))
             continue
         previous = text[index - 1] if index else " "
         # An `r` inside a name, or a name literal's, is part of it. Lean reads no
@@ -868,7 +1026,7 @@ def _without_lean_comments(text: str) -> str:
         if raw:
             found = text.find('"' + raw.group(1), raw.end())
             index = len(text) if found < 0 else found + 1 + len(raw.group(1))
-            out.append(text[raw.start() : index])
+            append(text[raw.start() : index], literal=True)
             continue
         if char == '"':
             interpolated = previous == "!" and index >= 2 and (text[index - 2].isalnum() or text[index - 2] == "_")
@@ -881,7 +1039,7 @@ def _without_lean_comments(text: str) -> str:
             top[1] += 1 if char == "{" else -1
             if top[1] == 0:
                 stack.pop()
-        out.append(char)
+        append(char)
         index += 1
     return "".join(out)
 
@@ -1288,6 +1446,9 @@ __all__ = [
     "MANAGED_OUTPUT_SCHEMAS",
     "PACKET_SCHEMA",
     "PASSAGE_SCHEMA",
+    "PUBLICATION_MANIFEST",
+    "PUBLICATION_MANIFEST_MAX_BYTES",
+    "PUBLICATION_SCHEMA",
     "SourceIndex",
     "SourceLinker",
     "bind_project_source_snapshot",

@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .runtime import RuntimeNode, load_runtime_graph
+from .runtime import RuntimeGraph, RuntimeNode, load_runtime_graph
 from .status import is_definition
 
 
@@ -184,6 +184,11 @@ def work_context(
     lean_root: str | Path | None = None,
 ) -> tuple[str, WorkItem]:
     runtime = load_runtime_graph(project_or_blueprint, lean_root=lean_root)
+    return runtime.source_revision, select_work_item(runtime, selector)
+
+
+def select_work_item(runtime: RuntimeGraph, selector: str) -> WorkItem:
+    """Select one article of a loaded runtime by node id or article_id."""
     matches = [
         node
         for node in runtime.nodes
@@ -199,7 +204,7 @@ def work_context(
             f"{selector!r} matches more than one article: "
             + ", ".join(node.id for node in matches)
         )
-    return runtime.source_revision, _item(matches[0], open_statements=runtime.open_statements)
+    return _item(matches[0], open_statements=runtime.open_statements)
 
 
 @dataclass(frozen=True, slots=True)
@@ -298,5 +303,6 @@ __all__ = [
     "WorkLeanTarget",
     "assumption_contract",
     "list_ready_work",
+    "select_work_item",
     "work_context",
 ]
