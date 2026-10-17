@@ -523,6 +523,8 @@ def test_commented_out_code_is_not_indexed(tmp_path: Path) -> None:
     index = _index(tmp_path)
 
     assert index.find("Ghost.commented_out") is None
+    # The comment's newlines are kept, so the lines below it keep their numbers.
+    assert index.find("toplevel").line == 31
 
 
 def test_nothing_after_exit_is_indexed(tmp_path: Path) -> None:
@@ -3494,6 +3496,56 @@ def test_double_brace_in_interpolation_opens_a_structure_instance(tmp_path: Path
 
     assert strip_lean_comments(line + " -- remove me") == line
     assert index.find("t") is not None
+
+
+@pytest.mark.parametrize("everywhere", [False, True])
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("/- a /- b -/ c -/\ndef d : Nat := 6", "def d : Nat := 6"),
+        ('def s := "a\\"--b" -- x', 'def s := "a\\"--b"'),
+        ('def s := r#"a"--b"# -- x', 'def s := r#"a"--b"#'),
+        ("def c : Char := '\"' -- x", "def c : Char := '\"'"),
+        ('def s := s!"{ {a := 1}.a ++ "--" }" -- x', 'def s := s!"{ {a := 1}.a ++ "--" }"'),
+        ('def s := s!"{«a--b»}" -- x', 'def s := s!"{«a--b»}"'),
+        ('def s := s!"{a /- c -/}" -- x', 'def s := s!"{a  }"'),
+        ("def «a--b» := 1 -- x", "def «a--b» := 1"),
+        ('def s := s!"{x -- }\n}" -- x', 'def s := s!"{x\n}"'),
+        ('def s := s!"{r#"a"--b"#}" -- x', 'def s := s!"{r#"a"--b"#}"'),
+        ("def s := s!\"{'{'}\" -- x", "def s := s!\"{'{'}\""),
+        # An `r` that ends a name, or a name literal's, opens no raw string.
+        ('def x := throwError"a\\"--b" -- c', 'def x := throwError"a\\"--b"'),
+        ('def x := `r"a\\"--b" -- c', 'def x := `r"a\\"--b"'),
+        # An unterminated raw string runs to the end of the text.
+        ('def s := r"a -- x', 'def s := r"a -- x'),
+    ],
+)
+def test_comment_stripping_follows_every_lexer_state(
+    source: str, expected: str, everywhere: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The stripper copies the text between two event matches unread. Matching
+    # every position makes it read each character, so both modes give the same
+    # output only if no event pattern misses a position some branch reacts to.
+    if everywhere:
+        for name in ("_CODE_EVENT", "_INTERPOLATION_EVENT", "_LITERAL_EVENT"):
+            monkeypatch.setattr(lean_module, name, re.compile(r"(?s)."))
+    assert strip_lean_comments(source) == expected
+
+
+def test_a_raw_string_ends_at_its_first_closer(tmp_path: Path) -> None:
+    # Lean reads no escapes in a raw string, so `r"\"` holds one backslash and
+    # the comments after it are comments, not string contents.
+    hidden = _index(
+        tmp_path / "hidden",
+        'def sep : String := r"\\"\n/-\ntheorem hidden : True := trivial\n-/\ndef after : Nat := 1\n',
+    )
+    real = _index(
+        tmp_path / "real",
+        'def sep : String := r"\\"\ndef o : String := "/-"\ntheorem real : True := trivial\ndef c : String := "-/"\n',
+    )
+
+    assert set(hidden.declarations) == {"sep", "after"}
+    assert set(real.declarations) == {"sep", "o", "real", "c"}
 
 
 def test_permalink_pins_the_commit(tmp_path: Path) -> None:
