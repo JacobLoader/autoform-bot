@@ -16,7 +16,7 @@ import pytest
 
 from autoform_cli.__main__ import main
 from autoform_cli.graph import load_graph
-from autoform_cli.markdown import site_converter, statement_and_notes
+from autoform_cli.markdown import published_page, site_converter, statement_and_notes
 from autoform_cli.mathjax import NEUTRALISED, mathjax_script
 from autoform_cli.publishable import publishable_article, shown_as_typed
 from autoform_cli.render import _GENERATED_FILES, PublicationError, _site_paths, render_site
@@ -90,7 +90,6 @@ def _settings(script: str) -> dict:
 def _with_article(blueprint: Path, text: str) -> None:
     top = blueprint / "roadmap/top.md"
     top.write_text(top.read_text(encoding="utf-8").replace("The main result.", text), encoding="utf-8")
-
 
 
 def test_render_writes_the_site_mathjax_configuration(tmp_path: Path) -> None:
@@ -224,7 +223,6 @@ def test_macros_made_valid_after_capture_are_still_left_out(
     assert _settings((site / "javascripts/mathjax.js").read_text(encoding="utf-8"))["page"]["macros"] == _OFF
 
 
-
 # Deeper than the JSON decoder goes on Python 3.10 to 3.13. From 3.14 it goes as
 # deep as the stack allows, about 37,000 levels in 8 MiB.
 _NESTED = '{"RR": ' + "[" * 100_000 + "]" * 100_000 + "}"
@@ -259,6 +257,7 @@ def test_the_macros_that_can_be_used_are_kept_beside_one_left_out() -> None:
     assert len(warnings) == 2
     assert _settings(script)["page"]["macros"] == {**_MACROS, **_OFF}
 
+
 def _directory_with_a_file(path: Path) -> None:
     path.mkdir(parents=True)
     (path / "kept.txt").write_text("x\n", encoding="utf-8")
@@ -281,7 +280,6 @@ def _fifo(path: Path) -> None:
 def _file(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("x\n", encoding="utf-8")
-
 
 
 def test_the_guarded_paths_are_every_file_render_writes(tmp_path: Path) -> None:
@@ -332,6 +330,7 @@ def test_something_other_than_a_file_where_render_writes_one_stops_render(
     with pytest.raises(PublicationError):
         _render(blueprint)
 
+
 @pytest.mark.parametrize(
     ("make", "reason"),
     [
@@ -364,7 +363,6 @@ def test_a_file_where_render_needs_a_folder_stops_render(
     _file(blueprint / folder)
 
     _warned(blueprint, capsys, f"{folder}: is a file, where autoform render needs a folder for {folder}/", stops_render=True)
-
 
 
 _ATTRIBUTE_RULE = "is not allowed: it would give the text an id, a class, or a style of its own; delete it"
@@ -459,6 +457,7 @@ def test_a_formula_that_defines_notation_is_reported_apart(article: str, named: 
         "commands off, so each shows an error in red; put the project's notation in blueprint/tex-macros.json",
     )
 
+
 @pytest.mark.parametrize(
     ("article", "reason"),
     [
@@ -471,7 +470,6 @@ def test_code_excuses_only_the_markup_it_shows(article: str, reason: str) -> Non
     errors = publishable_article(article)[1]
 
     assert any(error.startswith(f"line 1: {reason}") for error in errors), errors
-
 
 
 _RAW_HTML_FIX = (
@@ -551,7 +549,6 @@ def test_a_long_character_reference_is_named_short(reference: str, shown: str) -
     assert errors == (f"line 1: HTML character references are not allowed: {shown}; type the character itself",)
 
 
-
 @pytest.mark.parametrize(
     ("markup", "reason"),
     [
@@ -625,6 +622,7 @@ _ENCODED_MARKUP = (
     "%3Cspan%20class%3D%22bp-mark%22%3EFORGED%3C/span%3E.md)."
 )
 
+
 def test_a_link_whose_target_decodes_to_markup_publishes_none(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -678,6 +676,9 @@ def test_a_fence_left_open_cannot_run_into_the_next_article(
     assert "<script" not in published and '<span class="bp-mark">FORGED' not in published
     assert published.count('<span class="bp-mark"') == 2
     assert published.count('<pre class="bp-as-typed">') == 1
+    # The box shows its statement and notes as typed, nothing the site adds.
+    box = published[published.index('<pre class="bp-as-typed">') :].split("</pre>")[0]
+    assert box.startswith('<pre class="bp-as-typed">The base object.') and "{}" not in box and "# Base" not in box
 
 
 def test_a_chapter_is_read_in_the_stretches_its_page_has(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -736,7 +737,6 @@ def test_a_statement_after_a_paragraph_is_a_box_of_its_own(tmp_path: Path) -> No
     assert "<p>The base object comes first:</p>" in published
     assert "<p>and then the rest.</p>" in published
     assert '<div class="bp-thmcontent">\n<p>The base object.</p>\n</div>' in published
-
 
 
 _RUNNABLE = {
@@ -848,7 +848,6 @@ def test_a_link_to_a_page_or_a_web_address_is_published(tmp_path: Path) -> None:
     assert "<code>javascript:void(0)</code>" in html
 
 
-
 def test_check_judges_the_text_render_publishes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Check judges each page as render writes it, with its links moved, so
     what render publishes is what check saw."""
@@ -922,13 +921,12 @@ def test_a_page_that_is_not_utf8_is_left_out_by_name(tmp_path: Path, capsys: pyt
 
 
 def test_the_scaffolded_pages_pass_the_page_check(tmp_path: Path) -> None:
-    from autoform_cli.graph import load_graph
     from autoform_cli.render import publication_issues
 
     scaffold_project(tmp_path, title="Finite Flat")
     blueprint = tmp_path / "blueprint"
 
-    assert publication_issues(load_graph(blueprint), blueprint) == ([], [])
+    assert publication_issues(load_graph(blueprint), blueprint) == []
 
 
 _HTML = "raw HTML is not allowed: <span>, </span>, <script>, </script>"
@@ -980,7 +978,6 @@ def test_frontmatter_never_reaches_the_built_page(tmp_path: Path) -> None:
         assert not [tag for tag in re.findall(r"<meta [^>]*>", page) if "evil.example" in tag], name
         assert "Frontmatter title" not in page
         assert f"<title>{title} - Finite Flat</title>" in page
-
 
 
 @pytest.mark.parametrize(
@@ -1038,7 +1035,11 @@ def test_an_attribute_list_is_reported(article: str, shown: str) -> None:
     line = 3 + article[: article.index(shown)].count("\n")
     assert errors == (f"line {line}: attribute list {shown} {_ATTRIBUTE_RULE}",)
 
-_FENCE_RULE = 'a code fence may only name its language, as in "```lean" or "```{.lean}"; keep only the language'
+
+_FENCE_RULE = (
+    'a code fence may set only its language and options such as title, as in "```lean" or "```{.lean}"; '
+    "drop its classes, id, and attributes"
+)
 
 
 @pytest.mark.parametrize(
@@ -1050,6 +1051,8 @@ _FENCE_RULE = 'a code fence may only name its language, as in "```lean" or "```{
         ("``` { .lean #anchor }\nx\n```", "{ .lean #anchor }"),
         ("- item\n\n    ```{.text .bp-mark}\n    x\n    ```", "{.text .bp-mark}"),
         ("> ~~~{.text .mermaid}\n> graph LR\n> ~~~", "{.text .mermaid}"),
+        # The site draws render's own graphs, of this class, with loose security.
+        ("```{.text .mermaid .bp-graph}\ngraph LR\n```", "{.text .mermaid .bp-graph}"),
     ],
 )
 def test_a_fence_header_that_sets_more_than_a_language_is_reported(article: str, shown: str) -> None:
@@ -1064,14 +1067,99 @@ def test_a_fence_header_that_sets_more_than_a_language_is_reported(article: str,
     assert errors == (f"line {line}: attribute list {shown} is not allowed: {_FENCE_RULE}",)
 
 
+@pytest.mark.parametrize(
+    "heading",
+    ["Top <img src=x onerror=alert(1)>", "Top `<img src=x onerror=alert(1)>`", "Top $<img src=x onerror=alert(1)>$"],
+    ids=["raw", "code", "formula"],
+)
+def test_a_title_reaches_the_places_render_writes_it_as_text(tmp_path: Path, heading: str) -> None:
+    """Render writes article titles into graph headings, the navigation, and
+    page metadata, and the theme prints the last two as they are, so a title
+    reaches each as text, whatever markup or code it holds."""
 
-def test_a_fence_that_imitates_a_graph_render_drew_is_reported() -> None:
-    """The site draws an element of the class render marks its own graphs
-    with in loose mode, so an article cannot claim the class."""
+    blueprint = _vault(tmp_path)
+    for path in (blueprint / "roadmap/top.md", blueprint / "README.md"):
+        text = path.read_text(encoding="utf-8")
+        path.write_text(re.sub(r"^# .*$", f"# {heading}", text, count=1, flags=re.MULTILINE), encoding="utf-8")
 
-    errors = publishable_article("# Top\n\n```{.text .mermaid .bp-graph}\ngraph LR\n```\n")[1]
+    site = _render(blueprint)
 
-    assert errors == (f"line 3: attribute list {{.text .mermaid .bp-graph}} is not allowed: {_FENCE_RULE}",)
+    from mkdocs.utils.meta import get_data
+
+    graph_heading = next(
+        line for line in (site / "dependencies/nodes/top.md").read_text(encoding="utf-8").splitlines() if line.startswith("# ")
+    )
+    published = [
+        site_converter().convert(graph_heading),
+        (site / "SUMMARY.md").read_text(encoding="utf-8"),
+        get_data((site / "README.md").read_text(encoding="utf-8"))[1]["title"],
+    ]
+    assert not any("<img" in text for text in published), published
+
+
+def test_check_reads_past_a_hidden_article_render_never_captures(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The graph finds a hidden article, which capture skips and render never
+    publishes, so check has no page of it to read."""
+
+    blueprint = _vault(tmp_path)
+    (blueprint / "roadmap/.draft.md").write_text("---\n---\n\n# Draft\n\nNot yet.\n", encoding="utf-8")
+
+    assert main(["check", str(blueprint)]) == 0, capsys.readouterr().out
+
+
+def test_a_link_to_a_file_the_site_leaves_out_keeps_only_its_text(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A strict build fails on a link to a missing file, so an image, a link,
+    or a link definition that names a file the site leaves out keeps only its
+    text, and the site still builds."""
+
+    blueprint = _vault(tmp_path)
+    (blueprint / "roadmap/figures").mkdir()
+    (blueprint / "roadmap/figures/square.svg").write_text("<svg/>", encoding="utf-8")
+    _with_article(
+        blueprint,
+        "The main result: ![a square](figures/square.svg), [the figure](figures/square.svg), and [it][fig].\n\n"
+        "[fig]: figures/square.svg",
+    )
+
+    site = _warned(blueprint, capsys, "roadmap/figures/square.svg: the site leaves out .svg files")
+    chapter = (site / "roadmap/README.md").read_text(encoding="utf-8")
+    assert "square.svg" not in chapter
+    assert "The main result: a square, the figure, and [it][fig]." in chapter
+
+
+def test_a_chapter_shown_as_typed_keeps_its_statements_outside_the_block(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The slots and sections of a narrative shown as typed are text, so the
+    summary and every statement follow the block instead of landing in it."""
+
+    blueprint = _vault(tmp_path)
+    _with_narrative(blueprint, "## Definitions\n\nThe <b>base</b> object.\n\n- [Base](base.md)")
+
+    site = _warned(blueprint, capsys, "roadmap: the site shows it as typed until these are fixed")
+    published = _published(site / "roadmap/README.md")
+    block = published[published.index('<pre class="bp-as-typed">') : published.index("</pre>")]
+    assert "bp-thmwrapper" not in block
+    assert published.count('class="bp-thmwrapper') == 2
+
+
+@pytest.mark.parametrize(
+    ("written", "published"),
+    [
+        ("A span `a <!-- b\n--> c` crosses a line.", "A span `a <!-- b\n--> c` crosses a line."),
+        ("Not code: \\`<!-- note --> plain.", "Not code: \\` plain."),
+        ("Two `` ` `` then <!-- gone -->.", "Two `` ` `` then ."),
+    ],
+)
+def test_a_comment_is_dropped_only_outside_a_code_span(written: str, published: str) -> None:
+    """A code span shows a comment as typed, and may cross a line; a backtick
+    a backslash escapes opens none."""
+
+    assert published_page(written).removeprefix("---\n{}\n---\n") == f"{published}\n"
 
 
 def test_every_formula_paints_inside_its_own_band(tmp_path: Path) -> None:

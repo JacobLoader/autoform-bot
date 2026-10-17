@@ -61,10 +61,20 @@ from .lean import (
     snapshot_project_sources,
     verify_repository_snapshot,
 )
-from .markdown import site_converter
+from .markdown import (
+    NOTES_BOX,
+    PAGE_HEADER,
+    PAGE_SUFFIXES,
+    STATEMENT_BOX,
+    boxed,
+    converted_alone,
+    mask_fences_and_comments,
+    rendered_visible_text,
+    site_converter,
+    statement_and_notes,
+    title_text,
+)
 from .markdown import content_lines as _content_lines
-from .markdown import mask_fences_and_comments
-from .markdown import NOTES_BOX, PAGE_HEADER, PAGE_SUFFIXES, STATEMENT_BOX, boxed, statement_and_notes
 from .markdown import outside_fences as _outside_fences
 from .mathjax import MATHJAX_SCRIPT, TEX_MACROS, mathjax_script
 from .publishable import publishable_article, shown_as_typed
@@ -79,6 +89,8 @@ _MARKDOWN_LINK = re.compile(
     r"(?<!!)\[(?P<label>[^\]]*)\]\(\s*(?P<target><[^>]+>|(?:\\.|[^\\()\s]|\((?:\\.|[^\\()\s])*\))+)"
     r"""(?:\s+(?:"[^")]*"\s*|'[^')]*'\s*|(?:\\.|[^\\()]|\((?:\\.|[^\\()])*\))*))?\)"""
 )
+#: An inline image, read as an inline link is.
+_MARKDOWN_IMAGE = re.compile("!" + _MARKDOWN_LINK.pattern.removeprefix("(?<!!)"))
 #: A reference-style link definition, `[label]: target "title"`. Markdown
 #: resolves `[Paper][paper]` through one of these, so a rewrite that only sees
 #: inline links leaves the destination behind and publishes a dead link.
@@ -120,7 +132,7 @@ _GENERATED_FILES = frozenset(
 )
 #: The files a vault may publish as they are, besides its Markdown pages: a
 #: browser shows these, or offers to save them, and runs nothing in them.
-#: Anything else may be served as the site's own markup, so it is refused.
+#: Anything else may be served as the site's own markup, so it is left out.
 _STATIC_SUFFIXES = frozenset(
     {
         ".avif", ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".png", ".webp",
@@ -176,10 +188,10 @@ STYLESHEET = "stylesheets/blueprint.css"
 MERMAID_SCRIPT = "javascripts/blueprint-mermaid.js"
 LIVE_SCRIPT = "javascripts/blueprint-live.js"
 LOGO = "assets/autoform.svg"
-#: Paths render writes at fixed places; an authored path differing only in case would collide.
-_GENERATED_PATHS = _GENERATED_ROOT_ENTRIES | {STYLESHEET, MERMAID_SCRIPT, LIVE_SCRIPT, LOGO}
 #: The files render writes into every site, whatever the vault holds there.
 _ASSETS = (STYLESHEET, MERMAID_SCRIPT, MATHJAX_SCRIPT, LIVE_SCRIPT, LOGO)
+#: Paths render writes at fixed places; an authored path differing only in case would collide.
+_GENERATED_PATHS = _GENERATED_ROOT_ENTRIES | set(_ASSETS)
 _ASSET_DIR = Path(__file__).resolve().parent / "assets"
 
 
@@ -345,40 +357,30 @@ class PublicationError(ValueError):
         super().__init__("; ".join(self.issues))
 
 
-def publication_issues(graph: Graph, blueprint: Path) -> tuple[list[str], list[str]]:
+def publication_issues(graph: Graph, blueprint: Path) -> list[str]:
     """What ``autoform check`` reports about the site for ``graph``: the
     warnings :func:`_publication` gives for the pages and files render would
-    publish, and what would stop render, the inputs it refuses to capture
-    among them. Source notes are read as pages wherever the site would link
-    them instead, so the verdict does not depend on the clone's remote.
+    publish, then what would stop render, the inputs it refuses to capture
+    and the files in the way of its own. Source notes are read as pages
+    wherever the site would link them instead, so the verdict does not depend
+    on the clone's remote.
     """
 
     blueprint = Path(blueprint).expanduser().resolve()
     try:
         snapshot = _capture_blueprint(blueprint)
     except PublicationError as exc:
-        return [], list(exc.issues)
-    site = _publication(graph, blueprint, _captured_files(snapshot, blueprint), destination=blueprint, sources_base=None)
-    return site.warnings, site.errors
+        return [f"{issue}; autoform render stops until this is fixed" for issue in exc.issues]
+    files = _captured_files(snapshot, blueprint)
+    site = _publication(graph, blueprint, files, destination=blueprint, sources_base=None)
+    stops = _in_the_way(blueprint, graph, files)
+    return [*site.warnings, *(f"{issue}; autoform render stops until this is fixed" for issue in stops)]
 
 
-@dataclass(frozen=True, slots=True)
-class BlueprintSnapshot:
-    """The captured blueprint's files, keyed by canonical absolute path, so
-    the pages render publishes and check reads are the bytes it captured."""
-
-    files: dict[Path, bytes] = field(default_factory=dict)
-
-    def text(self, path: Path) -> str:
-        """Return a captured file as UTF-8 text."""
-
-        return self.files[path].decode("utf-8")
-
-
-def _captured_files(snapshot: TreeSnapshot, root: Path) -> BlueprintSnapshot:
+def _captured_files(snapshot: TreeSnapshot, root: Path) -> dict[Path, bytes]:
     """The captured blueprint's files, keyed by their path below ``root``."""
 
-    return BlueprintSnapshot({root / name: data for name, data in snapshot.files})
+    return {root / name: data for name, data in snapshot.files}
 
 
 @dataclass(frozen=True, slots=True)
@@ -401,21 +403,21 @@ class _Publication:
     script: str
     #: What the site leaves out or shows as typed, which publishes nonetheless.
     warnings: list[str]
-    #: Files in the way of render's own, which stop it.
-    errors: list[str]
+    #: The pages shown as typed, by where they are published.
+    typed: frozenset[Path]
 
 
 def _publication(
     graph: Graph,
     blueprint: Path,
-    snapshot: BlueprintSnapshot,
+    snapshot: dict[Path, bytes],
     *,
     destination: Path,
     sources_base: "_SourceBase | None",
 ) -> _Publication:
-    """The pages and files the site for ``graph`` gets from ``snapshot``, and
-    what is reported about them: each page's warnings, named by its node or
-    its file, then the MathJax configuration's, and the files that stop render.
+    """The pages and files the site for ``graph`` gets from ``snapshot``, the
+    bytes render captured by path, and the warnings about them: each page's,
+    named by its node or its file, then the MathJax configuration's.
 
     Every page an author wrote is untrusted, so each is published as the
     text :func:`~autoform_cli.publishable.publishable_article` returns for it
@@ -453,6 +455,21 @@ def _publication(
     }
 
     chapters = {page: group for group, page in group_pages.items()}
+    warnings: list[str] = []
+    typed: set[Path] = set()
+    # Render writes its own file where a vault's copy of one of these would go.
+    written_over = set(_site_paths(graph))
+    # A link to a file the site leaves out keeps only its text, so the strict
+    # build finds nothing missing.
+    left_out = frozenset(
+        source.resolve()
+        for source in snapshot
+        if source.relative_to(blueprint).as_posix() not in written_over
+        and (
+            source.suffix.lower() not in (*PAGE_SUFFIXES, *_STATIC_SUFFIXES)
+            or (source.suffix.lower() in PAGE_SUFFIXES and not _is_utf8(snapshot[source]))
+        )
+    )
 
     def published(text: str, source: Path, page: Path, *, whole: bool = True) -> tuple[str, tuple[str, ...]]:
         """The page ``text`` is published as, or the part of ``page`` it is
@@ -471,6 +488,7 @@ def _publication(
                 node_sources=node_sources,
                 targets=targets,
                 sources_base=sources_base,
+                left_out=left_out,
             )
         )
         group = chapters.get(page) if whole else None
@@ -489,31 +507,34 @@ def _publication(
             for stretch in _chapter_stretches(narrative, *layout):
                 found += publishable_article(stretch)[1]
         found = tuple(dict.fromkeys(found))
-        label = graph_ids.get(source.resolve()) or source.relative_to(blueprint).as_posix()
+        label = node_sources.get(source.resolve()) or source.relative_to(blueprint).as_posix()
         warnings.extend(f"{label}: {issue}" for issue in (*found, *notation))
         if found:
             warnings.append(f"{label}: the site shows it as typed until these are fixed")
+            typed.add(page)
         return page_text, found
 
-    graph_ids = {node.path.resolve(): node_id for node_id, node in graph.nodes.items()}
-    warnings: list[str] = []
     articles: dict[Path, str] = {}
     statements: dict[str, tuple[str, str]] = {}
     for node_id, node in graph.nodes.items():
-        # The captured bytes, the state the graph describes once capture checks it.
+        # The captured bytes, the state the graph describes once capture checks
+        # it. Capture skips a hidden article, which render never publishes.
+        captured = snapshot.get(node.path)
+        if captured is None:
+            continue
         leaf = node.formalizable and node_id not in containers
-        text, found = published(snapshot.text(node.path), node.path, targets[node_id][0], whole=not leaf)
+        text, found = published(captured.decode("utf-8"), node.path, targets[node_id][0], whole=not leaf)
         # Narrative articles remain book pages. Only formalizable leaves are
         # consolidated into their containing article with stable anchors.
         if leaf:
-            statements[node_id] = (shown_as_typed(text, page=False), "") if found else statement_and_notes(text)
+            parts = statement_and_notes(text)
+            # A flagged leaf's box shows its statement and notes as typed.
+            statements[node_id] = (shown_as_typed("\n\n".join(filter(None, parts)), page=False), "") if found else parts
         else:
             articles[node.path.resolve()] = shown_as_typed(text) if found else text
 
     files: dict[Path, str | bytes] = {}
-    # Render writes its own file where a vault's copy of one of these would go.
-    written_over = set(_site_paths(graph))
-    for source in sorted(snapshot.files):
+    for source in sorted(snapshot):
         relative = source.relative_to(blueprint)
         # Source notes leave the site entirely once readers can reach them in
         # the repository, so the book has one reference surface rather than two.
@@ -524,7 +545,7 @@ def _publication(
                 files[source] = articles[source.resolve()]
         elif source.suffix.lower() in PAGE_SUFFIXES:
             try:
-                written = snapshot.text(source)
+                written = snapshot[source].decode("utf-8")
             except UnicodeDecodeError:
                 warnings.append(
                     f"{relative.as_posix()}: is not UTF-8 text, as a Markdown page must be, so the site leaves it "
@@ -536,7 +557,7 @@ def _publication(
         elif relative.as_posix() in written_over:
             continue
         elif source.suffix.lower() in _STATIC_SUFFIXES:
-            files[source] = snapshot.files[source]
+            files[source] = snapshot[source]
         else:
             warnings.append(
                 f"{relative.as_posix()}: the site leaves out {source.suffix.lower() or 'extensionless'} "
@@ -544,12 +565,17 @@ def _publication(
                 "save it as an image (PNG, JPEG, GIF, WebP), a PDF or plain text, "
                 "or keep it outside blueprint/"
             )
-    script, script_warnings = mathjax_script(
-        snapshot.files.get(blueprint / MATHJAX_SCRIPT), snapshot.files.get(blueprint / TEX_MACROS)
-    )
+    script, script_warnings = mathjax_script(snapshot.get(blueprint / MATHJAX_SCRIPT), snapshot.get(blueprint / TEX_MACROS))
     warnings.extend(script_warnings)
-    errors = _in_the_way(blueprint, graph, snapshot)
-    return _Publication(groups, targets, node_sources, files, statements, script, warnings, errors)
+    return _Publication(groups, targets, node_sources, files, statements, script, warnings, frozenset(typed))
+
+
+def _is_utf8(data: bytes) -> bool:
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
 
 
 def _site_paths(graph: Graph) -> tuple[str, ...]:
@@ -571,13 +597,13 @@ def _site_paths(graph: Graph) -> tuple[str, ...]:
     )
 
 
-def _in_the_way(blueprint: Path, graph: Graph, snapshot: BlueprintSnapshot) -> list[str]:
+def _in_the_way(blueprint: Path, graph: Graph, snapshot: dict[Path, bytes]) -> list[str]:
     """A captured file below one of :func:`_site_paths`, or the project's
     macros, or at one of its folders. Render writes these over the captured
     files it copied, so it would stop the build half written; capture has
     already refused a symlink or a special file anywhere."""
 
-    captured = {source.relative_to(blueprint).as_posix() for source in snapshot.files}
+    captured = {source.relative_to(blueprint).as_posix() for source in snapshot}
     folders = {"/".join(parts[:end]) for parts in (path.split("/") for path in captured) for end in range(1, len(parts))}
     blocked: dict[str, str] = {}
     for relative in (*_site_paths(graph), TEX_MACROS):
@@ -760,19 +786,18 @@ def _render_pages(
     sources: bool,
     source_revision: str,
     lean_source_revision: str,
-    files: BlueprintSnapshot,
+    files: dict[Path, bytes],
 ) -> RenderReport:
     """Write the site into *destination* from the private copy at *blueprint*."""
     statuses = status.derive(graph)
     numbers = _number_nodes(graph)
     used_by = _reverse_edges(graph)
     # Sources leave the site only for a directory the verified commit holds.
-    # Notes link out only to a commit that holds the blueprint, under its committed spellings.
-    ref = linker.ref if linker.links_blueprint else None
-    sources_base = _sources_base(blueprint, repo_root, linker.repository_url, ref, linker.spellings) if sources else None
+    sources_base = _sources_base(blueprint, repo_root, linker) if sources else None
+    stops = _in_the_way(blueprint, graph, files)
+    if stops:
+        raise PublicationError(stops)
     site = _publication(graph, blueprint, files, destination=destination, sources_base=sources_base)
-    if site.errors:
-        raise PublicationError(site.errors)
     revisions = {"source_revision": source_revision, "lean_source_revision": lean_source_revision}
     # Written first, so a Lean walk by a concurrent render skips this stage;
     # rewritten with the file inventory once every page exists.
@@ -844,6 +869,7 @@ def _render_pages(
             node_sources=node_sources,
             containers=containers,
             statements=site.statements,
+            typed=page in site.typed,
         )
         page.write_text(chapter, encoding="utf-8")
         if narrative is None:  # a milestone with no narrative page of its own
@@ -1354,9 +1380,7 @@ def _skip_missing(_function: object, _path: str, error: BaseException | tuple) -
         raise exception
 
 
-def _sources_base(
-    blueprint: Path, repo_root: Path, repository_url: str | None, ref: str | None, spellings: Mapping[str, str]
-) -> "_SourceBase | None":
+def _sources_base(blueprint: Path, repo_root: Path, linker: SourceLinker) -> "_SourceBase | None":
     """Where `blueprint/sources/` lives in the repository, if it can be linked.
 
     Source notes are a reader's transcription of the paper being formalised.
@@ -1370,7 +1394,7 @@ def _sources_base(
     then published as before, because a site with no sources and no way to
     reach them is worse than a redundant page.
     """
-    if not repository_url or not ref:
+    if not linker.repository_url or not linker.ref or not linker.links_blueprint:
         return None
     try:
         relative = (blueprint / SOURCES_DIR).resolve().relative_to(repo_root).as_posix()
@@ -1378,14 +1402,14 @@ def _sources_base(
         # The vault is outside the repository being linked, so no blob URL
         # describes it. Better no link than one that 404s.
         return None
-    prefixes: dict[str, str] = {}
-    for path, committed in spellings.items():
+    spellings: dict[str, str] = {}
+    for path, committed in linker.spellings.items():
         # A link may name a folder as well as a note, so each leading path maps too.
         parts, committed_parts = path.split("/"), committed.split("/")
         for depth in range(1, len(parts) + 1):
             prefix = unicodedata.normalize("NFC", "/".join(parts[:depth]))
-            prefixes.setdefault(prefix, "/".join(committed_parts[:depth]))
-    return _SourceBase(repository_url, ref, relative, prefixes)
+            spellings.setdefault(prefix, "/".join(committed_parts[:depth]))
+    return _SourceBase(linker.repository_url, linker.ref, relative, spellings)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1847,7 +1871,7 @@ def _render_summary_nav(
     for page in book_pages:
         if page == overview:
             continue
-        title = _first_h1(page.read_text(encoding="utf-8")) or page.parent.name
+        title = title_text(_first_h1(page.read_text(encoding="utf-8")) or page.parent.name)
         depth = len(page.relative_to(destination).parts) - 1
         indent = "    " * max(depth, 1)
         lines.append(f"{indent}- [{title}]({page.relative_to(destination).as_posix()})")
@@ -1856,7 +1880,7 @@ def _render_summary_nav(
     # simplify without stranding it.
     coverage = destination / "coverage/README.md"
     if coverage.is_file():
-        title = _first_h1(coverage.read_text(encoding="utf-8")) or "Coverage"
+        title = title_text(_first_h1(coverage.read_text(encoding="utf-8")) or "Coverage")
         lines.append(f"    - [{title}](coverage/README.md)")
     lines.extend(
         [
@@ -1887,12 +1911,14 @@ def _render_landing_page(
     the page opts out.
     """
     body = _document_body(text)
-    title = _first_h1(text) or "Blueprint"
+    heading = _first_h1(text) or ""
+    title = rendered_visible_text(heading) or "Blueprint"
     parts = [
         "---",
         # The hero sets the H1 itself, so the page title has to be declared
-        # rather than discovered from the first Markdown heading.
-        f"title: {title}",
+        # rather than discovered from the first Markdown heading. The theme
+        # prints it as it is, so it is written as text.
+        f"title: {json.dumps(title_text(heading) or 'Blueprint')}",
         # The sidebar lists the open tab's pages, and this tab holds only this
         # page, so on the landing page it is a column of one word. The tabs
         # already carry the reader to Book and Graph, so it goes, and the hero
@@ -2266,6 +2292,7 @@ def _rewrite_links(
     node_sources: dict[Path, str],
     targets: dict[str, tuple[Path, str]],
     sources_base: "_SourceBase | None" = None,
+    left_out: frozenset[Path] = frozenset(),
 ) -> str:
     """Resolve a page's relative links against where it is being published.
 
@@ -2312,6 +2339,10 @@ def _rewrite_links(
         if not _is_within(candidate, blueprint):
             # Nothing outside the blueprint is published: "" keeps only the text.
             return ""
+        if candidate in left_out:
+            # Nor is a file the site leaves out; its image or definition goes too.
+            unlinked.add(raw)
+            return ""
         relative = candidate.relative_to(blueprint)
         # A repository link to a note the captured blueprint lacks would 404, so
         # it stays site-relative, where a strict build reports the page missing.
@@ -2325,6 +2356,8 @@ def _rewrite_links(
             return f"{_source_href(sources_base, relative.parts[1:])}{asked}{query}{separator}{fragment}"
         published = destination / relative
         return f"{mermaid.relative_link(published, page, candidate.suffix)}{asked}{query}{separator}{fragment}"
+
+    unlinked: set[str] = set()
 
     def bracketed(href: str) -> str:
         # A decoded path, or a query or fragment kept from angle brackets, can
@@ -2346,6 +2379,8 @@ def _rewrite_links(
         definition = _LINK_DEFINITION.match(line)
         if definition is not None:
             href = moved_target(definition.group("target"))
+            if href == "" and definition.group("target") in unlinked:
+                return ""
             if href:
                 indent, label = definition.group("indent"), definition.group("label")
                 # Python-Markdown reads a definition's destination only up to
@@ -2353,7 +2388,12 @@ def _rewrite_links(
                 href = re.sub(r"\s", lambda space: quote(space.group()), href)
                 return f"{indent}[{label}]: {href}{definition.group('rest') or ''}"
             return line
-        return _MARKDOWN_LINK.sub(replace, line)
+
+        def image(match: re.Match[str]) -> str:
+            unlink = moved_target(match.group("target")) == "" and match.group("target") in unlinked
+            return match.group("label") if unlink else match.group(0)
+
+        return _MARKDOWN_LINK.sub(replace, _MARKDOWN_IMAGE.sub(image, line))
 
     return _outside_fences(text, rewrite)
 
@@ -2438,6 +2478,7 @@ def _render_chapter(
     node_sources: dict[Path, str],
     containers: frozenset[str],
     statements: dict[str, tuple[str, str]],
+    typed: bool = False,
 ) -> tuple[str, int, list[str]]:
     """Render one narrative article with statements at its authored link slots."""
     links = _anchored_links(targets, page)
@@ -2470,11 +2511,17 @@ def _render_chapter(
         node_ids=node_ids,
     )
     if narrative is None:
-        title = graph.nodes[group].title if group in graph.nodes else group.replace("-", " ").capitalize()
-        narrative = "\n".join(["---", f"kind: article\ntitle: {title}", "---", "", f"# {title}"])
+        title = title_text(graph.nodes[group].title if group in graph.nodes else group.replace("-", " ").capitalize())
+        narrative = "\n".join(["---", f"kind: article\ntitle: {json.dumps(title)}", "---", "", f"# {title}"])
 
-    lead, slots = _chapter_layout(
-        group, node_ids, narrative, graph=graph, blueprint=blueprint, node_sources=node_sources, targets=targets
+    # A narrative shown as typed has no slots or sections render can see, so
+    # the summary and every statement follow it.
+    lead, slots = (
+        (len(narrative.splitlines()), {})
+        if typed
+        else _chapter_layout(
+            group, node_ids, narrative, graph=graph, blueprint=blueprint, node_sources=node_sources, targets=targets
+        )
     )
     chapter = _place_environments(narrative, lead, slots, summary=chapter_summary, environments=environments)
     placed = set(slots.values())
@@ -2735,7 +2782,7 @@ def _render_environment(
     # preconverted, render both with the shared article context: otherwise its
     # consumed definitions would leave the remaining Markdown links unresolved.
     references = {}
-    affected = "<" in statement or "<" in remainder
+    affected = converted_alone(statement, remainder)
     if affected:
         context = _body_converter()
         context.convert("\n\n".join((statement, remainder)))

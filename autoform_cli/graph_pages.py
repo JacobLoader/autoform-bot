@@ -24,6 +24,7 @@ from .graph_views import (
     project_view,
     scope_views,
 )
+from .markdown import title_text
 from .status import NodeStatus
 
 
@@ -268,7 +269,7 @@ def _write_page(
         f"graph_view: {view.kind}",
         "---",
         "",
-        f"# {heading}",
+        f"# {title_text(heading)}",
         "",
     ]
     if navigation:

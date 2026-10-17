@@ -375,6 +375,22 @@ def render_tree(text: str) -> object | None:
         return None
 
 
+#: What could be markup where render writes a title itself, as references.
+_TITLE_REFERENCES = str.maketrans({character: f"&#{ord(character)};" for character in "&<>\"'`*_[]$\\"})
+
+
+@lru_cache(maxsize=4096)
+def title_text(title: str) -> str:
+    """``title``, Markdown an author wrote, as the plain text a reader sees,
+    with every character that could be markup written as a numeric reference.
+
+    Render writes titles into headings, navigation entries, and page metadata,
+    and the theme prints the last two as they are. A reference reads as its
+    character in all three, so a title only ever reads as text."""
+
+    return rendered_visible_text(title).translate(_TITLE_REFERENCES)
+
+
 def rendered_visible_text(value: str) -> str:
     """Return the text a reader sees once ``value`` is published.
 
@@ -700,8 +716,10 @@ NOTES_BOX = "bp-thmnotes"
 #: MkDocs reads no leading line of the page as metadata either.
 PAGE_HEADER = "---\n{}\n---\n"
 
-#: A code span, which shows a comment as typed, or an HTML comment with its end.
-_CODE_OR_COMMENT = re.compile(INLINE_CODE.pattern + r"|<!--(?s:.*?)-->")
+#: A code span, which shows a comment as typed, or an HTML comment with its
+#: end. A span opens at a run of backticks no backslash escapes and may cross
+#: lines, but not a blank one, as in CommonMark.
+_CODE_OR_COMMENT = re.compile(r"(?<![\\`])(`+)(?!`)(?:(?!\n[ \t]*\n).)*?(?<!`)\1(?!`)|<!--.*?-->", re.DOTALL)
 
 
 def published_lines(text: str) -> str:
@@ -753,13 +771,19 @@ def published_markdown(text: str) -> list[tuple[str, str]]:
     page = text.removeprefix(PAGE_HEADER).lstrip("\n")
     pieces = [(page, page)]
     parts = statement_and_notes(text)
-    # Render converts both parts on their own before boxing them when either
-    # holds a "<", which the box's HTML reading could take for a tag.
-    alone = any("<" in part for part in parts)
+    alone = converted_alone(*parts)
     for part, box in zip(parts, (STATEMENT_BOX, NOTES_BOX), strict=True):
         if part:
             pieces.append((part, part if alone else "\n".join(boxed(part, box))))
     return pieces
+
+
+def converted_alone(*parts: str) -> bool:
+    """Whether render converts a statement and its notes on their own before
+    boxing them: when either holds a "<", which the box's HTML reading could
+    take for a tag."""
+
+    return any("<" in part for part in parts)
 
 
 def boxed(part: str, box: str) -> list[str]:
@@ -1181,6 +1205,7 @@ __all__ = [
     "article_parts",
     "Content",
     "boxed",
+    "converted_alone",
     "content",
     "content_lines",
     "frontmatter_end",
@@ -1206,6 +1231,7 @@ __all__ = [
     "resolved_path",
     "site_converter",
     "statement_and_notes",
+    "title_text",
     "strip_line_comments",
     "first_unclosed_fence",
     "visible_prose",

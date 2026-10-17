@@ -24,7 +24,6 @@ from .markdown import (
 )
 from .mathjax import NEUTRALISED, TEX_MACROS
 
-__all__ = ["entity_name", "html_names", "publishable_article", "shown_as_typed"]
 
 #: Raw HTML in CommonMark's grammar: open and closing tags, and the openers of
 #: comments, declarations, and processing instructions, closed or not.
@@ -231,15 +230,15 @@ _TEX_DEFINITION = re.compile(
 def shown_as_typed(text: str, *, page: bool = True) -> str:
     """``text``, Markdown that :func:`publishable_article` reported, published
     as typed: every character escaped in one preformatted block, under a note
-    that says why, so none of it becomes markup, a link, or a formula. With
-    ``page``, it is a whole page, which keeps the header that stands for its
-    frontmatter."""
+    that says why, so none of it becomes markup, a link, or a formula. The
+    header that stands for a page's frontmatter is dropped first; with
+    ``page``, the result is a whole page under a header of its own."""
 
     note = (
         '<p class="bp-as-typed-note">autoform render shows this text as typed: it holds markup the site does '
         "not publish. Run <code>autoform check</code> to see what.</p>"
     )
-    body = text.removeprefix(PAGE_HEADER) if page else text
+    body = text.removeprefix(PAGE_HEADER)
     block = f'{note}\n<pre class="bp-as-typed">{html.escape(body.strip(chr(10)), quote=False)}</pre>\n'
     return (PAGE_HEADER + "\n" + block) if page else block
 
@@ -314,8 +313,8 @@ def _attribute_errors(text: str, attributes: Iterable[tuple[str, str]]) -> list[
     errors: list[str] = []
     for tag, written in attributes:
         reason = (
-            'is not allowed: a code fence may only name its language, as in "```lean" or "```{.lean}"; '
-            "keep only the language"
+            'is not allowed: a code fence may set only its language and options such as title, as in "```lean" '
+            'or "```{.lean}"; drop its classes, id, and attributes'
             if tag == "fence"
             else "is not allowed: it would give the text an id, a class, or a style of its own; delete it"
         )
@@ -485,3 +484,6 @@ def entity_name(entity: str) -> str:
     if len(character) != 1:
         return shown
     return f"{shown} (U+{ord(character):04X} {unicodedata.name(character, 'unnamed')})"
+
+
+__all__ = ["entity_name", "html_names", "publishable_article", "shown_as_typed"]

@@ -67,8 +67,9 @@ bare fence line. A fence that never closes is read as plain text when its
 article is inspected alone, so it hides no heading or dependency link there,
 but on a chapter page it can pair with a later article's closing fence and hide
 everything between them, so `check` warns about one at the margin and the site
-shows that page as typed (see [Validation](#validation)). The audit reports a fence with no closing line as
-`unclosed-code-fence`. A later bare fence line of the same character and at
+shows that page as typed (see [Validation](#validation)). The audit reports a
+fence with no closing line as `unclosed-code-fence`. A later bare fence line of
+the same character and at
 least the opener's length closes it here, though the page asks for the opener's
 exact length and indent, so close each fence with its own line. The page can
 also pair an unclosed backtick fence line with a later backtick run in the same
@@ -1012,9 +1013,9 @@ its TeX settings were checked against, loads it itself when no bundle is
 listed, and leaves formulas as typed under any other release. The articles on
 a page share one TeX input, with the packages base, ams, noundefined,
 boldsymbol, and mathtools, and the project's macros from
-`blueprint/tex-macros.json`, written
-as MathJax's `tex.macros` is: a name maps to a body, `[body, arguments]`, or
-`[body, arguments, default]`. So that no formula changes another or colors a
+`blueprint/tex-macros.json`, written as MathJax's `tex.macros` is: a name maps
+to a body, `[body, arguments]`, or `[body, arguments, default]`. So that no
+formula changes another or colors a
 symbol like the site's status marks, that input turns off `\label`,
 `\mmlToken`, `\DeclareMathOperator`, the paired-delimiter and tag-form
 commands of mathtools, and `\mathtoolsset`: each shows in red and does nothing,
@@ -1040,8 +1041,10 @@ with its own, and the script finds MathJax already loaded and checks its
 version instead of loading it. A copy edited since is replaced too, with a
 warning, since its edits are lost; move its macros to `tex-macros.json` and
 delete it.
+
 `render` writes `stylesheets/blueprint.css`, `javascripts/blueprint-mermaid.js`,
-and `assets/autoform.svg` over the vault's copies the same way, and writes
+`javascripts/blueprint-live.js`, and `assets/autoform.svg` over the vault's
+copies the same way, and writes
 `SUMMARY.md`, `structure.md`, `publication.json`, the `dependencies.md` and
 `dependencies/` graph pages, and the chapter pages it consolidates. A
 directory holding a file at any of these paths, at `tex-macros.json`, or at the
@@ -1058,9 +1061,9 @@ Render copies them into the site as they are. Any other file under
 would be the site's own markup once a reader followed a link to it, so the
 site leaves it out, and `check` and `render` warn about it by its path: write
 it as Markdown, save it as an image, a PDF, or plain text, or keep it outside
-`blueprint/`. A Markdown page that is not UTF-8 is left out with a warning too. A copy of one
-of the files render writes, listed above, is not published; render's own is.
-
+`blueprint/`. A Markdown page that is not UTF-8 is left out with a warning too.
+A copy of one of the files render writes, listed above, is not published;
+render's own is.
 
 ## Validation
 

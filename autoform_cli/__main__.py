@@ -634,11 +634,8 @@ def _check(args: argparse.Namespace) -> int:
         print(f"warning: {warning}")
     # What the site would leave out or show as typed, and what would stop
     # render; none of it fails check.
-    site_warnings, render_errors = publication_issues(graph, Path(args.blueprint_dir))
-    for warning in site_warnings:
+    for warning in publication_issues(graph, Path(args.blueprint_dir)):
         print(f"warning: {warning}")
-    for issue in render_errors:
-        print(f"warning: {issue}; autoform render stops until this is fixed")
     return 0
 
 
