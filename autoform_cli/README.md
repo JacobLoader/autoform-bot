@@ -988,7 +988,9 @@ it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
 `mathlib: true`. A `## Sources` link to a local path must name a file
 inside the blueprint, as `audit` also requires: a missing file, a directory, an
-invalid path or URL, or a target outside the blueprint fails. So does a target
+invalid path or URL, or a target outside the blueprint fails. The path must open
+as written, so one through a missing folder or a symbolic link loop fails too,
+even where its `..` steps would cancel that part as text. So does a target
 whose path as written, once its `..` steps are applied, has a part below the
 blueprint starting with `.`, unless the article citing it is hidden too,
 because render omits hidden files and directories. Under `sources/`, such a

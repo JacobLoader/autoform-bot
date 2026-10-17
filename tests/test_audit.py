@@ -508,7 +508,7 @@ def test_audit_validates_local_source_links_without_network_access(tmp_path: Pat
 
 
 def test_audit_reports_a_source_link_through_a_symlink_loop_alike_on_every_python(tmp_path: Path) -> None:
-    # Before Python 3.13 resolving a loop raises; from 3.13 it returns the looping path.
+    # The kernel stops at the loop, wherever the rest of the path would lead.
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)
     (blueprint / "sources").mkdir()
@@ -527,9 +527,9 @@ def test_audit_reports_a_source_link_through_a_symlink_loop_alike_on_every_pytho
 
     assert _finding_map(blueprint)["roadmap/result.md"] == [
         ("source-escapes-blueprint", "source link escapes the blueprint: '../../outer.md'"),
-        ("source-escapes-blueprint", "source link escapes the blueprint: '../sources/away/loop.md'"),
-        ("source-escapes-blueprint", "source link escapes the blueprint: '../sources/loop.md/../away/note.txt'"),
+        ("source-not-found", "source link does not resolve to a file: '../sources/away/loop.md'"),
         ("source-not-found", "source link does not resolve to a file: '../sources/loop.md'"),
+        ("source-not-found", "source link does not resolve to a file: '../sources/loop.md/../away/note.txt'"),
     ]
 
 

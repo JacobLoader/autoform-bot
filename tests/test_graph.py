@@ -143,7 +143,7 @@ def test_rejects_invalid_nodes(tmp_path: Path, body: str, message: str) -> None:
 
 
 def test_a_dependency_through_a_symlink_loop_is_reported_alike_on_every_python(tmp_path: Path) -> None:
-    # Before Python 3.13 resolving a loop raises; from 3.13 it returns the looping path.
+    # The kernel stops at the loop, wherever the rest of the path would lead.
     blueprint = tmp_path / "blueprint"
     links = "[x](../loop.md)\n[y](../../outer.md)\n[z](../away/loop.md)\n[w](../loop.md/../away/note.md)\n"
     _node(blueprint, "result.md", f"# Result\n## Depends on\n{links}")
@@ -164,16 +164,15 @@ def test_a_dependency_through_a_symlink_loop_is_reported_alike_on_every_python(t
     assert caught.value.issues == (
         "result: dependency target does not exist: '../loop.md'",
         "result: dependency target escapes the blueprint directory: '../../outer.md'",
-        "result: dependency target escapes the blueprint directory: '../away/loop.md'",
-        "result: dependency target escapes the blueprint directory: '../loop.md/../away/note.md'",
+        "result: dependency target does not exist: '../away/loop.md'",
+        "result: dependency target does not exist: '../loop.md/../away/note.md'",
     )
 
 
-def test_check_passes_a_sources_link_that_reaches_its_file_through_loops(
+def test_check_rejects_a_sources_link_through_symlink_loops(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Each `loop.md/..` resolves past the loop, as on Python 3.13, and work and
-    # search resolve it the same way, so check has nothing to warn about.
+    # No program can open `loop.md/../paper.md`, though `..` would cancel the loop as text.
     blueprint = tmp_path / "blueprint"
     _node(blueprint, "result.md", "# Result\n\n## Sources\n\n- [Paper](../sources/s1.md)\n")
     sources = blueprint / "sources"
@@ -186,8 +185,8 @@ def test_check_passes_a_sources_link_that_reaches_its_file_through_loops(
     except OSError:
         pytest.skip("symlinks are unavailable")
 
-    assert main(["check", str(blueprint)]) == 0
-    assert "warning:" not in capsys.readouterr().out
+    assert main(["check", str(blueprint)]) == 1
+    assert capsys.readouterr().out == "error: result: source target does not resolve to a file: '../sources/s1.md'\n"
 
 
 def test_a_dependency_through_a_link_that_cannot_be_read_cannot_be_resolved(
@@ -683,6 +682,7 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
 
     (blueprint / "sources").mkdir()
     (blueprint / "sources" / "paper.md").write_text("# Paper\n", encoding="utf-8")
+    (blueprint / ".x").mkdir()
     sources += "- [Book](https://example.org/book)\n- [Author](mailto:author@example.org)\n"
     sources += "- [Same paper](../.x/../sources/paper.md)\n"
     _node(blueprint, "result.md", sources)

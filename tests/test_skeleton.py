@@ -2020,8 +2020,8 @@ def test_probe_comment_ranges_must_cover_comments(tmp_path: Path, ranges: object
         ("../../../outside.tex#L1-L1", "points outside the blueprint"),
         ("../../sources/loop.txt#L1-L1", "names a path that cannot be resolved"),
         ("../../sources/loopdir/book.tex#L1-L1", "names a path that cannot be resolved"),
-        ("../../sources/away/loop.tex#L1-L1", "points outside the blueprint"),
-        ("../../sources/loop.txt/../away/secret.tex#L1-L1", "points outside the blueprint"),
+        ("../../sources/away/loop.tex#L1-L1", "names a path that cannot be resolved"),
+        ("../../sources/loop.txt/../away/secret.tex#L1-L1", "names a path that cannot be resolved"),
         pytest.param("../../sources/" + "a" * 300 + ".tex#L1-L1", "names a path that cannot be resolved", id="long-name"),
         ("../../sources/bo\x00ok.tex#L1-L1", "contains an invalid path"),
         ("../../sources/bo%00ok.tex#L1-L1", "contains an invalid path"),
@@ -2069,14 +2069,14 @@ def test_extraction_reports_a_locator_that_names_no_passage(tmp_path: Path, link
 @pytest.mark.parametrize(
     ("link", "why"),
     [
-        ("../../sources/loop.txt/../sub/back/../book.tex#L1-L1", "points outside the blueprint"),
+        ("../../sources/loop.txt/../sub/back/../book.tex#L1-L1", "names a path that cannot be resolved"),
         ("../../sources/dangling.tex#L1-L1", "names a missing file"),
         ("../../sources/outside.tex#L1-L1", "points outside the blueprint"),
     ],
     ids=["after-a-loop", "dangling-to-markdown", "outside-markdown"],
 )
 def test_extraction_reports_a_locator_through_links_alike_on_every_python(tmp_path: Path, link: str, why: str) -> None:
-    # Before Python 3.13, `os.path.realpath` recurses once per link and stops at a loop.
+    # The kernel resolves the links, so a locator gets one verdict on every Python.
     project = _project(tmp_path)
     blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
     sources = blueprint / "sources"
@@ -2101,10 +2101,6 @@ def test_extraction_reports_a_locator_through_links_alike_on_every_python(tmp_pa
     assert not report.clean and report.nodes[0].declarations == ()
     [unresolved] = report.unresolved
     assert unresolved.reason.startswith("source locator ") and why in unresolved.reason
-    # The file is read where the locator resolves, not through the loop as written.
-    _replace_source(article, link, "../../sources/loop.txt/../book.tex#L2-L3")
-    report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
-    assert report.clean and report.nodes[0].passage == "two\nthree"
 
 
 @pytest.mark.parametrize("cited", ["locked/secret.tex", "locked"], ids=["through-the-link", "the-link-itself"])
