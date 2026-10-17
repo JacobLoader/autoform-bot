@@ -99,6 +99,14 @@ def test_json_rpc_error_response_raises_protocol_error(monkeypatch):
         session._read_response(1)
 
 
+def test_reading_a_response_without_a_process_fails_at_once():
+    # _read_message used to return None at once, so _read_response spun until its deadline.
+    session = lsp.LeanLspSession(lsp.LspConfig())
+
+    with pytest.raises(RuntimeError, match="LSP process not running"):
+        session._read_response(1)
+
+
 def test_start_aborts_process_when_initialize_fails(monkeypatch):
     process = _FakeProcess()
     popen_kwargs = {}
