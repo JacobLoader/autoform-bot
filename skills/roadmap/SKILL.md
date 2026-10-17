@@ -139,8 +139,12 @@ existing repository, coherent grouping is allowed only when the exact ledger
 still reconciles every public declaration. Do not turn existing formalization
 into fictional future work. Ground each statement and proof sketch in the
 source. Put genuine statement prerequisites under `## Depends on` and
-proof-only prerequisites under `## Proof depends on`. Assign durable
-`article_id` metadata to new articles; run
+proof-only prerequisites under `## Proof depends on`.
+Never delete or reverse a genuine article edge to make a chapter-level or
+scope-level projection acyclic. The authored leaf DAG is the mathematical
+record; a coarser view may have relations in both directions and must present
+them honestly.
+Assign durable `article_id` metadata to new articles; run
 `autoform migrate article-ids blueprint --write` after creating the pages to
 add deterministic IDs.
 Articles hold only frontmatter and informal mathematics; put Lean-side findings

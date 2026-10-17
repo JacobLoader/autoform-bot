@@ -161,6 +161,8 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         status_counts=(("planned", 1),),
         declaration="theorem",
         status_key="planned",
+        lean="Remote.Namespace.deepTheorem",
+        summary="A spectral gap statement for the remote fixture.",
     )
     dag_viewer.write_search_index(
         tmp_path / "search.json",
@@ -332,7 +334,34 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
             area="Algebra",
         ),
     )
-    dense_views["atlas"] = GraphView(kind="project", title="Knowledge atlas", nodes=atlas_nodes, edges=())
+    atlas_areas = (
+        "Algebra & Number Theory",
+        "Analysis & Probability",
+        "Discrete Mathematics & Computation",
+        "Foundations & Logic",
+        "Geometry & Topology",
+    )
+    atlas_nodes += tuple(
+        ViewNode(
+            id=f"atlas/auxiliary-{index}",
+            title=f"Auxiliary topic {index}",
+            kind="scope",
+            members=tuple(f"atlas/auxiliary-{index}/item-{item}" for item in range(10 + index * 7)),
+            status_counts=(("planned", 10 + index * 7),),
+            status_key="planned",
+            area=atlas_areas[index % len(atlas_areas)],
+        )
+        for index in range(26)
+    )
+    dense_views["atlas"] = GraphView(
+        kind="project",
+        title="Knowledge atlas",
+        nodes=atlas_nodes,
+        edges=(
+            ViewEdge("atlas/algebra", "atlas/topology", statement_count=3),
+            ViewEdge("atlas/analysis", "atlas/topology", statement_count=2),
+        ),
+    )
     dense_views["topics"] = GraphView(
         kind="chapter",
         title="Topics and results",
@@ -497,7 +526,7 @@ def test_connected_project_maps_open_at_readable_scale(
     playwright.expect(page.locator(".bp-dag-density")).to_contain_text("Readable window")
 
 
-def test_atlas_bubbles_open_authored_mathematical_context(
+def test_atlas_hierarchy_keeps_topics_readable_and_details_out_of_the_way(
     desktop_page: object, explorer_url: str
 ) -> None:
     page = desktop_page
@@ -508,45 +537,30 @@ def test_atlas_bubbles_open_authored_mathematical_context(
     assert page.locator(".bp-dag-viewer").evaluate(
         "element => element.classList.contains('bp-dag-atlas')"
     )
-    playwright.expect(page.locator(".bp-dag-inspector h2")).to_have_text("Knowledge atlas")
-    # Every topic of an edgeless atlas is isolated, so hiding them would empty the map.
-    playwright.expect(page.locator(".bp-dag-isolated")).to_be_hidden()
-    playwright.expect(page.locator(".bp-dag-inspector")).to_contain_text("Geometry & Topology")
-    # Topics count once, by their least-complete item, unlike the rings' items.
-    playwright.expect(page.locator(".bp-dag-inspector h3", has_text="status")).to_have_text(
-        "Topics by least-complete status"
-    )
-    # Each status row carries the swatch and meaning the hidden page legend held.
-    playwright.expect(
-        page.locator('.bp-dag-inspector .bp-dag-swatch[title="Proved, and every prerequisite is fully proved too."]')
-    ).to_have_count(1)
-    playwright.expect(page.locator(".bp-dag-inspector")).to_contain_text(
-        "No cross-topic dependency links are authored"
-    )
-    assert "50%" in topic.evaluate("element => getComputedStyle(element).borderRadius")
-    ring = topic.evaluate("element => getComputedStyle(element).backgroundImage")
-    # The ring follows the legend's state order: finished green before ready-to-prove blue.
-    assert ring.startswith("conic-gradient")
-    assert ring.index("rgb(34, 119, 58)") < ring.index("rgb(0, 100, 224)")
-    # The region is canvas text, which assistive technology never reads.
-    assert "Geometry & Topology" in (topic.get_attribute("aria-label") or "")
+    navigation = page.locator(".bp-dag-navigation")
+    playwright.expect(navigation).to_be_visible()
+    playwright.expect(navigation).to_contain_text("Knowledge atlas")
+    playwright.expect(navigation).to_contain_text("Geometry & Topology")
+    playwright.expect(page.locator(".bp-dag-inspector")).to_be_hidden()
+    stage_width = page.locator(".bp-dag-stage").bounding_box()["width"]
+    topic_box = topic.bounding_box()
+    assert topic_box is not None and topic_box["height"] >= 62 and topic_box["width"] >= 150
+    assert "50%" not in topic.evaluate("element => getComputedStyle(element).borderRadius")
+    assert "conic-gradient" in topic.evaluate("element => getComputedStyle(element).backgroundImage")
     topic.click()
     playwright.expect(page.locator(".bp-dag-inspector h2")).to_have_text("Topology")
-    playwright.expect(page.locator(".bp-dag-inspector .bp-dag-kicker")).to_have_text("Scope · Geometry & Topology")
-    playwright.expect(page.locator(".bp-dag-inspector h3", has_text="in this scope")).to_have_text(
-        "80 items in this scope"
-    )
     playwright.expect(page.locator(".bp-dag-summary")).to_contain_text(
         "continuity, deformation, and invariants"
     )
     playwright.expect(page.get_by_role("link", name="Explore topic")).to_be_visible()
-    # A topic made only of module inventories says so instead of its rolled-up planned status.
-    page.locator('[data-autoform-node-id="atlas/library"]').click()
-    playwright.expect(page.locator(".bp-dag-status-pill")).to_have_text("inventory only")
-    # Browse names each topic's region, which the map paints only on the canvas.
-    page.get_by_role("button", name="Browse").click()
-    topology = page.locator(".bp-dag-inventory-row", has_text="Topology")
-    playwright.expect(topology.locator(".bp-dag-inventory-meta")).to_contain_text("Geometry & Topology")
+    playwright.expect(page.locator('[data-autoform-node-id="atlas/algebra"]')).to_have_attribute(
+        "data-relation", "prerequisite"
+    )
+    selected_stage_width = page.locator(".bp-dag-stage").bounding_box()["width"]
+    assert abs(selected_stage_width - stage_width) < 2
+    playwright.expect(navigation.locator('[data-navigation-node-id="atlas/topology"]')).to_have_attribute(
+        "aria-current", "true"
+    )
 
 
 def test_a_view_of_topics_and_results_draws_readable_result_cards(desktop_page: object, explorer_url: str) -> None:
@@ -629,8 +643,8 @@ def test_oversized_flat_scope_defaults_to_browse(desktop_page: object, explorer_
     playwright.expect(page.locator(".bp-dag-node")).to_have_count(0)
 
 
-def test_choosing_from_browse_keeps_the_readers_place_and_focus(desktop_page: object, explorer_url: str) -> None:
-    """Each choice from Browse scrolled the list to its top, and closing the inspector dropped focus to the page."""
+def test_choosing_from_contents_keeps_the_readers_place_and_focus(desktop_page: object, explorer_url: str) -> None:
+    """Each choice from the list scrolled it to its top, and closing the details dropped focus to the page."""
     page = desktop_page
     page.goto(f"{explorer_url}/flat.html")
     page.locator(".bp-dag-inventory > .bp-dag-load-more").click()
@@ -644,19 +658,18 @@ def test_choosing_from_browse_keeps_the_readers_place_and_focus(desktop_page: ob
     row.click()
     playwright.expect(row).to_have_attribute("aria-current", "true")
     assert scroll.evaluate("element => element.scrollTop") == offset
-    close = page.get_by_role("button", name="Clear node selection")
+    close = page.get_by_role("button", name="Close details")
     close.press("Enter")
     playwright.expect(row).to_be_focused()
+    playwright.expect(row).to_have_attribute("aria-current", "true")
     assert scroll.evaluate("element => element.scrollTop") == offset
 
-    # Back restores the selection and brings its row into view; Escape in the inspector clears it again.
-    scroll.evaluate("element => { element.scrollTop = 0; }")
-    page.evaluate("history.back()")
-    playwright.expect(row).to_have_attribute("aria-current", "true")
-    playwright.expect(row).to_be_in_viewport()
+    # Escape in the details clears the selection and returns focus to its row too.
+    row.click()
     close.press("Escape")
     playwright.expect(page.locator(".bp-dag-has-selection")).to_have_count(0)
     playwright.expect(row).to_be_focused()
+    assert scroll.evaluate("element => element.scrollTop") == offset
 
 
 def test_a_node_chosen_on_a_phone_lands_above_the_open_sheet(mobile_page: object, explorer_url: str) -> None:
@@ -773,7 +786,7 @@ def test_search_keyboard_navigation_and_focus(desktop_page: object, explorer_url
     # Focus moving from the results to a control outside them closes them too.
     search.press("ArrowDown")
     playwright.expect(result).to_be_focused()
-    page.get_by_role("button", name="Browse").focus()
+    page.get_by_role("button", name="Contents").focus()
     playwright.expect(results).to_be_hidden()
 
     search.fill("target")
@@ -832,16 +845,16 @@ def test_a_result_neither_drawn_here_nor_safely_linked_selects_nothing(
 
 
 def test_a_browse_query_lists_only_this_scope(desktop_page: object, explorer_url: str) -> None:
-    """Whole-roadmap matches belong to the search dropdown, not under "Browse this scope".
+    """Whole-roadmap matches belong to the search dropdown, not under "Contents of this scope".
 
     The dropdown opened on every keystroke and covered the list being filtered,
-    so in Browse it opens only when asked: by Down from the search box, or the
+    so in Contents it opens only when asked: by Down from the search box, or the
     summary's button, which a touch screen can reach.
     """
     page = desktop_page
     _open_ready(page, explorer_url)
     search = _load_search_index(page)
-    page.get_by_role("button", name="Browse").click()
+    page.get_by_role("button", name="Contents").click()
     search.fill("theorem")
     playwright.expect(page.locator(".bp-dag-inventory-title")).to_have_text(["Target theorem"])
     results = page.locator(".bp-dag-search-results")
@@ -858,6 +871,10 @@ def test_global_search_jumps_to_the_smallest_context(desktop_page: object, explo
     page = desktop_page
     _open_ready(page, explorer_url)
     search = page.locator(".bp-dag-search")
+    search.fill("Remote.Namespace.deepTheorem")
+    playwright.expect(page.locator(".bp-dag-result-reason").first).to_have_text("Exact Lean name")
+    search.fill("spectral gap")
+    playwright.expect(page.locator(".bp-dag-result", has_text="Remote theorem")).to_be_visible()
     search.fill("Remote theorem")
     result = page.locator(".bp-dag-result", has_text="Remote theorem")
     result.wait_for()
@@ -981,6 +998,7 @@ def test_reselect_does_not_duplicate_history_and_back_restores_selection(
     foundation.click()
     assert page.evaluate("history.length") == after_first_selection == initial_length + 1
 
+    page.get_by_role("button", name="Close details").click()
     target.click()
     # Focus follows the click two frames later; waiting for it keeps it from
     # landing during the arrow keys below.

@@ -40,9 +40,11 @@ the overview, including its progress summary, plus the relevant project,
 chapter, nested-scope, and statement-context links. Every generated site route
 uses the same Canvas plus semantic-DOM viewer. Open its full-page route and move
 from the project's topics to a chapter, a nested scope, then a searched
-statement and its immediate dependencies. Global search enters the statement's
-smallest useful scope, while breadcrumbs and Back return to the project
-overview.
+statement and its immediate dependencies. Keep the hierarchy rail visible while
+drilling; at project scale, select one topic to reveal its direct dependency
+neighborhood instead of displaying every cross-topic edge at once. Global search
+enters the statement's smallest useful scope, while breadcrumbs and Back return
+to the project overview.
 
 Judge the explorer as a mathematical knowledge map, not navigation chrome.
 Authored mathematical regions and prose should control the atlas and reading

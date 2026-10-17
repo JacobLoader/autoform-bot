@@ -229,7 +229,7 @@ def test_isolated_inventory_does_not_spread_the_connected_dag(tmp_path: Path) ->
     assert columns["isolated-0"] >= 3
 
 
-def test_high_level_topics_use_a_weighted_knowledge_atlas(tmp_path: Path) -> None:
+def test_high_level_topics_use_a_readable_grouped_knowledge_atlas(tmp_path: Path) -> None:
     nodes = tuple(
         ViewNode(
             id=f"chapter-{index}",
@@ -254,8 +254,9 @@ def test_high_level_topics_use_a_weighted_knowledge_atlas(tmp_path: Path) -> Non
         ("Foundations", 10),
     }
     assert len({(layout["x"], layout["y"]) for layout in layouts}) == len(nodes)
-    assert all(layout["width"] == layout["height"] for layout in layouts)
-    assert max(layout["width"] for layout in layouts) > min(layout["width"] for layout in layouts)
+    assert all(layout["width"] > layout["height"] for layout in layouts)
+    assert min(layout["width"] for layout in layouts) >= 220
+    assert min(layout["height"] for layout in layouts) >= 88
 
 
 def test_atlas_regions_that_differ_only_in_case_keep_one_order(tmp_path: Path) -> None:
@@ -328,6 +329,13 @@ def test_explorer_marks_isolates_but_keeps_them_in_the_complete_inventory(tmp_pa
     script = dag_viewer.viewer_script()
     assert "inventoryNodes" in script
     assert '" · items without edges included"' in script
+    assert "MAX_MAP_NODES = 120" in script
+    assert "MIN_READABLE_SCALE = .8" in script
+    assert "MIN_ATLAS_SCALE = .68" in script
+    assert "fitted < readableFloor" in script
+    assert 'params.get("view") === "list" || !state.mapAllowed' in script
+    assert '" of " + data.nodes.length + " shown"' in script
+    assert '"+" + hidden + " hidden"' in script
 
 
 def test_explorer_host_is_escaped_responsive_and_accessible() -> None:
@@ -358,6 +366,11 @@ def test_explorer_host_is_escaped_responsive_and_accessible() -> None:
     assert 'refs.canvas.setAttribute("aria-hidden", "true")' in script
     assert 'refs.stage.setAttribute("role", "region")' in script
     assert 'toolbar.setAttribute("role", "group")' in script
+    assert 'refs.navigation = element("aside", "bp-dag-navigation")' in script
+    assert 'refs.navigation.setAttribute("aria-label", "Wiki hierarchy")' in script
+    assert 'renderNavigation()' in script
+    assert 'element("div", "bp-dag-main")' in script
+    assert 'element("main", "bp-dag-main")' not in script
     assert 'refs.announcement.setAttribute("aria-live", "polite")' in script
     assert "control.dataset.autoformNodeId = node.id" in script
     assert "new ResizeObserver(resize)" in script
@@ -369,16 +382,22 @@ def test_explorer_host_is_escaped_responsive_and_accessible() -> None:
     assert 'w: node.width, h: node.height' in script
     assert 'spotlight.before.has(edge.source) && spotlight.before.has(edge.target)' in script
     assert 'spotlight.after.has(edge.source) && spotlight.after.has(edge.target)' in script
+    assert "if (atlas && !state.selected) edgeIndexes.clear()" in script
+    assert "(incident.get(state.selected.id) || []).forEach" in script
     assert "if (!state.activeDirty) return" in script
     assert "if (query === state.searchCacheQuery) return state.searchCache" in script
     assert 'data.schema !== "autoform-dag-view/v2"' in script
     assert 'ctx.fillText("×" + count' in script
     assert "Title prefix" in script and "Id prefix" in script and "Word prefix" in script
+    assert "Exact Lean name" in script and "Statement match" in script and "All terms match" in script
 
 
 def test_explorer_pages_relations_and_clamps_zoom() -> None:
     script = dag_viewer.viewer_script()
 
+    assert "MIN_SCALE = .002, MIN_READABLE_SCALE = .8, MIN_ATLAS_SCALE = .68" in script
+    assert '"Show all "' not in script
+    assert "Math.min(matches.length, state.searchLimit + SEARCH_PAGE)" in script
     assert "Math.min(visible + RELATION_PAGE, ids.length)" in script
     assert "ids.slice(visible, next)" in script
     assert "clamp(old * factor, MIN_SCALE, 4)" in script
@@ -393,6 +412,8 @@ def test_explorer_assets_and_ordinary_payload_stay_within_budgets(tmp_path: Path
             members=(f"chapter/node-{index}",),
             status_counts=(("planned", 1),),
             status_key="planned",
+            lean="Project.NodeZero" if index == 0 else None,
+            summary="A spectral gap statement." if index == 0 else None,
         )
         for index in range(500)
     )
@@ -411,12 +432,18 @@ def test_explorer_assets_and_ordinary_payload_stay_within_budgets(tmp_path: Path
         context_links={node.id: f"chapters/chapter.html#node={node.id}" for node in nodes},
     )
 
-    assert len(dag_viewer.viewer_script().encode()) < 60_000
+    # The hierarchy rail is part of the shared runtime, but the dependency-free
+    # application still stays below one small uncompressed network response.
+    assert len(dag_viewer.viewer_script().encode()) < 66_000
     assert output.stat().st_size < 300_000
     assert search.stat().st_size < 100_000
     search_payload = json.loads(search.read_text(encoding="utf-8"))
     assert search_payload["schema"] == "autoform-dag-search/v1"
     assert "layout" not in search_payload["nodes"][0]
+    assert search_payload["nodes"][0]["lean"] == "Project.NodeZero"
+    assert search_payload["nodes"][0]["summary"] == "A spectral gap statement."
+    assert "lean" not in search_payload["nodes"][1]
+    assert "summary" not in search_payload["nodes"][1]
 
 
 def test_viewer_script_links_are_relative_to_the_rendered_site_root(tmp_path: Path) -> None:

@@ -16,7 +16,9 @@ from autoform_cli.graph import (
     catalogs_without_ledger,
     load_graph,
 )
+from autoform_cli.graph_views import project_view
 from autoform_cli.runtime import RuntimeProjectionError, load_runtime_graph
+from autoform_cli.status import derive
 
 
 def _node_text(body: str, **metadata: str) -> str:
@@ -504,7 +506,7 @@ def test_rejects_cycle(tmp_path: Path) -> None:
         load_graph(blueprint)
 
 
-def test_rejects_cycle_created_only_by_chapter_contraction(tmp_path: Path) -> None:
+def test_keeps_acyclic_edges_that_form_a_cycle_only_after_chapter_contraction(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _roadmap_page(blueprint, "a/README.md", "# A\n")
     _roadmap_page(blueprint, "b/README.md", "# B\n")
@@ -520,8 +522,14 @@ def test_rejects_cycle_created_only_by_chapter_contraction(tmp_path: Path) -> No
         "# A last\n## Depends on\n[B middle](../b/middle.md)\n",
     )
 
-    with pytest.raises(GraphValidationError, match=r"rolled-up dependency cycle in root: a -> b -> a"):
-        load_graph(blueprint)
+    graph = load_graph(blueprint)
+
+    assert graph.nodes["b/middle"].dependencies == ("a/first",)
+    assert graph.nodes["a/last"].dependencies == ("b/middle",)
+    assert {(edge.source, edge.target) for edge in project_view(graph, derive(graph)).edges} == {
+        ("scope:a", "scope:b"),
+        ("scope:b", "scope:a"),
+    }
 
 
 def test_ignores_links_in_code_fences_and_other_sections(tmp_path: Path) -> None:
@@ -946,6 +954,31 @@ def test_check_cli_reports_validation_errors(tmp_path: Path) -> None:
     assert "error: bad: missing H1 title" in result.stdout
 
 
+def test_check_warns_about_a_container_that_declares_something(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #221: audit reports this as formalizable-container, but the generated workflows run check.
+
+    The site still builds, so like #325's warnings it keeps the exit code. A declaring README.md with
+    nothing below it is a leaf, and a container below the top level is caught.
+    """
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "chapter/section/leaf.md", "# Leaf\n", declaration="theorem")
+    _node(blueprint, "chapter/other/README.md", "# Other\n", declaration="theorem")
+    assert main(["check", str(blueprint)]) == 0
+    assert "warning:" not in capsys.readouterr().out
+
+    _node(blueprint, "chapter/section/README.md", "# Section\n", declaration="theorem")
+
+    assert main(["check", str(blueprint)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("OK: ")
+    assert [line for line in lines if line.startswith("warning:")] == lines[-1:] == [
+        "warning: chapter/section: formalizable article has contained articles; declaration-sized articles must "
+        "be leaves; move the declaration and its lean, statement and proof fields into a leaf article"
+    ]
+
+
 def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -981,18 +1014,18 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
     ]
 
     # Issue #304: render omits hidden files, so a link that names one fails
-    # although the file exists.
+    # although the file exists. Only a repository link reaches a hidden note
+    # under sources/, so check only warns about one that exists.
     for note in (".drafts/notes.md", "sources/.private/paper.md"):
         (blueprint / note).parent.mkdir(exist_ok=True)
         (blueprint / note).write_text("# Notes\n", encoding="utf-8")
     hidden = "- [Draft](../.drafts/notes.md)\n- [Private](../sources/.private/paper.md)\n"
-    _node(blueprint, "result.md", sources + hidden)
+    _node(blueprint, "result.md", sources + hidden + "- [Lost](../sources/.private/lost.md)\n")
 
-    hidden_reason = "source target names a hidden path, which render omits"
     assert main(["check", str(blueprint)]) == 1
     assert capsys.readouterr().out == (
-        f"error: result: {hidden_reason}: '../.drafts/notes.md'\n"
-        f"error: result: {hidden_reason}: '../sources/.private/paper.md'\n"
+        "error: result: source target names a hidden path, which render omits: '../.drafts/notes.md'\n"
+        "error: result: source target does not resolve to a file: '../sources/.private/lost.md'\n"
     )
 
     (tmp_path / "slides.pdf").write_bytes(b"%PDF-1.4\n")
@@ -1009,6 +1042,23 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
         "error: result: source target contains an invalid path: '../sources/%00.md'\n"
         "error: result: source target contains an invalid path: 'http://[oops/paper.md'\n"
     )
+
+
+def test_check_warns_about_a_hidden_note_under_sources(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Render can link it to the repository, so unlike a hidden target elsewhere it resolves once committed."""
+    blueprint = tmp_path / "blueprint"
+    note = blueprint / "sources" / ".private" / "paper.md"
+    note.parent.mkdir(parents=True)
+    note.write_text("# Paper\n", encoding="utf-8")
+    _node(blueprint, "result.md", "# Result\n\n## Sources\n\n- [Private](../sources/.private/paper.md#lemma-3)\n")
+
+    assert main(["check", str(blueprint)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("OK: ")
+    assert [line for line in lines if line.startswith("warning:")] == lines[-1:] == [
+        "warning: result: source target names a hidden path, which only a repository link reaches, so it must be "
+        "committed: '../sources/.private/paper.md#lemma-3'"
+    ]
 
 
 def test_check_warns_about_a_mathlib_file_search_reports_as_null(

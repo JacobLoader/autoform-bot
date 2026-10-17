@@ -23,7 +23,8 @@ runs `tests/test_dag_viewer_browser.py` with `AUTOFORM_REQUIRE_BROWSER_TESTS=1`,
 so a missing browser fails the job instead of skipping its tests; locally they
 skip without the extra, and `make test-browser` installs both and runs them as
 CI does. `real Lean
-(fixture toolchain)` builds a project from the bundled Mathlib release and runs
+(fixture toolchain)` builds and audits a project from the bundled Mathlib
+release and runs
 the real-Lean suites other than the skeleton suite, which `real Lean skeleton
 suite` runs with one `tests/test_project_inspect.py` test. Another job runs the
 inspection, bounded-subprocess, and transactional-output tests on Windows, and
@@ -31,9 +32,12 @@ the last builds
 `tests/fixtures/repl-smoke` and runs `tests/test_real_repl.py` against the
 pinned upstream REPL, also checking the header parser on the oldest Lean release
 Autoform supports. Locally, tests that need Lean skip when
-`lake` is not on `PATH`. The `tests/test_skeleton.py` ones also skip when the
+`lake` is not on `PATH`. Those in `tests/test_skeleton.py`, `test_impact.py`,
+`test_contract.py`, `test_lake_artifact_audit.py`, `test_lsp_protocol.py` and
+`test_batch_diagnostics.py` also skip when elan is installed but the
 toolchain pinned in `tests/fixtures/skeleton-project/lean-toolchain` is
-missing; the others let elan download it. The `tests/test_library_generate.py`
+missing; only the real-Lake test in `tests/test_project_inspect.py` lets elan
+download it. The `tests/test_library_generate.py`
 ones that run Lean build a fixture that clones Batteries from GitHub, so they
 run only when `AUTOFORM_REQUIRE_REAL_LIBRARY_TESTS=1` is set, as their CI job
 does; a missing toolchain or a failed download then fails them. Run

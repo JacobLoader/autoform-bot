@@ -301,7 +301,12 @@ def test_keeps_confined_parent_relative_sources_and_omits_the_rest(tmp_path: Pat
     # rest, instead of refusing the project.
     mixed = "\n".join(
         f"- [source]({target})"
-        for target in ("../../../../outside.md", "../../../sources/paper.md", "mailto:author@example.org")
+        for target in (
+            "../../../../outside.md",
+            "../../../sources/paper.md",
+            "mailto:author@example.org",
+            "https://[2001:db8::1/paper",
+        )
     )
     result.write_text(text.replace("- [source](../../../sources/paper.md)", mixed), encoding="utf-8")
     node = load_runtime_graph(project).get("chapter/section/result")

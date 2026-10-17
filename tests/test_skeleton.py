@@ -777,8 +777,8 @@ def test_unreadable_probe_records_are_refused(tmp_path: Path) -> None:
         _read_probe_records(records, "skeleton probe")
     records.unlink()
     records.mkdir()
-    with pytest.raises(SkeletonError, match="^the unused-hypotheses probe's records could not be read: "):
-        _read_probe_records(records, "unused-hypotheses probe")
+    with pytest.raises(SkeletonError, match="^the impact probe's records could not be read: "):
+        _read_probe_records(records, "impact probe")
 
 
 def _pid_is_live(pid: int) -> bool:
@@ -1142,6 +1142,25 @@ def test_libraries_and_modules_follow_the_lake_source_directory(tmp_path: Path) 
     assert module_of(project / "lakefile.toml", libraries) is None
     assert path_of("Skel.Defs", libraries, project) == "src/Skel/Defs.lean"
     assert path_of("Skel.Missing", libraries, project) is None
+
+
+def test_a_file_no_library_selects_has_no_module(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "lakefile.toml").write_text(
+        'name = "Demo"\n\n[[lean_lib]]\nname = "Demo"\n\n[[lean_lib]]\nname = "Lib"\nglobs = ["Extra.+"]\n',
+        encoding="utf-8",
+    )
+
+    libraries = lean_libraries(project)
+
+    # Both libraries hold every file under the project, but Lake builds only
+    # what their roots and globs make buildable: Lib's glob leaves out its own root.
+    assert module_of(project / "Demo" / "Basic.lean", libraries) == "Demo.Basic"
+    assert module_of(project / "Extra" / "Sub.lean", libraries) == "Extra.Sub"
+    assert module_of(project / "Extra.lean", libraries) is None
+    assert module_of(project / "Lib" / "Foo.lean", libraries) is None
+    assert module_of(project / "v1" / "Old.lean", libraries) is None
 
 
 def test_a_package_without_library_targets_is_its_own_library(tmp_path: Path) -> None:
@@ -2042,6 +2061,18 @@ def test_a_report_or_packet_manifest_that_cannot_be_decoded_is_refused(tmp_path:
     packets = tmp_path / "packets"
     packets.mkdir()
     (packets / PACKET_MANIFEST).write_text(text, encoding="utf-8")
+    with pytest.raises(SkeletonError, match="refusing to overwrite non-Autoform packet output"):
+        write_packets(_fake_report(tmp_path), packets)
+    assert (packets / PACKET_MANIFEST).read_text(encoding="utf-8") == text
+
+
+@pytest.mark.parametrize("schema", [{}, []])
+def test_a_packet_manifest_whose_schema_is_not_a_string_is_refused(tmp_path: Path, schema: object) -> None:
+    packets = tmp_path / "packets"
+    packets.mkdir()
+    text = json.dumps({"kind": "packets", "schema": schema, "packets": []})
+    (packets / PACKET_MANIFEST).write_text(text, encoding="utf-8")
+
     with pytest.raises(SkeletonError, match="refusing to overwrite non-Autoform packet output"):
         write_packets(_fake_report(tmp_path), packets)
     assert (packets / PACKET_MANIFEST).read_text(encoding="utf-8") == text

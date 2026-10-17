@@ -26,8 +26,11 @@ import unicodedata
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
+
+from markdown.treeprocessors import Treeprocessor
 
 from . import dag_viewer, graph_pages, graph_views, mermaid, status
 from ._tree_snapshot import (
@@ -64,7 +67,7 @@ from .lean import (
     snapshot_project_sources,
     verify_repository_snapshot,
 )
-from .markdown import INLINE_CODE, _BRACKET_ESCAPE, _INLINE_MATH, _blank, article_parts
+from .markdown import INLINE_CODE, _BRACKET_ESCAPE, _INLINE_MATH, _blank, article_parts, site_converter
 from .markdown import mask_fences_and_comments
 from .status import is_definition
 
@@ -74,9 +77,14 @@ _FENCE = re.compile(r"^ {0,3}(`{3,}(?=[^`]*$)|~{3,})")
 # as ``[0,1]^n`` and in math such as ``$(0,1]$`` are blanks. Any other bracket in
 # a label must be paired, so an earlier "[1]" or "[x]" on the line stays text.
 _LINK_LABEL = r"(?:[^\[\]]|\[[^\[\]]*\])*"
+#: An inline link. A bare destination or a title may hold one level of
+#: balanced parentheses, a quoted title may leave a `(` open, and an escaped
+#: parenthesis is text, as in Python-Markdown. A rewrite drops the title of a
+#: link it moves, so a match that ran past the link's own `)` would drop text.
 _MARKDOWN_LINK = re.compile(
-    rf"(?<!!)\[(?P<label>{_LINK_LABEL})\]"
-    r"\(\s*(?P<target><[^>]+>|[^)\s]+)(?:\s+[^)]*)?\)"
+    rf"(?<!!)\[(?P<label>{_LINK_LABEL})\]\(\s*"
+    r"(?P<target><[^>]+>|(?:\\.|[^\\()\s]|\((?:\\.|[^\\()\s])*\))+)"
+    r"""(?:\s+(?:"[^")]*"\s*|'[^')]*'\s*|(?:\\.|[^\\()]|\((?:\\.|[^\\()])*\))*))?\)"""
 )
 #: A reference-style link definition, `[label]: target "title"`. Markdown
 #: resolves `[Paper][paper]` through one of these, so a rewrite that only sees
@@ -91,6 +99,7 @@ _ARTICLE_SLOT = re.compile(
 )
 _DEPENDENCY_SECTIONS = frozenset({"depends on", "proof depends on"})
 _SKIPPED_DIRECTORIES = frozenset({".obsidian", ".trash", ".git"})
+
 
 #: Transcriptions of the paper being formalised. Vault material, not chapters.
 SOURCES_DIR = "sources"
@@ -647,14 +656,7 @@ def _render_pages(
     _append_book_navigation([p for p in book_pages if p != overview])
     structure = destination / STRUCTURE_PAGE
     structure.write_text(
-        _render_structure_page(
-            blueprint,
-            graph,
-            statuses,
-            page=structure,
-            targets=targets,
-            sources_base=sources_base,
-        ),
+        _render_structure_page(page=structure),
         encoding="utf-8",
     )
     report.pages += 1
@@ -1328,13 +1330,13 @@ def _book_page_order(blueprint: Path, destination: Path, graph: Graph) -> list[P
             for match in _MARKDOWN_LINK.finditer(_link_mask(line)):
                 raw = line[match.start("target") : match.end("target")]
                 bare = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
-                path = bare.partition("#")[0]
-                if not path or urlsplit(path).scheme or path.startswith("/"):
-                    continue
-                candidate = (source.parent / unquote(path)).resolve()
+                path = bare.partition("#")[0].partition("?")[0]
                 try:
+                    if not path or urlsplit(path).scheme or path.startswith("/"):
+                        continue
+                    candidate = (source.parent / unquote(path)).resolve()
                     candidate_relative = candidate.relative_to(blueprint)
-                except ValueError:
+                except ValueError:  # a target outside the vault, an unbalanced IPv6 bracket, or a decoded NUL
                     continue
                 if (
                     not candidate_relative.parts
@@ -1511,115 +1513,32 @@ STRUCTURE_PAGE = "structure.md"
 
 
 def _render_structure_page(
-    blueprint: Path,
-    graph: Graph,
-    statuses: dict[str, status.NodeStatus],
     *,
     page: Path,
-    targets: dict[str, tuple[Path, str]],
-    sources_base: "_SourceBase | None",
 ) -> str:
-    """List the vault as a file tree, so its shape can be checked at a glance.
+    """Keep the old structure route as a bounded doorway into the explorer.
 
-    The book answers what the project says; nothing answered how it is laid
-    out. A real project came back with 71 of 72 articles sitting directly under
-    `roadmap/`, which parses cleanly, passes `autoform check`, and publishes a
-    book with no chapters -- a fault invisible in every rendered view, because
-    every rendered view shows content rather than paths.
-
-    So this shows paths: the directory tree itself, with what the graph made of
-    each file beside it. Directories are rows too, because they are what a
-    chapter is; without them every `README.md` looks like every other one.
+    The explorer owns hierarchy now. Republishing every source path as one raw
+    HTML tree made this compatibility page larger than the rest of a small
+    site, duplicated the explorer, and became unusable on repository-scale books.
     """
-    links = _anchored_links(targets, page, extension=".md")
-    by_path = {node.path.resolve(): node for node in graph.nodes.values()}
-
-    def keep(relative: Path) -> bool:
-        if _SKIPPED_DIRECTORIES.intersection(relative.parts) or _is_hidden(relative):
-            return False
-        return not (sources_base is not None and relative.parts[:1] == (SOURCES_DIR,))
-
-    files = [p for p in sorted(blueprint.rglob("*.md")) if keep(p.relative_to(blueprint))]
-    directories = {p.relative_to(blueprint).parent for p in files}
-    directories.discard(Path("."))
-    for directory in list(directories):
-        for parent in directory.parents:
-            if parent != Path("."):
-                directories.add(parent)
-
-    def row(
-        indent: int,
-        label: str,
-        kind: str,
-        mark: str,
-        extra: str = "",
-        node_id: str | None = None,
-    ) -> str:
-        identity = (
-            f' data-autoform-node-id="{html.escape(node_id, quote=True)}"'
-            if node_id is not None
-            else ""
-        )
-        return (
-            f'<span class="bp-tree-path{extra}"{identity} '
-            f'style="padding-left: {indent * 1.1:.1f}rem">{label}</span>'
-            f'<span class="bp-tree-kind">{kind}</span>'
-            f'<span class="bp-tree-mark">{mark}</span>'
-        )
-
-    rows = [row(0, "<strong>blueprint/</strong>", "vault root", "")]
-    for entry in sorted(directories | {p.relative_to(blueprint) for p in files}):
-        depth = len(entry.parts)
-        if entry in directories:
-            rows.append(row(depth, f"<strong>{html.escape(entry.name)}/</strong>", "", ""))
-            continue
-        source = blueprint / entry
-        node = by_path.get(source.resolve())
-        name = html.escape(entry.name)
-        if node is None:
-            # Everything under `roadmap/` is a node or the graph refuses to
-            # load, so a file with no node here is prose by construction: the
-            # blueprint landing page or the coverage contract.
-            rows.append(row(depth, name, "prose", ""))
-            continue
-        href = links.get(node.id)
-        label = f'<a href="{html.escape(href, quote=True)}">{name}</a>' if href else name
-        state = graph_views.display_state(node, statuses[node.id])
-        kind = graph_views.kind_label(node)
-        rows.append(
-            row(
-                depth,
-                f"{label} <span class='bp-tree-title'>{html.escape(node.title)}</span>",
-                html.escape(kind),
-                f'<span class="bp-swatch bp-swatch-{state.key}"></span>'
-                f'<span class="bp-tree-state">{html.escape(state.label)}</span>',
-                node_id=node.id,
-            )
-        )
-
-    article_depths = {len(p.relative_to(blueprint).parts) - 1 for p in by_path}
-    warnings = []
-    if len(by_path) > 3 and article_depths <= {1}:
-        warnings.append(
-            "Every article sits directly under <code>roadmap/</code>. Chapters come "
-            "from directories, so this vault publishes as one undivided list."
-        )
+    explorer = mermaid.relative_link(page.parent / "dependencies/full.md", page, ".md")
     return "\n".join(
         [
             "---",
-            "title: Vault structure",
+            "title: Browse the roadmap",
+            "search:",
+            "  exclude: true",
             "hide:",
             "  - toc",
             "---",
             "",
-            "# Vault structure",
+            "# Browse the roadmap",
             "",
-            "Every Markdown file in the blueprint, as the vault holds them. Chapters "
-            "come from directories, so the shape of this tree is the shape of the book.",
+            "The dependency explorer presents the authored hierarchy and its mathematical",
+            "relations without flattening the repository into a file listing.",
             "",
-            *(f'<div class="bp-tree-warn">{text}</div>' for text in warnings),
-            "",
-            f'<div class="bp-tree">{"".join(rows)}</div>',
+            f"[Open the roadmap explorer]({explorer})",
             "",
         ]
     )
@@ -1668,7 +1587,7 @@ def _render_summary_nav(
         [
             "- Graph",
             "    - [Dependency explorer](dependencies.md)",
-            f"    - [Vault structure]({STRUCTURE_PAGE})",
+            "    - [Browse all mathematics](dependencies/full.md)",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -2118,24 +2037,52 @@ def _rewrite_links(
     def moved_target(raw: str) -> str | None:
         """Where *raw* should point once published, or None to leave it alone."""
         bare = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
-        path, separator, fragment = bare.partition("#")
-        if not path or urlsplit(path).scheme or path.startswith("/"):
+        # The query and fragment are not part of the file's name: they are
+        # kept as written, beside the path render moves.
+        located, separator, fragment = bare.partition("#")
+        path, asked, query = located.partition("?")
+        try:
+            if not path or urlsplit(path).scheme or path.startswith("/"):
+                return None
+            candidate = (source_dir / unquote(path)).resolve()
+        except ValueError:
+            # An unbalanced IPv6 bracket or a decoded NUL names no file to
+            # point at, so the link is published as written, like a URL.
             return None
-        candidate = (source_dir / unquote(path)).resolve()
         node_id = node_sources.get(candidate)
         if node_id is not None:
             href = anchored[node_id]
             if not targets[node_id][1] and separator:
                 href = f"{'' if href == '#' else href}#{fragment}"
-            return href
+            before, hashed, anchor = href.partition("#")  # the query goes before the anchor
+            return f"{before}{asked}{query}{hashed}{anchor}"
         if not _is_within(candidate, blueprint):
             # Nothing outside the blueprint is published: "" keeps only the text.
             return ""
         relative = candidate.relative_to(blueprint)
-        if sources_base is not None and relative.parts[:1] == (SOURCES_DIR,):
-            return f"{_source_href(sources_base, relative.parts[1:])}{separator}{fragment}"
+        # A repository link to a note the captured blueprint lacks would 404, so
+        # it stays site-relative, where a strict build reports the page missing.
+        # The capture skips hidden files, so a hidden note keeps its repository
+        # link, which resolves once the note is committed, as check warns.
+        if (
+            sources_base is not None
+            and relative.parts[:1] == (SOURCES_DIR,)
+            and (os.path.exists(candidate) or _is_hidden(relative))
+        ):
+            return f"{_source_href(sources_base, relative.parts[1:])}{asked}{query}{separator}{fragment}"
         published = destination / relative
-        return f"{mermaid.relative_link(published, page, candidate.suffix)}{separator}{fragment}"
+        # Mermaid URLs are percent-encoded because they sit in generated
+        # JavaScript. This is Markdown: keep its decoded spelling so an
+        # unchanged link stays byte-for-byte unchanged, and ``bracketed`` can
+        # protect a moved path containing a space or parenthesis.
+        href = unquote(mermaid.relative_link(published, page, candidate.suffix))
+        return f"{href}{asked}{query}{separator}{fragment}"
+
+    def bracketed(href: str) -> str:
+        # A decoded path, or a query or fragment kept from angle brackets, can
+        # hold a space or a parenthesis. CommonMark allows no space in a bare
+        # destination, and Python-Markdown needs its parentheses balanced.
+        return f"<{href}>" if re.search(r"[\s()]", href) else href
 
     def rewrite(line: str) -> str:
         # A reference definition carries the destination for every `[x][label]`
@@ -2146,16 +2093,21 @@ def _rewrite_links(
             href = moved_target(definition.group("target"))
             if href:
                 indent, label = definition.group("indent"), definition.group("label")
+                # Python-Markdown reads a definition's destination only up to
+                # whitespace, in angle brackets or not, so whitespace is encoded.
+                href = re.sub(r"\s", lambda space: quote(space.group()), href)
                 return f"{indent}[{label}]: {href}{definition.group('rest') or ''}"
             return line
         pieces: list[str] = []
         end = 0
         for match in _MARKDOWN_LINK.finditer(_link_mask(line)):
-            href = moved_target(line[match.start("target") : match.end("target")])
-            if href is not None:
-                label = line[match.start("label") : match.end("label")]
-                pieces += [line[end : match.start()], f"[{label}]({href})" if href else label]
-                end = match.end()
+            raw = line[match.start("target") : match.end("target")]
+            href = moved_target(raw)
+            if href is None or raw in (href, f"<{href}>"):  # nothing moved: keep the link as written
+                continue
+            label = line[match.start("label") : match.end("label")]
+            pieces += [line[end : match.start()], f"[{label}]({bracketed(href)})" if href else label]
+            end = match.end()
         return "".join(pieces) + line[end:]
 
     return _outside_fences(text, rewrite)
@@ -2346,18 +2298,154 @@ def _place_environments(
             continue
         target = line[slot.start("target") : slot.end("target")]
         path, separator, fragment = target.partition("#")
-        if not path and separator:
-            node_id = anchor_nodes.get(fragment)
-        elif not path or urlsplit(path).scheme or path.startswith("/"):
+        try:
+            if not path and separator:
+                node_id = anchor_nodes.get(fragment)
+            elif not path or urlsplit(path).scheme or path.startswith("/"):
+                node_id = None
+            else:
+                node_id = node_sources.get((source_dir / unquote(path)).resolve())
+        except ValueError:  # an unbalanced IPv6 bracket or a decoded NUL names no article
             node_id = None
-        else:
-            node_id = node_sources.get((source_dir / unquote(path)).resolve())
         if node_id is None or node_id not in environments or node_id in placed:
             output.append(line)
             continue
         output.append(environments[node_id])
         placed.add(node_id)
     return "\n".join(output), placed
+
+
+class _FenceSafeHtml(HTMLParser):
+    """Keep displayed fence markers from opening fences on the second pass.
+
+    HTML entities decode to the exact displayed code/TeX. Raw script/style
+    text is not entity-decoded by HTML, so it retains its original spelling.
+    """
+
+    _runs = re.compile(r"`{3,}|~{3,}")
+    _quoted = re.compile(r"(['\"])(.*?)\1", re.DOTALL)
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.parts: list[str] = []
+
+    @classmethod
+    def escaped(cls, value: str) -> str:
+        return cls._runs.sub(lambda match: "".join(f"&#{ord(char)};" for char in match.group()), value)
+
+    def handle_starttag(self, tag, attrs):
+        value = self.get_starttag_text()
+        # Quoted attribute values also decode entities; names are untouched.
+        self.parts.append(self._quoted.sub(
+            lambda match: match.group(1) + self.escaped(match.group(2)) + match.group(1), value
+        ))
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag):
+        self.parts.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        self.parts.append(data if self.cdata_elem else self.escaped(data))
+
+    def handle_entityref(self, name):
+        self.parts.append(f"&{name};")
+
+    def handle_charref(self, name):
+        self.parts.append(f"&#{name};")
+
+    def handle_comment(self, data):
+        self.parts.append(f"<!--{data}-->")
+
+    def handle_decl(self, decl):
+        self.parts.append(f"<!{decl}>")
+
+    def handle_pi(self, data):
+        self.parts.append(f"<?{data}>")
+
+    def unknown_decl(self, data):
+        self.parts.append(f"<![{data}{']]>' if data.startswith('CDATA[') else ']>'}")
+
+
+class _PublishedBodyLinks(Treeprocessor):
+    """Give parsed Markdown links their final URLs before they become HTML.
+
+    MkDocs does not rewrite links inside raw HTML. Authored raw HTML links are
+    not Markdown tree elements, so their spelling remains untouched.
+    """
+
+    def __init__(self, md):
+        super().__init__(md)
+        self.validation_targets: list[tuple[str, str]] = []
+
+    def run(self, root):
+        for element in root.iter():
+            if element.tag not in {"a", "img"}:
+                continue
+            key = "href" if element.tag == "a" else "src"
+            href = element.get(key, "")
+            try:
+                parts = urlsplit(href)
+            except ValueError:
+                self.validation_targets.append((element.tag, href))
+                continue
+            if not parts.scheme and not parts.netloc:
+                # Keep the original parsed link/image and .md destination for
+                # MkDocs' configured missing-file/anchor checks on the final
+                # page. Raw authored HTML links are not tree elements here.
+                self.validation_targets.append((element.tag, href))
+                if (element.tag == "a" and not parts.path.startswith("/")
+                        and parts.path.lower().endswith(".md") and "\0" not in unquote(parts.path)):
+                    path = _as_published(parts.path[:-3] + ".html")
+                    element.set("href", urlunsplit(parts._replace(path=path)))
+
+
+def _body_converter():
+    converter = site_converter()
+    # The final page assigns heading IDs once, across all its statements.
+    # attr_list still keeps an author's explicit {#id} here.
+    converter.treeprocessors.deregister("toc")
+    converter.treeprocessors.register(_PublishedBodyLinks(converter), "published-body-links", 5)
+    return converter
+
+
+def _protect_markdown_in_html(
+    text: str, *, references: Mapping[str, tuple[str, str]] | None = None, force: bool = False,
+) -> str:
+    """Parse an affected authored chunk before introducing HTML containers.
+
+    HTML extraction precedes arithmatex and indented code. Inside markdown=1,
+    r<n can consume the container's closing tag and lose its whole suffix.
+    Parsing the fragment first lets the configured Markdown engine distinguish
+    code, math, HTML and autolinks and emit the correct escaping for each.
+    The vault and generated wrapper/navigation markup are never rewritten.
+    """
+    if not force and "<" not in text:
+        return text
+    converter = _body_converter()
+    if references:
+        converter.references.update(references)
+    rendered = converter.convert(text)
+    if "```" in rendered or "~~~" in rendered:
+        protected = _FenceSafeHtml()
+        protected.feed(rendered)
+        protected.close()
+        rendered = "".join(protected.parts)
+    targets = converter.treeprocessors["published-body-links"].validation_targets
+    if targets:
+        # The visible fragment is raw HTML, which MkDocs does not validate.
+        # Native Markdown witnesses retain the original validation behavior,
+        # including images, decoded paths, queries, fragments and warning
+        # levels. A hidden subtree prevents extra layout or keyboard targets;
+        # whitespace-only labels add no visible text.
+        witnesses = []
+        for kind, href in dict.fromkeys(targets):
+            target = f"<{href}>" if "<" not in href and ">" not in href else href
+            witnesses.append(f"{'!' if kind == 'img' else ''}[ ]({target})")
+        rendered += '\n\n<div class="bp-body-link-validation" hidden markdown="1">\n\n'
+        rendered += "\n\n".join(witnesses) + "\n\n</div>"
+    return rendered
 
 
 def _render_environment(
@@ -2395,6 +2483,19 @@ def _render_environment(
             sources_base=sources_base,
         )
         for part in (statement, remainder)
+    )
+
+    # References in either chunk may be used by the other. If one chunk is
+    # preconverted, render both with the shared article context: otherwise its
+    # consumed definitions would leave the remaining Markdown links unresolved.
+    references = {}
+    affected = "<" in statement or "<" in remainder
+    if affected:
+        context = _body_converter()
+        context.convert("\n\n".join((statement, remainder)))
+        references = context.references
+    statement, remainder = (
+        _protect_markdown_in_html(part, references=references, force=affected) for part in (statement, remainder)
     )
 
     code_links, implementation_rows, linked, unresolved = _lean_presentation(node, linker)
