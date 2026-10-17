@@ -2018,6 +2018,8 @@ def test_probe_comment_ranges_must_cover_comments(tmp_path: Path, ranges: object
         ("../../sources/chapter.md#L1-L1", "names something other than a regular file"),
         ("../../sources/binary.tex#L1-L1", "not readable UTF-8 text"),
         ("../../../outside.tex#L1-L1", "points outside the blueprint"),
+        # Nothing outside the blueprint is looked up, so a missing file there is outside too.
+        ("../../../absent.tex#L1-L1", "points outside the blueprint"),
         ("../../sources/loop.txt#L1-L1", "names a path that cannot be resolved"),
         ("../../sources/loopdir/book.tex#L1-L1", "names a path that cannot be resolved"),
         ("../../sources/away/loop.tex#L1-L1", "names a path that cannot be resolved"),

@@ -990,7 +990,8 @@ without `statement: formalized`, or either without a `lean:` name, even beside
 inside the blueprint, as `audit` also requires: a missing file, a directory, an
 invalid path or URL, or a target outside the blueprint fails. The path must open
 as written, so one through a missing folder or a symbolic link loop fails too,
-even where its `..` steps would cancel that part as text. So does a target
+even where its `..` steps would cancel that part as text (Windows itself applies
+`..` as text). So does a target
 whose path as written, once its `..` steps are applied, has a part below the
 blueprint starting with `.`, unless the article citing it is hidden too,
 because render omits hidden files and directories. Under `sources/`, such a

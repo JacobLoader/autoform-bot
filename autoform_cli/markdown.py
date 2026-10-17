@@ -716,8 +716,9 @@ def resolved_path(path: Path) -> Path | None:
     The kernel follows the links first, so a missing part, a symlink loop or a
     chain past its link limit gives None on every Python, and that limit bounds
     the work `os.path.realpath` then does. Strict `realpath` also gives None at
-    a link it cannot read, which macOS follows anyway. Callers still check where
-    the result points and whether it is a file.
+    a link it cannot read, which macOS follows anyway. Windows applies `..` as
+    text before it looks anything up. Callers still check where the result
+    points and whether it is a file.
     """
 
     try:
