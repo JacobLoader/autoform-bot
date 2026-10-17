@@ -2475,55 +2475,43 @@ def _hash_module_files(
     return tuple(identities)
 
 
-def _available_cpus() -> int:
-    """The CPUs this process may run on, where the platform can say."""
-
-    if hasattr(os, "process_cpu_count"):
-        return os.process_cpu_count() or 1
-    if hasattr(os, "sched_getaffinity"):
-        return len(os.sched_getaffinity(0))
-    return os.cpu_count() or 1
-
-
 def _probe_workers(jobs: int) -> int:
     """How many probe processes run at once; see ``_MAX_PROBE_WORKERS``."""
 
-    return max(1, min(jobs, _MAX_PROBE_WORKERS, _available_cpus()))
+    if hasattr(os, "process_cpu_count"):
+        cpus = os.process_cpu_count()
+    elif hasattr(os, "sched_getaffinity"):
+        cpus = len(os.sched_getaffinity(0))
+    else:
+        cpus = os.cpu_count()
+    return max(1, min(jobs, _MAX_PROBE_WORKERS, cpus or 1))
 
 
-def _run_module_probes(
-    jobs: list[tuple[str, str]],
-    runner: ProbeRunner,
-    lean_root: Path,
-    read: Callable[[str, str], object] | None = None,
-) -> dict[str, object]:
-    """Run each module's probe in a bounded pool and collect its result.
+def _run_module_probes(modules: list[str], probe: Callable[[str], object]) -> dict[str, object]:
+    """Run ``probe(module)`` for each module in a bounded pool and collect the results.
 
-    ``read(module, output)`` turns a probe's output into its result in the
-    worker, as soon as the probe ends; without ``read`` the result is the
-    output. A ``SkeletonError`` from one probe is that module's result.
-    Anything else, an interrupt, a signal, or a ``_ProbeEnvironmentError``,
-    cancels the pool: every running command terminates its process tree and
-    every worker is joined before the error propagates. Each probe has the
-    budget ``runner`` enforces; a budget shared across the pool would make
-    which module fails depend on scheduling.
+    A ``SkeletonError`` from one probe is that module's result. Anything else,
+    an interrupt, a signal, or a ``_ProbeEnvironmentError``, cancels the pool:
+    every running command terminates its process tree and every worker is
+    joined before the error propagates. Each probe has the budget its command
+    enforces; a budget shared across the pool would make which module fails
+    depend on scheduling.
     """
 
     cancelled = threading.Event()
 
-    def probe(module: str, program: str) -> object:
+    def run(module: str) -> object:
         _PROBE_POOL.cancelled = cancelled
         try:
-            output = runner(program, lean_root)
+            return probe(module)
         finally:
             _PROBE_POOL.cancelled = None
-        return output if read is None else read(module, output)
 
     results: dict[str, object] = {}
-    pool = ThreadPoolExecutor(max_workers=_probe_workers(len(jobs)), thread_name_prefix="autoform-probe")
+    pool = ThreadPoolExecutor(max_workers=_probe_workers(len(modules)), thread_name_prefix="autoform-probe")
     with _signal_guard() as guard:
         try:
-            futures = {pool.submit(probe, module, program): module for module, program in jobs}
+            futures = {pool.submit(run, module): module for module in modules}
             pending = set(futures)
             while pending:
                 # Polled rather than armed: a signal raised inside wait() could
@@ -2565,8 +2553,9 @@ def extract_skeletons(
     returns Lean's standard output; the default runs ``lake env lean`` after one
     Lake freshness check and one build of the probe's helpers, and ``timeout``
     bounds that build and each probe. A custom ``runner`` bounds its own probes,
-    so it cannot be combined with ``timeout``. A declaration the lexical index
-    cannot place is reported as unresolved without running Lean, exactly as
+    so it cannot be combined with ``timeout``, and may be called from several
+    threads at once. A declaration the lexical index cannot place is reported
+    as unresolved without running Lean, exactly as
     ``autoform check --lean-root`` reports it.
     """
 
@@ -2788,17 +2777,18 @@ def extract_graph_skeletons(
     snapshot_started_ns: int | None = None
     if groups:
         project_roots = tuple(root for library in libraries for root in library.roots)
-        jobs = [
-            (module, render_probe(imports=(module,), roots=tuple(groups[module]), project_roots=project_roots))
+        programs = {
+            module: render_probe(imports=(module,), roots=tuple(groups[module]), project_roots=project_roots)
             for module in sorted(groups)
-        ]
+        }
         snapshot_started_ns = time.time_ns()
 
-        def read(module: str, output: str) -> dict[str, dict[str, object]]:
-            return parse_probe_output(output, expected_roots=tuple(groups[module]))
+        def probe(module: str) -> dict[str, dict[str, object]]:
+            # Parsed in the worker, as soon as the probe ends.
+            return parse_probe_output(runner(programs[module], lean_root), expected_roots=tuple(groups[module]))
 
         with contextlib.nullcontext() if probing is None else probing(tuple(sorted(groups))):
-            results = _run_module_probes(jobs, runner, lean_root, read)
+            results = _run_module_probes(list(programs), probe)
         for module in sorted(groups):
             result = results[module]
             if isinstance(result, SkeletonError):

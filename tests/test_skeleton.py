@@ -48,6 +48,7 @@ from autoform_cli.skeleton import (
     _PROBE_POOL,
     _PROCESS_TERMINATION_GRACE,
     _ProbeEnvironmentError,
+    _build_probe_helper,
     _declaration,
     _install_output,
     _join_readers,
@@ -910,14 +911,14 @@ def test_probe_pool_interruption_kills_running_probes_and_starts_no_queued_one(
         interrupted.append(time.monotonic())
         raise KeyboardInterrupt
 
-    def run(program: str, root: Path) -> str:
-        return _run_bounded_command([sys.executable, "-c", program], cwd=root, timeout=60, context="test probe").stdout
+    def probe(module: str) -> object:
+        return _bounded(tmp_path, _sleeping_probe(pid_files["AB".index(module)]), timeout=60)
 
     monkeypatch.setattr("autoform_cli.skeleton._probe_workers", lambda jobs: workers)
     monkeypatch.setattr("autoform_cli.skeleton.wait", interrupt_once_the_workers_run)
 
     with pytest.raises(KeyboardInterrupt):
-        _run_module_probes([("A", _sleeping_probe(pid_files[0])), ("B", _sleeping_probe(pid_files[1]))], run, tmp_path)
+        _run_module_probes(["A", "B"], probe)
 
     # The probes sleep for a minute; the pool must stop them, not wait them out.
     assert time.monotonic() - interrupted[0] < 15
@@ -931,9 +932,9 @@ def test_probe_pool_termination_signal_kills_every_workers_process_group(tmp_pat
     pid_files = [tmp_path / "a.pids", tmp_path / "b.pids"]
     code = (
         "skeleton._probe_workers = lambda jobs: jobs; "
-        "run = lambda program, root: skeleton._run_bounded_command("
-        "[sys.executable, '-c', program], cwd=root, timeout=60, context='test probe').stdout; "
-        "skeleton._run_module_probes(list(zip(('A', 'B'), sys.argv[1:])), run, Path.cwd())"
+        "programs = dict(zip(('A', 'B'), sys.argv[1:])); "
+        "skeleton._run_module_probes(list(programs), lambda module: skeleton._run_bounded_command("
+        "[sys.executable, '-c', programs[module]], cwd=Path.cwd(), timeout=60, context='test probe'))"
     )
     _signal_driver(tmp_path, code, [_sleeping_probe(path) for path in pid_files], pid_files, (signum,))
 
@@ -964,8 +965,8 @@ def test_a_signal_during_the_probe_pools_wait_is_handled_outside_it(tmp_path: Pa
         returned.append(True)
         return result
 
-    def run(program: str, root: Path) -> str:
-        return _run_bounded_command([sys.executable, "-c", program], cwd=root, timeout=60, context="test probe").stdout
+    def probe(module: str) -> object:
+        return _bounded(tmp_path, _sleeping_probe(pid_file), timeout=60)
 
     monkeypatch.setattr("autoform_cli.skeleton.wait", signal_inside_wait)
     monkeypatch.setattr("autoform_cli.skeleton.ThreadPoolExecutor", Pool)
@@ -973,7 +974,7 @@ def test_a_signal_during_the_probe_pools_wait_is_handled_outside_it(tmp_path: Pa
     previous = signal.signal(signal.SIGTERM, lambda signum, frame: received.append(signum))
     try:
         with pytest.raises(SkeletonError, match="interrupted by SIGTERM"):
-            _run_module_probes([("A", _sleeping_probe(pid_file))], run, tmp_path)
+            _run_module_probes(["A"], probe)
         workers = [thread for thread in threading.enumerate() if thread not in before and thread.is_alive()]
     finally:
         signal.signal(signal.SIGTERM, previous)
@@ -1088,21 +1089,21 @@ def test_a_signal_after_the_last_probe_is_delivered_before_the_report_is_built(t
 def test_a_probe_cancelled_before_its_process_starts_never_starts_it(tmp_path: Path, monkeypatch) -> None:
     # The pool is cancelled after a worker takes the probe and before it
     # starts the process.
-    def run(program: str, root: Path) -> str:
+    def probe(module: str) -> object:
         _PROBE_POOL.cancelled.set()
-        return _run_bounded_command([sys.executable, "-c", program], cwd=root, timeout=60, context="test probe").stdout
+        return _bounded(tmp_path, "pass")
 
     def popen(*args, **kwargs):
         raise AssertionError("a process started after the pool was cancelled")
 
     monkeypatch.setattr("autoform_cli.skeleton.subprocess.Popen", popen)
 
-    (result,) = _run_module_probes([("A", "pass")], run, tmp_path).values()
+    (result,) = _run_module_probes(["A"], probe).values()
 
-    assert isinstance(result, SkeletonError) and result.issues == ("test probe was cancelled",)
+    assert isinstance(result, SkeletonError) and result.issues == ("test command was cancelled",)
 
 
-def test_unreadable_probe_records_fail_only_that_probe(tmp_path: Path) -> None:
+def test_unreadable_probe_records_are_refused(tmp_path: Path) -> None:
     records = tmp_path / "records.out"
     records.write_bytes(PROBE_MARKER.encode() + b"\xff\n")
     with pytest.raises(SkeletonError, match="^the skeleton probe's records are not valid UTF-8$"):
@@ -2803,6 +2804,23 @@ def test_environmental_failures_still_abort_a_per_module_extraction(tmp_path: Pa
     with pytest.raises(SkeletonError, match=r"build artifacts are stale; run `lake build Skel.Main Skel.Uses`"):
         extract_skeletons(_two_module_blueprint(tmp_path), lean_root=project)
     assert calls == [["/bin/lake", "--rehash", "--no-build", "build", "Skel.Main", "Skel.Uses"]]
+
+
+def test_a_helper_build_that_times_out_states_its_budget_once(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "lake-manifest.json").write_text("{}\n", encoding="utf-8")
+
+    def stall(command, *, timeout, context, **kwargs):
+        raise _CommandTimedOut([f"{context} timed out after {timeout:g} seconds"])
+
+    monkeypatch.setattr("autoform_cli.skeleton.shutil.which", lambda executable: "/bin/lake")
+    monkeypatch.setattr("autoform_cli.skeleton._run_bounded_command", stall)
+
+    with pytest.raises(_ProbeEnvironmentError) as caught:
+        _build_probe_helper(tmp_path, tmp_path / "helper", timeout=5)
+    assert caught.value.issues == (
+        "building the skeleton probe helpers timed out after 5 seconds; "
+        "rerun with --timeout <seconds> for large projects",
+    )
 
 
 def test_a_root_beside_a_private_twin_is_probed_in_its_public_module(tmp_path: Path) -> None:

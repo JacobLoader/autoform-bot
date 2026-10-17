@@ -549,12 +549,13 @@ define more than once, with no single declaration chosen by the rules under
 Validation, is unresolved without a probe; the reason lists the `path:line` of
 each of its declarations. A name with one public declaration beside private
 ones is probed in the public one's module.
-A probe that fails on its own (a nonzero exit, a timeout, or malformed or
-ambiguous records) likewise leaves only its module's targets unresolved, with
-the reason, and an error the probe meets while reading one declaration leaves
-only that declaration unresolved. A reason quotes at most 2,000 characters of
-Lean's output, shows the probe's temporary directory as `<scratch>` and
-project paths relative to the project, and so reads the same on every run.
+A probe that fails on its own (a nonzero exit, a kill by a signal, a timeout,
+or malformed or ambiguous records) likewise leaves only its module's targets
+unresolved, with the reason, and an error the probe meets while reading one
+declaration leaves only that declaration unresolved. A reason quotes at most
+2,000 characters of Lean's output, shows the probe's temporary directory as
+`<scratch>` and project paths relative to the project, and so reads the same
+on every run.
 The output and material limits apply to a whole probe, so a module whose
 selected declarations together pass one fails as a whole: a declaration that
 resolves when selected alone can be unresolved beside its module's other
