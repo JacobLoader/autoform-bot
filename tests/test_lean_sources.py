@@ -525,6 +525,11 @@ def test_the_name_prefilter_admits_every_name_the_scan_indexes(tmp_path: Path) -
     source = [
         "universe u v w",
         "namespace Outer",
+        # A name on the line after its keyword, with and without trailing space.
+        "theorem",
+        "  nextLine : True := trivial",
+        "lemma ",
+        "  spaced : True := trivial",
         "def polymorphic.{u} (α : Type u) := α",
         "theorem «dotted.name» : True := trivial",
         "theorem _root_.rootLevel.{v} : True := trivial",
@@ -533,6 +538,8 @@ def test_the_name_prefilter_admits_every_name_the_scan_indexes(tmp_path: Path) -
         "alias ⟨forward, _⟩ := base_iff",
         "alias later :=",
         "  base_iff",
+        "alias",
+        "  renamed := base_iff",
         "@[simp]",
         "theorem attributed : True := trivial",
         "/-- A docstring on the declaration's own line. -/ theorem documented : True := trivial",
@@ -549,7 +556,8 @@ def test_the_name_prefilter_admits_every_name_the_scan_indexes(tmp_path: Path) -
 
     assert sorted(index.declarations) == [
         *(f"Outer.{name}" for name in ("attributed", "base_iff", "defWish", "documented", "forward", "guarded")),
-        *(f"Outer.{name}" for name in ("instWish", "later", "polymorphic", "proofWish", "split", "wish")),
+        *(f"Outer.{name}" for name in ("instWish", "later", "nextLine", "polymorphic", "proofWish", "renamed")),
+        *(f"Outer.{name}" for name in ("spaced", "split", "wish")),
         "Outer.«dotted.name»",
         "rootLevel",
     ]

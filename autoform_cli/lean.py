@@ -791,6 +791,10 @@ def _may_declare(lines: list[str], wanted_short: frozenset[str]) -> bool:
         match = _DECLARATION.match(line)
         if match is None:
             continue
+        if not match.group(2):
+            # A keyword alone on its line takes its name from a later line,
+            # under rules only `_scan` applies, so the file is scanned.
+            return True
         if match.group(1) == "alias":
             # As `_aliases` reads it: one name, or both names of `⟨mp, mpr⟩`.
             alias = _ALIAS.match(match.group(2))
