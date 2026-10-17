@@ -21,7 +21,8 @@ The H1 is the article's human title. Container
 prose supplies the mathematical exposition, and a standalone list item linking
 to a formalizable leaf places that definition or result at the exact position in
 the published chapter. Leaves without a placement slot appear under an explicit
-“Additional formalization targets” section rather than disappearing.
+“Additional formalization targets” section rather than disappearing; a module
+catalog without one appears under “Module inventories” instead.
 
 Keep the root roadmap article short: it is the book's preface and table of
 contents, not a dump of every planned milestone. Large planning inventories
