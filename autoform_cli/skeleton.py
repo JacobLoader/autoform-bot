@@ -2914,21 +2914,24 @@ def source_passage(node: Node, blueprint: Path, *, issues: list[str] | None = No
             continue
         if "\x00" in path:
             return broken(target, "contains an invalid path")
-        candidate = resolved_path(node.path.parent / path)
-        if candidate is None:
-            return broken(target, "names a path that cannot be resolved")
-        if not candidate.is_relative_to(blueprint.resolve()):
+        spelled = node.path.parent / path
+        if not Path(os.path.normpath(spelled)).is_relative_to(blueprint.resolve()):
             return broken(target, "points outside the blueprint")
         # Each way a locator's file cannot be read is this article's problem, so
         # the other articles still extract.
         try:
-            metadata = os.stat(candidate)
+            metadata = os.stat(spelled)
         except OSError as error:
             if error.errno in (errno.ELOOP, errno.ENAMETOOLONG):
                 return broken(target, "names a path that cannot be resolved")
             if error.errno in (errno.EACCES, errno.EPERM):
                 return broken(target, "names a file that cannot be read")
             return broken(target, "names a missing file")
+        candidate = resolved_path(spelled)
+        if candidate is None:
+            return broken(target, "names a path that cannot be resolved")
+        if not candidate.is_relative_to(blueprint.resolve()):
+            return broken(target, "points outside the blueprint")
         if not stat.S_ISREG(metadata.st_mode):
             return broken(target, "names something other than a regular file")
         # As audit judges a link that names a file: a Markdown file, in any

@@ -15,6 +15,7 @@ from urllib.parse import unquote, urlsplit
 
 from .graph import Graph, load_graph, roadmap_symlink_issues
 from .lean import LeanSourceError, declaration_names, index_failure_message, index_project, resolve_lean_root
+from .markdown import resolved_path
 from .status import derive, is_definition
 
 RUNTIME_SCHEMA = "autoform-runtime/v3"
@@ -448,11 +449,8 @@ def _source_target_is_confined(article: Path, target: str, blueprint: Path) -> b
     windows = PureWindowsPath(value)
     if path.is_absolute() or windows.is_absolute():
         return False
-    try:
-        (article.parent / path).resolve().relative_to(blueprint)
-    except (OSError, RuntimeError, ValueError):  # RuntimeError: a symlink loop before Python 3.13
-        return False
-    return True
+    resolved = resolved_path(article.parent / path)
+    return resolved is not None and resolved.is_relative_to(blueprint)
 
 
 def _portable_mathlib_file(value: str | None) -> str | None:
