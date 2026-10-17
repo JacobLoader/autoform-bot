@@ -999,9 +999,8 @@ example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml).
 
 ## Validation
 
-`autoform check` rejects cycles, missing targets, escaping paths, symbolic
-links anywhere under `roadmap/`, self-dependencies, cycles introduced at any
-rolled-up containment level,
+`autoform check` rejects cycles between authored articles, missing targets,
+escaping paths, symbolic links anywhere under `roadmap/`, self-dependencies,
 missing or multiple H1 titles, unsupported frontmatter keys, assertion values
 it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
@@ -1029,6 +1028,11 @@ also fails on a `lean:` name that is absent from the sources (as
 `leanblueprint checkdecls` does for LaTeX blueprints) or defined more than
 once in them (see below). It validates structure and leaves mathematical
 correctness to the agent and the Lean kernel.
+
+Contracting that acyclic article graph into chapters or nested scopes can put
+an edge in both directions between two containers. Generated views retain and
+draw both relations: an authored dependency is not deleted merely to make a
+coarser projection acyclic.
 
 Source-aware `--lean-root` inspection requires directory-descriptor traversal.
 Platforms without that capability, including Windows, fail closed instead of
