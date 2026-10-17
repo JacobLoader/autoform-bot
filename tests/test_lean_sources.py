@@ -3302,6 +3302,7 @@ def test_double_brace_in_interpolation_opens_a_structure_instance(tmp_path: Path
     assert index.find("t") is not None
 
 
+@pytest.mark.parametrize("everywhere", [False, True])
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
@@ -3312,38 +3313,27 @@ def test_double_brace_in_interpolation_opens_a_structure_instance(tmp_path: Path
         ('def s := s!"{ {a := 1}.a ++ "--" }" -- x', 'def s := s!"{ {a := 1}.a ++ "--" }"'),
         ('def s := s!"{«a--b»}" -- x', 'def s := s!"{«a--b»}"'),
         ('def s := s!"{a /- c -/}" -- x', 'def s := s!"{a  }"'),
+        ("def «a--b» := 1 -- x", "def «a--b» := 1"),
+        ('def s := s!"{x -- }\n}" -- x', 'def s := s!"{x\n}"'),
+        ('def s := s!"{r#"a"--b"#}" -- x', 'def s := s!"{r#"a"--b"#}"'),
+        ("def s := s!\"{'{'}\" -- x", "def s := s!\"{'{'}\""),
+        # An `r` that ends a name, or a name literal's, opens no raw string.
+        ('def x := throwError"a\\"--b" -- c', 'def x := throwError"a\\"--b"'),
+        ('def x := `r"a\\"--b" -- c', 'def x := `r"a\\"--b"'),
+        # An unterminated raw string runs to the end of the text.
+        ('def s := r"a -- x', 'def s := r"a -- x'),
     ],
 )
-def test_comment_stripping_follows_every_lexer_state(source: str, expected: str) -> None:
-    assert strip_lean_comments(source) == expected
-
-
-def test_comment_stripping_events_cover_every_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_comment_stripping_follows_every_lexer_state(
+    source: str, expected: str, everywhere: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # The stripper copies the text between two event matches unread. Matching
-    # every position makes it read each character, so its output changes
-    # wherever an event pattern misses a position some branch reacts to.
-    texts = [
-        'x := "a\\"--b" -- c',
-        'x := r#"a"--b"# -- c',
-        'x := r#"a\\"# -- c',
-        "c := '\"' -- c",
-        "«a--b» -- c",
-        's!"{\'{\'}" -- c',
-        's!"{"a--b"}" -- c',
-        "a /- b /- c -/ d -/ e",
-        "/-- d -/ x -- y",
-        's!"{{ a := 1 }.a ++ "--"}" -- c',
-        's!"{r#"a"--b"#}" -- c',
-        's!"{«a}"--b»}" -- c',
-        's!"{x /- } -/ }" -- c',
-        's!"{x -- }\n}" -- c',
-    ]
-    expected = [lean_module._without_lean_comments(text) for text in texts]
-    everywhere = re.compile(r"(?s).")
-    for name in ("_CODE_EVENT", "_INTERPOLATION_EVENT", "_LITERAL_EVENT"):
-        monkeypatch.setattr(lean_module, name, everywhere)
-
-    assert [lean_module._without_lean_comments(text) for text in texts] == expected
+    # every position makes it read each character, so both modes give the same
+    # output only if no event pattern misses a position some branch reacts to.
+    if everywhere:
+        for name in ("_CODE_EVENT", "_INTERPOLATION_EVENT", "_LITERAL_EVENT"):
+            monkeypatch.setattr(lean_module, name, re.compile(r"(?s)."))
+    assert strip_lean_comments(source) == expected
 
 
 def test_a_raw_string_ends_at_its_first_closer(tmp_path: Path) -> None:
@@ -3351,19 +3341,15 @@ def test_a_raw_string_ends_at_its_first_closer(tmp_path: Path) -> None:
     # the comments after it are comments, not string contents.
     hidden = _index(
         tmp_path / "hidden",
-        'def sep : String := r"\\"\n/-\ntheorem hidden : True := trivial\n-/\ndef r : Nat := 1\n',
+        'def sep : String := r"\\"\n/-\ntheorem hidden : True := trivial\n-/\ndef after : Nat := 1\n',
     )
     real = _index(
         tmp_path / "real",
         'def sep : String := r"\\"\ndef o : String := "/-"\ntheorem real : True := trivial\ndef c : String := "-/"\n',
     )
 
-    assert hidden.find("hidden") is None
-    assert hidden.find("r") is not None
-    assert real.find("real") is not None
-    assert real.find("c") is not None
-    # An `r` that ends a name opens no raw string, so this string keeps its escape.
-    assert strip_lean_comments('def x := throwError"a\\"--b" -- c') == 'def x := throwError"a\\"--b"'
+    assert set(hidden.declarations) == {"sep", "after"}
+    assert set(real.declarations) == {"sep", "o", "real", "c"}
 
 
 def test_permalink_pins_the_commit(tmp_path: Path) -> None:

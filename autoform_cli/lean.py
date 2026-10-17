@@ -802,8 +802,8 @@ _CHAR_LITERAL = re.compile(r"'(?:\\.|[^'\\\n])*'")
 # unread, so each must match every position its branch of the loop reacts to:
 # a branch whose trigger is missing never runs, while an extra match only
 # copies one character. In code, a comment, literal or interpolation brace can
-# start there; inside a literal, its closer (which starts with ", » or '), an
-# escape, or an interpolation.
+# start there; inside a literal, its closer (", » or '), an escape, or an
+# interpolation.
 _CODE_EVENT = re.compile(rf"""--|/-|{_RAW_OPEN.pattern}|["«']""")
 _INTERPOLATION_EVENT = re.compile(rf"""--|/-|{_RAW_OPEN.pattern}|["«'{{}}]""")
 _LITERAL_EVENT = re.compile(r"""["»'\\{]""")
@@ -831,16 +831,13 @@ def _without_lean_comments(text: str) -> str:
         char = text[index]
         if literal:
             close, interpolated = top
-            if text.startswith(close, index):
-                out.append(close)
-                index += len(close)
-                stack.pop()
-                continue
             if close in {'"', "'"} and char == "\\":
                 out.append(text[index : index + 2])
                 index += 2
                 continue
-            if interpolated and char == "{":
+            if char == close:
+                stack.pop()
+            elif interpolated and char == "{":
                 stack.append([None, 1])
             out.append(char)
             index += 1
@@ -864,12 +861,13 @@ def _without_lean_comments(text: str) -> str:
             out.append(" " + "\n" * text.count("\n", start, index))
             continue
         previous = text[index - 1] if index else " "
-        # An `r` inside a name is part of it. Lean reads no escapes in a raw
-        # string, so it ends at the first closer: `r"\"` is one backslash.
-        raw = None if previous.isalnum() or previous in "_'!?.«" else _RAW_OPEN.match(text, index)
+        # An `r` inside a name, or a name literal's, is part of it. Lean reads no
+        # escapes in a raw string, so it ends at the first closer: `r"\"` is one
+        # backslash.
+        raw = None if previous.isalnum() or previous in "_'!?.`" else _RAW_OPEN.match(text, index)
         if raw:
-            close = text.find('"' + raw.group(1), raw.end())
-            index = len(text) if close < 0 else close + 1 + len(raw.group(1))
+            found = text.find('"' + raw.group(1), raw.end())
+            index = len(text) if found < 0 else found + 1 + len(raw.group(1))
             out.append(text[raw.start() : index])
             continue
         if char == '"':
