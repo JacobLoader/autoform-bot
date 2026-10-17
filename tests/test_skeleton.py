@@ -10,8 +10,10 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import replace
 from pathlib import Path
 
@@ -42,14 +44,20 @@ from autoform_cli.skeleton import (
     TrustedDeclaration,
     SkeletonError,
     UnresolvedTarget,
+    _CommandTimedOut,
+    _PROBE_POOL,
     _PROCESS_TERMINATION_GRACE,
+    _ProbeEnvironmentError,
+    _build_probe_helper,
     _declaration,
     _install_output,
     _join_readers,
     _remove_output,
+    _run_module_probes,
     _rename_no_replace,
     _run_bounded_command,
     _replace_outputs,
+    _stable_paths,
     _stage_output,
     _terminate_process_tree,
     _hash_module_files,
@@ -60,6 +68,7 @@ from autoform_cli.skeleton import (
     _without_comments,
     _probe_modules,
     _probe_record_issue,
+    _probe_workers,
     _read_probe_records,
     _render_probe_helper,
     extract_graph_skeletons,
@@ -886,6 +895,97 @@ def _signal_driver(
     _assert_no_survivors(pid_files)
 
 
+@pytest.mark.parametrize("workers", [2, 1], ids=["both-running", "one-queued"])
+def test_probe_pool_interruption_kills_running_probes_and_starts_no_queued_one(
+    tmp_path: Path, monkeypatch, workers: int
+) -> None:
+    pid_files = [tmp_path / "a.pids", tmp_path / "b.pids"]
+    interrupted: list[float] = []
+
+    def interrupt_once_the_workers_run(*args, **kwargs):
+        deadline = time.monotonic() + 20
+        running = pid_files[:workers]
+        while not all(path.exists() and len(path.read_text(encoding="utf-8").split()) == 2 for path in running):
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        interrupted.append(time.monotonic())
+        raise KeyboardInterrupt
+
+    def probe(module: str) -> object:
+        return _bounded(tmp_path, _sleeping_probe(pid_files["AB".index(module)]), timeout=60)
+
+    monkeypatch.setattr("autoform_cli.skeleton._probe_workers", lambda jobs: workers)
+    monkeypatch.setattr("autoform_cli.skeleton.wait", interrupt_once_the_workers_run)
+
+    with pytest.raises(KeyboardInterrupt):
+        _run_module_probes(["A", "B"], probe)
+
+    # The probes sleep for a minute; the pool must stop them, not wait them out.
+    assert time.monotonic() - interrupted[0] < 15
+    assert pid_files[1].exists() == (workers == 2)
+    _assert_no_survivors(pid_files)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="termination signals are POSIX-specific")
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM], ids=["int", "term"])
+def test_probe_pool_termination_signal_kills_every_workers_process_group(tmp_path: Path, signum: int) -> None:
+    pid_files = [tmp_path / "a.pids", tmp_path / "b.pids"]
+    code = (
+        "skeleton._probe_workers = lambda jobs: jobs; "
+        "programs = dict(zip(('A', 'B'), sys.argv[1:])); "
+        "skeleton._run_module_probes(list(programs), lambda module: skeleton._run_bounded_command("
+        "[sys.executable, '-c', programs[module]], cwd=Path.cwd(), timeout=60, context='test probe'))"
+    )
+    _signal_driver(tmp_path, code, [_sleeping_probe(path) for path in pid_files], pid_files, (signum,))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="termination signals are POSIX-specific")
+def test_a_signal_during_the_probe_pools_wait_is_handled_outside_it(tmp_path: Path, monkeypatch) -> None:
+    # Raised inside wait(), the signal could leave a future's lock held and
+    # hang the join; the pool must let wait() return, then cancel and join
+    # every worker before the signal ends anything.
+    pid_file = tmp_path / "a.pids"
+    received: list[int] = []
+    returned: list[bool] = []
+    joined: list[bool] = []
+
+    class Pool(ThreadPoolExecutor):
+        def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+            super().shutdown(wait=wait, cancel_futures=cancel_futures)
+            joined.append(wait)
+
+    def signal_inside_wait(*args, **kwargs):
+        if not returned:
+            deadline = time.monotonic() + 20
+            while not (pid_file.exists() and len(pid_file.read_text(encoding="utf-8").split()) == 2):
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            signal.raise_signal(signal.SIGTERM)
+        result = wait(*args, **kwargs)
+        returned.append(True)
+        return result
+
+    def probe(module: str) -> object:
+        return _bounded(tmp_path, _sleeping_probe(pid_file), timeout=60)
+
+    monkeypatch.setattr("autoform_cli.skeleton.wait", signal_inside_wait)
+    monkeypatch.setattr("autoform_cli.skeleton.ThreadPoolExecutor", Pool)
+    before = set(threading.enumerate())
+    previous = signal.signal(signal.SIGTERM, lambda signum, frame: received.append(signum))
+    try:
+        with pytest.raises(SkeletonError, match="interrupted by SIGTERM"):
+            _run_module_probes(["A"], probe)
+        workers = [thread for thread in threading.enumerate() if thread not in before and thread.is_alive()]
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+    assert returned == [True]
+    assert received == [signal.SIGTERM]
+    assert joined == [True]
+    assert workers == []
+    _assert_no_survivors([pid_file])
+
+
 _STALLING_LAKE = """\
 #!{python}
 import os, pathlib, subprocess, sys, time
@@ -986,6 +1086,23 @@ def test_a_signal_after_the_last_probe_is_delivered_before_the_report_is_built(t
     assert scratch and not scratch[0].exists()
 
 
+def test_a_probe_cancelled_before_its_process_starts_never_starts_it(tmp_path: Path, monkeypatch) -> None:
+    # The pool is cancelled after a worker takes the probe and before it
+    # starts the process.
+    def probe(module: str) -> object:
+        _PROBE_POOL.cancelled.set()
+        return _bounded(tmp_path, "pass")
+
+    def popen(*args, **kwargs):
+        raise AssertionError("a process started after the pool was cancelled")
+
+    monkeypatch.setattr("autoform_cli.skeleton.subprocess.Popen", popen)
+
+    (result,) = _run_module_probes(["A"], probe).values()
+
+    assert isinstance(result, SkeletonError) and result.issues == ("test command was cancelled",)
+
+
 def test_unreadable_probe_records_are_refused(tmp_path: Path) -> None:
     records = tmp_path / "records.out"
     records.write_bytes(PROBE_MARKER.encode() + b"\xff\n")
@@ -995,6 +1112,18 @@ def test_unreadable_probe_records_are_refused(tmp_path: Path) -> None:
     records.mkdir()
     with pytest.raises(SkeletonError, match="^the impact probe's records could not be read: "):
         _read_probe_records(records, "impact probe")
+
+
+def test_probe_workers_follow_the_cpus_available_to_the_process(monkeypatch) -> None:
+    monkeypatch.setattr(os, "process_cpu_count", lambda: 3, raising=False)
+    assert _probe_workers(10) == 3
+    monkeypatch.delattr(os, "process_cpu_count")
+    monkeypatch.setattr(os, "sched_getaffinity", lambda pid: {0, 1}, raising=False)
+    assert _probe_workers(10) == 2
+    monkeypatch.delattr(os, "sched_getaffinity")
+    monkeypatch.setattr(os, "cpu_count", lambda: 64)
+    assert _probe_workers(10) == 8
+    assert _probe_workers(2) == 2
 
 
 def _pid_is_live(pid: int) -> bool:
@@ -1182,6 +1311,17 @@ def test_parse_probe_output_rejects_wrong_types_duplicates_and_unrequested_roots
         parse_probe_output("\n".join([output, line]))
     with pytest.raises(SkeletonError, match="unrequested root"):
         parse_probe_output(output, expected_roots=("Skel.somewhere_else",))
+
+
+def test_parse_probe_output_keeps_an_error_the_probe_caught_on_one_root() -> None:
+    error = _record("Skel.ghost", error="unknown constant")
+    records = parse_probe_output("\n".join([_fake_probe_output(), error]))
+
+    assert records["Skel.ghost"] == {"root": "Skel.ghost", "error": "unknown constant"}
+    assert records["Skel.observation_determined"]["found"] is True
+    for bad in (_record("Skel.ghost", error=3), _record("Skel.ghost", error="x", found=False)):
+        with pytest.raises(SkeletonError, match="invalid error record for Skel.ghost"):
+            parse_probe_output(bad)
 
 
 def test_parse_probe_output_resolves_shared_entries_strictly() -> None:
@@ -2053,8 +2193,10 @@ def test_probe_comment_ranges_must_cover_comments(tmp_path: Path, ranges: object
     record = _fake_found_record()
     record["statement_comments"] = ranges
 
-    with pytest.raises(SkeletonError, match="invalid statement_comments"):
-        _fake_report(tmp_path, _probe_lines(record))
+    # A malformed record fails its module's probe, which leaves that module's roots unresolved.
+    (issue,) = _fake_report(tmp_path, _probe_lines(record)).unresolved
+    assert issue.reason.startswith("probe of module Skel.Main failed: ")
+    assert "invalid statement_comments" in issue.reason
 
 
 @pytest.mark.parametrize(
@@ -2437,15 +2579,18 @@ def _fake_lake(monkeypatch, project: Path, answer) -> list[list[str]]:
 
     (project / "lake-manifest.json").write_text("{}\n", encoding="utf-8")
     calls: list[list[str]] = []
+    lock = threading.Lock()
 
     def fake_run(command, *, env=None, **kwargs):
         if command[1] == "--rehash" or "-o" in command:
-            calls.append(command)
+            with lock:
+                calls.append(command)
             if "-o" in command:
                 Path(command[command.index("-o") + 1]).write_bytes(b"")
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         modules = _probe_modules(Path(command[-1]).read_text(encoding="utf-8"))
-        calls.append([*command, *modules])
+        with lock:
+            calls.append([*command, *modules])
         return answer(modules, command, env)
 
     monkeypatch.setattr("autoform_cli.skeleton.shutil.which", lambda executable: "/bin/lake")
@@ -2480,6 +2625,44 @@ def test_lake_freshness_is_checked_once_before_one_probe_per_module(tmp_path: Pa
     assert calls[1][-1].endswith("/autoform-skeleton-helper.lean")
     assert all(command[1:3] == ["env", "lean"] and "-o" not in command for command in calls[2:])
     assert sorted(command[4:] for command in calls[2:]) == [["Skel.Main"], ["Skel.Uses"]]
+
+
+@pytest.mark.parametrize("failure", ["exit", "killed", "timeout", "malformed"])
+def test_a_failed_module_probe_leaves_only_its_roots_unresolved(
+    tmp_path: Path, monkeypatch, failure: str
+) -> None:
+    project = _project(tmp_path)
+
+    def answer(modules, command, env):
+        if "Skel.Uses" not in modules:
+            return _answer_records(modules, command, env)
+        if failure == "timeout":
+            raise _CommandTimedOut(["lake env lean timed out after 1 seconds"])
+        if failure == "malformed":
+            Path(env[PROBE_OUTPUT_ENV]).write_text(
+                "\n".join([_record("Skel.heavy_of_notation", found=False)] * 2), encoding="utf-8"
+            )
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if failure == "killed":
+            return subprocess.CompletedProcess(command, -9, stdout="", stderr="")
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="error: Skel.Uses broke")
+
+    _fake_lake(monkeypatch, project, answer)
+
+    report = extract_skeletons(_two_module_blueprint(tmp_path), lean_root=project)
+
+    determined, notation = report.nodes
+    assert determined.complete and [d.name for d in determined.declarations] == ["Skel.observation_determined"]
+    assert not notation.complete and notation.declarations == ()
+    (issue,) = report.unresolved
+    assert (issue.node_id, issue.declaration) == ("basics/notation", "Skel.heavy_of_notation")
+    assert issue.reason.startswith("probe of module Skel.Uses failed: ")
+    assert {
+        "exit": "error: Skel.Uses broke",
+        "killed": "the skeleton probe was killed by signal 9",
+        "timeout": "rerun with --timeout <seconds>",
+        "malformed": "duplicate records for Skel.heavy_of_notation",
+    }[failure] in issue.reason
 
 
 def test_a_root_lean_declares_in_another_module_is_unresolved(tmp_path: Path) -> None:
@@ -2523,6 +2706,121 @@ def test_a_root_several_files_declare_fails_closed_naming_every_file(tmp_path: P
         "declaration defined more than once in the Lean sources: Skel/Adup.lean:2, Skel/Bdup.lean:2, Skel/Cdup.lean:2"
     )
     assert issue.reason.startswith("source locator ") == (passage == "broken")
+
+
+def test_an_error_on_one_root_leaves_the_rest_of_its_module_resolved(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    blueprint = _blueprint(
+        tmp_path, lean={"determined": "Skel.observation_determined", "supervision": "Skel.supervision_nonAmbiguous"}
+    )
+    error = f"unknown declaration in {project / 'Skel' / 'Main.lean'}"
+    output = "\n".join([_probe_lines(_fake_found_record()), _record("Skel.supervision_nonAmbiguous", error=error)])
+
+    report = extract_skeletons(blueprint, lean_root=project, runner=lambda probe, root: output)
+
+    nodes = {node.node_id: node for node in report.nodes}
+    assert nodes["basics/determined"].complete
+    assert not nodes["basics/supervision"].complete
+    (issue,) = report.unresolved
+    assert (issue.node_id, issue.declaration) == ("basics/supervision", "Skel.supervision_nonAmbiguous")
+    assert issue.reason == "the probe failed on this declaration: unknown declaration in Skel/Main.lean"
+
+
+def test_a_failed_probes_reason_reads_the_same_on_every_run(tmp_path: Path, monkeypatch) -> None:
+    project = _project(tmp_path)
+
+    def answer(modules, command, env):
+        if "Skel.Uses" not in modules:
+            return _answer_records(modules, command, env)
+        # Lean names the probe's temporary file, the project's own paths, and
+        # the helper, compiled into the extraction's scratch directory.
+        stderr = (
+            f"{command[-1]}:3:0: error: unknown module prefix\n"
+            f"{project / 'Skel' / 'Uses.lean'}:1:0: note: imported here\n"
+            f"{env['LEAN_PATH'].split(os.pathsep)[-1]}\n" + "trace line\n" * 500
+        )
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr=stderr)
+
+    _fake_lake(monkeypatch, project, answer)
+    blueprint = _two_module_blueprint(tmp_path)
+    written = []
+    for name in ("first.json", "second.json"):
+        report = extract_skeletons(blueprint, lean_root=project)
+        written.append(write_skeleton_report(report, tmp_path / name).read_bytes())
+
+    assert written[0] == written[1]
+    (issue,) = report.unresolved
+    assert "<scratch>/AutoformSkeletonProbe.lean:3:0: error" in issue.reason
+    assert "\nSkel/Uses.lean:1:0: note" in issue.reason and str(tmp_path) not in issue.reason
+    assert "\n<scratch>\n" in issue.reason and "autoform-skeleton-" not in issue.reason
+    # Cut once, so the count covers everything Lean printed past the cut.
+    quoted = issue.reason.split("\n", 1)[1]
+    dropped = re.fullmatch(r"(?s).*\n\[(\d+) more characters\]", quoted)
+    assert len(quoted) <= 2000 and dropped and int(dropped.group(1)) > len("trace line\n") * 500 - 2000
+
+
+def test_a_stable_reason_leaves_paths_beside_the_project_as_lean_printed_them(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    text = f"{root}/Skel/A.lean:1:0 {root}-old/A.lean {root}ect/A.lean {root}.bak/A.lean {root}: {root}"
+    assert _stable_paths(text, root) == f"Skel/A.lean:1:0 {root}-old/A.lean {root}ect/A.lean {root}.bak/A.lean .: ."
+
+
+@pytest.mark.parametrize("noise", [0, 500], ids=["alone", "past-the-quoted-part"])
+def test_a_failure_every_probe_would_share_stops_the_extraction(tmp_path: Path, monkeypatch, noise: int) -> None:
+    project = _project(tmp_path)
+
+    def answer(modules, command, env):
+        if "Skel.Uses" not in modules:
+            return _answer_records(modules, command, env)
+        olean = project / ".lake" / "packages" / "dep" / "Std" / "Vendor.olean"
+        stderr = "trace line\n" * noise + f"error: object file '{olean}' of module Std.Vendor does not exist"
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr=stderr)
+
+    _fake_lake(monkeypatch, project, answer)
+
+    with pytest.raises(SkeletonError, match="hides the toolchain's own `Std`"):
+        extract_skeletons(_two_module_blueprint(tmp_path), lean_root=project)
+
+    # Without its compiled helpers no probe can run.
+    probe = render_probe(imports=("Skel.Main",), roots=("Skel.x",), project_roots=("Skel",))
+    (tmp_path / "helper").mkdir()
+    with pytest.raises(_ProbeEnvironmentError, match="helpers are missing"):
+        run_probe(probe, project, helper=tmp_path / "helper", check_freshness=False)
+
+
+def test_environmental_failures_still_abort_a_per_module_extraction(tmp_path: Path, monkeypatch) -> None:
+    # Labelled guard: stale artifacts concern every module, so nothing is probed.
+    project = _project(tmp_path)
+    calls = _fake_lake(monkeypatch, project, _answer_records)
+
+    def stale(command, **kwargs):
+        calls.append(command)
+        if command[1] == "--rehash":
+            return subprocess.CompletedProcess(command, 3, stdout="target is out-of-date", stderr="")
+        raise AssertionError("a probe ran after a failed freshness check")
+
+    monkeypatch.setattr("autoform_cli.skeleton._run_bounded_command", stale)
+
+    with pytest.raises(SkeletonError, match=r"build artifacts are stale; run `lake build Skel.Main Skel.Uses`"):
+        extract_skeletons(_two_module_blueprint(tmp_path), lean_root=project)
+    assert calls == [["/bin/lake", "--rehash", "--no-build", "build", "Skel.Main", "Skel.Uses"]]
+
+
+def test_a_helper_build_that_times_out_states_its_budget_once(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "lake-manifest.json").write_text("{}\n", encoding="utf-8")
+
+    def stall(command, *, timeout, context, **kwargs):
+        raise _CommandTimedOut([f"{context} timed out after {timeout:g} seconds"])
+
+    monkeypatch.setattr("autoform_cli.skeleton.shutil.which", lambda executable: "/bin/lake")
+    monkeypatch.setattr("autoform_cli.skeleton._run_bounded_command", stall)
+
+    with pytest.raises(_ProbeEnvironmentError) as caught:
+        _build_probe_helper(tmp_path, tmp_path / "helper", timeout=5)
+    assert caught.value.issues == (
+        "building the skeleton probe helpers timed out after 5 seconds; "
+        "rerun with --timeout <seconds> for large projects",
+    )
 
 
 def test_a_root_beside_a_private_twin_is_probed_in_its_public_module(tmp_path: Path) -> None:
@@ -3419,9 +3717,7 @@ def test_project_notation_cannot_disguise_the_statement(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
 @pytest.mark.parametrize("collision", ["module", "constant"])
-def test_a_project_name_the_probe_helper_reserves_stops_extraction(
-    tmp_path: Path, monkeypatch, collision: str
-) -> None:
+def test_a_project_name_the_probe_helper_reserves_fails_its_probe(tmp_path: Path, monkeypatch, collision: str) -> None:
     # A module named like the helper hides it, and a constant in its namespace makes its import fail.
     reserved = "namespace AutoformSkeleton\ndef main : Nat := 1\nend AutoformSkeleton\n"
     source = (reserved if collision == "constant" else "") + "theorem Skel.coll : True := trivial\n"
@@ -3432,8 +3728,10 @@ def test_a_project_name_the_probe_helper_reserves_stops_extraction(
         (shadow / "autoform-skeleton-helper.olean").write_bytes(b"")
         monkeypatch.setenv("LEAN_PATH", str(shadow))
 
-    with pytest.raises(SkeletonError, match="the skeleton probe failed"):
-        extract_skeletons(_blueprint(tmp_path, lean={"coll": "Skel.coll"}), lean_root=project)
+    report = extract_skeletons(_blueprint(tmp_path, lean={"coll": "Skel.coll"}), lean_root=project)
+
+    (issue,) = report.unresolved
+    assert issue.reason.startswith("probe of module Skel.PktColl failed: the skeleton probe failed")
 
 
 #: The packet cases' modules are built into one project, and one extraction reads every article in
@@ -3577,6 +3875,16 @@ _PACKETS.update(
     inst=dict(root="Skel.InstDef.natInh_default"),
     other=dict(root="Skel.InstAttr.other"),
 )
+_PACKET_MODULES["PktRefuse"] = (
+    "import Lean\n"
+    "open Lean PrettyPrinter Delaborator\n"
+    "namespace Skel.PktRefuse\n"
+    "def refused (n : Nat) : Nat := n\n"
+    '@[app_delab refused] def delabRefused : Delab := throwError "this delaborator refuses"\n'
+    "theorem bad : refused 1 = 1 := rfl\n"
+    "theorem good : 1 = 1 := rfl\n"
+    "end Skel.PktRefuse\n"
+)
 
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
@@ -3661,6 +3969,18 @@ def test_a_declaration_reads_as_its_own_root_module_prints_it(
     }
     loaded = load_skeleton_report(write_skeleton_report(full, tmp_path / "skeleton.json"))
     assert loaded == full and notated in loaded.declarations("basics/u2")[0].trusted
+
+
+@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+def test_a_declaration_the_probe_cannot_print_leaves_its_module_resolved(packet_project: Path, tmp_path: Path) -> None:
+    blueprint = _blueprint(tmp_path, lean={"bad": "Skel.PktRefuse.bad", "good": "Skel.PktRefuse.good"})
+
+    report = extract_skeletons(blueprint, lean_root=packet_project)
+
+    assert report.node("basics/good").complete
+    (issue,) = report.unresolved
+    assert (issue.node_id, issue.declaration) == ("basics/bad", "Skel.PktRefuse.bad")
+    assert issue.reason == "the probe failed on this declaration: this delaborator refuses"
 
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")

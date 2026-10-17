@@ -608,9 +608,10 @@ helper module and makes one fully qualified call, with no `open` or
 helpers are compiled with the project's toolchain and no project module in
 scope into a module named `autoform-skeleton-helper`, whose constants are all
 in the `AutoformSkeleton` namespace. Both names are reserved: a module of the
-project, a dependency, or `LEAN_PATH` that takes one makes the extraction
-fail. A declaration's packet reads as it does to a file that imports its module, whichever other
-articles are extracted with it.
+project, a dependency, or `LEAN_PATH` that takes one makes each probe that
+imports it fail, and that probe's targets are unresolved with Lean's error. A
+declaration's packet reads as it does to a file that imports its module,
+whichever other articles are extracted with it.
 That environment has the module's global notation, instances, and
 attributes, including any the module declares after the declaration; it lacks
 the module's `local notation` and local instances, and the `open` and
@@ -648,7 +649,20 @@ define more than once, with no single declaration chosen by the rules under
 Validation, is unresolved without a probe; the reason lists the `path:line` of
 each of its declarations. A name with one public declaration beside private
 ones is probed in the public one's module.
-A declaration that resolves has the same hash under any selection.
+A probe that fails on its own (a nonzero exit, a kill by a signal, a timeout,
+or malformed or ambiguous records) likewise leaves only its module's targets
+unresolved, with the reason, and an error the probe meets while reading one
+declaration leaves only that declaration unresolved. A reason quotes at most
+2,000 characters of Lean's output, shows the probe's temporary directory as
+`<scratch>` and project paths relative to the project, and so reads the same
+on every run.
+The output and material limits apply to a whole probe, so a module whose
+selected declarations together pass one fails as a whole: a declaration that
+resolves when selected alone can be unresolved beside its module's other
+targets. A declaration that resolves has the same hash under any selection.
+A missing `lake`, a failed freshness check or helper build, a dependency that
+hides a toolchain library, or a blueprint or source tree that changes during
+extraction still stops the whole command.
 `--output` records the `autoform-skeleton/v5` report, which contains no
 timestamp or absolute path, for a later render or review to consume. The
 report identifies the exact blueprint, its complete target set, and whether
@@ -679,7 +693,12 @@ command; on POSIX, Autoform also terminates its process group, for every
 probe, on every failure and on interruption. The Lake freshness check, the
 helper's build, and each probe have their own 600-second budget;
 `--timeout SECONDS` sets the helper's and each probe's, which a large
-project may need. The parsed records, at most 512 Mi characters of semantic
+project may need. Probes run in parallel, one per CPU available to the
+process and at most eight; on Python 3.13 and later, `PYTHON_CPU_COUNT` sets
+that CPU count. Each probe's budget is its own rather than a share of one
+deadline, so its result does not depend on which probes ran before it, and an
+extraction can run for one probe budget per round of parallel probes. The
+parsed records, at most 512 Mi characters of semantic
 material per probed module, stay in memory until the report is built. These
 limits are resource controls, not a security or authenticity boundary.
 
@@ -1140,7 +1159,7 @@ What an existing repository meets when it moves to this version:
 ## Validation
 
 `autoform check` rejects cycles between authored articles, missing targets,
-escaping paths, symbolic links anywhere under `roadmap/`, and self-dependencies,
+escaping paths, symbolic links anywhere under `roadmap/`, self-dependencies,
 missing or multiple H1 titles, unsupported frontmatter keys, assertion values
 it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside

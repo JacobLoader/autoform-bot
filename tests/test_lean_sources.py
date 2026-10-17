@@ -264,6 +264,23 @@ def test_declaration_scan_view_preserves_coordinates_and_original_literal_bytes(
     assert snapshot.source_files == ((Path("Project/Basic.lean"), source.encode("utf-8")),)
 
 
+@pytest.mark.parametrize(
+    ("source", "masked"),
+    [
+        ('def s := "ab" ++ t', "def s :=      ++ t"),
+        ("def c := 'x' ++ t", "def c :=     ++ t"),
+        ('def s := "a\\"b" ++ t', "def s :=        ++ t"),
+        ('def s := s!"a{x}b" ++ t', "def s := s!        ++ t"),
+        ('def s := r#"a"# ++ t', "def s :=        ++ t"),
+        ('def «a b» := "c"', "def «a b» :=    "),
+    ],
+)
+def test_masking_blanks_each_literal_through_its_closer(source: str, masked: str) -> None:
+    # The closer is appended before its frame pops; appended after, it would
+    # stay visible while the rest of its literal is blanked.
+    assert lean_module._without_lean_comments(source, mask_literals=True) == masked
+
+
 def test_alias_identifier_and_target_can_each_follow_on_the_next_line(tmp_path: Path) -> None:
     source = "\n".join(
         [
@@ -3009,16 +3026,10 @@ def test_managed_output_marker_prunes_before_any_descendant_open(
     )
     original_read = tree_snapshot_module._read_file
 
-    def refuse_descendant(parent_descriptor, name, expected, *, relative, max_bytes=None):
+    def refuse_descendant(parent_descriptor, name, *args, **kwargs):
         if name == "Packet.lean":
             raise AssertionError("managed descendants must not be opened")
-        return original_read(
-            parent_descriptor,
-            name,
-            expected,
-            relative=relative,
-            max_bytes=max_bytes,
-        )
+        return original_read(parent_descriptor, name, *args, **kwargs)
 
     monkeypatch.setattr(tree_snapshot_module, "_read_file", refuse_descendant)
 
@@ -3085,10 +3096,10 @@ def test_managed_marker_folder_is_listed_once_per_look_and_never_entered(
         return original_scandir(path)
     original_read = tree_snapshot_module._read_file
 
-    def refuse_descendant(parent_descriptor, name, expected, *, relative, max_bytes=None):
+    def refuse_descendant(parent_descriptor, name, *args, **kwargs):
         if name == "Packet.lean":
             raise AssertionError("managed descendants must not be opened")
-        return original_read(parent_descriptor, name, expected, relative=relative, max_bytes=max_bytes)
+        return original_read(parent_descriptor, name, *args, **kwargs)
 
     def add_irrelevant_churn() -> None:
         for index in range(100):

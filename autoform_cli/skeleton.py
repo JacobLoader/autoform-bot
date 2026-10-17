@@ -30,6 +30,7 @@ import threading
 import time
 import warnings
 from collections.abc import Callable, Iterator
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
@@ -86,10 +87,17 @@ DEFAULT_PROBE_TIMEOUT = 600.0
 #: The Lake freshness check hashes every imported input, which on a Mathlib
 #: project can take minutes on its own, so it does not share the probe's budget.
 DEFAULT_FRESHNESS_TIMEOUT = 600.0
+#: Probes run in parallel, one Lean process per root module. On a Mathlib
+#: project each needs about 10 CPU-seconds and 140 MB of private memory (the
+#: imported `.olean` files are mapped and shared), so extraction uses one
+#: worker per CPU available to it, at most eight, and never more than modules.
+_MAX_PROBE_WORKERS = 8
 DEFAULT_PROBE_OUTPUT_LIMIT = 64 * 1024 * 1024
 #: The probe states shared subterms once; this bounds the characters of
 #: semantic material they may expand to in one probe.
 _PROBE_MATERIAL_LIMIT = 512 * 1024 * 1024
+#: Characters of Lean output a failure reason quotes.
+_FAILURE_DETAIL_LIMIT = 2000
 _PROCESS_TERMINATION_GRACE = 2.0
 #: Lake's exit status when ``--no-build`` finds a target that needs rebuilding.
 _LAKE_NO_BUILD_EXIT = 3
@@ -120,6 +128,10 @@ class SkeletonError(RuntimeError):
 
 class _CommandTimedOut(SkeletonError):
     """A bounded command ran out of time; its caller knows which budget to raise."""
+
+
+class _ProbeEnvironmentError(SkeletonError):
+    """Every probe would fail alike, so the pool stops instead of isolating it."""
 
 
 #: Shown when no source can be attributed and parsed safely. The signatures
@@ -1195,6 +1207,10 @@ class _CommandSignalled(BaseException):
     """A termination signal arrived while a bounded command was running."""
 
 
+#: Per-thread state of a probe pool's workers; see _run_module_probes.
+_PROBE_POOL = threading.local()
+
+
 _GUARDED_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP")
 _ACTIVE_SIGNAL_GUARD: _SignalGuard | None = None
 
@@ -1331,6 +1347,9 @@ def _run_registered_command(
         if overflow.is_set():
             raise SkeletonError([f"{context} exceeded the {output_limit}-byte output limit"])
 
+    # Set when this command runs as one of a pool's probes and the pool is
+    # being torn down; the command then ends like one that timed out.
+    cancelled: threading.Event | None = getattr(_PROBE_POOL, "cancelled", None)
     descendants: dict[tuple[int, float], psutil.Process] = {}
     token = secrets.token_hex(16)
     process_env = os.environ.copy() if env is None else env.copy()
@@ -1338,6 +1357,8 @@ def _run_registered_command(
     deadline = time.monotonic() + timeout
     cleanup_deadline: float | None = None
     try:
+        if cancelled is not None and cancelled.is_set():
+            raise SkeletonError([f"{context} was cancelled"])
         try:
             process = subprocess.Popen(
                 command,
@@ -1361,6 +1382,8 @@ def _run_registered_command(
         while not _leader_has_exited(process):
             _remember_descendants(process, descendants)
             check_output()
+            if cancelled is not None and cancelled.is_set():
+                raise SkeletonError([f"{context} was cancelled"])
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise _CommandTimedOut([f"{context} timed out after {timeout:g} seconds"])
@@ -1574,6 +1597,39 @@ def path_of(module: str, libraries: tuple[LeanLibrary, ...], lean_root: Path) ->
     return None
 
 
+def _stable_paths(text: str, lean_root: Path, *scratch: Path) -> str:
+    """``text`` with the paths that change from run to run made stable.
+
+    Each ``scratch`` directory, which changes on every run, reads as
+    `<scratch>`, and paths inside the project read relative to it; paths
+    elsewhere, such as the toolchain's or a sibling directory's, stay as Lean
+    printed them.
+    """
+
+    replacements = {str(path): "<scratch>" for directory in scratch for path in (directory, directory.resolve())}
+    for root in (lean_root, lean_root.resolve()):
+        replacements[str(root) + os.sep] = ""
+        replacements[str(root)] = "."
+    # A directory matches only where its name ends, so `/srv/proj` leaves `/srv/proj-old` alone.
+    pattern = "|".join(
+        re.escape(old) + ("" if old.endswith(os.sep) else r"(?![\w.-])")
+        for old in sorted(replacements, key=len, reverse=True)
+    )
+    return re.sub(pattern, lambda match: replacements[match.group()], text)
+
+
+def _stable_detail(text: str, lean_root: Path, *scratch: Path) -> str:
+    """``_stable_paths`` of a failure reason, cut to ``_FAILURE_DETAIL_LIMIT`` characters."""
+
+    text = _stable_paths(text, lean_root, *scratch)
+    if len(text) <= _FAILURE_DETAIL_LIMIT:
+        return text
+    keep = _FAILURE_DETAIL_LIMIT - 64
+    cut = text.rfind("\n", keep // 2, keep)
+    cut = keep if cut < 0 else cut
+    return f"{text[:cut]}\n[{len(text) - cut} more characters]"
+
+
 # --------------------------------------------------------------------------- #
 # The probe
 # --------------------------------------------------------------------------- #
@@ -1589,6 +1645,7 @@ def _render_probe_helper() -> str:
 
     return _probe_template().format(
         core_roots=", ".join(_lean_name(name) for name in _CORE_MODULE_ROOTS),
+        error_limit=_FAILURE_DETAIL_LIMIT,
         marker=PROBE_MARKER,
         output_env=PROBE_OUTPUT_ENV,
         output_limit=DEFAULT_PROBE_OUTPUT_LIMIT,
@@ -1780,23 +1837,26 @@ def _build_probe_helper(lean_root: Path, directory: Path, *, timeout: float) -> 
             env=_probe_environment(),
         )
     except _CommandTimedOut as exc:
-        raise SkeletonError(
-            [f"{exc.issues[0]} after {timeout:g} seconds; rerun with --timeout <seconds> for large projects"]
-        ) from exc
+        raise _ProbeEnvironmentError([f"{exc.issues[0]}; rerun with --timeout <seconds> for large projects"]) from exc
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        _raise_if_core_module_shadowed(detail)
-        raise SkeletonError([f"cannot build the skeleton probe helpers\n{detail}"])
+        raw = (result.stderr or result.stdout).strip()
+        detail = _stable_detail(raw, lean_root, directory)
+        _raise_if_core_module_shadowed(raw, detail)
+        raise _ProbeEnvironmentError([f"cannot build the skeleton probe helpers\n{detail}"])
     return directory
 
 
-def _raise_if_core_module_shadowed(detail: str, label: str = "skeleton probe") -> None:
-    """Name the dependency library at fault when Lean could not load a toolchain module."""
+def _raise_if_core_module_shadowed(output: str, detail: str, label: str = "skeleton probe") -> None:
+    """Name the dependency library at fault when Lean could not load a toolchain module.
 
-    shadowed = _SHADOWED_CORE_MODULE.search(detail)
+    ``output`` is Lean's whole output, searched because ``detail``, the
+    reason's shortened copy, could cut the refusal off.
+    """
+
+    shadowed = _SHADOWED_CORE_MODULE.search(output)
     if shadowed:
         root = shadowed.group(1).split(".", 1)[0]
-        raise SkeletonError(
+        raise _ProbeEnvironmentError(
             [
                 f"the {label} cannot load toolchain module {shadowed.group(1)}: a dependency "
                 f"library probably provides modules under `{root}`, which hides the toolchain's own `{root}`; "
@@ -1838,7 +1898,7 @@ def run_probe(
                     lean_root, Path(scratch) / "helper", timeout=max(0.0, deadline - time.monotonic())
                 )
             if not (helper / f"{_PROBE_HELPER_MODULE}.olean").is_file():
-                raise SkeletonError([f"the skeleton probe helpers are missing from {helper}"])
+                raise _ProbeEnvironmentError([f"the skeleton probe helpers are missing from {helper}"])
             # Lake puts the project's own directories first, so the helper cannot
             # hide a project module; one with the helper's name hides the helper,
             # and the probe fails.
@@ -1865,11 +1925,16 @@ def run_probe(
             ) from exc
         output = _read_probe_records(records, label) if result.returncode == 0 else ""
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        _raise_if_core_module_shadowed(detail, label)
-        uncaptured = _UNCAPTURED_ROOT_MODULE.search(detail)
+        raw = (result.stderr or result.stdout).strip()
+        detail = _stable_detail(raw, lean_root, *filter(None, (Path(scratch), helper)))
+        _raise_if_core_module_shadowed(raw, detail, label)
+        # Searched in the whole output: the shortened reason could cut the refusal off.
+        uncaptured = _UNCAPTURED_ROOT_MODULE.search(raw)
         if uncaptured:
             raise SkeletonError([uncaptured.group()])
+        if result.returncode < 0:
+            # Most likely the out-of-memory killer, which leaves no output to explain it.
+            raise SkeletonError([f"the {label} was killed by signal {-result.returncode}\n{detail}".rstrip()])
         raise SkeletonError([f"the {label} failed; is the project built with `lake build`?\n{detail}"])
     return output or result.stdout
 
@@ -1966,11 +2031,16 @@ def parse_probe_output(
             raise SkeletonError([f"the skeleton probe emitted duplicate records for {root}"])
         if expected is not None and root not in expected:
             raise SkeletonError([f"the skeleton probe emitted an unrequested root: {root}"])
+        if "error" in record and (record.keys() != {"error", "root"} or not isinstance(record["error"], str)):
+            raise SkeletonError([f"the skeleton probe emitted an invalid error record for {root}"])
         records[root] = record
     expand = _expand_probe_material(tables)
     # Shared entries are validated once, however many roots name them.
     checked: set[int] = set()
     for root, record in records.items():
+        if "error" in record:
+            # The probe failed on this root alone; the caller reports why.
+            continue
         records[root] = _resolve_probe_record(record, tables, root=root, expand=expand)
         _validate_probe_record(records[root], root=root, checked=checked)
     return records
@@ -2405,6 +2475,63 @@ def _hash_module_files(
     return tuple(identities)
 
 
+def _probe_workers(jobs: int) -> int:
+    """How many probe processes run at once; see ``_MAX_PROBE_WORKERS``."""
+
+    if hasattr(os, "process_cpu_count"):
+        cpus = os.process_cpu_count()
+    elif hasattr(os, "sched_getaffinity"):
+        cpus = len(os.sched_getaffinity(0))
+    else:
+        cpus = os.cpu_count()
+    return max(1, min(jobs, _MAX_PROBE_WORKERS, cpus or 1))
+
+
+def _run_module_probes(modules: list[str], probe: Callable[[str], object]) -> dict[str, object]:
+    """Run ``probe(module)`` for each module in a bounded pool and collect the results.
+
+    A ``SkeletonError`` from one probe is that module's result. Anything else,
+    an interrupt, a signal, or a ``_ProbeEnvironmentError``, cancels the pool:
+    every running command terminates its process tree and every worker is
+    joined before the error propagates. Each probe has the budget its command
+    enforces; a budget shared across the pool would make which module fails
+    depend on scheduling.
+    """
+
+    cancelled = threading.Event()
+
+    def run(module: str) -> object:
+        _PROBE_POOL.cancelled = cancelled
+        try:
+            return probe(module)
+        finally:
+            _PROBE_POOL.cancelled = None
+
+    results: dict[str, object] = {}
+    pool = ThreadPoolExecutor(max_workers=_probe_workers(len(modules)), thread_name_prefix="autoform-probe")
+    with _signal_guard() as guard:
+        try:
+            futures = {pool.submit(run, module): module for module in modules}
+            pending = set(futures)
+            while pending:
+                # Polled rather than armed: a signal raised inside wait() could
+                # leave a future's lock held, and the join below would hang.
+                if guard.received is not None:
+                    raise _CommandSignalled(guard.received)
+                done, pending = wait(pending, timeout=0.05, return_when=FIRST_COMPLETED)
+                for future in done:
+                    try:
+                        results[futures[future]] = future.result()
+                    except _ProbeEnvironmentError:
+                        raise
+                    except SkeletonError as exc:
+                        results[futures[future]] = exc
+        finally:
+            cancelled.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+    return results
+
+
 # --------------------------------------------------------------------------- #
 # Extraction
 # --------------------------------------------------------------------------- #
@@ -2426,8 +2553,9 @@ def extract_skeletons(
     returns Lean's standard output; the default runs ``lake env lean`` after one
     Lake freshness check and one build of the probe's helpers, and ``timeout``
     bounds that build and each probe. A custom ``runner`` bounds its own probes,
-    so it cannot be combined with ``timeout``. A declaration the lexical index
-    cannot place is reported as unresolved without running Lean, exactly as
+    so it cannot be combined with ``timeout``, and may be called from several
+    threads at once. A declaration the lexical index cannot place is reported
+    as unresolved without running Lean, exactly as
     ``autoform check --lean-root`` reports it.
     """
 
@@ -2640,17 +2768,34 @@ def extract_graph_skeletons(
         groups.setdefault(module, []).append(name)
 
     records: dict[str, dict[str, object]] = {}
+    # A probe that fails on its own (exit status, timeout, malformed records)
+    # leaves only its module's roots unresolved, and an error the probe caught
+    # on one root leaves only that root unresolved. Lake, freshness, helper,
+    # toolchain, and snapshot failures concern every module and still abort the
+    # extraction.
+    failed_modules: dict[str, str] = {}
     snapshot_started_ns: int | None = None
     if groups:
         project_roots = tuple(root for library in libraries for root in library.roots)
-        jobs = [
-            (module, render_probe(imports=(module,), roots=tuple(groups[module]), project_roots=project_roots))
+        programs = {
+            module: render_probe(imports=(module,), roots=tuple(groups[module]), project_roots=project_roots)
             for module in sorted(groups)
-        ]
+        }
         snapshot_started_ns = time.time_ns()
+
+        def probe(module: str) -> dict[str, dict[str, object]]:
+            # Parsed in the worker, as soon as the probe ends.
+            return parse_probe_output(runner(programs[module], lean_root), expected_roots=tuple(groups[module]))
+
         with contextlib.nullcontext() if probing is None else probing(tuple(sorted(groups))):
-            for module, program in jobs:
-                records.update(parse_probe_output(runner(program, lean_root), expected_roots=tuple(groups[module])))
+            results = _run_module_probes(list(programs), probe)
+        for module in sorted(groups):
+            result = results[module]
+            if isinstance(result, SkeletonError):
+                # run_probe already cut Lean's output; a second cut would drop the end of what it kept.
+                failed_modules[module] = _stable_paths(f"probe of module {module} failed: {result}", lean_root)
+            else:
+                records.update(result)  # type: ignore[arg-type]
 
     nodes: list[NodeSkeleton] = []
     module_hashes: dict[tuple[str, str], str] = {}
@@ -2660,9 +2805,16 @@ def extract_graph_skeletons(
             if name not in roots or node.id in broken_passages:
                 continue
             module = roots[name]
+            if module in failed_modules:
+                unresolved.append(UnresolvedTarget(node.id, name, failed_modules[module]))
+                continue
             record = records.get(name)
             if record is None:
                 unresolved.append(UnresolvedTarget(node.id, name, "the probe returned no record"))
+                continue
+            if "error" in record:
+                reason = f"the probe failed on this declaration: {record['error']}"
+                unresolved.append(UnresolvedTarget(node.id, name, _stable_paths(reason, lean_root)))
                 continue
             if not record.get("found"):
                 unresolved.append(
