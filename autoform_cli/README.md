@@ -1007,9 +1007,10 @@ autoform render blueprint --output site-src --lean-root . --require-declarations
 `render` never writes into the vault. It leads the landing page with the project
 explorer, once the roadmap has articles to draw, over a summary of what is
 formalized and what is unblocked, places a compact
-progress summary after each chapter's opening prose, writes `structure.md` so a
-vault's layout can be checked against the book it produces, and shows a source
-icon when a `lean:` declaration resolves to a repository permalink; a catalog
+progress summary after each chapter's opening prose, keeps `structure.md` as a
+short page that opens the explorer, which shows the vault's hierarchy, and
+shows a source icon when a `lean:` declaration resolves to a repository
+permalink; a catalog
 instead links its first eight names in its Lean row and counts the rest. Its
 `dependencies.md` opens a full-viewport application and rolls dependencies
 through the article hierarchy, with bounded project, chapter, and nested-scope
