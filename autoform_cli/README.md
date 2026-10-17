@@ -430,7 +430,7 @@ unknown disposition, so move the pin first. `DECOMPOSED` is reserved for
 source-grounded declaration articles and links to them, directly or through a
 containing roadmap scope. A row whose links reach nothing but catalogs is a
 `coverage-role-mismatch`. Any other link that reaches no declaration leaf, such
-as one to prose or to leaves marked `not_ready`, is a
+as one to prose or to leaves marked `not_ready` that declare nothing yet, is a
 `decomposed-without-declaration` [warning](#warnings), since earlier versions
 accepted it. `DEFERRED` and `OUT` record an explicit later milestone or
 exclusion. Audit JSON includes canonical rows, counts, and the
@@ -1084,9 +1084,9 @@ What an existing repository meets when it moves to this version:
 1. CI at an older `AUTOFORM_REF` rejects `catalog:` and `area:` as unsupported
    frontmatter keys and `INVENTORIED` as an unknown coverage disposition, so
    move the pin before using them. Older refs ignore `blueprint/atlas.json`.
-2. A `DECOMPOSED` link that reaches only prose or leaves marked `not_ready` is
-   now a `decomposed-without-declaration` audit warning, which `render` also
-   prints; neither fails.
+2. A `DECOMPOSED` link that reaches only prose or leaves marked `not_ready`
+   that declare nothing yet is now a `decomposed-without-declaration` audit
+   warning, which `render` also prints; neither fails.
 3. Coverage JSON is `autoform-coverage/v2`: `INVENTORIED` is a new terminal
    disposition, and `counts` always holds an `INVENTORIED` key.
 4. `publication.json` is `autoform-publication/v3`. The first render replaces a
