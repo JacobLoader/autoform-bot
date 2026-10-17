@@ -585,6 +585,7 @@ def test_reselect_does_not_duplicate_history_and_back_restores_selection(
     foundation.click()
     assert page.evaluate("history.length") == after_first_selection == initial_length + 1
 
+    page.get_by_role("button", name="Close details").click()
     target.click()
     assert page.evaluate("history.length") == initial_length + 2
     page.evaluate("history.back()")
