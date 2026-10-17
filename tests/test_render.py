@@ -1661,13 +1661,9 @@ def test_anchored_links_resolve_only_entries_that_are_read(
     assert links["node-9999"] == expected
     assert len(calls) == 1
 
-    selected = render_module._anchored_links(
-        targets,
-        page,
-        node_ids=("node-2", "node-2", "node-7"),
-    )
-    assert list(selected) == ["node-2", "node-7"]
-    assert len(selected) == 2
+    # An explorer page copies only the links it draws.
+    selected = render_module._node_links(targets, page, ("node-2", "node-2", "node-7"))
+    assert selected == {"node-2": "chapter-2.html#node-2", "node-7": "chapter-7.html#node-7"}
 
 
 def test_the_source_revision_of_a_fixed_blueprint_is_pinned(tmp_path: Path) -> None:
@@ -2561,13 +2557,18 @@ def test_node_links_resolve_each_target_page_once(tmp_path: Path, monkeypatch: p
 
     links = _anchored_links(targets, page)
 
-    # A page reads only the nodes it shows, so nothing is linked before then.
-    assert calls == []
-    assert links["a/0"] == "a.html#n0"
+    # A page reads only the nodes it shows, so nothing is linked before then,
+    # and reading one node links only its own target page.
+    assert calls == resolved == []
     assert links["a/7"] == "a.html#n7"
+    assert calls == [chapter]
     assert links["b"] == "b/index.html"
     assert links["here"] == "#self"
-    assert len(dict(links)) == len(targets)
+    assert dict(links) == {
+        **{f"a/{index}": f"a.html#n{index}" for index in range(20)},
+        "b": "b/index.html",
+        "here": "#self",
+    }
     assert sorted(calls) == [chapter, other]
     # Once to compare it with the current page, once inside relative_link.
     assert resolved.count(chapter) <= 2

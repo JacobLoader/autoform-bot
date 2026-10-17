@@ -1088,23 +1088,18 @@ _ONE_COMPONENT = re.compile(r"(?:«[^«»]*»|[^.«»])+")
 
 _RAW_OPEN = re.compile(r'r(#*)"')
 _CHAR_LITERAL = re.compile(r"'(?:\\.|[^'\\\n])*'")
-# Where a comment, literal, or interpolation brace can start. The text between
-# two of these positions is copied as one slice, not character by character.
-_CODE_EVENT = re.compile(r"""--|/-|r#*"|["«']""")
-_INTERPOLATION_EVENT = re.compile(r"""--|/-|r#*"|["«'{}]""")
+# _without_lean_comments copies the text between two matches of these patterns
+# unread, so each must match every position its branch of the loop reacts to:
+# a branch whose trigger is missing never runs, while an extra match only
+# copies one character. In code, a comment, literal or interpolation brace can
+# start there; inside a literal, its closer (", » or '), an escape, or an
+# interpolation.
+_CODE_EVENT = re.compile(rf"""--|/-|{_RAW_OPEN.pattern}|["«']""")
+_INTERPOLATION_EVENT = re.compile(rf"""--|/-|{_RAW_OPEN.pattern}|["«'{{}}]""")
+_LITERAL_EVENT = re.compile(r"""["»'\\{]""")
+# Inside a block comment: where a nested comment opens or the current one closes.
+# Every match changes the depth, so this pattern can't match anything extra.
 _COMMENT_EVENT = re.compile(r"-/|/-")
-_LITERAL_EVENTS: dict[tuple[str, bool, bool], re.Pattern[str]] = {}
-
-
-def _literal_event(close: str, interpolated: bool) -> re.Pattern[str]:
-    """Where a literal ended by *close* can next close, escape, or interpolate."""
-
-    key = (close[0], close in {'"', "'"}, interpolated)
-    pattern = _LITERAL_EVENTS.get(key)
-    if pattern is None:
-        chars = close[0] + ("\\" if key[1] else "") + ("{" if interpolated else "")
-        pattern = _LITERAL_EVENTS[key] = re.compile(f"[{re.escape(chars)}]")
-    return pattern
 
 
 def _without_lean_comments(text: str, *, mask_literals: bool = False) -> str:
@@ -1117,45 +1112,37 @@ def _without_lean_comments(text: str, *, mask_literals: bool = False) -> str:
     out: list[str] = []
     stack: list[list] = []  # [closer, interpolated] for a string, [None, depth] for `{…}` in `s!"…"`
 
-    def append(fragment: str) -> None:
-        in_literal = any(frame[0] not in {None, "»"} for frame in stack)
+    def append(fragment: str, literal: bool = False) -> None:
+        # A raw string never reaches the stack, so its branch passes literal=True.
+        in_literal = literal or any(frame[0] not in {None, "»"} for frame in stack)
         out.append(re.sub(r"[^\r\n]", " ", fragment) if mask_literals and in_literal else fragment)
 
     index = 0
     while index < len(text):
         top = stack[-1] if stack else None
-        if top is not None and top[0] is not None:
+        literal = top is not None and top[0] is not None
+        events = _LITERAL_EVENT if literal else _CODE_EVENT if top is None else _INTERPOLATION_EVENT
+        event = events.search(text, index)
+        if event is None:
+            append(text[index:])
+            break
+        append(text[index : event.start()])
+        index = event.start()
+        char = text[index]
+        if literal:
             close, interpolated = top
-            event = _literal_event(close, interpolated).search(text, index)
-            if event is None:
-                append(text[index:])
-                break
-            if event.start() > index:
-                append(text[index : event.start()])
-                index = event.start()
-            char = text[index]
-            if text.startswith(close, index):
-                append(close)
-                index += len(close)
-                stack.pop()
-                continue
             if close in {'"', "'"} and char == "\\":
                 append(text[index : index + 2])
                 index += 2
                 continue
-            if interpolated and char == "{":
-                stack.append([None, 1])
+            # Append before popping, so blanking covers the closer.
             append(char)
+            if char == close:
+                stack.pop()
+            elif interpolated and char == "{":
+                stack.append([None, 1])
             index += 1
             continue
-        event = (_CODE_EVENT if top is None else _INTERPOLATION_EVENT).search(text, index)
-        if event is None:
-            append(text[index:])
-            break
-        if event.start() > index:
-            append(text[index : event.start()])
-            index = event.start()
-        char = text[index]
         if text.startswith("--", index):
             newline = text.find("\n", index + 2)
             if newline < 0:
@@ -1165,25 +1152,25 @@ def _without_lean_comments(text: str, *, mask_literals: bool = False) -> str:
             continue
         if text.startswith("/-", index):
             # `/--` and `/-!` open a docstring whose body starts after the marker.
-            depth, index = 1, index + (3 if text[index + 2 : index + 3] in {"-", "!"} else 2)
-            append(" ")
-            while index < len(text) and depth:
-                pair = _COMMENT_EVENT.search(text, index)
-                end = len(text) if pair is None else pair.start()
-                append("\n" * text.count("\n", index, end))
-                if pair is None:
-                    index = end
-                    break
+            depth, start = 1, index + (3 if text[index + 2 : index + 3] in {"-", "!"} else 2)
+            index = len(text)
+            for pair in _COMMENT_EVENT.finditer(text, start):
                 depth += 1 if pair.group() == "/-" else -1
-                index = pair.end()
-            continue
-        raw = _RAW_OPEN.match(text, index)
-        if raw:
-            stack.append(['"' + raw.group(1), False])
-            append(raw.group())
-            index = raw.end()
+                if not depth:
+                    index = pair.end()
+                    break
+            append(" " + "\n" * text.count("\n", start, index))
             continue
         previous = text[index - 1] if index else " "
+        # An `r` inside a name, or a name literal's, is part of it. Lean reads no
+        # escapes in a raw string, so it ends at the first closer: `r"\"` is one
+        # backslash.
+        raw = None if previous.isalnum() or previous in "_'!?.`" else _RAW_OPEN.match(text, index)
+        if raw:
+            found = text.find('"' + raw.group(1), raw.end())
+            index = len(text) if found < 0 else found + 1 + len(raw.group(1))
+            append(text[raw.start() : index], literal=True)
+            continue
         if char == '"':
             interpolated = previous == "!" and index >= 2 and (text[index - 2].isalnum() or text[index - 2] == "_")
             stack.append(['"', interpolated])

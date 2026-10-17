@@ -451,31 +451,45 @@ def test_graph_page_publication_builds_whole_graph_indexes_a_fixed_number_of_tim
     assert max(small["_containment_children"], small["_relations"]) <= 4
 
 
-def _written_blueprint(tmp_path: Path, sections: int = 1) -> Path:
+def _written_blueprint(tmp_path: Path, sections: int = 1, chapters: int = 1, dependencies: bool = False) -> Path:
     blueprint = tmp_path / "blueprint"
-    chapter = blueprint / "roadmap" / "chapter"
+    # One chapter keeps the "chapter" directory that other tests name.
+    groups = {"chapter": "Chapter"} if chapters == 1 else {f"chapter{n}": f"Chapter {n}" for n in range(chapters)}
     names = [f"section{index}" for index in range(sections)]
-    for name in names:
-        (chapter / name).mkdir(parents=True)
+    for group in groups:
+        for name in names:
+            (blueprint / "roadmap" / group / name).mkdir(parents=True)
     (blueprint / "README.md").write_text("# Book\n\n[Roadmap](roadmap/README.md)\n", encoding="utf-8")
-    (blueprint / "roadmap" / "README.md").write_text("# Roadmap\n\n[Chapter](chapter/README.md)\n", encoding="utf-8")
-    (chapter / "README.md").write_text(
-        "# Chapter\n\n" + "".join(f"[{name}]({name}/README.md)\n" for name in names), encoding="utf-8"
+    (blueprint / "roadmap" / "README.md").write_text(
+        "# Roadmap\n\n" + "".join(f"[{title}]({group}/README.md)\n" for group, title in groups.items()),
+        encoding="utf-8",
     )
     (blueprint / "coverage").mkdir()
     (blueprint / "coverage" / "README.md").write_text(
         "# Coverage\n\n| Area | Coverage | Evidence |\n| --- | --- | --- |\n"
         "| Project scope | MAPPED | Source audit pending |\n"
-        + "".join(f"| {name} | DECOMPOSED | [A](../roadmap/chapter/{name}/a.md) |\n" for name in names),
+        + "".join(
+            f"| {group}/{name} | DECOMPOSED | [A](../roadmap/{group}/{name}/a.md) |\n"
+            for group in groups
+            for name in names
+        ),
         encoding="utf-8",
     )
-    for name in names:
-        section = chapter / name
-        (section / "README.md").write_text(f"# {name}\n\n[A](a.md)\n[B](b.md)\n", encoding="utf-8")
-        (section / "a.md").write_text("---\ndeclaration: theorem\n---\n# A\n\nStatement.\n", encoding="utf-8")
-        (section / "b.md").write_text(
-            "---\ndeclaration: theorem\n---\n# B\n\nUses [A](a.md).\n", encoding="utf-8"
+    for group, title in groups.items():
+        chapter = blueprint / "roadmap" / group
+        (chapter / "README.md").write_text(
+            f"# {title}\n\n" + "".join(f"[{name}]({name}/README.md)\n" for name in names), encoding="utf-8"
         )
+        for name in names:
+            section = chapter / name
+            (section / "README.md").write_text(f"# {name}\n\n[A](a.md)\n[B](b.md)\n", encoding="utf-8")
+            (section / "a.md").write_text("---\ndeclaration: theorem\n---\n# A\n\nStatement.\n", encoding="utf-8")
+            # With a dependency, each chapter page reads node links of its own, not only the maps.
+            (section / "b.md").write_text(
+                "---\ndeclaration: theorem\n---\n# B\n\nUses [A](a.md).\n"
+                + ("\n## Depends on\n\n- [A](a.md)\n" if dependencies else ""),
+                encoding="utf-8",
+            )
     return blueprint
 
 
@@ -498,58 +512,68 @@ def test_site_rendering_does_not_scan_for_children_per_node(
     assert (tmp_path / "site" / "dependencies" / "scopes" / "chapter" / "section0.md").is_file()
 
 
-def _container_index_builds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sections: int) -> int:
-    blueprint = _written_blueprint(tmp_path / str(sections), sections)
-    builds = 0
-    original = render._containers
+def _render_calls(blueprint: Path, monkeypatch: pytest.MonkeyPatch, owner: object, name: str) -> int:
+    """How often rendering *blueprint* calls ``owner.name``."""
+    calls = 0
+    original = getattr(owner, name)
 
-    def counted(graph: Graph) -> frozenset[str]:
-        nonlocal builds
-        builds += 1
-        return original(graph)
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
 
     with monkeypatch.context() as patch:
-        # render imports the index builder that graph_views' own helpers call.
-        patch.setattr(render, "_containers", counted)
-        patch.setattr(graph_views, "_containers", counted)
-        render_site(blueprint, tmp_path / str(sections) / "site")
-    return builds
+        patch.setattr(owner, name, counted)
+        render_site(blueprint, blueprint.parent / "site")
+    return calls
 
 
 def test_site_rendering_indexes_containers_a_fixed_number_of_times(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    assert _container_index_builds(tmp_path, monkeypatch, 6) == _container_index_builds(tmp_path, monkeypatch, 2)
+    # render imports the index builder that graph_views' own helpers call.
+    monkeypatch.setattr(graph_views, "_containers", lambda graph: render._containers(graph))
+    small, large = (
+        _render_calls(_written_blueprint(tmp_path / str(sections), sections), monkeypatch, render, "_containers")
+        for sections in (2, 6)
+    )
+
+    assert large == small
 
 
-def _path_resolves(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sections: int) -> int:
-    blueprint = _written_blueprint(tmp_path / str(sections), sections)
-    calls = 0
-    original = Path.resolve
-
-    def counted(self: Path, strict: bool = False) -> Path:
-        nonlocal calls
-        calls += 1
-        return original(self, strict)
-
-    with monkeypatch.context() as patch:
-        patch.setattr(Path, "resolve", counted)
-        render_site(blueprint, tmp_path / str(sections) / "site")
-    return calls
+def _path_resolves(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sections: int = 1, chapters: int = 1) -> int:
+    blueprint = _written_blueprint(tmp_path / f"{chapters}x{sections}", sections, chapters, dependencies=True)
+    return _render_calls(blueprint, monkeypatch, Path, "resolve")
 
 
-def test_site_rendering_resolves_paths_linearly_in_the_number_of_sections(
+@pytest.mark.parametrize("axis", ["sections", "chapters"])
+def test_site_rendering_resolves_paths_linearly_in_sections_and_chapters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    axis: str,
+) -> None:
+    small = _path_resolves(tmp_path, monkeypatch, **{axis: 8})
+    large = _path_resolves(tmp_path, monkeypatch, **{axis: 16})
+
+    # Every section and chapter has its own scope map page, and every section a
+    # DECOMPOSED coverage row. Linking every node from every page made the
+    # resolves grow with the pages times the nodes.
+    assert large <= 2 * small
+
+
+def test_site_rendering_never_iterates_a_pages_node_links(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    small = _path_resolves(tmp_path, monkeypatch, 8)
-    large = _path_resolves(tmp_path, monkeypatch, 16)
+    # A page's node links cover the whole graph and are built when read, so
+    # iterating or copying them on every page makes render quadratic again.
+    def iterated(self: object) -> None:
+        raise AssertionError("a page's node links were iterated")
 
-    # Every section has its own scope map page and a DECOMPOSED coverage row.
-    # Linking every node from every page made the resolves grow with sections
-    # times nodes.
-    assert large <= 2 * small
+    monkeypatch.setattr(render._PageLinks, "__iter__", iterated)
+
+    render_site(_written_blueprint(tmp_path, 2, chapters=2, dependencies=True), tmp_path / "site")
 
 
 def _coverage_role_resolves(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sections: int) -> int:
