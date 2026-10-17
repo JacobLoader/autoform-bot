@@ -24,7 +24,10 @@ from .markdown import link_definitions, link_targets, mask_code_and_comments
 
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
-_MARKDOWN_LINK_TEXT = re.compile(r"!?\[([^\]]+)\]\([^)]*\)")
+#: An inline link or image; its label may hold bracket pairs, as the page reads it.
+_MARKDOWN_LINK_TEXT = re.compile(r"!?\[((?:[^\[\]]|\[[^\[\]]*\])+)\]\([^)]*\)")
+#: A full, collapsed or shortcut reference link: ``[text][label]``, ``[label][]`` or ``[label]``.
+_REFERENCE_LINK_TEXT = re.compile(r"!?\[((?:[^\[\]]|\[[^\[\]]*\])+)\](?:\[([^\[\]]*)\])?")
 _HTML_TAG = re.compile(r"<[^>]+>")
 ARTICLE_ID_PATTERN = re.compile(r"af_[0-9a-f]{24}\Z")
 _FRONTMATTER_KEYS = frozenset(
@@ -669,17 +672,24 @@ def _parse_node(node_id: str, path: Path, text: str) -> tuple[_ParsedNode | None
         tuple(targets[_PROOF_SECTION]),
         tuple(targets[_SOURCES_SECTION]),
         metadata,
-        _extract_summary(body),
+        _extract_summary(body, references),
     )
     return parsed, []
 
 
-def _extract_summary(body: list[str], *, limit: int = 420) -> str | None:
+def _extract_summary(body: list[str], references: dict[str, str], *, limit: int = 420) -> str | None:
     """Return the first reader-facing prose paragraph from a roadmap article.
 
     ``body`` is the article below its frontmatter with fences, comments and
-    indented code already masked, so the summary reads what the page shows.
+    indented code already masked, and ``references`` its link definitions, so
+    the summary reads what the page shows.
     """
+
+    def unwrap(link: re.Match[str]) -> str:
+        # Without a definition, the page shows a reference link's brackets as written.
+        label = " ".join((link.group(2) or link.group(1)).lower().split())
+        return link.group(1) if label in references else link.group(0)
+
     paragraph: list[str] = []
     excluded = False
     for raw in body:
@@ -694,13 +704,15 @@ def _extract_summary(body: list[str], *, limit: int = 420) -> str | None:
             }
             continue
         text = raw.strip()
-        if not text:
+        # The page ends a paragraph at a reference definition, as at a blank line.
+        if not text or link_definitions([raw]):
             if paragraph:
                 break
             continue
         if excluded or text.startswith(("- ", "* ", "+ ", "> ", "|", "$$", "\\[", "<div")):
             continue
         text = _MARKDOWN_LINK_TEXT.sub(r"\1", text)
+        text = _REFERENCE_LINK_TEXT.sub(unwrap, text)
         text = _HTML_TAG.sub("", text).replace("**", "").replace("__", "")
         text = unescape(text).strip()
         if text:

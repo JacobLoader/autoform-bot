@@ -137,6 +137,19 @@ def test_summary_skips_a_block_the_page_shows_as_indented_code(tmp_path: Path) -
     )
 
 
+def test_summary_reads_reference_links_and_definitions_as_the_page_does(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(
+        blueprint,
+        "topic.md",
+        "# T\n\n[paper]: ../sources/paper.md\n\n"
+        "The statement cites [the paper][paper], [Smith][] and [[1] Jones](../sources/jones.md).\n"
+        "[smith]: ../sources/smith.md\nThe page starts a new paragraph here.\n",
+    )
+
+    assert load_graph(blueprint).nodes["topic"].summary == "The statement cites the paper, Smith and [1] Jones."
+
+
 def test_summary_clips_a_long_paragraph_at_a_word(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     words = " ".join(f"word{index}" for index in range(200))
