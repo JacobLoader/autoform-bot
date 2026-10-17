@@ -610,7 +610,9 @@ def _container_index_builds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sec
         return original(graph)
 
     with monkeypatch.context() as patch:
+        # render imports the index builder that graph_views' own helpers call.
         patch.setattr(render, "_containers", counted)
+        patch.setattr(graph_views, "_containers", counted)
         render_site(blueprint, tmp_path / str(sections) / "site")
     return builds
 
