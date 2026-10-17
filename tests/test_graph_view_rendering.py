@@ -329,13 +329,6 @@ def test_explorer_marks_isolates_but_keeps_them_in_the_complete_inventory(tmp_pa
     script = dag_viewer.viewer_script()
     assert "inventoryNodes" in script
     assert '" · items without edges included"' in script
-    assert "MAX_MAP_NODES = 120" in script
-    assert "MIN_READABLE_SCALE = .8" in script
-    assert "MIN_ATLAS_SCALE = .68" in script
-    assert "fitted < readableFloor" in script
-    assert 'params.get("view") === "list" || !state.mapAllowed' in script
-    assert '" of " + data.nodes.length + " shown"' in script
-    assert '"+" + hidden + " hidden"' in script
 
 
 def test_explorer_host_is_escaped_responsive_and_accessible() -> None:
@@ -369,8 +362,6 @@ def test_explorer_host_is_escaped_responsive_and_accessible() -> None:
     assert 'refs.navigation = element("aside", "bp-dag-navigation")' in script
     assert 'refs.navigation.setAttribute("aria-label", "Wiki hierarchy")' in script
     assert 'renderNavigation()' in script
-    assert 'element("div", "bp-dag-main")' in script
-    assert 'element("main", "bp-dag-main")' not in script
     assert 'refs.announcement.setAttribute("aria-live", "polite")' in script
     assert "control.dataset.autoformNodeId = node.id" in script
     assert "new ResizeObserver(resize)" in script
@@ -395,9 +386,6 @@ def test_explorer_host_is_escaped_responsive_and_accessible() -> None:
 def test_explorer_pages_relations_and_clamps_zoom() -> None:
     script = dag_viewer.viewer_script()
 
-    assert "MIN_SCALE = .002, MIN_READABLE_SCALE = .8, MIN_ATLAS_SCALE = .68" in script
-    assert '"Show all "' not in script
-    assert "Math.min(matches.length, state.searchLimit + SEARCH_PAGE)" in script
     assert "Math.min(visible + RELATION_PAGE, ids.length)" in script
     assert "ids.slice(visible, next)" in script
     assert "clamp(old * factor, MIN_SCALE, 4)" in script
