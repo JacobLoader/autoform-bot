@@ -914,6 +914,18 @@ def test_reselect_does_not_duplicate_history_and_back_restores_selection(
     page.evaluate("history.back()")
     page.wait_for_function("!location.hash.includes('node=')")
 
+    # From an unselected map the first arrow key adds the entry, so Back returns to the map, not the page before.
+    page.goto("about:blank")
+    _open_ready(page, explorer_url)
+    foundation.focus()
+    foundation.press("ArrowRight")
+    playwright.expect(middle).to_be_focused()
+    middle.press("ArrowRight")
+    playwright.expect(target).to_be_focused()
+    page.evaluate("history.back()")
+    page.wait_for_function("!location.hash.includes('node=')")
+    assert page.url == f"{explorer_url}/index.html"
+
 
 def test_hiding_the_selected_status_clears_selection(
     desktop_page: object, explorer_url: str
