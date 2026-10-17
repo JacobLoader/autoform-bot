@@ -454,25 +454,46 @@ def test_every_explorer_breadcrumb_reaches_a_published_page(tmp_path: Path) -> N
     (groups / "lemma.md").write_text("---\ndeclaration: lemma\n---\n\n# Lemma\n\nA lemma.\n", encoding="utf-8")
     out = tmp_path / "out"
 
+    def book_crumbs() -> set[Path]:
+        """Check that every explorer's crumbs are published, and say where its Book crumb leads."""
+        payloads = [out / "dependencies.json", *(out / "dependencies").rglob("*.json")]
+        payloads.remove(out / "dependencies/index.json")
+        assert out / "dependencies/scopes/algebra/groups.json" in payloads
+        crumbs = [
+            (payload, crumb["label"], crumb["url"])
+            for payload in payloads
+            for crumb in json.loads(payload.read_text(encoding="utf-8"))["view"]["breadcrumbs"]
+            if crumb["url"] is not None
+        ]
+        assert sum(label == "Book" for _payload, label, _url in crumbs) == len(payloads)
+        published = _published_pages(out)
+        dead = [
+            (payload.relative_to(out).as_posix(), label, url)
+            for payload, label, url in crumbs
+            if Path(os.path.normpath(payload.parent / unquote(url.partition("#")[0]))) not in published
+        ]
+        assert dead == []
+        return {
+            Path(os.path.normpath(payload.parent / unquote(url))) for payload, label, url in crumbs if label == "Book"
+        }
+
     render_site(project / "blueprint", out, lean_root=project)
 
-    payloads = [out / "dependencies.json", *(out / "dependencies").rglob("*.json")]
-    payloads.remove(out / "dependencies/index.json")
-    assert out / "dependencies/scopes/algebra/groups.json" in payloads
-    crumbs = [
-        (payload, crumb["label"], crumb["url"])
-        for payload in payloads
-        for crumb in json.loads(payload.read_text(encoding="utf-8"))["view"]["breadcrumbs"]
-        if crumb["url"] is not None
-    ]
-    assert sum(label == "Book" for _payload, label, _url in crumbs) == len(payloads)
-    published = _published_pages(out)
-    dead = [
-        (payload.relative_to(out).as_posix(), label, url)
-        for payload, label, url in crumbs
-        if Path(os.path.normpath(payload.parent / unquote(url.partition("#")[0]))) not in published
-    ]
-    assert dead == []
+    # Every trail starts at the book's contents, which the Book tab opens, not at the home page.
+    assert book_crumbs() == {out / "roadmap/index.html"}
+    # The app layout hides a section explorer's other links, so it carries one to the section's own page.
+    section = json.loads((out / "dependencies/scopes/algebra/groups.json").read_text(encoding="utf-8"))
+    assert section["view"]["book"] == "../../../roadmap/algebra/groups/index.html"
+    assert out / "roadmap/algebra/groups/index.html" in _published_pages(out)
+    # The root article is the contents page without root leaves too. With neither
+    # there is no contents page, so trails start at home.
+    for name in ("base.md", "top.md"):
+        (project / "blueprint/roadmap" / name).unlink()
+    render_site(project / "blueprint", out, lean_root=project)
+    assert book_crumbs() == {out / "roadmap/index.html"}
+    (project / "blueprint/roadmap/README.md").unlink()
+    render_site(project / "blueprint", out, lean_root=project)
+    assert book_crumbs() == {out / "index.html"}
 
 
 def test_a_chapter_places_statements_in_the_authored_narrative(tmp_path: Path) -> None:
@@ -2404,6 +2425,9 @@ def test_a_root_article_links_the_explorer_page_search_opens(tmp_path: Path) -> 
     assert {node["id"]: node["url"] for node in index["nodes"]}["top"] == "chapters/roadmap.html#node=top"
     chapter = (out / "roadmap/README.md").read_text(encoding="utf-8")
     assert '<a class="bp-context-link" href="../dependencies/chapters/roadmap.html#node=top"' in chapter
+    # The root leaves' chapter is still the book's contents, where explorer trails start.
+    project_view = json.loads((out / "dependencies.json").read_text(encoding="utf-8"))["view"]
+    assert project_view["breadcrumbs"][0] == {"label": "Book", "url": "roadmap/index.html"}
 
 
 def test_a_node_that_is_the_current_page_links_as_a_bare_fragment(tmp_path: Path) -> None:

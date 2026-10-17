@@ -56,6 +56,10 @@ def write_graph_pages(
     # _write_page writes each payload beside its page.
     project_page = (destination / PROJECT_PAYLOAD).with_suffix(".md")
     full_page = destination / "dependencies/full.md"
+    # The book's contents, which the Book tab opens; every explorer trail starts
+    # there. A roadmap with neither a root article nor root leaves has no such
+    # page, so its trails start at home.
+    book_root = destination / ("roadmap/README.md" if "roadmap" in graph.nodes or "roadmap" in groups else "README.md")
     search_index = destination / SEARCH_INDEX
     chapter_pages = {group: destination / "dependencies/chapters" / f"{group or 'roadmap'}.md" for group in groups}
     scope_maps = scope_views(graph, statuses)
@@ -118,7 +122,7 @@ def write_graph_pages(
             site_root=destination,
             search_href=_search_index_link(search_index, project_page),
             breadcrumbs=(
-                ("Book", _published_link(destination / "README.md", project_page)),
+                ("Book", _published_link(book_root, project_page)),
                 (root_title, None),
             ),
         )
@@ -136,7 +140,7 @@ def write_graph_pages(
                 links[node.id] = _published_link(scope_pages[nested], chapter_page)
 
         book_page = (
-            destination / "roadmap/README.md"
+            book_root
             if group in {"", "roadmap"}
             else destination / "roadmap" / group / "README.md"
         )
@@ -172,6 +176,7 @@ def write_graph_pages(
                     page=chapter_page,
                     scope_pages=scope_pages,
                     project_page=project_page,
+                    book_root=book_root,
                 ),
             )
         )
@@ -195,6 +200,7 @@ def write_graph_pages(
             _write_page(
                 scope_page,
                 view=view,
+                book=_published_link(destination / "roadmap" / scope / "README.md", scope_page),
                 statuses=_selected_statuses(graph, statuses, view, containers),
                 links=links,
                 heading=_dependency_heading(view),
@@ -214,6 +220,7 @@ def write_graph_pages(
                     page=scope_page,
                     scope_pages=scope_pages,
                     project_page=project_page,
+                    book_root=book_root,
                 ),
             )
         )
@@ -240,7 +247,7 @@ def write_graph_pages(
             # It repeats the project page's title, so site search would list both.
             searchable=False,
             breadcrumbs=(
-                ("Book", _published_link(destination / "README.md", full_page)),
+                ("Book", _published_link(book_root, full_page)),
                 (root_title, _published_link(project_page, full_page)),
                 ("Explorer", None),
             ),
@@ -425,6 +432,7 @@ def _scope_breadcrumbs(
     page: Path,
     scope_pages: Mapping[str, Path],
     project_page: Path,
+    book_root: Path,
 ) -> tuple[tuple[str, str | None], ...]:
     lineage: list[str] = []
     current: str | None = scope
@@ -432,7 +440,7 @@ def _scope_breadcrumbs(
         lineage.append(current)
         current = graph.nodes[current].parent if current in graph.nodes else None
     items: list[tuple[str, str | None]] = [
-        ("Book", _published_link(project_page.parent / "README.md", page)),
+        ("Book", _published_link(book_root, page)),
         (group_title(graph, "roadmap"), _published_link(project_page, page)),
     ]
     for node_id in reversed(lineage):
