@@ -2490,6 +2490,8 @@ def source_passage(node: Node, blueprint: Path, *, issues: list[str] | None = No
         if "\x00" in path:
             return broken(target, "contains an invalid path")
         candidate = resolved_path(node.path.parent / path)
+        if candidate is None:
+            return broken(target, "names a path that cannot be resolved")
         if not candidate.is_relative_to(blueprint.resolve()):
             return broken(target, "points outside the blueprint")
         # Each way a locator's file cannot be read is this article's problem, so

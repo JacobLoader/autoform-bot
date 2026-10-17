@@ -195,6 +195,28 @@ def test_check_passes_a_sources_link_that_reaches_its_file_through_loops(tmp_pat
     assert main(["check", str(blueprint)]) == 0
 
 
+@pytest.mark.skipif(not hasattr(os, "lchmod"), reason="a symlink's own mode does not deny reading it here")
+def test_a_dependency_through_a_link_that_cannot_be_read_does_not_exist(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "result.md", "# Result\n## Depends on\n[x](../locked/a.md)\n")
+    (tmp_path / "away").mkdir()
+    (tmp_path / "away" / "a.md").write_text("# A\n", encoding="utf-8")
+    locked = blueprint / "locked"
+    locked.symlink_to(tmp_path / "away")
+    os.lchmod(locked, 0)
+    try:
+        os.readlink(locked)
+    except OSError:
+        pass
+    else:
+        pytest.skip("the link can still be read")
+
+    with pytest.raises(GraphValidationError) as caught:
+        load_graph(blueprint)
+
+    assert caught.value.issues == ("result: dependency target does not exist: '../locked/a.md'",)
+
+
 @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")
 def test_a_dependency_under_an_unreadable_directory_is_an_issue(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"

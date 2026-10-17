@@ -682,6 +682,8 @@ def _resolve_target(
         return None, f"{node.id}: dependency target must be a relative .md file: {target!r}"
 
     resolved = resolved_path(node.path.parent / relative)
+    if resolved is None:
+        return None, f"{node.id}: dependency target does not exist: {target!r}"
     if not _is_within(resolved, blueprint):
         return None, f"{node.id}: dependency target escapes the blueprint directory: {target!r}"
     # Before Python 3.14, `Path.is_file` raises under an unreadable directory.

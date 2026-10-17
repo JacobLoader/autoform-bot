@@ -1815,6 +1815,7 @@ def test_probe_comment_ranges_must_cover_comments(tmp_path: Path, ranges: object
         ("../../sources/missing.md#L1-L1", "names a missing file"),
         ("../../sources/book.tex/inside.tex#L1-L1", "names a missing file"),
         ("../../sources/chapter#L1-L1", "names something other than a regular file"),
+        ("../../sources/chapter.md#L1-L1", "names something other than a regular file"),
         ("../../sources/binary.tex#L1-L1", "not readable UTF-8 text"),
         ("../../../outside.tex#L1-L1", "points outside the blueprint"),
         ("../../sources/loop.txt#L1-L1", "names a path that cannot be resolved"),
@@ -1836,6 +1837,7 @@ def test_extraction_reports_a_locator_that_names_no_passage(tmp_path: Path, link
     (sources / "empty.tex").write_text("", encoding="utf-8")
     (sources / "binary.tex").write_bytes(b"\xff\xfe\n")
     (sources / "chapter").mkdir()
+    (sources / "chapter.md").mkdir()
     (tmp_path / "away").mkdir()
     (tmp_path / "away" / "secret.tex").write_text("secret\n", encoding="utf-8")
     try:
@@ -1906,6 +1908,34 @@ def test_extraction_reports_a_locator_through_links_alike_on_every_python(tmp_pa
     assert not report.clean and report.nodes[0].declarations == ()
     [unresolved] = report.unresolved
     assert unresolved.reason.startswith("source locator ") and why in unresolved.reason
+
+
+@pytest.mark.skipif(not hasattr(os, "lchmod"), reason="a symlink's own mode does not deny reading it here")
+@pytest.mark.parametrize("cited", ["locked/secret.tex", "locked"], ids=["through-the-link", "the-link-itself"])
+def test_extraction_reports_a_locator_through_a_link_it_cannot_read(tmp_path: Path, cited: str) -> None:
+    # macOS follows a link whose mode forbids reading it, so keeping it as
+    # written would hide where it leads.
+    project = _project(tmp_path)
+    blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
+    (blueprint / "sources").mkdir()
+    (tmp_path / "away").mkdir()
+    (tmp_path / "away" / "secret.tex").write_text("secret\n", encoding="utf-8")
+    locked = blueprint / "sources" / "locked"
+    locked.symlink_to(tmp_path / "away" / ("secret.tex" if cited == "locked" else ""))
+    os.lchmod(locked, 0)
+    try:
+        os.readlink(locked)
+    except OSError:
+        pass
+    else:
+        pytest.skip("the link can still be read")
+    article = blueprint / "roadmap" / "basics" / "determined.md"
+    _replace_source(article, "## Depends on", f"## Sources\n\n- [book](../../sources/{cited}#L1-L1)\n\n## Depends on")
+
+    report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+
+    [unresolved] = report.unresolved
+    assert unresolved.reason == f"source locator ../../sources/{cited}#L1-L1 names a path that cannot be resolved"
 
 
 @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")

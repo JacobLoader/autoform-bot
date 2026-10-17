@@ -533,6 +533,8 @@ def _is_roadmap_article(target: str, *, coverage_path: Path, roadmap: Path) -> b
     if not raw_path or "\x00" in raw_path:
         return False
     candidate = resolved_path(coverage_path.parent / raw_path)
+    if candidate is None:
+        return False
     return candidate.is_relative_to(roadmap) and os.path.isfile(candidate) and candidate.suffix.casefold() == ".md"
 
 

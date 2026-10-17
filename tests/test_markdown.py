@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import html
 import os
 import re
@@ -484,6 +485,7 @@ def test_resolved_path_follows_links_as_python_3_13_does(tmp_path: Path) -> None
     (root / "away").mkdir()
     (root / "here" / "sub").mkdir(parents=True)
     links = {"loop": "loop", "grow": "grow/more", "away": str(root / "away"), "sub/back": "../away"}
+    links |= {"sub/up": "../", "sub/dot": "./../.."}
     links |= {f"hop{n}": f"loop/../hop{n + 1}" for n in range(45)} | {"hop45": "away/file.tex"}
     links |= {f"chain{n}": f"chain{n + 1}" for n in range(1000)}
     try:
@@ -502,6 +504,48 @@ def test_resolved_path_follows_links_as_python_3_13_does(tmp_path: Path) -> None
     assert resolved("grow/x") == "here/grow/more/x"
     assert resolved("hop0") == "away/file.tex"
     assert resolved("chain0") == "here/chain1000"
+    # An empty part and `.` in a link's target, and a link met again once it is resolved.
+    assert resolved("sub/up/../file.tex") == "file.tex"
+    assert resolved("sub/dot/file.tex") == "file.tex"
+    assert resolved("sub/back/../here/sub/back/file.tex") == "away/file.tex"
+
+
+@pytest.mark.skipif(not hasattr(os, "lchmod"), reason="a symlink's own mode does not deny reading it here")
+def test_a_link_that_cannot_be_read_does_not_resolve(tmp_path: Path) -> None:
+    # macOS follows a link whose mode forbids reading it, so keeping it as
+    # written would hide where it leads.
+    root = tmp_path.resolve()
+    (root / "away").mkdir()
+    (root / "away" / "paper.md").write_text("# Paper\n", encoding="utf-8")
+    (root / "blueprint" / "roadmap").mkdir(parents=True)
+    locked = root / "blueprint" / "locked"
+    locked.symlink_to(root / "away")
+    os.lchmod(locked, 0)
+    try:
+        os.readlink(locked)
+    except OSError:
+        pass
+    else:
+        pytest.skip("the link can still be read")
+
+    assert resolved_path(locked / "paper.md") is None
+    issue = local_target_issue(root / "blueprint" / "roadmap" / "result.md", "../locked/paper.md", root / "blueprint", label="source")
+    assert issue == ("source-not-found", "source link does not resolve to a file: '../locked/paper.md'")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows resolves with os.path.realpath")
+def test_a_path_that_fails_to_resolve_does_not_resolve_to_a_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # As `ntpath.realpath` raises for a path over Windows' length limit.
+    (tmp_path / "paper.md").write_text("# Paper\n", encoding="utf-8")
+
+    def refuse(path: str) -> str:
+        raise OSError(errno.ENAMETOOLONG, os.strerror(errno.ENAMETOOLONG), path)
+
+    monkeypatch.setattr("autoform_cli.markdown._realpath_posix", refuse)
+
+    assert resolved_path(tmp_path / "paper.md") is None
+    issue = local_target_issue(tmp_path / "result.md", "paper.md", tmp_path, label="source")
+    assert issue == ("source-not-found", "source link does not resolve to a file: 'paper.md'")
 
 
 def test_a_statement_runs_from_the_title_to_the_first_h2() -> None:

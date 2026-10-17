@@ -30,7 +30,6 @@ import html
 import os
 import re
 import stat
-import sys
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -712,36 +711,40 @@ def _anchors_from_body(body: str) -> frozenset[str]:
     return frozenset(html.unescape(found) for found in _HEADING_ID.findall(rendered))
 
 
-def resolved_path(path: Path) -> Path:
-    """``path`` with its symbolic links resolved, as Python 3.13's `os.path.realpath` resolves them.
+def resolved_path(path: Path) -> Path | None:
+    """``path`` with its symbolic links resolved, or None if one cannot be read.
 
-    From 3.13, `realpath` keeps a symlink loop as written and resolves the
-    rest of the path past it. Before 3.13, `Path.resolve` raises on a loop,
-    and POSIX `realpath` recurses once per link and stops at a loop, applying
-    the rest of the path's `..` steps as written, so a link after the loop
-    could lead out of the blueprint unresolved. Those versions get 3.13's
-    algorithm from `_realpath_before_3_13`, so a link gets the same verdict on
-    every supported version; callers still check where it points and whether
-    it is a file. Windows `realpath` applies `..` as written on every version,
-    as Windows itself does.
+    On POSIX, `_realpath_posix` resolves it as Python 3.13's `os.path.realpath`
+    does, on every version: a symlink loop stays as written and the rest of the
+    path resolves past it. Before 3.13, `realpath` recurses once per link and
+    stops at a loop, applying the rest of the path's `..` steps as written, so
+    a link after the loop could lead out of the blueprint unresolved, and
+    `Path.resolve` raises when the path `realpath` returns still runs through a
+    loop. So a link gets the same verdict on every supported version; callers
+    still check where it points and whether it is a file. Windows `realpath`
+    applies `..` as written on every version, as Windows itself does.
     """
 
     try:
-        if os.name == "nt" or sys.version_info >= (3, 13):
+        if os.name == "nt":
             return Path(os.path.realpath(path))
-        return Path(_realpath_before_3_13(os.fspath(path)))
+        resolved = _realpath_posix(os.fspath(path))
     except (OSError, ValueError):
         # A NUL in the path, which callers check for first, or a path Windows
         # refuses to resolve, such as one over its length limit.
-        return Path(os.path.abspath(path))
+        return None
+    return None if resolved is None else Path(resolved)
 
 
-def _realpath_before_3_13(path: str) -> str:
-    """Python 3.13's POSIX `os.path.realpath`, which does not recurse or stop at a loop.
+def _realpath_posix(path: str) -> str | None:
+    """Python 3.13's POSIX `os.path.realpath`, or None at a link it cannot read.
 
     Each link is read once. A link met again before its target is resolved is
     a loop and stays as written; a later `..` leaves it again. A part that
-    cannot be read also stays as written, and the parts after it still resolve.
+    cannot be looked up, missing or under a loop, also stays as written, and
+    the parts after it still resolve. Unlike 3.13, a link that cannot be read
+    leaves the path unresolved: macOS follows a link whose mode forbids reading
+    it, so keeping that link as written would hide where it leads.
     """
 
     pending: list[str | None] = path.split("/")[::-1]
@@ -761,16 +764,19 @@ def _realpath_before_3_13(path: str) -> str:
             continue
         joined = os.path.join(resolved, name)
         try:
-            if not stat.S_ISLNK(os.lstat(joined).st_mode):
-                resolved = joined
-                continue
-            if joined in links:
-                resolved = links[joined] or joined
-                continue
-            target = os.readlink(joined)
+            is_link = stat.S_ISLNK(os.lstat(joined).st_mode)
         except OSError:
+            is_link = False
+        if not is_link:
             resolved = joined
             continue
+        if joined in links:
+            resolved = links[joined] or joined
+            continue
+        try:
+            target = os.readlink(joined)
+        except OSError:
+            return None
         if target.startswith("/"):
             resolved = "/"
         links[joined] = None
@@ -815,6 +821,8 @@ def local_target_issue(
             return f"{label}-escapes-blueprint", f"{label} link escapes the blueprint: {target!r}"
         candidate = source_path.parent / relative
     candidate = resolved_path(candidate)
+    if candidate is None:
+        return f"{label}-not-found", f"{label} link does not resolve to a file: {target!r}"
 
     boundary = boundary.resolve()
     if not _is_within(candidate, boundary):

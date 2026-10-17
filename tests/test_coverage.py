@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 import pytest
@@ -828,6 +829,29 @@ def test_a_roadmap_link_through_a_symlink_to_another_folder_is_not_a_roadmap_art
     assert [issue.reason for issue in issues] == [
         "DECOMPOSED coverage evidence has no link to an existing roadmap article"
     ]
+
+
+@pytest.mark.skipif(not hasattr(os, "lchmod"), reason="a symlink's own mode does not deny reading it here")
+def test_a_roadmap_link_through_a_link_that_cannot_be_read_is_not_a_roadmap_article(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    (blueprint / "sources").mkdir(parents=True)
+    (blueprint / "sources" / "note.md").write_text("# Note\n", encoding="utf-8")
+    (blueprint / "roadmap").mkdir()
+    alias = blueprint / "roadmap" / "alias.md"
+    alias.symlink_to("../sources/note.md")
+    os.lchmod(alias, 0)
+    try:
+        os.readlink(alias)
+    except OSError:
+        pass
+    else:
+        pytest.skip("the link can still be read")
+    _contract(blueprint, "| Aliased | DECOMPOSED | [Alias](../roadmap/alias.md) |\n")
+
+    summary, issues = load_coverage(blueprint)
+
+    assert summary is None
+    assert [issue.reason for issue in issues] == ["coverage link does not resolve to a file: '../roadmap/alias.md'"]
 
 
 def test_a_roadmap_link_to_a_file_that_is_not_markdown_is_not_a_roadmap_article(tmp_path: Path) -> None:
