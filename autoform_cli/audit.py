@@ -46,6 +46,7 @@ from .markdown import HEADING as _HEADING
 from .markdown import is_placeholder as _is_placeholder
 from .markdown import local_target_issue as _local_target_issue
 from .markdown import markdown_links as _markdown_links
+from .markdown import resolved_path as _resolved_path
 from .markdown import visible_prose as _visible_prose
 
 #: More siblings than this at one level is a table of contents, not a chapter.
@@ -149,8 +150,10 @@ def audit_blueprint(
     Semantic checks run only after :func:`load_graph` has produced a valid graph.
     """
 
-    blueprint = Path(blueprint_dir).expanduser().resolve()
-    if blueprint.is_dir():
+    given = Path(blueprint_dir).expanduser()
+    resolved = _resolved_path(given)
+    blueprint = resolved or given.absolute()
+    if resolved is not None and blueprint.is_dir():
         coverage, coverage_findings = _coverage_findings(blueprint)
     else:
         coverage, coverage_findings = None, []
@@ -685,8 +688,7 @@ def _size_findings(graph: Graph, sizes: dict[str, int]) -> list[AuditFinding]:
 
 
 def _stable_validation_reason(blueprint: Path, issue: str) -> str:
-    blueprint_text = str(blueprint.resolve())
-    return issue.replace(blueprint_text, ".")
+    return issue.replace(str(blueprint), ".")
 
 
 def _validation_article_path(blueprint: Path, issue: str) -> str:

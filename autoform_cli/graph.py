@@ -146,8 +146,8 @@ class _NodeSource:
 def load_graph(blueprint_dir: str | Path) -> Graph:
     """Load and validate Markdown nodes beneath *blueprint_dir*."""
 
-    # As every link in it is resolved, so a link above it that cannot be read
-    # fails here once instead of failing every link.
+    # Resolved as its links are, so a blueprint behind a link that cannot be read
+    # fails once here rather than at every link.
     blueprint = resolved_path(Path(blueprint_dir).expanduser())
     if blueprint is None:
         raise GraphValidationError([f"blueprint directory cannot be resolved: {blueprint_dir}"])
@@ -687,7 +687,7 @@ def _resolve_target(
 
     resolved = resolved_path(node.path.parent / relative)
     if resolved is None:
-        return None, f"{node.id}: dependency target does not exist: {target!r}"
+        return None, f"{node.id}: dependency target cannot be resolved: {target!r}"
     if not _is_within(resolved, blueprint):
         return None, f"{node.id}: dependency target escapes the blueprint directory: {target!r}"
     # Before Python 3.14, `Path.is_file` raises under an unreadable directory.

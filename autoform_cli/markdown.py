@@ -718,19 +718,13 @@ _MAX_LINKS = 4096
 
 
 def resolved_path(path: Path) -> Path | None:
-    """``path`` with its symbolic links resolved, or None if that fails or a link cannot be read.
+    """``path`` with its symbolic links resolved, or None when a link cannot be read or resolving fails.
 
-    On POSIX, `_realpath_posix` resolves it as Python 3.13's `os.path.realpath`
-    does, on every version: a symlink loop stays as written and the rest of the
-    path resolves past it. Before 3.13, `realpath` recurses once per link and
-    stops at a loop, applying the rest of the path's `..` steps as written, so
-    a link after the loop could lead out of the blueprint unresolved, and
-    `Path.resolve` raises when the path `realpath` returns still runs through a
-    loop. From 3.13 it runs too, because `realpath` keeps a link it cannot read
-    as written, so a target outside the blueprint would look inside. So a link
-    gets the same verdict on every supported version; callers still check where
-    it points and whether it is a file. Windows `realpath` applies `..` as
-    written on every version, as Windows itself does.
+    On POSIX this runs `_realpath_posix` on every Python, so a link gets one
+    verdict everywhere; see it for how it differs from 3.13's `os.path.realpath`;
+    earlier versions stop at a symlink loop. On Windows it is `os.path.realpath`,
+    which applies `..` as written, as Windows does. Callers still check where the
+    result points and whether it is a file.
     """
 
     try:
@@ -738,9 +732,8 @@ def resolved_path(path: Path) -> Path | None:
             return Path(os.path.realpath(path))
         resolved = _realpath_posix(os.fspath(path))
     except (OSError, ValueError):
-        # A NUL in the path, which callers check for first, `os.getcwd` failing
-        # for a relative path, or a path Windows refuses to resolve, such as one
-        # over its length limit.
+        # A NUL in the path, `os.getcwd` failing for a relative path, or a path
+        # Windows refuses to resolve, such as one over its length limit.
         return None
     return None if resolved is None else Path(resolved)
 

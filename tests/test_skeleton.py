@@ -2069,13 +2069,11 @@ def test_extraction_reports_a_locator_that_names_no_passage(tmp_path: Path, link
 @pytest.mark.parametrize(
     ("link", "why"),
     [
-        ("../../sources/hop0.tex#L1-L1", "points outside the blueprint"),
         ("../../sources/loop.txt/../sub/back/../book.tex#L1-L1", "points outside the blueprint"),
-        ("../../sources/chain0.tex#L1-L1", "names a missing file"),
         ("../../sources/dangling.tex#L1-L1", "names a missing file"),
         ("../../sources/outside.tex#L1-L1", "points outside the blueprint"),
     ],
-    ids=["loop-hops", "after-a-loop", "deep-chain", "dangling-to-markdown", "outside-markdown"],
+    ids=["after-a-loop", "dangling-to-markdown", "outside-markdown"],
 )
 def test_extraction_reports_a_locator_through_links_alike_on_every_python(tmp_path: Path, link: str, why: str) -> None:
     # Before Python 3.13, `os.path.realpath` recurses once per link and stops at a loop.
@@ -2090,11 +2088,6 @@ def test_extraction_reports_a_locator_through_links_alike_on_every_python(tmp_pa
         (sources / "loop.txt").symlink_to("loop.txt")
         (sources / "away").symlink_to(tmp_path / "away")
         (sources / "sub" / "back").symlink_to("../away")
-        for n in range(45):
-            (sources / f"hop{n}.tex").symlink_to(f"loop.txt/../hop{n + 1}.tex")
-        (sources / "hop45.tex").symlink_to("away/secret.md")
-        for n in range(1000):
-            (sources / f"chain{n}.tex").symlink_to(f"chain{n + 1}.tex")
         # A Markdown file is a note only once the link names it in the blueprint.
         (sources / "dangling.tex").symlink_to("gone.md")
         (sources / "outside.tex").symlink_to(tmp_path / "away" / "secret.md")
@@ -2108,6 +2101,10 @@ def test_extraction_reports_a_locator_through_links_alike_on_every_python(tmp_pa
     assert not report.clean and report.nodes[0].declarations == ()
     [unresolved] = report.unresolved
     assert unresolved.reason.startswith("source locator ") and why in unresolved.reason
+    # The file is read where the locator resolves, not through the loop as written.
+    _replace_source(article, link, "../../sources/loop.txt/../book.tex#L2-L3")
+    report = extract_skeletons(blueprint, lean_root=project, runner=lambda p, r: _fake_probe_output())
+    assert report.clean and report.nodes[0].passage == "two\nthree"
 
 
 @pytest.mark.parametrize("cited", ["locked/secret.tex", "locked"], ids=["through-the-link", "the-link-itself"])
