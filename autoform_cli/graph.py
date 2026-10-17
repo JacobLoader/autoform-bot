@@ -302,10 +302,9 @@ def atlas_omissions(graph: Graph) -> list[str]:
 def _atlas_assignments(blueprint: Path, nodes: dict[str, Node]) -> tuple[dict[str, str], list[str]]:
     """Read the optional authored taxonomy: the areas it assigns, and what it leaves out.
 
-    The file only places articles in the explorer's regions, so nothing in it
-    stops a command. An article's own ``area:`` wins, the first area listing a
-    node wins, and a file that is not readable ``autoform-atlas/v1`` JSON is
-    ignored whole.
+    The file only assigns areas, so nothing in it stops a command. An article's
+    own ``area:`` wins, the first area listing a node wins, and a file that is
+    not readable ``autoform-atlas/v1`` JSON is ignored whole.
     """
     path = blueprint / "atlas.json"
     try:

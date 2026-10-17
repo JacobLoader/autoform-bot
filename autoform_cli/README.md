@@ -34,7 +34,6 @@ Frontmatter records checked facts:
 ```markdown
 ---
 article_id: af_5b0e4d3c2a1f09e8d7c6b5a4
-area: Analysis & Probability
 declaration: theorem
 origin: cited
 statement: formalized
@@ -104,11 +103,11 @@ target, `bridged` for a result introduced between source targets, and
 Frontmatter is optional. A container article that only supplies prose and
 placement needs none at all; only checked facts are recorded.
 
-The optional `area` field assigns a container to an authored mathematical
-region in the knowledge atlas. Use mathematical areas such as `Foundations` or
-`Geometry & Topology`, never repository or workflow buckets such as
-`MathlibExt` or `catalog-01`. Autoform does not guess areas from paths, imports,
-or titles.
+The optional `area` field places a container in an authored mathematical
+region of its parent's explorer map; on a leaf it only labels the article. Use
+mathematical areas such as `Foundations` or `Geometry & Topology`, never
+repository or workflow buckets such as `MathlibExt` or `catalog-01`. Autoform
+does not guess areas from paths, imports, or titles.
 
 For a taxonomy maintained separately from article files, `blueprint/atlas.json`
 may assign the same areas without moving pages:
@@ -119,7 +118,7 @@ may assign the same areas without moving pages:
 
 Every listed value is a roadmap node id. A node takes the first area that
 lists it, and an `area:` authored on the node wins over the file. The file only
-places articles in regions, so it never stops a command: `check` and `render`
+assigns areas, so it never stops a command: `check` and `render`
 warn about each entry they ignore, or about the whole file when it is not
 readable `autoform-atlas/v1` JSON, and `audit` reports each as an
 `atlas-omission` [warning](#warnings). An older `AUTOFORM_REF` ignores the file.
