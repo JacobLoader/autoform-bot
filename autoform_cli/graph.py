@@ -352,8 +352,8 @@ def catalogs_without_ledger(graph: Graph) -> list[str]:
     """Name each module catalog with no ``## Sources`` link into ``blueprint/sources/``.
 
     The catalog contract asks for a declaration ledger there. A link that points
-    there at no file is a dead source link, which check and audit report for
-    every article, so this reads the links alone and touches no file.
+    there at no file, or at a hidden path, is a source link that check and audit
+    report for every article, so this reads the links alone and touches no file.
     """
     sources = graph.blueprint_dir / "sources"
     return [
