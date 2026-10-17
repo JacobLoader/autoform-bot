@@ -19,6 +19,7 @@ from . import dag_viewer, mermaid
 from .graph import Graph
 from .graph_views import (
     INVENTORY_STATUSES,
+    ROOT_GROUP_TITLE,
     GraphView,
     chapter_view,
     full_view,
@@ -81,12 +82,7 @@ def write_graph_pages(
                 destination, node.id, search_index, parent=graph.nodes[node.id].parent
             )
             continue
-        target = (
-            chapter_pages["roadmap"]
-            if node.id == "roadmap" and "roadmap" in chapter_pages
-            else scope_pages[node.id]
-        )
-        context_links[node.id] = _published_link(target, search_index)
+        context_links[node.id] = _published_link(scope_pages[node.id], search_index)
     dag_viewer.write_search_index(search_index, complete, context_links=context_links)
 
     project = project_view(graph, statuses)
@@ -162,7 +158,7 @@ def write_graph_pages(
                 book=_published_link(book_page, chapter_page),
                 statuses=_selected_statuses(graph, statuses, view, containers),
                 links=links,
-                heading=_dependency_heading(view),
+                heading=_dependency_heading(view, ROOT_GROUP_TITLE if group in {"", "roadmap"} else None),
                 lead=(
                     f"This map covers {item_count} item{'s' if item_count != 1 else ''} in this chapter. "
                     "Collapsed chapter nodes stand for external prerequisites or dependents."
@@ -373,10 +369,13 @@ def _view_inventories(view: GraphView) -> dict[str, int]:
     return counts
 
 
-def _dependency_heading(view: GraphView) -> str:
-    """Name a projected explorer view without carrying over Mermaid-era copy."""
-    subject = view.title.removesuffix(" dependency map")
-    return f"{subject} {'dependencies' if view.edges else 'knowledge map'}"
+def _dependency_heading(view: GraphView, subject: str | None = None) -> str:
+    """Name an explorer page for *subject*, by default the view's scope, and for what it draws.
+
+    The views keep their Mermaid-era "<scope> dependency map" titles, so that suffix goes.
+    """
+    subject = subject or view.title.removesuffix(" dependency map")
+    return f"{subject} {'knowledge map' if dag_viewer.uses_atlas(view) else 'dependencies'}"
 
 
 def _article_link_ids(view: GraphView) -> tuple[str, ...]:
@@ -442,7 +441,7 @@ def _scope_breadcrumbs(
         items.append((label, _published_link(target, page) if target and target != page else None))
     if not lineage:
         # The crumb before already carries the roadmap's title.
-        items.append(("Top level", None))
+        items.append((ROOT_GROUP_TITLE, None))
     return tuple(items)
 
 

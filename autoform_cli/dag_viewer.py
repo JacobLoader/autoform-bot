@@ -38,7 +38,7 @@ _ROW_GAP = 24
 
 def _positions(view: GraphView) -> dict[str, dict[str, int]]:
     """Return stable, bounded-row coordinates without a browser force layout."""
-    if _uses_atlas(view):
+    if uses_atlas(view):
         return _atlas_positions(view)
     all_node_ids = [node.id for node in view.nodes]
     known = set(all_node_ids)
@@ -150,7 +150,7 @@ def _positions(view: GraphView) -> dict[str, dict[str, int]]:
     return result
 
 
-def _uses_atlas(view: GraphView) -> bool:
+def uses_atlas(view: GraphView) -> bool:
     """Draw topic bubbles in regions only when every node is a topic.
 
     A leaf needs a readable card, so a view holding any leaf, such as a
@@ -348,7 +348,7 @@ def write_payload(
         "nodes": nodes,
         "palette": _palette(),
         "present_statuses": ordered_statuses,
-        "regions": _atlas_regions(view, positions) if _uses_atlas(view) else [],
+        "regions": _atlas_regions(view, positions) if uses_atlas(view) else [],
         "schema": SCHEMA,
         "title": view.title,
         "view": {
@@ -358,7 +358,7 @@ def write_payload(
             ],
             "book": book,
             "kind": view.kind,
-            "presentation": "atlas" if _uses_atlas(view) else "dag",
+            "presentation": "atlas" if uses_atlas(view) else "dag",
             "summary": view.summary,
         },
     }
@@ -1652,6 +1652,7 @@ __all__ = [
     "SCRIPT_PATH",
     "SEARCH_SCHEMA",
     "render_container",
+    "uses_atlas",
     "viewer_script",
     "write_payload",
     "write_search_index",

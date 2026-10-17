@@ -272,6 +272,17 @@ def test_a_view_of_topics_and_leaves_is_a_dag_not_an_atlas(tmp_path: Path) -> No
     assert {node["layout"]["width"] for node in payload["nodes"]} == {196}
 
 
+def test_an_explorer_page_is_named_for_how_the_explorer_draws_it() -> None:
+    """The heading followed the edges, so an edgeless chapter of results was a "knowledge map" drawn as cards."""
+    results = GraphView("chapter", "Results dependency map", (ViewNode("a", "A", "node", ("a",), (("planned", 1),)),), ())
+    topics = tuple(ViewNode(f"scope:{name}", name, "scope", (), (("planned", 1),), area="Algebra") for name in "xy")
+    atlas = GraphView("chapter", "Topics dependency map", topics, (ViewEdge("scope:x", "scope:y", statement_count=1),))
+
+    assert graph_pages._dependency_heading(results) == "Results dependencies"
+    assert graph_pages._dependency_heading(atlas) == "Topics knowledge map"
+    assert graph_pages._dependency_heading(results, "Top level") == "Top level dependencies"
+
+
 def test_explorer_marks_isolates_but_keeps_them_in_the_complete_inventory(tmp_path: Path) -> None:
     nodes = tuple(
         ViewNode(

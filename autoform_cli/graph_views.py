@@ -25,6 +25,8 @@ _ScopedRelation = tuple[str, str, bool, str | None, str | None]
 
 _H1 = re.compile(r"^ {0,3}#[ \t]+(.+?)[ \t]*#*[ \t]*$")
 INVENTORY_STATUSES = tuple(state.key for state in INVENTORY_STATES)
+#: What the project's views call the root's own articles, since the root's title names the whole project.
+ROOT_GROUP_TITLE = "Top level"
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +135,7 @@ def project_view(graph: Graph, statuses: dict[str, NodeStatus]) -> GraphView:
             graph,
             statuses,
             _scope_node_id(group),
-            group_title(graph, group),
+            ROOT_GROUP_TITLE if group in {"", "roadmap"} else group_title(graph, group),
             grouped.get(group, ()),
             summary=graph.nodes[group].summary if group in graph.nodes else None,
             area=graph.nodes[group].area if group in graph.nodes else None,
