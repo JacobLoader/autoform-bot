@@ -51,6 +51,17 @@ uv run autoform-lean-runtime stop
 `stop` is graceful: it waits for admitted tool calls and Lean children to
 finish shutting down before a subsequent `start` can replace the runtime.
 
+Closing a project's Lean server first lets Lean stop its file workers, then
+terminates the server's process group. Each server starts with a random token
+in its environment, which its file workers and their `lake setup-file` and
+`lean` builds inherit; every process that carries it is terminated next,
+including workers orphaned when the server died first and any daemon one of
+them started, and the close is retried until none is left. A process whose
+environment the runtime cannot read is never signalled and does not hold up the
+close, since nothing shows that it belongs to the server, and a process started
+without the token, for example by a program that clears its children's
+environment, is not found.
+
 `lean_diagnostic_messages` runs `lake --no-build lean` once per call and waits
 until Lean exits. When `LEAN_LSP_CMD` ends in `serve`, that command runs with
 `--no-build lean` in place of `serve`; otherwise the `lake` on `PATH` runs.
