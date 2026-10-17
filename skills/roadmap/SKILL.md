@@ -51,10 +51,9 @@ choosing one would discard accepted work.
 
 ## Inventory existing project mathematics
 
-When the adopted boundary is a repository-wide catalog, library, global wiki,
-or other existing codebase, project-owned Lean is a primary mathematical
-source rather than implementation prior art to omit. Before planning future
-work:
+When the adopted boundary is a repository-wide library, global wiki, or other
+existing codebase, project-owned Lean is a primary mathematical source rather
+than implementation prior art to omit. Before planning future work:
 
 - inventory every in-scope tracked module and public mathematical declaration,
   plus declaration-like wishlist or conjecture entries and adopted planning
@@ -73,10 +72,10 @@ does not make an area `DECOMPOSED`.
 
 A future-work slice cannot stand in for a repository-wide inventory. Keep
 existing, wishlist, conjectural, and planned mathematics in the same book and
-DAG. `DECOMPOSED` means represented by roadmap articles, not unfinished, so it
-may describe mathematics whose Lean implementation is already complete. A
-checked local declaration is valid grounding for repository documentation; do
-not invent an external citation or historical-source claim.
+DAG. `DECOMPOSED` means represented by declaration articles, not unfinished,
+so it may describe mathematics whose Lean implementation is already complete.
+A checked local declaration is valid grounding for repository documentation;
+do not invent an external citation or historical-source claim.
 
 ## Ground and decompose
 
@@ -194,15 +193,6 @@ the user's request and only once CI meets the
 Turn it back off only once no open statement remains: the strict audit rejects
 every `sorry`, and strict status shows a proof resting on one as proved.
 
-Use `catalog: module` only as a source inventory for one existing Lean module,
-with an exact declaration ledger and explicit private/supporting exclusions.
-It may accompany exposition, but names, signatures, status tables, and imports
-do not replace reader-facing mathematical prose. A catalog leaf omits
-`declaration` and is never dispatchable proof work. When the project's CI pins
-an `AUTOFORM_REF` older than catalogs, its `autoform check` rejects `catalog:`
-and `area:`, and its `render` rejects `INVENTORIED`: move the pin, or report
-it, before adding catalogs, areas, or `INVENTORIED` rows.
-
 Assert `statement: formalized`, `proof: formalized`, or `mathlib: true` only
 after exact verification. For declaration leaves, record exact compiled names
 in `lean`. Definitions, structures, classes, instances, and inductives have no
@@ -213,6 +203,14 @@ formalized proof; a definition of a conjecture proposition formalizes its
 statement representation, not the conjecture. Set `mathlib: true` only for an
 exact verified upstream result. Hand deeper trust and axiom review to Agent
 Review.
+
+Use `catalog: module` only as a source inventory for one existing Lean module.
+It may accompany exposition, but names, signatures, status tables, and imports
+do not replace reader-facing mathematical prose. A catalog leaf omits
+`declaration` and is never dispatchable proof work. When the project's CI pins
+an `AUTOFORM_REF` older than catalogs, its `autoform check` rejects `catalog:`
+and `area:`, and its `render` rejects `INVENTORIED`: move the pin, or report
+it, before adding catalogs, areas, or `INVENTORIED` rows.
 
 For a `catalog: module` leaf, assertion keys describe the whole tracked module:
 set `statement: formalized` only when all inventoried public declarations

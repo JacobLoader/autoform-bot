@@ -1556,7 +1556,7 @@ def test_roadmap_retracts_against_the_branch_formalize_works_from(repo_root: Pat
 
 
 def test_roadmap_repository_scope_inventories_existing_lean(repo_root: Path) -> None:
-    """A global blueprint is a catalog, not merely a future-work backlog.
+    """A global blueprint is an inventory, not merely a future-work backlog.
 
     A consumer asked for one wiki covering all mathematics in an established
     Lean repository. The old workflow treated local implementations as prior
@@ -1575,7 +1575,7 @@ def test_roadmap_repository_scope_inventories_existing_lean(repo_root: Path) -> 
     ).read_text(encoding="utf-8")
 
     for required in (
-        "repository-wide catalog",
+        "repository-wide library, global wiki, or other existing codebase",
         "project-owned Lean is a primary mathematical source",
         "inventory every in-scope tracked module and public mathematical declaration",
         "future-work slice cannot stand in for a repository-wide inventory",
@@ -1583,7 +1583,7 @@ def test_roadmap_repository_scope_inventories_existing_lean(repo_root: Path) -> 
         "Work from exact source passages. When the boundary includes existing Lean",
         "never replace the adopted source",
         "a repository inventory also needs every in-scope declaration reconciled",
-        "`DECOMPOSED` means represented by roadmap articles, not unfinished",
+        "`DECOMPOSED` means represented by declaration articles, not unfinished",
         "record exact compiled names in `lean`",
         "`proof: formalized` for a theorem or lemma only after checking that its proof is complete",
         "An axiom or wanted placeholder does not justify a formalized proof",
