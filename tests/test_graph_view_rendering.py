@@ -23,13 +23,13 @@ def test_full_view_payload_is_deterministic_layout_ready_and_data_only(tmp_path:
             summary="A reader-facing mathematical summary." if index == 0 else None,
             lean="Project.node" if index == 0 else None,
         )
-        for index in range(170)
+        for index in range(dag_viewer.MAX_MAP_NODES)
     )
     view = GraphView(
         kind="full",
         title="Full graph",
         nodes=nodes,
-        edges=tuple(ViewEdge(nodes[index].id, nodes[index + 1].id, statement_count=1) for index in range(169)),
+        edges=tuple(ViewEdge(source.id, target.id, statement_count=1) for source, target in zip(nodes, nodes[1:])),
     )
     outputs = [tmp_path / "one.json", tmp_path / "two.json"]
     for output in outputs:
@@ -51,8 +51,8 @@ def test_full_view_payload_is_deterministic_layout_ready_and_data_only(tmp_path:
         "view",
     }
     assert set(payload["nodes"][0]["layout"]) == {"column", "height", "row", "width", "x", "y"}
-    assert len(payload["nodes"]) == 170
-    assert payload["edge_count"] == 169
+    assert len(payload["nodes"]) == dag_viewer.MAX_MAP_NODES
+    assert payload["edge_count"] == dag_viewer.MAX_MAP_NODES - 1
     assert payload["view"] == {
         "book": None,
         "breadcrumbs": [],
@@ -72,7 +72,6 @@ def test_full_view_payload_is_deterministic_layout_ready_and_data_only(tmp_path:
     assert payload["nodes"][0]["isolated"] is False
     assert payload["palette"]["inventory_checked"]["label"] == "inventory checked"
     assert payload["palette"]["inventory_checked"]["neutral"] is True
-    assert max(node["layout"]["row"] for node in payload["nodes"]) < dag_viewer.MAX_LAYOUT_ROWS
     assert max(node["layout"]["column"] for node in payload["nodes"]) > 0
     positions = {(node["layout"]["x"], node["layout"]["y"]) for node in payload["nodes"]}
     assert len(positions) == len(nodes)
@@ -87,6 +86,27 @@ def test_full_view_payload_is_deterministic_layout_ready_and_data_only(tmp_path:
     assert "requestAnimationFrame" in script
     assert 'statusCounts.has("inventory_pending")' in script
     assert '"Inventory statuses are neutral:' in script
+
+
+def test_a_view_too_large_for_the_map_gets_no_layout(tmp_path: Path) -> None:
+    """The explorer only browses a view above its map limit, yet each node carried a layout it never drew."""
+    nodes = tuple(
+        ViewNode(f"n{index}", f"N{index}", "node", (f"n{index}",), (("planned", 1),))
+        for index in range(dag_viewer.MAX_MAP_NODES + 1)
+    )
+    output = tmp_path / "large.json"
+    dag_viewer.write_payload(output, GraphView(kind="chapter", title="Large", nodes=nodes, edges=()), links={})
+
+    assert not any("layout" in node for node in json.loads(output.read_text(encoding="utf-8"))["nodes"])
+    # The runtime draws a map up to the same limit.
+    assert f"MAX_MAP_NODES = {dag_viewer.MAX_MAP_NODES}," in dag_viewer.viewer_script()
+    # An atlas that large keeps its overview's count of topics in each region.
+    topics = tuple(
+        ViewNode(node.id, node.title, "scope", node.members, node.status_counts, area="Algebra") for node in nodes
+    )
+    dag_viewer.write_payload(output, GraphView(kind="project", title="Large", nodes=topics, edges=()), links={})
+    regions = json.loads(output.read_text(encoding="utf-8"))["regions"]
+    assert regions == [{"count": dag_viewer.MAX_MAP_NODES + 1, "label": "Algebra"}]
 
 
 def test_each_inventory_has_a_neutral_colour_of_its_own(tmp_path: Path) -> None:
@@ -180,7 +200,7 @@ def test_a_catalog_carries_a_few_lean_names_and_counts_the_rest(tmp_path: Path) 
 
 
 def test_isolated_inventory_does_not_spread_the_connected_dag(tmp_path: Path) -> None:
-    node_ids = ["root", "result", *(f"isolated-{index}" for index in range(1_000))]
+    node_ids = ["root", "result", *(f"isolated-{index}" for index in range(100))]
     nodes = tuple(
         ViewNode(
             id=node_id,

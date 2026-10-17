@@ -24,7 +24,8 @@ SCHEMA = "autoform-dag-view/v2"
 SEARCH_SCHEMA = "autoform-dag-search/v1"
 #: Where the site publishes the viewer, relative to its root.
 SCRIPT_PATH = "javascripts/blueprint-dag.js"
-MAX_LAYOUT_ROWS = 160
+#: The most nodes the explorer draws as a map; it only browses a larger view, which gets no layout.
+MAX_MAP_NODES = 120
 
 _PALETTE_KEYS = frozenset(state.key for state in (*STATES, *INVENTORY_STATES))
 #: A catalog lists its keyword-declared public names; its explorer node and its Lean row
@@ -37,7 +38,7 @@ _ROW_GAP = 24
 
 
 def _positions(view: GraphView) -> dict[str, dict[str, int]]:
-    """Return stable, bounded-row coordinates without a browser force layout."""
+    """Return stable coordinates without a browser force layout."""
     if uses_atlas(view):
         return _atlas_positions(view)
     all_node_ids = [node.id for node in view.nodes]
@@ -51,10 +52,9 @@ def _positions(view: GraphView) -> dict[str, dict[str, int]]:
         if edge.source in known and edge.target in known and edge.source != edge.target:
             connected.update((edge.source, edge.target))
 
-    # Isolates are searchable inventory, not visible dependency topology by
-    # default. Lay out the connected graph without reserving thousands of
-    # blank columns, then park isolates in a separate stable grid that appears
-    # only when the reader asks for it.
+    # Isolates are inventory, not dependency topology. Rank only the connected
+    # graph, then park the isolates in a separate stable grid beside it, which
+    # the reader can hide.
     node_ids = [node_id for node_id in all_node_ids if node_id in connected]
     order_index = {node_id: index for index, node_id in enumerate(node_ids)}
     outgoing: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
@@ -109,17 +109,9 @@ def _positions(view: GraphView) -> dict[str, dict[str, int]]:
         for slot, node_id in enumerate(candidates):
             prior_slots[node_id] = slot
 
-    column_bases: dict[int, int] = {}
-    next_column = 0
-    for rank in sorted(by_rank):
-        column_bases[rank] = next_column
-        next_column += max(1, (len(by_rank[rank]) + MAX_LAYOUT_ROWS - 1) // MAX_LAYOUT_ROWS)
-
     result: dict[str, dict[str, int]] = {}
-    for rank in sorted(by_rank):
-        for slot, node_id in enumerate(by_rank[rank]):
-            column = column_bases[rank] + slot // MAX_LAYOUT_ROWS
-            row = slot % MAX_LAYOUT_ROWS
+    for column, rank in enumerate(sorted(by_rank)):
+        for row, node_id in enumerate(by_rank[rank]):
             result[node_id] = {
                 "column": column,
                 "height": _NODE_HEIGHT,
@@ -131,9 +123,8 @@ def _positions(view: GraphView) -> dict[str, dict[str, int]]:
 
     isolated = [node_id for node_id in all_node_ids if node_id not in connected]
     isolate_base = max((position["column"] for position in result.values()), default=-2) + 2
-    # A single 160-row column made a project of 30 chapters fit as unreadable
-    # specks.  Balance inventory-only siblings for a widescreen reading surface;
-    # dependency-connected nodes keep their ranked DAG positions above.
+    # One tall column of isolates made a project of 30 chapters fit as
+    # unreadable specks, so they fill a widescreen grid beside the ranked DAG.
     cell_aspect = (_NODE_HEIGHT + _ROW_GAP) / (_NODE_WIDTH + _COLUMN_GAP)
     isolate_columns = max(1, math.ceil(math.sqrt(len(isolated) * cell_aspect * (16 / 9))))
     for slot, node_id in enumerate(isolated):
@@ -235,20 +226,16 @@ def _atlas_regions(view: GraphView, positions: Mapping[str, Mapping[str, int]]) 
     areas = sorted({node.area for node in view.nodes if node.area}, key=lambda area: (area.casefold(), area))
     for area in areas:
         members = [node for node in view.nodes if node.area == area]
+        region: dict[str, object] = {"count": len(members), "label": area}
+        regions.append(region)
+        # A view too large for the map has no layout, but its overview still counts each region.
+        if not positions:
+            continue
         min_x = min(positions[node.id]["x"] for node in members)
         min_y = min(positions[node.id]["y"] for node in members) - 34
         max_x = max(positions[node.id]["x"] + positions[node.id]["width"] for node in members)
         max_y = max(positions[node.id]["y"] + positions[node.id]["height"] for node in members)
-        regions.append(
-            {
-                "count": len(members),
-                "height": max_y - min_y + 24,
-                "label": area,
-                "width": max_x - min_x + 24,
-                "x": min_x - 12,
-                "y": min_y - 12,
-            }
-        )
+        region.update(height=max_y - min_y + 24, width=max_x - min_x + 24, x=min_x - 12, y=min_y - 12)
     return regions
 
 
@@ -298,7 +285,7 @@ def write_payload(
 
     *book* links a chapter's explorer to the chapter's textbook page.
     """
-    positions = _positions(view)
+    positions = _positions(view) if len(view.nodes) <= MAX_MAP_NODES else {}
     degrees: dict[str, int] = {node.id: 0 for node in view.nodes}
     for edge in view.edges:
         if edge.source in degrees and edge.target in degrees:
@@ -318,7 +305,7 @@ def write_payload(
             "internal_dependency_count": node.internal_dependency_count,
             "isolated": degrees[node.id] == 0,
             "kind": node.kind,
-            "layout": positions[node.id],
+            **({"layout": positions[node.id]} if positions else {}),
             "lean": node.lean,
             # The items the status counts add up to, so a scope's
             # "N items" header agrees with the rows beneath it.
@@ -1649,7 +1636,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
 
 
 __all__ = [
-    "MAX_LAYOUT_ROWS",
+    "MAX_MAP_NODES",
     "SCHEMA",
     "SCRIPT_PATH",
     "SEARCH_SCHEMA",
