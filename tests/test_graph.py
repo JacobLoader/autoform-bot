@@ -144,9 +144,7 @@ def test_summary_clips_a_long_paragraph_at_a_word(tmp_path: Path) -> None:
 
     summary = load_graph(blueprint).nodes["topic"].summary
 
-    assert summary is not None and len(summary) <= 420
-    assert summary.endswith("…")
-    assert words.startswith(summary.removesuffix("…") + " ")
+    assert summary == " ".join(f"word{index}" for index in range(61)) + "…"
 
 
 def test_authored_atlas_manifest_groups_nodes_independently_of_paths(tmp_path: Path) -> None:
