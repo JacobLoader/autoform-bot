@@ -1159,7 +1159,7 @@ def test_audit_measures_an_alias_by_its_target_s_span(tmp_path: Path) -> None:
 
 
 def test_a_source_span_does_not_depend_on_the_names_a_filter_admits(tmp_path: Path) -> None:
-    # X.foo bounds X.bar in B.lean even when A.lean, whose X.foo the index keeps, is also read.
+    # B.lean's X.foo bounds X.bar even when A.lean, which also declares X.foo, is read too.
     root = tmp_path / "lean"
     root.mkdir()
     (root / "A.lean").write_text("theorem X.foo : True := trivial\ntheorem A.other : True := trivial\n", encoding="utf-8")
@@ -1170,13 +1170,14 @@ def test_a_source_span_does_not_depend_on_the_names_a_filter_admits(tmp_path: Pa
     )
 
     for names in (("X.bar",), ("X.bar", "A.other"), None):
-        assert audit_module._source_spans(index_project(root, names=names))["X.bar"] == 9, names
+        index = index_project(root, names=names)
+        assert audit_module._source_spans(index)[index.find("X.bar")] == 9, names
 
 
 def test_an_alias_s_limits_do_not_depend_on_the_names_other_articles_request(tmp_path: Path) -> None:
-    # Unfiltered, the index keeps A.lean's `N.aux` and cannot place B.lean's
-    # alias, so it reads no limit for it; an article naming `N.helper` must
-    # not change that.
+    # B.lean declares its `N.aux` only after the alias and A.lean declares one
+    # too, so the index cannot place the alias and reads no limit for it; an
+    # article naming `N.helper` must not change that.
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)
     _article(blueprint, "good.md", declaration="theorem", statement="formalized", proof="formalized", lean="N.good")
@@ -1187,7 +1188,8 @@ def test_an_alias_s_limits_do_not_depend_on_the_names_other_articles_request(tmp
         encoding="utf-8",
     )
     (lean_root / "B.lean").write_text(
-        "namespace N\nset_option maxHeartbeats 0 in\nprivate theorem aux : True := trivial\nalias good := aux\nend N\n",
+        "set_option maxHeartbeats 0 in\ntheorem aux : True := trivial\n"
+        "namespace N\nalias good := aux\nprivate theorem aux : True := trivial\nend N\n",
         encoding="utf-8",
     )
 

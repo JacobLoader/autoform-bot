@@ -3450,14 +3450,16 @@ def test_an_alias_is_followed_only_to_an_earlier_declaration_of_its_file(tmp_pat
 
 
 def test_a_name_filter_resolves_an_alias_as_the_unfiltered_index_does(tmp_path: Path) -> None:
-    # The unfiltered index keeps A.lean's `N.aux`, so B.lean's alias has no sure
-    # target, whether or not a request also names A.lean's `N.helper`.
+    # B.lean declares its `N.aux` only after the alias and A.lean declares one
+    # too, so the alias has no sure target, whether or not a request also
+    # names A.lean's `N.helper`.
     (tmp_path / "A.lean").write_text(
         "namespace N\nprivate theorem aux : True := trivial\ntheorem helper : True := trivial\nend N\n",
         encoding="utf-8",
     )
     (tmp_path / "B.lean").write_text(
-        "namespace N\nprivate theorem aux : True := trivial\nalias good := aux\nend N\n", encoding="utf-8"
+        "theorem aux : True := trivial\nnamespace N\nalias good := aux\nprivate theorem aux : True := trivial\nend N\n",
+        encoding="utf-8",
     )
 
     for names in (None, ("N.good",), ("N.good", "N.helper")):
