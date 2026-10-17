@@ -271,7 +271,7 @@ def test_rejects_cycle(tmp_path: Path) -> None:
         load_graph(blueprint)
 
 
-def test_keeps_acyclic_edges_that_form_a_cycle_only_after_chapter_contraction(tmp_path: Path) -> None:
+def test_accepts_cycle_created_only_by_chapter_contraction(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _roadmap_page(blueprint, "a/README.md", "# A\n")
     _roadmap_page(blueprint, "b/README.md", "# B\n")
