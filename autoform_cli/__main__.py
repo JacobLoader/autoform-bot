@@ -49,7 +49,6 @@ from .skeleton import (
     write_packets,
     write_skeleton_report,
 )
-from .unused_hypotheses import find_unused_hypotheses, format_unused_hypotheses
 from .work import WORK_SCHEMA, WorkError, assumption_contract, list_ready_work, work_context
 
 
@@ -397,33 +396,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         "the Lake freshness check before it has its own budget",
     )
 
-    unused = subparsers.add_parser(
-        "unused-hypotheses",
-        help="report the hypotheses that the proof of each theorem the blueprint names never uses",
-    )
-    unused.add_argument("blueprint_dir")
-    unused.add_argument(
-        "--lean-root",
-        type=Path,
-        required=True,
-        help="built Lean project whose declarations the blueprint names",
-    )
-    unused.add_argument(
-        "--node",
-        action="append",
-        dest="nodes",
-        metavar="ID",
-        help="restrict to one article id (repeatable)",
-    )
-    unused.add_argument("--json", action="store_true", help="write stable machine-readable output")
-    unused.add_argument(
-        "--timeout",
-        type=_positive_seconds,
-        metavar="SECONDS",
-        help=f"seconds the Lean probe may run (default {DEFAULT_PROBE_TIMEOUT:g}); "
-        "the Lake freshness check before it has its own budget",
-    )
-
     render = subparsers.add_parser("render", help="build the publishable blueprint")
     render.add_argument("blueprint_dir")
     render.add_argument("-o", "--output", default="site-src", help="output directory")
@@ -467,8 +439,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _migrate(args)
     if args.command == "skeleton":
         return _skeleton(args)
-    if args.command == "unused-hypotheses":
-        return _unused_hypotheses(args)
     if args.command == "render":
         return _render(args)
     return 2
@@ -546,17 +516,19 @@ def _byte_order_mark_warnings(graph: Graph) -> list[str]:
 
 
 def _source_link_issues(graph: Graph) -> list[str]:
-    """Name each ``## Sources`` link to a local path that is not a file in the blueprint.
+    """Name each ``## Sources`` link to a local path that is not a file in the blueprint, or is hidden.
 
     The generated workflows run ``check`` but not ``audit``, and render publishes
     a missing or escaping target broken: a page a strict MkDocs build cannot find,
-    a repository URL that 404s, or a path off the site. Fragments and other
-    schemes stay with ``audit``, whose anchor check renders each cited note.
+    a repository URL that 404s, or a path off the site. Render omits hidden files,
+    so a hidden target is refused too. Fragments and other schemes stay with
+    ``audit``, whose anchor check renders each cited note.
     """
     rejected = {
         "source-not-found": "does not resolve to a file",
         "source-escapes-blueprint": "escapes the blueprint directory",
         "malformed-source-link": "contains an invalid path",
+        "hidden-source-target": "names a hidden path, which render omits",
     }
     issues = []
     for node in graph.nodes.values():
@@ -567,6 +539,25 @@ def _source_link_issues(graph: Graph) -> list[str]:
     return issues
 
 
+def _formalizable_container_issues(graph: Graph) -> list[str]:
+    """Name each article that sets ``declaration`` and also contains articles.
+
+    The generated workflows run ``check`` but not ``audit``, which reports these
+    as ``formalizable-container``. Nothing counts or schedules a container's own
+    declaration, yet its scope is drawn complete once its leaves are proved.
+    The message names the move because deleting only ``declaration:`` passes
+    both commands, and a container left with ``lean:`` and ``statement:`` is
+    still drawn complete while its own proof is open.
+    """
+    containers = {node.parent for node in graph.nodes.values() if node.parent is not None}
+    return [
+        f"{node.id}: formalizable article has contained articles; declaration-sized articles must be leaves; "
+        "move the declaration and its lean, statement and proof fields into a leaf article"
+        for node in graph.nodes.values()
+        if node.formalizable and node.id in containers
+    ]
+
+
 def _check(args: argparse.Namespace) -> int:
     try:
         graph = load_graph(args.blueprint_dir)
@@ -574,8 +565,8 @@ def _check(args: argparse.Namespace) -> int:
         for issue in exc.issues:
             print(f"error: {issue}")
         return 1
-    if source_issues := _source_link_issues(graph):
-        for issue in source_issues:
+    if issues := _formalizable_container_issues(graph) + _source_link_issues(graph):
+        for issue in issues:
             print(f"error: {issue}")
         return 1
 
@@ -1382,22 +1373,6 @@ def _skeleton(args: argparse.Namespace) -> int:
         print(report.to_json())
     else:
         print(format_report(report, lean_root=args.lean_root), end="")
-    return 0 if report.clean else 1
-
-
-def _unused_hypotheses(args: argparse.Namespace) -> int:
-    try:
-        report = find_unused_hypotheses(
-            args.blueprint_dir,
-            lean_root=args.lean_root,
-            node_ids=tuple(args.nodes) if args.nodes else None,
-            timeout=args.timeout or DEFAULT_PROBE_TIMEOUT,
-        )
-    except SkeletonError as exc:
-        for issue in exc.issues:
-            print(f"error: {issue}", file=sys.stderr)
-        return 2
-    print(report.to_json() if args.json else format_unused_hypotheses(report), end="\n" if args.json else "")
     return 0 if report.clean else 1
 
 

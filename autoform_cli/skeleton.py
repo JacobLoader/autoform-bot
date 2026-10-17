@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import errno
 import hashlib
 import json
 import os
@@ -1373,13 +1374,43 @@ def _translate_lakefile(root: Path) -> bytes:
 
 
 def module_of(path: Path, libraries: tuple[LeanLibrary, ...]) -> str | None:
-    """Return the Lean module name of a source file, or ``None`` if no library holds it."""
+    """Return the Lean module name of a source file, or ``None`` if no library builds it.
+
+    Lake builds only the modules a library's roots and globs make buildable, not
+    every file under its srcDir, so a stray file there has no module.
+    """
 
     resolved = path.resolve()
-    held = [lib.src_dir for lib in libraries if resolved != lib.src_dir and resolved.is_relative_to(lib.src_dir)]
-    if resolved.suffix != ".lean" or not held:
+    if resolved.suffix != ".lean":
         return None
-    return ".".join(resolved.relative_to(max(held, key=lambda src_dir: len(src_dir.parts))).with_suffix("").parts)
+    held = [lib for lib in libraries if resolved != lib.src_dir and resolved.is_relative_to(lib.src_dir)]
+    for library in sorted(held, key=lambda lib: len(lib.src_dir.parts), reverse=True):
+        module = ".".join(resolved.relative_to(library.src_dir).with_suffix("").parts)
+        if _builds(library, module):
+            return module
+    return None
+
+
+def _builds(library: LeanLibrary, module: str) -> bool:
+    """Whether Lake builds ``module`` for ``library``, as ``LeanLibConfig.isBuildableModule`` decides.
+
+    Lake finds, imports and builds a module by that rule, not by ``isLocalModule``:
+    a glob matches the module, or a root prefixes it and a glob matches that root.
+    Without ``globs``, each root is its own glob.
+    """
+
+    globs = library.globs or library.roots
+
+    def globbed(name: str) -> bool:
+        for glob in globs:
+            base, mode = (glob[:-2], glob[-1]) if glob.endswith((".*", ".+")) else (glob, "")
+            if (name == base and mode != "+") or (mode and name.startswith(f"{base}.")):
+                return True
+        return False
+
+    return globbed(module) or any(
+        (module == root or module.startswith(f"{root}.")) and globbed(root) for root in library.roots
+    )
 
 
 def path_of(module: str, libraries: tuple[LeanLibrary, ...], lean_root: Path) -> str | None:
@@ -2439,13 +2470,29 @@ def source_passage(node: Node, blueprint: Path, *, issues: list[str] | None = No
         return None, None
 
     for target in node.sources:
-        parsed = urlsplit(target)
+        try:
+            parsed = urlsplit(target)
+        except ValueError:
+            continue
         if parsed.scheme or parsed.netloc:
             continue
         match = _LINE_LOCATOR.fullmatch(parsed.fragment)
         if match is None or not parsed.path or parsed.path.endswith(".md"):
             continue
-        candidate = (node.path.parent / parsed.path).resolve()
+        if "\x00" in parsed.path:
+            return broken(target, "contains an invalid path")
+        try:
+            candidate = (node.path.parent / parsed.path).resolve()
+        except (OSError, RuntimeError, ValueError):
+            # Before Python 3.13 a symlink loop raises RuntimeError here.
+            return broken(target, "names a path that cannot be resolved")
+        try:
+            os.stat(candidate)
+        except OSError as error:
+            # From Python 3.13 resolve returns a looping path, which stat refuses, as it
+            # does a name too long for the filesystem.
+            if error.errno in (errno.ELOOP, errno.ENAMETOOLONG):
+                return broken(target, "names a path that cannot be resolved")
         if not candidate.is_relative_to(blueprint.resolve()):
             return broken(target, "points outside the blueprint")
         try:
@@ -2461,8 +2508,12 @@ def source_passage(node: Node, blueprint: Path, *, issues: list[str] | None = No
                 lines.pop()
         except (ValueError, UnicodeError):
             return broken(target, "names a file that is not readable UTF-8 text")
-        start = int(match.group(1))
-        end = int(match.group(2) or start)
+        try:
+            start = int(match.group(1))
+            end = int(match.group(2) or start)
+        except ValueError:
+            # By default `int` refuses more than 4,300 digits, far past any file's last line.
+            return broken(target, "names no lines of its file")
         if start < 1 or end < start or end > len(lines):
             return broken(target, "names no lines of its file")
         relative = candidate.relative_to(blueprint.resolve()).as_posix()
