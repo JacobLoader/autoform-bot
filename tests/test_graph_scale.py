@@ -546,7 +546,7 @@ def test_graph_page_publication_builds_whole_graph_indexes_a_fixed_number_of_tim
     assert max(small.values()) <= 4
 
 
-def _written_blueprint(tmp_path: Path, sections: int = 1, chapters: int = 1) -> Path:
+def _written_blueprint(tmp_path: Path, sections: int = 1, chapters: int = 1, dependencies: bool = False) -> Path:
     blueprint = tmp_path / "blueprint"
     # One chapter keeps the "chapter" directory that other tests name.
     groups = {"chapter": "Chapter"} if chapters == 1 else {f"chapter{n}": f"Chapter {n}" for n in range(chapters)}
@@ -574,8 +574,11 @@ def _written_blueprint(tmp_path: Path, sections: int = 1, chapters: int = 1) -> 
             section = chapter / name
             (section / "README.md").write_text(f"# {name}\n\n[A](a.md)\n[B](b.md)\n", encoding="utf-8")
             (section / "a.md").write_text("---\ndeclaration: theorem\n---\n# A\n\nStatement.\n", encoding="utf-8")
+            # With a dependency, each chapter page reads node links of its own, not only the maps.
             (section / "b.md").write_text(
-                "---\ndeclaration: theorem\n---\n# B\n\nUses [A](a.md).\n", encoding="utf-8"
+                "---\ndeclaration: theorem\n---\n# B\n\nUses [A](a.md).\n"
+                + ("\n## Depends on\n\n- [A](a.md)\n" if dependencies else ""),
+                encoding="utf-8",
             )
     return blueprint
 
@@ -628,11 +631,7 @@ def test_site_rendering_indexes_containers_a_fixed_number_of_times(
 
 
 def _path_resolves(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sections: int = 1, chapters: int = 1) -> int:
-    blueprint = _written_blueprint(tmp_path / f"{chapters}x{sections}", sections, chapters)
-    # With a dependency, each chapter page reads node links of its own, not only the maps.
-    for statement in blueprint.glob("roadmap/*/section*/b.md"):
-        with statement.open("a", encoding="utf-8") as text:
-            text.write("\n## Depends on\n\n- [A](a.md)\n")
+    blueprint = _written_blueprint(tmp_path / f"{chapters}x{sections}", sections, chapters, dependencies=True)
     return _render_calls(blueprint, monkeypatch, Path, "resolve")
 
 
@@ -645,8 +644,9 @@ def test_site_rendering_resolves_paths_linearly_in_sections_and_chapters(
     small = _path_resolves(tmp_path, monkeypatch, **{axis: 8})
     large = _path_resolves(tmp_path, monkeypatch, **{axis: 16})
 
-    # Every statement and chapter has its own map page. Linking every node from
-    # every page made doubling the sections multiply the resolves by 2.8.
+    # Every statement, section and chapter has its own map page. Linking every
+    # node from every page made doubling the sections or chapters multiply the
+    # resolves by 2.8 or 3.2.
     assert large <= 2 * small
 
 
@@ -661,7 +661,7 @@ def test_site_rendering_never_iterates_a_pages_node_links(
 
     monkeypatch.setattr(render._PageLinks, "__iter__", iterated)
 
-    render_site(_written_blueprint(tmp_path, 2, chapters=2), tmp_path / "site")
+    render_site(_written_blueprint(tmp_path, 2, chapters=2, dependencies=True), tmp_path / "site")
 
 
 def test_audit_does_not_scan_for_children_per_node(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

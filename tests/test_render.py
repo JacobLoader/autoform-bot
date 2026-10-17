@@ -1447,7 +1447,7 @@ def test_node_links_resolve_each_target_page_once(tmp_path: Path, monkeypatch: p
 
     # A page reads only the nodes it shows, so nothing is linked before then,
     # and reading one node links only its own target page.
-    assert calls == []
+    assert calls == resolved == []
     assert links["a/7"] == "a.html#n7"
     assert calls == [chapter]
     assert links["b"] == "b/index.html"

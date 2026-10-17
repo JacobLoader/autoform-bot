@@ -1948,10 +1948,9 @@ def _anchored_links(
 
     Use ``.md`` for links MkDocs will parse -- it validates and rewrites those
     itself -- and ``.html`` for raw HTML and Mermaid, which it never sees. A
-    statement on the current page is just a fragment. The mapping covers every
-    node but builds a link only when it is read, so read just the nodes the page
-    shows: iterating or copying it builds them all, and with a page per node
-    that makes rendering quadratic again.
+    statement on the current page is just a fragment. Read only the nodes the
+    page shows: links are built when read, and iterating or copying the mapping
+    walks the whole graph on every page.
     """
     return _PageLinks(targets, page, extension)
 
@@ -1987,9 +1986,7 @@ class _PageLinks(Mapping[str, str]):
                 if self._extension == ".html":
                     href = _as_published(href)
             self._hrefs[target] = href
-        if href:
-            return f"{href}#{anchor}" if anchor else href
-        return f"#{anchor}" if anchor else "#"
+        return f"{href}#{anchor}" if anchor else href or "#"
 
     def __contains__(self, node_id: object) -> bool:
         return node_id in self._targets
