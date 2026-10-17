@@ -1049,7 +1049,8 @@ autoform render blueprint --output site-src --lean-root . --require-declarations
 ```
 
 `render` never writes into the vault. It leads the landing page with the project
-explorer over a summary of what is formalized and what is unblocked, places a compact
+explorer, once the roadmap has articles to draw, over a summary of what is
+formalized and what is unblocked, places a compact
 progress summary after each chapter's opening prose, writes `structure.md` so a
 vault's layout can be checked against the book it produces, and shows a source
 icon when a `lean:` declaration resolves to a repository permalink. Its
