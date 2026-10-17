@@ -15,6 +15,7 @@ from autoform_cli.markdown import (
     article_parts,
     content,
     content_lines,
+    directory_path,
     has_substance,
     is_placeholder,
     local_target_issue,
@@ -515,6 +516,20 @@ def test_a_link_that_cannot_be_read_does_not_resolve(
     assert resolved_path(root / "blueprint" / "locked" / "paper.md") is None
     issue = local_target_issue(root / "blueprint" / "roadmap" / "result.md", "../locked/paper.md", root / "blueprint", label="source")
     assert issue == ("source-not-found", "source link does not resolve to a file: '../locked/paper.md'")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows reads links with os.path.realpath")
+def test_a_directory_behind_a_link_that_cannot_be_read_has_the_path_the_system_opens(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
+    # As for a blueprint reached through another user's symlink.
+    root = tmp_path.resolve()
+    (root / "real" / "blueprint").mkdir(parents=True)
+    unreadable_link(root / "via", root / "real")
+
+    assert resolved_path(root / "via" / "blueprint") is None
+    assert directory_path(root / "via" / "blueprint") == root / "real" / "blueprint"
+    assert directory_path(root / "via" / "missing") is None
 
 
 def test_a_statement_runs_from_the_title_to_the_first_h2() -> None:

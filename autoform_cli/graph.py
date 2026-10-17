@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .lean import declaration_names
-from .markdown import link_definitions, link_targets, mask_code_and_comments, resolved_path
+from .markdown import directory_path, link_definitions, link_targets, mask_code_and_comments, resolved_path
 
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
@@ -149,9 +149,8 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
     given = Path(blueprint_dir).expanduser()
     if not os.path.isdir(given):
         raise GraphValidationError([f"blueprint directory does not exist: {given}"])
-    # Resolved as its links are, so a blueprint behind a link that cannot be read
-    # fails once here rather than at every link.
-    blueprint = resolved_path(given)
+    # Resolved as its links are, even behind a link above it that cannot be read.
+    blueprint = directory_path(given)
     if blueprint is None:
         raise GraphValidationError([f"blueprint directory cannot be resolved: {blueprint_dir}"])
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
@@ -76,6 +77,15 @@ def _project(tmp_path: Path) -> Path:
         sources=("https://example.invalid/paper",),
     )
     return project
+
+
+def test_a_project_behind_a_link_that_cannot_be_read_projects_as_itself(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
+    project = _project(tmp_path / "real")
+    unreadable_link(tmp_path / "via", tmp_path / "real")
+
+    assert load_runtime_graph(tmp_path / "via" / "project") == load_runtime_graph(project)
 
 
 def test_loads_identical_runtime_from_project_or_blueprint(tmp_path: Path) -> None:

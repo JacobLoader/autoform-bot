@@ -15,7 +15,7 @@ from urllib.parse import unquote, urlsplit
 
 from .graph import Graph, load_graph, roadmap_symlink_issues
 from .lean import LeanSourceError, declaration_names, index_failure_message, index_project, resolve_lean_root
-from .markdown import resolved_path
+from .markdown import directory_path, resolved_path
 from .status import derive, is_definition
 
 RUNTIME_SCHEMA = "autoform-runtime/v3"
@@ -204,8 +204,8 @@ def resolve_runtime_paths(project_or_blueprint: str | Path) -> RuntimePaths:
     supplied = Path(project_or_blueprint).expanduser()
     if supplied.is_symlink():
         raise RuntimeProjectionError(["project or blueprint path is a symbolic link"])
-    candidate = supplied.resolve()
-    if not candidate.is_dir():
+    candidate = directory_path(supplied)
+    if candidate is None or not candidate.is_dir():
         raise RuntimeProjectionError(["project or blueprint directory does not exist"])
 
     is_blueprint = (candidate / "roadmap").is_dir()

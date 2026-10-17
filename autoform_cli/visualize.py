@@ -10,6 +10,7 @@ from typing import Sequence
 
 from . import mermaid, status
 from .graph import GraphValidationError, load_graph
+from .markdown import directory_path
 
 
 GENERATED_STRUCTURE_MARKER = "---\nkind: structure\nautoform_generated: true\n---"
@@ -73,7 +74,7 @@ def export_graph(
     title: str = "Dependency graph",
 ) -> Path:
     """Load and export ``blueprint_dir``; return the written Markdown path."""
-    blueprint_dir = Path(blueprint_dir).resolve()
+    blueprint_dir = directory_path(Path(blueprint_dir)) or Path(blueprint_dir).absolute()
     destination = _destination(output or blueprint_dir / "dependencies.md")
     graph = load_graph(blueprint_dir)
     statuses = status.derive(graph)
@@ -100,7 +101,7 @@ def export_structure(blueprint_dir: Path, output: Path | None = None) -> Path:
 
     Plain Markdown, no HTML: the site's stylesheet does not exist here.
     """
-    blueprint_dir = Path(blueprint_dir).resolve()
+    blueprint_dir = directory_path(Path(blueprint_dir)) or Path(blueprint_dir).absolute()
     destination = _destination(output or blueprint_dir / "structure.md")
     _preflight_structure(destination)
     graph = load_graph(blueprint_dir)

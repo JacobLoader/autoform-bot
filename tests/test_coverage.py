@@ -852,6 +852,18 @@ def test_a_coverage_link_through_a_link_that_cannot_be_read_does_not_resolve(
     assert [issue.reason for issue in issues] == ["coverage link does not resolve to a file: '../roadmap/alias.md'"]
 
 
+def test_coverage_of_a_blueprint_behind_a_link_that_cannot_be_read_matches_the_blueprint_itself(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
+    real = tmp_path / "real" / "blueprint"
+    (real / "roadmap").mkdir(parents=True)
+    (real / "roadmap" / "result.md").write_text("# Result\n", encoding="utf-8")
+    _contract(real, "| Result | DECOMPOSED | [Result](../roadmap/result.md) |\n")
+    unreadable_link(tmp_path / "via", tmp_path / "real")
+
+    assert load_coverage(tmp_path / "via" / "blueprint") == load_coverage(real)
+
+
 def test_malformed_evidence_paths_are_reported_without_raising(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _contract(

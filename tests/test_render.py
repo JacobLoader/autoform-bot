@@ -12,6 +12,7 @@ import stat
 import subprocess
 import threading
 import tracemalloc
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
@@ -920,6 +921,18 @@ def test_render_is_deterministic_and_records_a_path_free_manifest(tmp_path: Path
         path: hashlib.sha256(data).hexdigest() for path, data in first.items() if path != PUBLICATION_MANIFEST
     }
     assert str(tmp_path).encode() not in b"".join(first.values())
+
+
+def test_the_source_revision_of_a_blueprint_behind_a_link_that_cannot_be_read_is_its_own(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
+    (tmp_path / "real/blueprint/roadmap").mkdir(parents=True)
+    (tmp_path / "real/blueprint/roadmap/README.md").write_bytes(b"# Roadmap\n")
+    unreadable_link(tmp_path / "via", tmp_path / "real")
+
+    assert publication_source_revision(tmp_path / "via/blueprint") == publication_source_revision(
+        tmp_path / "real/blueprint"
+    )
 
 
 def test_the_source_revision_of_a_fixed_blueprint_is_pinned(tmp_path: Path) -> None:

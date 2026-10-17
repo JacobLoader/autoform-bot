@@ -61,7 +61,7 @@ from .lean import (
     snapshot_project_sources,
     verify_repository_snapshot,
 )
-from .markdown import article_parts, site_converter
+from .markdown import article_parts, directory_path, site_converter
 from .markdown import mask_fences_and_comments
 from .status import is_definition
 
@@ -330,7 +330,8 @@ def render_site(
     Lean sources are each read once, and every page, link and hash comes from
     those bytes. The site is built beside the output and swapped in whole.
     """
-    blueprint = Path(blueprint_dir).expanduser().resolve()
+    given = Path(blueprint_dir).expanduser()
+    blueprint = directory_path(given) or given.absolute()
     requested_destination = Path(output_dir).expanduser()
     if requested_destination.name in {"", ".."}:  # the swap below would rename a working directory
         raise PublicationError(["output directory must name one ordinary directory"])
@@ -761,7 +762,8 @@ def _load_graph(copy: Path, blueprint: Path) -> Graph:
 
 def load_publication_source(blueprint_dir: str | Path) -> tuple[str, Graph]:
     """Read the blueprint once; return its publication revision and the graph of those bytes."""
-    blueprint = Path(blueprint_dir).expanduser().resolve()
+    given = Path(blueprint_dir).expanduser()
+    blueprint = directory_path(given) or given.absolute()
     snapshot = _capture_blueprint(blueprint)
     with _private_copy(snapshot, prefix="roadmap/") as (_root, copy):  # the graph reads nothing else
         return _source_revision(snapshot), _load_graph(copy, blueprint)
@@ -1186,7 +1188,8 @@ def _source_revision(snapshot: TreeSnapshot) -> str:
 def publication_source_revision(blueprint_dir: str | Path) -> str:
     """Return the deterministic source hash stored in ``publication.json``."""
 
-    return _source_revision(_capture_blueprint(Path(blueprint_dir).expanduser().resolve()))
+    given = Path(blueprint_dir).expanduser()
+    return _source_revision(_capture_blueprint(directory_path(given) or given.absolute()))
 
 
 def _write_publication_manifest(

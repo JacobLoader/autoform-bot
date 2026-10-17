@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .graph import GraphValidationError, load_graph
+from .markdown import directory_path
 
 IDENTITY_PLAN_SCHEMA = "autoform-article-id-plan/v1"
 
@@ -117,7 +118,8 @@ def write_article_ids(blueprint_dir: str | Path) -> tuple[ArticleIdentityEntry, 
     """
 
     plan = plan_article_ids(blueprint_dir)
-    blueprint = Path(blueprint_dir).expanduser().resolve()
+    given = Path(blueprint_dir).expanduser()
+    blueprint = directory_path(given) or given.absolute()
     pending = [entry for entry in plan.entries if not entry.assigned]
     prepared: list[tuple[ArticleIdentityEntry, Path, bytes, int]] = []
     issues: list[str] = []
