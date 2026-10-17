@@ -1557,6 +1557,15 @@ def test_a_missing_source_note_keeps_the_link_a_strict_build_rejects(tmp_path: P
     assert "[lemma 3](../sources/lemma-3.md)" in chapter
 
 
+def test_a_hidden_source_note_keeps_its_repository_link(tmp_path: Path) -> None:
+    """The capture skips hidden files, so the existence check kept a committed
+    hidden note's link on the site, which does not publish the note, and the
+    strict build failed on a link that resolved in the repository."""
+    chapter, commit = _render_statement_link(tmp_path, "[the draft](../sources/.draft.md)", notes=(".draft.md",))
+
+    assert f"[the draft]({_REPOSITORY}/blob/{commit}/blueprint/sources/.draft.md)" in chapter
+
+
 def test_a_link_to_the_sources_directory_names_its_repository_tree(tmp_path: Path) -> None:
     """The existence check lets the directory through. A check for a file would
     publish `../sources`, which the site lacks and a strict build only logs."""
