@@ -90,9 +90,14 @@ def _use_portable_capture(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _index(tmp_path: Path, text: str = _SOURCE, name: str = "Project/Basic.lean"):
-    path = tmp_path / name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    return _index_files(tmp_path, {name: text})
+
+
+def _index_files(tmp_path: Path, files: dict[str, str]):
+    for name, text in files.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
     return index_project(tmp_path)
 
 
@@ -1094,7 +1099,7 @@ def test_lean_file_edited_while_it_is_read_is_named(
 
     assert edited
     assert len(binds) == 2
-    # Each capture appended one more declaration.
+    # `_changed_path`'s capture and this snapshot's first attempt each appended one `def edited`.
     assert len(snapshot.index.occurrences("edited")) == 2
 
 
@@ -3046,14 +3051,6 @@ def test_an_alias_is_followed_only_to_an_earlier_declaration_of_its_file(tmp_pat
         assert index.reached(index.find(name)) is None, name
 
 
-def _index_files(tmp_path: Path, files: dict[str, str]):
-    for name, text in files.items():
-        path = tmp_path / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
-    return index_project(tmp_path)
-
-
 def _where(declarations) -> list[tuple[str, int]]:
     return [(declaration.path.as_posix(), declaration.line) for declaration in declarations]
 
@@ -3074,6 +3071,11 @@ _PRIVATE_MAIN = "private theorem Demo.main : True := trivial\n"
             {"A.lean": "@[simp]\nprivate\ntheorem Demo.main : True := trivial\n", "B.lean": _PUBLIC_MAIN},
             [("A.lean", 3), ("B.lean", 2)],
             [("B.lean", 2)],
+        ),
+        (
+            {"A.lean": _PUBLIC_MAIN, "B.lean": "theorem bar : True := trivial\nprivate alias Demo.main := bar\n"},
+            [("A.lean", 2), ("B.lean", 2)],
+            [("A.lean", 2)],
         ),
         ({"A.lean": _PUBLIC_MAIN, "B.lean": _PRIVATE_MAIN}, [("A.lean", 2), ("B.lean", 1)], [("A.lean", 2)]),
         # Batteries makes a wanted command a private placeholder, so the
@@ -3097,7 +3099,7 @@ _PRIVATE_MAIN = "private theorem Demo.main : True := trivial\n"
         ({"A.lean": _PRIVATE_MAIN, "B.lean": "\nproof_wanted Demo.main : True\n"}, [("A.lean", 1), ("B.lean", 2)], []),
     ],
     ids=[
-        "earlier-private", "private-above", "later-private", "wanted",
+        "earlier-private", "private-above", "private-alias", "later-private", "wanted",
         "lone-private", "two-public", "two-private", "private-wanted",
     ],
 )
@@ -3122,11 +3124,7 @@ def test_one_short_name_in_distinct_namespaces_is_no_duplicate(tmp_path: Path) -
         },
     )
 
-    assert [_where([index.find(name)]) for name in ("A.x", "B.x", "C.x")] == [
-        [("A.lean", 2)],
-        [("B.lean", 1)],
-        [("B.lean", 3)],
-    ]
+    assert _where(index.find(name) for name in ("A.x", "B.x", "C.x")) == [("A.lean", 2), ("B.lean", 1), ("B.lean", 3)]
     assert index.duplicates == {}
 
 
@@ -3141,8 +3139,7 @@ def test_an_alias_of_a_private_declaration_names_its_own_file_one(tmp_path: Path
         },
     )
 
-    assert _where([index.find("foo")]) == [("A.lean", 1)]
-    assert _where([index.alias_target(index.find("bar"))]) == [("B.lean", 1)]
+    assert _where([index.find("foo"), index.alias_target(index.find("bar"))]) == [("A.lean", 1), ("B.lean", 1)]
 
 
 def test_anonymous_instances_are_not_mistaken_for_names(tmp_path: Path) -> None:

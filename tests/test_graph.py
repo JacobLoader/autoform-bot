@@ -698,7 +698,6 @@ def test_check_warns_about_an_article_whose_byte_order_mark_hides_its_frontmatte
     ("other", "errors"),
     [
         ("private theorem Project.base : True := trivial\n", []),
-        ("proof_wanted Project.base : True\n", []),
         (
             "theorem Project.base : True := trivial\n",
             ["error: base: declaration defined more than once in {root}: Project.base (A.lean:1, B.lean:2)"],
