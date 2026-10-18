@@ -666,6 +666,12 @@ def _check(args: argparse.Namespace) -> int:
         ]
         for issue in missing:
             print(f"error: {issue}")
+        if any(": declaration not found in " in issue for issue in missing):
+            print(
+                "note: check resolves lean: names only in the project's own Lean files, not in Mathlib or other "
+                "dependencies under .lake; if a name is a shared library's declaration, record it in the article's "
+                "implementation note instead"
+            )
         if missing:
             return 1
         declared = sum(1 for node in graph.nodes.values() if node.lean)
@@ -966,11 +972,22 @@ def _search(args: argparse.Namespace) -> int:
         if note:
             print(note, file=sys.stderr)
         return 0
-    if not result.hits:
+    # Every count comes first, and each hit's statement on its first line, so output cut short still shows them.
+    if result.hits:
+        print(f"{len(result.hits)} of {result.total_matches} matching article(s) shown.")
+    else:
         print("No matching articles.")
+    for library in libraries:
+        if library.hits:
+            shown = f"{len(library.hits)} of {library.total_matches} matching declaration(s) shown."
+            print(_human_text(f"Library {library.name}: {shown}"))
+        else:
+            print(_human_text(f"Library {library.name}: no matching declarations."))
     for hit in result.hits:
         durable = f" [{hit.article_id}]" if hit.article_id else ""
-        print(_human_text(f"{hit.title} ({hit.node_id}){durable}"))
+        preview = statement_preview(hit)
+        statement = f": {preview}" if preview else ""
+        print(_human_text(f"{hit.title} ({hit.node_id}){durable}{statement}"))
         summary = [
             hit.declaration or "no declaration",
             hit.state,
@@ -984,12 +1001,7 @@ def _search(args: argparse.Namespace) -> int:
             print(_human_text(f"  Lean: {target.declaration}{location}"))
         if hit.mathlib_declarations:
             print(_human_text("  Mathlib: " + ", ".join(hit.mathlib_declarations)))
-        preview = statement_preview(hit)
-        if preview:
-            print(_human_text(f"  Statement: {preview}"))
         print("  Matched: " + ", ".join(hit.matched_fields))
-    if result.hits:
-        print(f"{len(result.hits)} of {result.total_matches} matching article(s) shown.")
     for library in libraries:
         _print_library(library)
     if note:
@@ -1034,20 +1046,17 @@ def _print_library(library: LibraryResult) -> None:
         else:
             held = f"project: {difference.project}"
         print(_human_text(f"  differs: {what} {difference.library} ({held})"))
-    if not library.hits:
-        print("No matching declarations.")
-        return
     for hit in library.hits:
         declaration = hit.declaration
-        print(_human_text(f"{declaration.name} ({declaration.kind}, {declaration.status})"))
+        heading = f"{declaration.name} ({declaration.kind}, {declaration.status})"
+        signature = _one_line(declaration.signature)
+        print(_human_text(f"{heading}: {signature}" if signature else heading))
         print(_human_text(f"  {hit.source_file}:{declaration.line}"))
         if hit.import_line is not None:
             print(_human_text(f"  {hit.import_line}"))
-        print(_human_text(f"  Signature: {_one_line(declaration.signature)}"))
         if declaration.docstring:
             print(_human_text(f"  Docstring: {_one_line(declaration.docstring)}"))
         print("  Matched: " + ", ".join(hit.matched_fields))
-    print(f"{len(library.hits)} of {library.total_matches} matching declaration(s) shown.")
 
 
 def _one_line(text: str) -> str:

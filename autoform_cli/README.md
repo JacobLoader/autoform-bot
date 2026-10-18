@@ -354,7 +354,11 @@ autoform check blueprint --lean-root .
 autoform audit blueprint --lean-root .
 ```
 
-`check` validates the graph contract. `audit` adds deterministic completeness,
+`check` validates the graph contract. With `--lean-root` it resolves names only
+in the project's own Lean files, not in Mathlib or other dependencies under
+`.lake`; when a name is not found, a note at the end of the output says that a
+shared library's declaration belongs in the article's implementation note.
+`audit` adds deterministic completeness,
 provenance, coverage, checked-fact, and optional Lean-target checks. It is local
 and read-only: it neither contacts network services nor writes findings back
 into the blueprint. Pass `--json` for stable machine-readable output; a nonzero
@@ -1400,7 +1404,11 @@ proof; `used_by_count` counts all. `shared_title` marks a title another article
 repeats and is advisory. `matched_fields` lists, best first and once each, the
 fields in which some term found its best match; it does not say which term.
 No hit is `"hits":[]` with exit 0. Human output shortens the statement, omits
-sources and dependent names, and is not a contract.
+sources and dependent names, and is not a contract. It opens with how many
+matches each list shows, the blueprint's and each library's, and puts each
+hit's statement, or a library hit's signature, on the hit's first line, so
+output cut short still gives every list's count and, for each hit it shows,
+the statement or signature.
 
 Search rereads each article it matches against and refuses, with exit 2, bytes
 other than those the graph was built from, as it refuses a symlinked roadmap
