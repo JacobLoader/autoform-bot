@@ -45,6 +45,13 @@ MAX_LSP_MESSAGE_BYTES = 16 * 1024 * 1024
 LSP_EOF_GRACE_SECONDS = 2.0
 # How long close() waits for Lean to leave after shutdown and exit.
 LSP_SHUTDOWN_GRACE_SECONDS = 5.0
+# How much of a hover's budget, at most a quarter of it, is kept for closing its
+# file. Closing makes Lean answer a hover it is still working on, and reading that
+# answer shows Lean still serves the project, so the server need not restart.
+LSP_DOCUMENT_CLOSE_GRACE_SECONDS = 5.0
+# A call left less than this after queueing, or half its budget if that is less,
+# is refused before it writes anything: a write cut off midway desynchronizes Lean.
+LSP_MIN_OPERATION_SECONDS = 1.0
 # Names the random token start() puts in the Lean server's environment. Every
 # process the server starts inherits it, in any process group, orphaned or not,
 # unless a process between them starts it without the variable.
@@ -55,8 +62,24 @@ class LspProtocolError(RuntimeError):
     """The Lean language server returned or emitted invalid JSON-RPC state."""
 
 
+class LspErrorReply(LspProtocolError):
+    """Lean answered a request with a JSON-RPC error; the stream is still in step."""
+
+
 class LspBusyError(TimeoutError):
     """A queued operation could not enter the shared LSP session in time."""
+
+
+class LspResponseTimeout(TimeoutError):
+    """No response arrived by the deadline; nothing was cut off mid-frame."""
+
+    def __init__(self, message: str, request_id: int) -> None:
+        super().__init__(message)
+        self.request_id = request_id
+
+
+class LspHoverTimeout(TimeoutError):
+    """A hover ran out of time, and closing its file showed Lean still serves the project."""
 
 
 class LeanLspStartupError(RuntimeError):
@@ -113,19 +136,21 @@ def _processes_with_token(token: str) -> list[Any]:
     return found
 
 
-def _wait_for_exit(processes: list[Any], deadline: float) -> None:
-    """Wait until every process has exited or become a zombie, or the deadline passes."""
+def _running(process: Any) -> bool:
+    """Whether a psutil process is still running; one that cannot be read counts as running."""
     import psutil
 
-    def running(process: Any) -> bool:
-        try:
-            return process.is_running() and process.status() != psutil.STATUS_ZOMBIE
-        except psutil.NoSuchProcess:
-            return False
-        except psutil.Error:
-            return True
+    try:
+        return process.is_running() and process.status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return False
+    except psutil.Error:
+        return True
 
-    while any(running(process) for process in processes) and time.monotonic() < deadline:
+
+def _wait_for_exit(processes: list[Any], deadline: float) -> None:
+    """Wait until every process has exited or become a zombie, or the deadline passes."""
+    while any(_running(process) for process in processes) and time.monotonic() < deadline:
         time.sleep(0.01)
 
 
@@ -338,22 +363,30 @@ class LeanLspSession:
         return status not in {psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD}
 
     def _admitted(self, operation: Callable[[float], T]) -> T:
-        """Run one serialized operation and fence a failed protocol stream."""
+        """Run one serialized operation and fence a failed protocol stream.
+
+        LspErrorReply and LspHoverTimeout keep the session: hover raises them only
+        once its file is closed and nothing the file's worker started is left running.
+        """
         deadline = time.monotonic() + self.config.timeout
+        busy = (
+            f"timed out after {self.config.timeout:g}s (LEAN_LSP_TIMEOUT) waiting for the Lean LSP session "
+            "behind other hovers; retry, or raise LEAN_LSP_TIMEOUT and restart the runtime with "
+            "`uv run autoform-lean-runtime stop`"
+        )
         if not self._operation_lock.acquire(timeout=self.config.timeout):
-            raise LspBusyError(
-                f"timed out after {self.config.timeout:g}s waiting for the Lean LSP session"
-            )
+            raise LspBusyError(busy)
         try:
             if self._retire_pending:
                 raise LspProtocolError("Lean LSP session is retiring after a failed operation")
             remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise LspBusyError(
-                    f"timed out after {self.config.timeout:g}s waiting for the Lean LSP session"
-                )
+            if remaining <= 0 or remaining < min(LSP_MIN_OPERATION_SECONDS, self.config.timeout / 2):
+                raise LspBusyError(busy)
             try:
                 return operation(remaining)
+            except (LspErrorReply, LspHoverTimeout):
+                # Lean's last frame was read whole, so the session can serve the next call.
+                raise
             except BaseException:
                 self._retire_pending = True
                 raise
@@ -387,7 +420,9 @@ class LeanLspSession:
     ) -> str | None:
         uri = path.as_uri()
         deadline = time.monotonic() + timeout
-        self._open_document(uri, content, timeout=self._remaining(deadline, timeout))
+        # The request ends early enough to leave time for closing the file.
+        answer_by = deadline - min(LSP_DOCUMENT_CLOSE_GRACE_SECONDS, timeout / 4)
+        self._open_document(uri, content, timeout=self._remaining(answer_by, timeout))
         try:
             result = self._send_request(
                 "textDocument/hover",
@@ -395,24 +430,110 @@ class LeanLspSession:
                     "textDocument": {"uri": uri},
                     "position": {"line": line, "character": character},
                 },
-                timeout=self._remaining(deadline, timeout),
+                timeout=self._remaining(answer_by, timeout),
+                # A frame already started may finish, but not past half the close time.
+                finish_by=answer_by + (deadline - answer_by) / 2,
             )
-        finally:
-            try:
-                self._send_notification(
-                    "textDocument/didClose",
-                    {"textDocument": {"uri": uri}},
-                    timeout=self._remaining(deadline, timeout),
-                )
-            except Exception:
+        except LspResponseTimeout as unanswered:
+            result = self._close_unanswered(uri, unanswered.request_id, deadline, timeout)
+        except LspErrorReply:
+            self._close_document(uri, deadline, timeout)
+            if not self._retire_pending and self._left_running(deadline):
+                # A crashed worker's build outlives it; retiring the session stops the build.
                 self._retire_pending = True
-                logger.warning("failed to close LSP document %s", uri, exc_info=True)
+            raise
+        except BaseException:
+            self._close_document(uri, deadline, timeout)
+            raise
+        else:
+            self._close_document(uri, deadline, timeout)
         if result and "contents" in result:
             contents = result["contents"]
             if isinstance(contents, dict):
                 return contents.get("value", "")
             return str(contents)
         return None
+
+    def _close_document(self, uri: str, deadline: float, timeout: float) -> None:
+        """Send didClose; a close that fails leaves Lean's state unknown, so the session retires."""
+        try:
+            self._send_notification(
+                "textDocument/didClose",
+                {"textDocument": {"uri": uri}},
+                timeout=self._remaining(deadline, timeout),
+            )
+        except Exception:
+            self._retire_pending = True
+            logger.warning("failed to close LSP document %s", uri, exc_info=True)
+
+    def _close_unanswered(self, uri: str, request_id: int, deadline: float, timeout: float) -> Any:
+        """Close a file whose hover Lean has not answered, and return the answer if it still comes.
+
+        Closing makes Lean answer the hover still pending on the file: with its own
+        result if that wins the race, else contentModified. Reading the answer shows
+        Lean still serves the project, so the session stays, unless the close fails,
+        no answer comes, or the file's worker, or a build it started, still runs.
+        """
+        waited = (
+            f"Lean did not answer the hover within {self.config.timeout:g}s (LEAN_LSP_TIMEOUT), "
+            "which includes waiting behind other hovers on this project"
+        )
+        advice = (
+            "If the file's imports are stale, which lean_diagnostic_messages reports, build them and retry; "
+            "else raise LEAN_LSP_TIMEOUT and restart the runtime with `uv run autoform-lean-runtime stop`"
+        )
+        self._close_document(uri, deadline, timeout)
+        if self._retire_pending:
+            raise TimeoutError(
+                f"{waited}, and closing the file failed, so the project's Lean server restarts. {advice}"
+            )
+        try:
+            with self._lock:
+                answer = self._await_response(request_id, deadline, timeout, finish_by=deadline)
+        except Exception:
+            logger.warning("Lean did not answer the closed LSP document %s", uri, exc_info=True)
+            raise TimeoutError(
+                f"{waited}, and closing the file brought no answer, so the project's Lean server restarts. {advice}"
+            ) from None
+        try:
+            # A malformed answer raises a protocol error, which retires the session.
+            return self._response_result(answer, request_id)
+        except LspErrorReply:
+            pass
+        if self._left_running(deadline):
+            raise TimeoutError(
+                f"{waited}, and the file's worker, or a build it started, still ran after the close, so the "
+                f"project's Lean server restarts to stop it. {advice}"
+            )
+        raise LspHoverTimeout(f"{waited}. {advice}")
+
+    def _left_running(self, deadline: float) -> bool:
+        """Whether a file worker, or a build it started, outlives the closed file.
+
+        Lean starts each file worker in its own session, so with no file open,
+        nothing outside the server's process group should carry the token. A
+        worker that exits takes its group, builds included, with it; one still
+        setting up the file's imports may not exit when told, and its build keeps
+        running. Waits at most LSP_EOF_GRACE_SECONDS, and never past the deadline.
+        """
+        token = self._token
+        if token is None:
+            return False
+        try:
+            carriers = _processes_with_token(token)
+        except RuntimeError:
+            return True
+        outside = []
+        for process in carriers:
+            try:
+                if os.getpgid(process.pid) != self._process_group_id:
+                    outside.append(process)
+            except ProcessLookupError:
+                continue
+            except OSError:
+                outside.append(process)
+        _wait_for_exit(outside, min(deadline, time.monotonic() + LSP_EOF_GRACE_SECONDS))
+        return any(_running(process) for process in outside)
 
     def _open_document(self, uri: str, content: str, *, timeout: float) -> None:
         """Send didOpen. Nothing reads a document version back, so every open is version 1."""
@@ -429,7 +550,9 @@ class LeanLspSession:
             timeout=timeout,
         )
 
-    def _send_request(self, method: str, params: dict, *, timeout: float = 30) -> Any:
+    def _send_request(
+        self, method: str, params: dict, *, timeout: float = 30, finish_by: float | None = None
+    ) -> Any:
         """Send a JSON-RPC request and wait for response."""
         deadline = time.monotonic() + timeout
         with self._lock:
@@ -444,6 +567,7 @@ class LeanLspSession:
             return self._read_response(
                 self._request_id,
                 timeout=self._remaining(deadline, timeout),
+                finish_by=finish_by,
             )
 
     def _send_notification(
@@ -497,20 +621,26 @@ class LeanLspSession:
                 raise LspProtocolError("LSP process closed stdin mid-message")
             offset += written
 
-    def _read_response(self, request_id: int, timeout: float = 30) -> Any:
+    def _read_response(self, request_id: int, timeout: float = 30, finish_by: float | None = None) -> Any:
         """Read JSON-RPC messages until we get the response for request_id."""
-        deadline = time.monotonic() + timeout
+        msg = self._await_response(request_id, time.monotonic() + timeout, timeout, finish_by=finish_by)
+        return self._response_result(msg, request_id)
+
+    def _await_response(
+        self, request_id: int, deadline: float, timeout: float, *, finish_by: float | None = None
+    ) -> dict:
+        """Read frames until the response to request_id; running out between frames raises LspResponseTimeout."""
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
-            msg = self._read_message(timeout=remaining)
+            msg = self._read_message(timeout=remaining, finish_by=finish_by)
             # Lean's workers send their own requests with numeric ids, so a
             # frame that names a method is never the response to ours.
             if msg and "method" not in msg and msg.get("id") == request_id:
-                return self._response_result(msg, request_id)
-        raise TimeoutError(
-            f"timed out after {timeout:g}s waiting for LSP response {request_id}"
+                return msg
+        raise LspResponseTimeout(
+            f"timed out after {timeout:g}s waiting for LSP response {request_id}", request_id
         )
 
     @staticmethod
@@ -523,7 +653,7 @@ class LeanLspSession:
                 message = error.get("message", "unspecified protocol error")
                 data = error.get("data")
                 detail = f" ({data!r})" if data is not None else ""
-                raise LspProtocolError(
+                raise LspErrorReply(
                     f"LSP request {request_id} failed [{code}]: "
                     f"{message}{detail}"
                 )
@@ -536,8 +666,12 @@ class LeanLspSession:
             )
         return msg["result"]
 
-    def _read_message(self, timeout: float = 5) -> dict | None:
-        """Read one bounded JSON-RPC frame within one absolute deadline."""
+    def _read_message(self, timeout: float = 5, finish_by: float | None = None) -> dict | None:
+        """Read one bounded JSON-RPC frame within one absolute deadline.
+
+        A frame that has started may run on to finish_by, so a deadline that falls
+        mid-frame does not cut it off.
+        """
         if not self.process or not self.process.stdout:
             raise RuntimeError("LSP process not running")
 
@@ -567,6 +701,8 @@ class LeanLspSession:
             if not chunk:
                 raise LspProtocolError("LSP process closed stdout mid-header")
             header.extend(chunk)
+            if finish_by is not None:
+                deadline = max(deadline, finish_by)
             if len(header) > MAX_LSP_HEADER_BYTES:
                 raise LspProtocolError(
                     f"LSP header exceeds {MAX_LSP_HEADER_BYTES} bytes"
