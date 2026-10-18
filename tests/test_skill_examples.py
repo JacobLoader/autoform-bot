@@ -13,7 +13,7 @@ except ModuleNotFoundError:  # Python 3.10
 
 from autoform_cli.audit import audit_blueprint
 from autoform_cli.graph import load_graph
-from autoform_cli.lean import build_linker, declaration_names
+from autoform_cli.lean import declaration_names, index_project
 from autoform_cli.project.create import _MINIMUM_LEAN
 from autoform_cli.render import render_site
 from autoform_cli.status import derive
@@ -700,10 +700,10 @@ def test_setup_asset_is_a_repo_shaped_thesis_vault(repo_root: Path) -> None:
     )
 
     # Every declaration a node claims must exist in the project's Lean sources.
-    linker = build_linker(example)
+    index = index_project(example)
     for node in graph.nodes.values():
         for name in declaration_names(node.lean or ""):
-            assert linker.location(name) is not None, f"{node.id}: {name}"
+            assert index.find(name) is not None, f"{node.id}: {name}"
 
     assert (blueprint / "roadmap" / "README.md").is_file()
     assert (blueprint / "roadmap" / "full-supervision" / "README.md").is_file()

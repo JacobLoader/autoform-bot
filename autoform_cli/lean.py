@@ -1247,97 +1247,6 @@ class SourceLinker:
         return f"{self.repository_url}/blob/{encoded_ref}/{path}#L{declaration.line}"
 
 
-def build_linker(lean_root: str | Path) -> SourceLinker:
-    """Index *lean_root* and resolve repository coordinates."""
-    resolved_root = resolve_lean_root(lean_root)
-    snapshot, repository_url, ref, linkable_paths = _capture_link_state(resolved_root)
-    if repository_url is None:
-        repository_url = detect_repository_url(resolved_root)
-    return SourceLinker(
-        index=snapshot.index,
-        repository_url=repository_url,
-        ref=ref,
-        linkable_paths=linkable_paths,
-    )
-
-
-def _capture_link_state(
-    root: Path,
-) -> tuple[
-    IndexedSourceSnapshot,
-    str | None,
-    str | None,
-    frozenset[Path] | None,
-]:
-    """Capture source bytes and prove which ones belong to one stable commit."""
-
-    last_snapshot: IndexedSourceSnapshot | None = None
-    last_url: str | None = None
-    for attempt in range(_SNAPSHOT_ATTEMPTS):
-        if attempt:
-            time.sleep(_SNAPSHOT_RETRY_DELAY_SECONDS * attempt)
-        before_url = detect_repository_url(root)
-        before_ref = detect_ref(root)
-        snapshot = snapshot_project_sources(root)
-        last_snapshot = snapshot
-        last_url = before_url
-        after_url = detect_repository_url(root)
-        after_ref = detect_ref(root)
-        if before_url != after_url or before_ref != after_ref:
-            continue
-        if before_ref is None:
-            return snapshot, before_url, None, frozenset()
-        commit = _git(root, "rev-parse", "--verify", f"{before_ref}^{{commit}}")
-        if commit is None:
-            return snapshot, before_url, None, frozenset()
-        linkable = _committed_source_paths(root, snapshot, commit)
-        if linkable is None:
-            return snapshot, before_url, None, frozenset()
-        if (
-            detect_repository_url(root) == before_url
-            and detect_ref(root) == before_ref
-        ):
-            return snapshot, before_url, commit, linkable
-    assert last_snapshot is not None
-    return last_snapshot, last_url, None, frozenset()
-
-
-def _committed_source_paths(
-    root: Path,
-    snapshot: IndexedSourceSnapshot,
-    commit: str,
-) -> frozenset[Path] | None:
-    """Return captured files whose Git blob is exactly the commit's blob."""
-
-    top_level_text = _git(root, "rev-parse", "--show-toplevel")
-    algorithm = _git(root, "rev-parse", "--show-object-format")
-    if top_level_text is None or algorithm not in {"sha1", "sha256"}:
-        return None
-    top_level = Path(top_level_text).resolve()
-    try:
-        prefix = root.resolve().relative_to(top_level)
-    except (OSError, RuntimeError, ValueError):
-        return None
-    if prefix.parts:
-        # SourceLinker URLs are rooted at ``lean_root`` today.  Until that API
-        # carries a repository-relative prefix, refusing links is safer than
-        # emitting a valid commit with the wrong path.
-        return frozenset()
-    repo_paths = {
-        path: (prefix / path).as_posix()
-        for path, _data in snapshot.source_files
-    }
-    tree_oids = _git_tree_oids(root, commit, tuple(repo_paths.values()))
-    if tree_oids is None:
-        return None
-    linkable: set[Path] = set()
-    for path, data in snapshot.source_files:
-        framed = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
-        if hashlib.new(algorithm, framed).hexdigest() == tree_oids.get(repo_paths[path]):
-            linkable.add(path)
-    return frozenset(linkable)
-
-
 def verify_repository_snapshot(
     root: str | Path,
     requested_ref: str,
@@ -1599,7 +1508,6 @@ __all__ = [
     "SourceIndex",
     "SourceLinker",
     "bind_project_source_snapshot",
-    "build_linker",
     "declaration_names",
     "detect_ref",
     "detect_repository_url",

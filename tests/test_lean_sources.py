@@ -28,8 +28,9 @@ from autoform_cli._tree_snapshot import (
 from autoform_cli.lean import (
     Alias,
     SourceLinker,
-    build_linker,
     declaration_names,
+    detect_ref,
+    detect_repository_url,
     index_project,
     open_project_sources,
     snapshot_project_sources,
@@ -3781,28 +3782,23 @@ def _init_git_repository(
 
 
 @pytest.mark.parametrize("object_format", ["sha1", "sha256"])
-def test_auto_linker_only_links_bytes_present_in_the_commit(
+def test_snapshot_attestation_accepts_only_bytes_present_in_the_commit(
     tmp_path: Path,
     object_format: str,
 ) -> None:
     root = tmp_path / object_format
     root.mkdir()
-    _index(root, "def committed : Nat := 0\n", "Committed.lean")
-    _index(root, "def dirty : Nat := 0\n", "Dirty.lean")
+    committed = root / "Committed.lean"
+    committed.write_text("def committed : Nat := 0\n")
+    dirty = root / "Dirty.lean"
+    dirty.write_text("def dirty : Nat := 0\n")
     commit = _init_git_repository(root, object_format=object_format)
-    (root / "Dirty.lean").write_text("def dirty : Nat := 1\n")
-    (root / "Untracked.lean").write_text("def untracked : Nat := 0\n")
+    dirty.write_text("def dirty : Nat := 1\n")
 
-    linker = build_linker(root)
-
-    assert linker.ref == commit
-    assert linker.url("committed") == (
-        f"https://github.com/owner/repo/blob/{commit}/Committed.lean#L1"
-    )
-    assert linker.location("dirty") is not None
-    assert linker.location("untracked") is not None
-    assert linker.url("dirty") is None
-    assert linker.url("untracked") is None
+    assert verify_repository_snapshot(root, commit, ((committed, committed.read_bytes()),)) == commit
+    assert verify_repository_snapshot(
+        root, commit, ((committed, committed.read_bytes()), (dirty, dirty.read_bytes()))
+    ) is None
 
 
 def test_tree_lookup_matches_the_spelling_git_committed_only_when_asked_to(
@@ -3834,62 +3830,7 @@ def test_permalink_names_the_spelling_git_committed(tmp_path: Path) -> None:
     assert linker.url("decomposed") == "https://github.com/owner/repo/blob/deadbeef/Poincar%C3%A9%E2%84%AB.lean#L1"
 
 
-def test_auto_linker_retries_ref_and_source_as_one_unit(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
-    source = root / "A.lean"
-    source.write_text("def first : Nat := 0\n")
-    first_commit = _init_git_repository(root)
-    original_snapshot = lean_module.snapshot_project_sources
-    captures = 0
-    second_commit = ""
-
-    def capture_then_commit(*args, **kwargs):
-        nonlocal captures, second_commit
-        snapshot = original_snapshot(*args, **kwargs)
-        captures += 1
-        if captures == 1:
-            source.write_text("def second : Nat := 0\n")
-            second_commit = _git_commit(root, "second", "A.lean")
-        return snapshot
-
-    monkeypatch.setattr(lean_module, "snapshot_project_sources", capture_then_commit)
-    monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
-
-    linker = build_linker(root)
-
-    assert captures == 2
-    assert first_commit != second_commit
-    assert linker.ref == second_commit
-    assert linker.location("first") is None
-    assert linker.url("second") == (
-        f"https://github.com/owner/repo/blob/{second_commit}/A.lean#L1"
-    )
-
-
-def test_auto_linker_supports_a_symlinked_repository_root(tmp_path: Path) -> None:
-    root = tmp_path / "root"
-    root.mkdir()
-    _index(root, "def linkedThroughAlias : Nat := 0\n", "A.lean")
-    commit = _init_git_repository(root)
-    alias = tmp_path / "alias"
-    try:
-        alias.symlink_to(root, target_is_directory=True)
-    except OSError:
-        pytest.skip("symlinks are unavailable")
-
-    linker = build_linker(alias)
-
-    assert linker.ref == commit
-    assert linker.url("linkedThroughAlias") == (
-        f"https://github.com/owner/repo/blob/{commit}/A.lean#L1"
-    )
-
-
-def test_auto_linker_ignores_git_replace_objects(tmp_path: Path) -> None:
+def test_snapshot_attestation_ignores_git_replace_objects(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
     source = root / "A.lean"
@@ -3901,14 +3842,13 @@ def test_auto_linker_ignores_git_replace_objects(tmp_path: Path) -> None:
     source.write_text("def replacementTree : Nat := 0\n")
     subprocess.run(["git", "replace", original, replacement], cwd=root, check=True)
 
-    linker = build_linker(root)
+    assert verify_repository_snapshot(root, original, ((source, source.read_bytes()),)) is None
+    assert verify_repository_snapshot(
+        root, original, ((source, b"def originalTree : Nat := 0\n"),)
+    ) == original
 
-    assert linker.ref == original
-    assert linker.location("replacementTree") is not None
-    assert linker.url("replacementTree") is None
 
-
-def test_auto_linker_ignores_inherited_repo_and_ci_redirects(
+def test_git_runner_ignores_inherited_repo_and_ci_redirects(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3930,14 +3870,13 @@ def test_auto_linker_ignores_inherited_repo_and_ci_redirects(
     monkeypatch.setenv("GITHUB_REPOSITORY", "owner/ci-wrong")
     monkeypatch.setenv("GITHUB_SHA", second_commit)
 
-    linker = build_linker(first)
+    source = first / "A.lean"
 
     assert first_commit != second_commit
-    assert linker.ref == first_commit
-    assert linker.repository_url == "https://github.com/owner/A"
-    assert linker.url("stableRepository") == (
-        f"https://github.com/owner/A/blob/{first_commit}/A.lean#L1"
-    )
+    assert detect_repository_url(first) == "https://github.com/owner/A"
+    assert detect_ref(first) == first_commit
+    assert verify_repository_snapshot(first, "HEAD", ((source, source.read_bytes()),)) == first_commit
+    assert verify_repository_snapshot(first, second_commit, ((source, source.read_bytes()),)) is None
 
 
 def test_snapshot_attestation_accepts_a_clean_checkout_with_eol_conversion(
