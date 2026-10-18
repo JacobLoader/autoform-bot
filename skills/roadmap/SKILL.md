@@ -66,10 +66,11 @@ for its result and for each intermediate result its proof proves or cites, by a
 few distinctive words of each statement and by a Lean name when one is known;
 the [search contract](../../autoform_cli/README.md#search-contract) says what
 is matched. Bound a listing with search's limit, never by dropping lines (as
-`| head` does): each hit's name is followed by its statement, or a library
-hit's signature, and each listing ends by saying how many of its matches it
-shows. A line ending in `...` is shortened; the JSON output has it whole.
-Narrow a query whose listing the limit cut short. Matching is literal, so a
+`| head` does), since that drops later hits and the library listings, which
+print last. Read each hit's statement, or a library hit's signature, and the
+counts the output opens with; a line ending in `...` is shortened, and the
+JSON output has it whole. Narrow a query whose count shows the limit cut it
+short. Matching is literal, so a
 result is new only when retries with fewer words, and under other usual names
 for its objects, also show no article
 stating it. Search the project's usable shared libraries in the same call: run
