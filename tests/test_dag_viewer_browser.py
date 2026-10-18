@@ -637,7 +637,7 @@ def test_a_click_on_empty_map_space_keeps_the_readers_zoom(desktop_page: object,
     assert node.evaluate("node => node.style.transform") == before
 
 
-def test_oversized_flat_scope_defaults_to_browse(desktop_page: object, explorer_url: str) -> None:
+def test_oversized_flat_scope_defaults_to_contents(desktop_page: object, explorer_url: str) -> None:
     page = desktop_page
     page.set_viewport_size({"width": 1440, "height": 900})
     page.goto(f"{explorer_url}/flat.html")
@@ -700,7 +700,7 @@ def test_a_node_chosen_on_a_phone_lands_above_the_open_sheet(mobile_page: object
     assert box["y"] + box["height"] <= sheet["y"]
 
 
-def test_mobile_browse_pagination_stays_above_the_collapsed_sheet(
+def test_mobile_contents_pagination_stays_above_the_collapsed_sheet(
     mobile_page: object, explorer_url: str
 ) -> None:
     page = mobile_page
@@ -842,7 +842,7 @@ def test_a_result_neither_drawn_here_nor_safely_linked_selects_nothing(
     assert page.url == url
 
 
-def test_a_browse_query_lists_only_this_scope(desktop_page: object, explorer_url: str) -> None:
+def test_a_contents_query_lists_only_this_scope(desktop_page: object, explorer_url: str) -> None:
     """Whole-roadmap matches belong to the search dropdown, not under "Contents of this scope".
 
     The dropdown opened on every keystroke and covered the list being filtered,
