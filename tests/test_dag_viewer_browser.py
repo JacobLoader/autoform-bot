@@ -1190,6 +1190,116 @@ def test_on_a_phone_the_status_filter_and_search_results_open_in_view(mobile_pag
     assert lowest == [True, True]
 
 
+@pytest.mark.parametrize("width", (800, 1100, 1440))
+def test_a_node_chosen_on_a_wider_screen_lands_beside_the_open_details(
+    desktop_page: object, site_url: str, width: int
+) -> None:
+    """Centring in the whole stage put the chosen node, which also takes focus, under the drawer its selection opens."""
+    page = desktop_page
+    page.set_viewport_size({"width": width, "height": 900})
+    # The drawer slides in; without motion it is measured where it stops.
+    page.emulate_media(reduced_motion="reduce")
+    _open_site(page, site_url, "dependencies/chapters/algebra.html#node=algebra%2Fresult")
+    settled = "() => new Promise(done => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(done))))"
+
+    def assert_beside_the_details(node: object) -> None:
+        playwright.expect(node).to_have_attribute("data-selected", "true")
+        page.evaluate(settled)
+        box = node.bounding_box()
+        drawer = page.locator(".bp-dag-inspector").bounding_box()
+        stage = page.locator(".bp-dag-stage").bounding_box()
+        assert box is not None and drawer is not None and stage is not None
+        assert box["x"] + box["width"] <= drawer["x"] or drawer["x"] + drawer["width"] <= box["x"]
+        assert stage["x"] <= box["x"] and box["x"] + box["width"] <= stage["x"] + stage["width"]
+
+    result = page.locator('[data-autoform-node-id="algebra/result"]')
+    assert_beside_the_details(result)
+    # An arrow key from closed details centred the next node before its selection opened them.
+    page.get_by_role("button", name="Close details").click()
+    playwright.expect(result).to_be_focused()
+    stacked = page.locator(".bp-dag-stage").evaluate("stage => stage.clientWidth <= 620")
+    page.keyboard.press("ArrowUp" if stacked else "ArrowLeft")
+    base = page.locator('[data-autoform-node-id="algebra/base"]')
+    playwright.expect(base).to_be_focused()
+    assert_beside_the_details(base)
+
+
+def _paints_over_the_details(page: object, items: str, container: str) -> bool | None:
+    """Whether the first of *items* shown in *container* over the open details is what a click there would hit.
+
+    None means that no such item lies over the details.
+    """
+    return page.evaluate(
+        """([items, container]) => {
+          const drawer = document.querySelector(".bp-dag-inspector").getBoundingClientRect();
+          const shown = document.querySelector(container).getBoundingClientRect();
+          const inside = (box, [x, y]) => box.left < x && x < box.right && box.top < y && y < box.bottom;
+          const centre = item => {
+            const box = item.getBoundingClientRect();
+            return [box.x + box.width / 2, box.y + box.height / 2];
+          };
+          const item = Array.from(document.querySelectorAll(items))
+            .find(item => inside(drawer, centre(item)) && inside(shown, centre(item)));
+          return item ? item.contains(document.elementFromPoint(...centre(item))) : null;
+        }""",
+        [items, container],
+    )
+
+
+def test_the_toolbars_popovers_paint_over_the_open_details(desktop_page: object, site_url: str) -> None:
+    """The head stacked under the details drawer, which covered the Status popover and the search results."""
+    page = desktop_page
+    page.set_viewport_size({"width": 1000, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+
+    def every_status(route: object) -> None:
+        payload = route.fetch().json()
+        payload["nodes"] += [
+            {"id": f"more/{key}", "kind": "node", "status": key, "status_counts": [[key, 1]], "title": f"More {key}"}
+            for key in payload["palette"]
+        ]
+        route.fulfill(json=payload)
+
+    def lengthen_the_index(route: object) -> None:
+        index = route.fetch().json()
+        index["nodes"] += [
+            {"id": f"more/result-{n}", "kind": "node", "status": "planned", "title": f"Result {n}", "url": None}
+            for n in range(20)
+        ]
+        route.fulfill(json=index)
+
+    # A row per status makes the popover reach well down over the drawer.
+    page.route("**/algebra.json", every_status)
+    page.route("**/dependencies/index.json", lengthen_the_index)
+    _open_site(page, site_url, "dependencies/chapters/algebra.html#node=algebra%2Fresult")
+    playwright.expect(page.locator(".bp-dag-inspector h2")).to_have_text("Result")
+
+    page.locator(".bp-dag-filter-summary").click()
+    playwright.expect(page.locator(".bp-dag-filter-popover")).to_be_visible()
+    assert _paints_over_the_details(page, ".bp-dag-check", ".bp-dag-filter-popover") is True
+    page.locator(".bp-dag-filter-summary").click()
+
+    search = _load_search_index(page, 27)
+    for width in (1000, 800):
+        page.set_viewport_size({"width": width, "height": 900})
+        search.fill("")
+        search.fill("Result")
+        playwright.expect(page.locator(".bp-dag-search-results")).to_be_visible()
+        assert _paints_over_the_details(page, ".bp-dag-result", ".bp-dag-search-results") is True
+
+
+def test_a_short_phones_explorer_keeps_its_sheet_handle_on_screen(mobile_page: object, site_url: str) -> None:
+    """A 28rem floor, 560px under Material's root font, pushed the sheet's handle below a short window."""
+    page = mobile_page
+    page.set_viewport_size({"width": 390, "height": 480})
+    _open_site(page, site_url, "dependencies/chapters/algebra.html")
+    viewer = page.locator(".bp-dag-viewer").bounding_box()
+    handle = page.locator(".bp-dag-sheet-handle").bounding_box()
+    assert viewer is not None and handle is not None
+    assert viewer["height"] <= 480
+    assert 0 <= handle["y"] and handle["y"] + handle["height"] <= 480
+
+
 def test_a_phones_chapter_explorer_gives_its_breadcrumb_a_line_of_its_own(mobile_page: object, site_url: str) -> None:
     """The textbook link and kind pill shared the crumbs' line, cutting the chapter's name and Book's target short."""
     page = _open_site(mobile_page, site_url, "dependencies/chapters/algebra.html")
