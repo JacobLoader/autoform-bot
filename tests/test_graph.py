@@ -153,6 +153,19 @@ def test_summary_reads_reference_links_and_definitions_as_the_page_does(tmp_path
     assert load_graph(blueprint).nodes["topic"].summary == "The statement cites the paper, Smith and [1] Jones."
 
 
+def test_summary_keeps_the_mathematics_and_code_a_tag_would_span(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(
+        blueprint,
+        "topic.md",
+        "# Ball\n\nFor $0 < a \\le b$ and $r > 0$ the <em>ball</em> `B<r>` is convex.\n",
+    )
+
+    assert load_graph(blueprint).nodes["topic"].summary == (
+        "For $0 < a \\le b$ and $r > 0$ the ball `B<r>` is convex."
+    )
+
+
 def test_summary_clips_a_long_paragraph_at_a_word(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     words = " ".join(f"word{index}" for index in range(200))
