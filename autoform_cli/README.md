@@ -907,8 +907,10 @@ against: every article whose `lean:` names a declaration, stated or not, with
 `open`, `assumes`, and `allowed_open_declarations`, the declarations of the
 open statements its Lean may reach, plus its own when it is open. A `mathlib:
 true` article is listed with state `mathlib`, `open` false, and nothing assumed
-or allowed, so CI checks that its names exist and reach no open statement. Under
-the strict policy every such article is listed with `open` false and nothing
+or allowed, so CI checks that its names exist and reach no open statement. An
+open module catalog keeps only the names no other article's `lean:` lists, and
+is left out when none remain: the other article's state decides whether such a
+name is open. Under the strict policy every such article is listed with `open` false and nothing
 allowed, and CI checks that its names exist. It reads Markdown only and needs
 no Lean build.
 

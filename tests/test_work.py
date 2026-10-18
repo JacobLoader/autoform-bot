@@ -12,6 +12,7 @@ import pytest
 from autoform_cli import __main__ as cli, work as work_module
 from autoform_cli.runtime import load_runtime_graph
 from autoform_cli.work import WORK_SCHEMA, WorkError, list_ready_work, work_context
+from tests.test_lake_artifact_audit import _load_helper
 
 
 def _article(
@@ -874,6 +875,40 @@ def test_work_assumptions_does_not_open_a_never_stated_theorem_naming_a_draft_le
         for article in articles.values()
         for name in ("Project.open_thm", "Project.open_aux")
     )
+
+
+def test_work_assumptions_leaves_a_pending_catalog_only_the_names_no_other_article_lists(
+    repo_root: Path, tmp_path: Path, capsys
+) -> None:
+    """A proved article owns its declaration, so a pending catalog listing it too cannot open it."""
+    project = _policy_project(tmp_path, "allowed")
+    _article(
+        project,
+        "catalog.md",
+        title="Module",
+        metadata=["catalog: module", "statement: formalized", "lean: Project.reduction Project.listed"],
+    )
+
+    assert cli.main(["work", "assumptions", str(project), "--json"]) == 0
+    output = capsys.readouterr().out
+    articles = {article["id"]: article for article in json.loads(output)["articles"]}
+
+    # A name only the catalog lists stays open.
+    assert articles["chapter/catalog"] == _contract_article(
+        "chapter/catalog", None, "can_prove", ["Project.listed"], open_=True, allowed=("Project.listed",)
+    )
+    assert articles["chapter/reduction"]["open"] is False
+
+    contract = tmp_path / "contract.json"
+    contract.write_text(output, encoding="utf-8")
+    entries = _load_helper(repo_root).load_assumption_contract(contract)
+    assert {entry.name for entry in entries if entry.is_open} == {
+        "Project.listed",
+        "Project.open_aux",
+        "Project.open_thm",
+        "Project.prove",
+        "Project.uses",
+    }
 
 
 def test_work_assumptions_text_labels_only_conditional_articles_as_conditional(tmp_path: Path, capsys) -> None:
