@@ -417,13 +417,17 @@ def test_real_lean_batch_diagnostics_render_the_probe(tmp_path):
 
 @_requires_real_lean
 def test_real_lean_reports_unbuilt_imports_without_building_them(tmp_path):
-    project = _real_lean_project(tmp_path / "stale", "import Probe.Dep\n", Dep="def dep : Nat := 1\n")
+    project = _real_lean_project(
+        tmp_path / "stale", "import Probe.Mid\n", Mid="import Probe.Dep\n", Dep="def dep : Nat := 1\n"
+    )
 
     with pytest.raises(batch.BatchDiagnosticsError, match="imports are not built") as raised:
         batch.batch_diagnostics(project, project / "Probe" / "Main.lean", command=_LAKE_LEAN, timeout=300)
 
-    assert "Probe.Dep" in str(raised.value)
-    assert not list((project / ".lake").rglob("Dep.olean"))
+    # Lake lists only the first module to build, not the ones that import it.
+    assert str(raised.value).endswith("- Probe.Dep")
+    assert "- Probe.Mid" not in str(raised.value)
+    assert not list((project / ".lake").rglob("*.olean"))
 
 
 @_requires_real_lean
