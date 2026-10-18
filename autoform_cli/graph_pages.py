@@ -140,7 +140,8 @@ def write_graph_pages(
         for node in view.nodes:
             if node.kind == "boundary":
                 external = node.id.removeprefix("boundary:")
-                links[node.id] = _published_link(scope_pages[external], chapter_page)
+                # The root's own articles are drawn on their Top level page, not the project's.
+                links[node.id] = _published_link(chapter_pages.get(external) or scope_pages[external], chapter_page)
             elif node.kind == "scope":
                 nested = node.id.removeprefix("scope:")
                 links[node.id] = _published_link(scope_pages[nested], chapter_page)
@@ -199,7 +200,7 @@ def write_graph_pages(
                 links[node.id] = _published_link(scope_pages[nested], scope_page)
             elif node.kind == "boundary":
                 external = node.id.removeprefix("boundary:")
-                links[node.id] = _published_link(scope_pages[external], scope_page)
+                links[node.id] = _published_link(chapter_pages.get(external) or scope_pages[external], scope_page)
         parent = graph.nodes[scope].parent
         parent_page = scope_pages.get(parent or "roadmap", project_page)
         written.append(

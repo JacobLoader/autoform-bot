@@ -137,8 +137,9 @@ def project_view(graph: Graph, statuses: dict[str, NodeStatus]) -> GraphView:
             _scope_node_id(group),
             ROOT_GROUP_TITLE if group in {"", "roadmap"} else group_title(graph, group),
             grouped.get(group, ()),
-            summary=graph.nodes[group].summary if group in graph.nodes else None,
-            area=graph.nodes[group].area if group in graph.nodes else None,
+            # The root's summary and area describe the project, not its top level.
+            summary=graph.nodes[group].summary if group in graph.nodes and group != "roadmap" else None,
+            area=graph.nodes[group].area if group in graph.nodes and group != "roadmap" else None,
             internal_dependency_count=internal_counts[group],
         )
         for group in scopes
@@ -181,7 +182,7 @@ def chapter_view(graph: Graph, statuses: dict[str, NodeStatus], group: str) -> G
     nodes.extend(
         ViewNode(
             id=_boundary_node_id(external),
-            title=group_title(graph, external),
+            title=ROOT_GROUP_TITLE if external in {"", "roadmap"} else group_title(graph, external),
             kind="boundary",
             members=tuple(sorted(external_members)),
             status_counts=_status_counts(graph, external_members, statuses),
@@ -341,7 +342,7 @@ def _scope_view(
         nodes.append(
             ViewNode(
                 id=_boundary_node_id(external),
-                title=group_title(graph, external),
+                title=ROOT_GROUP_TITLE if external in {"", "roadmap"} else group_title(graph, external),
                 kind="boundary",
                 members=tuple(sorted(external_members)),
                 status_counts=_status_counts(graph, external_members, statuses),
