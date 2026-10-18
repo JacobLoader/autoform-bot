@@ -322,6 +322,14 @@ def test_loads_a_non_dispatchable_module_catalog_status(tmp_path: Path) -> None:
             "error: module: source target does not resolve to a file: '../sources/missing.md'",
             id="missing",
         ),
+        # Only audit fails a hidden note under sources/.
+        pytest.param(
+            "../sources/.private/module.md",
+            0,
+            "warning: module: source target names a hidden path, which only a repository link reaches, so it must "
+            "be committed: '../sources/.private/module.md'",
+            id="hidden",
+        ),
     ],
 )
 def test_check_warns_about_a_catalog_that_links_no_ledger_under_sources(
@@ -329,7 +337,7 @@ def test_check_warns_about_a_catalog_that_links_no_ledger_under_sources(
 ) -> None:
     """A catalog's ledger is a source link: only a dead one fails check, as for any article."""
     blueprint = tmp_path / "blueprint"
-    for ledger in ("sources/module.md", "notes/ledger.md"):
+    for ledger in ("sources/module.md", "sources/.private/module.md", "notes/ledger.md"):
         (blueprint / ledger).parent.mkdir(parents=True)
         (blueprint / ledger).write_text("# Module declarations\n", encoding="utf-8")
     _node(blueprint, "module.md", f"# Existing module\n\n## Sources\n\n- [Ledger]({link})\n", catalog="module")

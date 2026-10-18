@@ -130,8 +130,9 @@ proof task. A catalog must be a leaf: `audit` reports one with contained
 articles as `catalog-container`. Every catalog links a declaration ledger under
 `blueprint/sources/` from its `## Sources` section: `check` warns about a
 catalog that links none and `audit` reports it as `catalog-missing-ledger`,
-while a link to a missing or hidden ledger fails both, as such a source link
-does for any article. A completed catalog also
+while a link to a missing ledger fails both, as such a source link does for any
+article. A hidden ledger under `sources/` draws a `check` warning and fails only
+`audit`, as [Validation](#validation) explains. A completed catalog also
 records in `lean:` the full name of every public declaration the module writes
 with a declaration keyword, which is what the Lean source index records (see
 [Validation](#validation)). Names Lean generates, such as constructors,
