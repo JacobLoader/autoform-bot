@@ -728,8 +728,10 @@ def test_a_catalog_hit_says_it_is_a_module_inventory(tmp_path: Path, capsys) -> 
     )
 
     assert cli.main(["search", str(project), "Project.separation", "--json"]) == 0
-    hits = json.loads(capsys.readouterr().out)["hits"]
-    assert {hit["node_id"]: hit["catalog"] for hit in hits} == {
+    document = json.loads(capsys.readouterr().out)
+    # The key is additive, so the schema stays v1; --library already has v2.
+    assert document["schema"] == "autoform-search/v1"
+    assert {hit["node_id"]: hit["catalog"] for hit in document["hits"]} == {
         "convexity/hyperplane": None,
         "convexity/inventory": "module",
     }

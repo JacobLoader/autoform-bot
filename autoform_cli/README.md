@@ -1232,6 +1232,10 @@ What an existing repository meets when it moves to this version:
     kind and size. A name declared that way in one file and plainly in another
     is now `defined more than once` in `check` and `lean-target-ambiguous` in
     `audit`, where earlier versions passed.
+11. Every `autoform search --json` hit now carries a nullable `catalog`,
+    `module` for a module catalog, while the schema stays
+    `autoform-search/v1`: `autoform-search/v2` already names the `--library`
+    output. A consumer that rejects unknown keys must accept the new one.
 
 ## Validation
 
