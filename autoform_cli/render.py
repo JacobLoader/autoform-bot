@@ -25,7 +25,7 @@ import time
 import unicodedata
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
@@ -44,7 +44,7 @@ from ._tree_snapshot import (
     descriptor_capture_supported,
 )
 from .coverage import COVERAGE_DISPOSITIONS, CoverageSummary, load_coverage
-from .graph import Graph, GraphValidationError, Node, _implementation_note_issues, load_graph
+from .graph import Graph, GraphValidationError, Node, _implementation_note_issues, load_graph, unpublished_content
 from .lean import (
     PUBLICATION_MANIFEST,
     PUBLICATION_MANIFEST_MAX_BYTES,
@@ -337,7 +337,7 @@ def render_site(
             ["blueprint and output directories must be disjoint; refusing destructive render"]
         )
     recovered = _recover_backup(destination)
-    snapshot = _capture_blueprint(blueprint)
+    snapshot, unpublished, unpublished_ids = _capture_blueprint(blueprint)
     # The repository root, not the vault's parent. A blueprint nested at
     # <repo>/docs/blueprint would otherwise be described as <repo>/blueprint,
     # and every generated permalink would 404.
@@ -350,8 +350,8 @@ def render_site(
     # the repository path it had when render read the vault.
     relative = blueprint.relative_to(repo_root) if _is_within(blueprint, repo_root) else Path("blueprint")
     with _private_copy(snapshot, relative) as (copy_root, copy):
-        graph = _load_graph(copy, blueprint)
-        coverage, coverage_issues = load_coverage(copy)
+        graph = _load_graph(copy, blueprint, unpublished_ids)
+        coverage, coverage_issues = load_coverage(copy, unpublished=tuple(copy / folder for folder in unpublished))
         if coverage_issues:
             raise PublicationError(
                 [
@@ -643,11 +643,13 @@ def _render_pages(
     return report
 
 
-def _capture_blueprint(blueprint: Path) -> TreeSnapshot:
+def _capture_blueprint(blueprint: Path) -> tuple[TreeSnapshot, tuple[str, ...], frozenset[str]]:
     """Read the blueprint once, refusing what must not be published.
 
     Through descriptors where the host has them; elsewhere (Windows) as two
-    pathname captures that must agree.
+    pathname captures that must agree. Folders whose README says ``published:
+    false`` are left out of the returned snapshot, so no page, hash or
+    repository check sees them; they and the article IDs in them come beside it.
     """
     try:
         selection = _PUBLICATION_SELECTION
@@ -690,7 +692,17 @@ def _capture_blueprint(blueprint: Path) -> TreeSnapshot:
             )
     if issues:
         raise PublicationError(issues)
-    return snapshot
+    folders, article_ids = unpublished_content(snapshot.files)
+
+    def kept(name: str) -> bool:
+        return not any(name == folder or name.startswith(f"{folder}/") for folder in folders)
+
+    published = replace(
+        snapshot,
+        directories=tuple(name for name in snapshot.directories if kept(name)),
+        files=tuple(item for item in snapshot.files if kept(item[0])),
+    )
+    return published, folders, article_ids
 
 
 def _is_sensitive(relative: PurePosixPath) -> bool:
@@ -733,11 +745,12 @@ def _private_copy(
         yield root, copy
 
 
-def _load_graph(copy: Path, blueprint: Path) -> Graph:
+def _load_graph(copy: Path, blueprint: Path, unpublished_ids: frozenset[str] = frozenset()) -> Graph:
     """Load the copy's graph, then check the vault's implementation notes as ``load_graph`` would.
 
     The notes are hidden, so the copy lacks them. Nothing is published or hashed
-    from them, so reading them in place changes no output.
+    from them, so reading them in place changes no output. A note may belong to
+    an article in an unpublished folder, which the copy lacks too.
     """
     try:
         graph = load_graph(copy)
@@ -745,6 +758,7 @@ def _load_graph(copy: Path, blueprint: Path) -> Graph:
         issues = [issue.replace(str(copy), str(blueprint)) for issue in error.issues]
         raise GraphValidationError(issues) from None
     article_ids = {node.article_id: node.id for node in graph.nodes.values() if node.article_id is not None}
+    article_ids.update(dict.fromkeys(unpublished_ids, ""))
     if issues := _implementation_note_issues(blueprint, article_ids):
         raise GraphValidationError(issues)
     return graph
@@ -753,9 +767,9 @@ def _load_graph(copy: Path, blueprint: Path) -> Graph:
 def load_publication_source(blueprint_dir: str | Path) -> tuple[str, Graph]:
     """Read the blueprint once; return its publication revision and the graph of those bytes."""
     blueprint = blueprint_root(blueprint_dir)
-    snapshot = _capture_blueprint(blueprint)
+    snapshot, _, unpublished_ids = _capture_blueprint(blueprint)
     with _private_copy(snapshot, prefix="roadmap/") as (_root, copy):  # the graph reads nothing else
-        return _source_revision(snapshot), _load_graph(copy, blueprint)
+        return _source_revision(snapshot), _load_graph(copy, blueprint, unpublished_ids)
 
 
 #: An output render may replace: its identity and its files' digests (none for an empty one).
@@ -1177,7 +1191,7 @@ def _source_revision(snapshot: TreeSnapshot) -> str:
 def publication_source_revision(blueprint_dir: str | Path) -> str:
     """Return the deterministic source hash stored in ``publication.json``."""
 
-    return _source_revision(_capture_blueprint(blueprint_root(blueprint_dir)))
+    return _source_revision(_capture_blueprint(blueprint_root(blueprint_dir))[0])
 
 
 def _write_publication_manifest(

@@ -154,20 +154,23 @@ def audit_blueprint(
     given = Path(blueprint_dir).expanduser()
     resolved = _directory_path(given)
     blueprint = resolved or given.absolute()
-    if resolved is not None and blueprint.is_dir():
-        coverage, coverage_findings = _coverage_findings(blueprint)
-    else:
-        coverage, coverage_findings = None, []
     try:
         graph = load_graph(blueprint)
     except GraphValidationError as error:
+        graph, invalid = None, error.issues
+    # The graph names the folders render leaves out, which coverage may not link into.
+    if resolved is not None and blueprint.is_dir():
+        coverage, coverage_findings = _coverage_findings(blueprint, graph.unpublished if graph else ())
+    else:
+        coverage, coverage_findings = None, []
+    if graph is None:
         findings = [
             AuditFinding(
                 _validation_article_path(blueprint, issue),
                 "invalid-graph",
                 _stable_validation_reason(blueprint, issue),
             )
-            for issue in error.issues
+            for issue in invalid
         ]
         return _result([*findings, *coverage_findings], coverage=coverage)
     return audit_graph(
@@ -314,7 +317,7 @@ def audit_graph(
         findings.extend(_source_findings(graph, node, article_path))
 
     if coverage_findings is None:
-        coverage, coverage_findings = _coverage_findings(graph.blueprint_dir)
+        coverage, coverage_findings = _coverage_findings(graph.blueprint_dir, graph.unpublished)
     findings.extend(coverage_findings)
     if lean_root is not None:
         findings.extend(_lean_findings(graph, lean_root))
@@ -370,7 +373,7 @@ def _statement_finding(statement: str) -> tuple[str, str] | None:
 def _source_findings(graph: Graph, node: Node, article_path: str) -> list[AuditFinding]:
     findings: list[AuditFinding] = []
     for target in node.sources:
-        issue = _local_target_issue(node.path, target, graph.blueprint_dir, label="source")
+        issue = _local_target_issue(node.path, target, graph.blueprint_dir, label="source", unpublished=graph.unpublished)
         if issue is not None:
             code, reason = issue
             findings.append(AuditFinding(article_path, code, reason))
@@ -378,11 +381,11 @@ def _source_findings(graph: Graph, node: Node, article_path: str) -> list[AuditF
 
 
 def _coverage_findings(
-    blueprint: Path,
+    blueprint: Path, unpublished: tuple[Path, ...] = ()
 ) -> tuple[CoverageSummary | None, list[AuditFinding]]:
     coverage_root = blueprint / "coverage"
     contract = coverage_root / "README.md"
-    coverage, issues = load_coverage(blueprint)
+    coverage, issues = load_coverage(blueprint, unpublished=unpublished)
     findings = [
         AuditFinding(
             "coverage/README.md",
@@ -429,7 +432,7 @@ def _coverage_findings(
             continue
 
         for line_number, target in _markdown_links(text):
-            issue = _local_target_issue(path, target, blueprint, label="coverage")
+            issue = _local_target_issue(path, target, blueprint, label="coverage", unpublished=unpublished)
             if issue is not None:
                 code, reason = issue
                 findings.append(

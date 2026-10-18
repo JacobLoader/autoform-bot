@@ -779,6 +779,61 @@ def test_a_dependency_on_a_hidden_page_names_the_hidden_path(tmp_path: Path) -> 
     assert caught.value.issues == ("base: dependency target names a hidden path, which render omits: '.draft.md'",)
 
 
+def test_an_unpublished_folder_is_checked_and_named(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "base.md", "# Base\n")
+    _node(blueprint, "drafts/README.md", "# Drafts\n", published="false")
+    _node(blueprint, "drafts/idea.md", "# Idea\n## Depends on\n[Base](../base.md)\n")
+
+    graph = load_graph(blueprint)
+
+    assert sorted(graph.nodes) == ["base", "drafts", "drafts/idea"]
+    assert graph.unpublished == ((blueprint / "roadmap" / "drafts").resolve(),)
+
+
+def test_published_is_a_folder_setting(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _roadmap_page(blueprint, "README.md", _node_text("# Roadmap\n", published="false"))
+    _node(blueprint, "base.md", "# Base\n", published="false")
+
+    with pytest.raises(GraphValidationError) as caught:
+        load_graph(blueprint)
+
+    assert caught.value.issues == tuple(
+        f"{node}: published is a folder setting; set it in a folder's README.md below roadmap/"
+        for node in ("roadmap", "base")
+    )
+
+
+def test_a_published_article_may_not_depend_on_an_unpublished_one(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "drafts/README.md", "# Drafts\n", published="false")
+    _node(blueprint, "drafts/idea.md", "# Idea\n")
+    _node(blueprint, "base.md", "# Base\n## Depends on\n[Idea](drafts/idea.md)\n")
+
+    with pytest.raises(GraphValidationError) as caught:
+        load_graph(blueprint)
+
+    assert caught.value.issues == ("base: depends on drafts/idea, which is in an unpublished folder render omits",)
+
+
+def test_check_rejects_a_sources_link_into_an_unpublished_folder(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    blueprint = tmp_path / "blueprint"
+    (blueprint / "sources").mkdir(parents=True)
+    (blueprint / "sources" / ".notes.md").write_text("# Notes\n", encoding="utf-8")
+    _node(blueprint, "drafts/README.md", "# Drafts\n", published="false")
+    # Render reads none of an unpublished page's links, so it may cite a hidden note.
+    _node(blueprint, "drafts/idea.md", "# Idea\n\n## Sources\n\n- [Notes](../../sources/.notes.md)\n")
+    _node(blueprint, "result.md", "# Result\n\n## Sources\n\n- [Idea](drafts/idea.md)\n")
+
+    assert main(["check", str(blueprint)]) == 1
+    assert capsys.readouterr().out == (
+        "error: result: source target names an unpublished folder, which render omits: 'drafts/idea.md'\n"
+    )
+
+
 def test_check_rejects_a_sources_link_to_a_view_render_generates(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

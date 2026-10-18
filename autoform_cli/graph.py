@@ -37,6 +37,7 @@ _FRONTMATTER_KEYS = frozenset(
         "origin",
         "discussion",
         "open_statements",
+        "published",
     }
 )
 _FORMALIZED = "formalized"
@@ -114,6 +115,9 @@ class Graph:
     #: statement may land with a ``sorry`` proof. Absent or ``forbidden`` keeps
     #: the strict policy, where CI rejects every ``sorry``.
     open_statements: bool = False
+    #: Folders whose ``README.md`` says ``published: false``: check validates
+    #: them, and render leaves them out of the site.
+    unpublished: tuple[Path, ...] = ()
 
     @property
     def edge_count(self) -> int:
@@ -199,6 +203,8 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
                     )
                 else:
                     open_statements = policy == "allowed"
+            if "published" in node.metadata and (canonical.name != "README.md" or canonical == policy_page):
+                issues.append(f"{node.id}: published is a folder setting; set it in a folder's README.md below roadmap/")
             parsed.append(node)
 
     if not issues:
@@ -210,6 +216,8 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
     issues.extend(_containment_cycles(parents))
     if issues:
         raise GraphValidationError(issues)
+    unpublished = tuple(sorted(node.path.parent for node in parsed if node.metadata.get("published") in _FALSE))
+    unpublished_ids = {node.id for node in parsed if any(_is_within(node.path, folder) for folder in unpublished)}
     nodes: dict[str, Node] = {}
     for parsed_node in parsed:
 
@@ -221,6 +229,8 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
                     issues.append(issue)
                 elif dependency == node.id:
                     issues.append(f"{node.id}: dependency on itself")
+                elif dependency in unpublished_ids and node.id not in unpublished_ids:
+                    issues.append(f"{node.id}: depends on {dependency}, which is in an unpublished folder render omits")
                 elif dependency not in resolved:
                     resolved.append(dependency)
             return resolved
@@ -262,7 +272,36 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
         issues.extend(_find_cycles(nodes))
     if issues:
         raise GraphValidationError(issues)
-    return Graph(blueprint_dir=blueprint, nodes=nodes, open_statements=open_statements)
+    return Graph(blueprint_dir=blueprint, nodes=nodes, open_statements=open_statements, unpublished=unpublished)
+
+
+def unpublished_content(files: tuple[tuple[str, bytes], ...]) -> tuple[tuple[str, ...], frozenset[str]]:
+    """The folders captured *files* mark ``published: false``, and the article IDs inside them.
+
+    For render, which leaves those folders out before it loads the graph but
+    still knows their articles' implementation notes. A README that cannot be
+    read here fails ``load_graph`` too.
+    """
+    folders = []
+    for name, data in files:
+        parts = name.split("/")
+        if len(parts) > 2 and parts[0] == "roadmap" and parts[-1] == "README.md":
+            try:
+                metadata = _parse_frontmatter(name, data.decode("utf-8").splitlines())[0]
+            except UnicodeError:
+                continue
+            if metadata.get("published") in _FALSE:
+                folders.append(name.removesuffix("/README.md"))
+    article_ids = set()
+    for name, data in files:
+        if name.endswith(".md") and any(name.startswith(f"{folder}/") for folder in folders):
+            try:
+                article_id = _parse_frontmatter(name, data.decode("utf-8").splitlines())[0].get("article_id")
+            except UnicodeError:
+                continue
+            if article_id is not None:
+                article_ids.add(article_id)
+    return tuple(folders), frozenset(article_ids)
 
 
 def _discover_nodes(blueprint: Path) -> tuple[list[_NodeSource], list[str]]:
@@ -654,7 +693,7 @@ def _normalize_value(node_id: str, line_number: int, key: str, value: str) -> tu
         if folded != _FORMALIZED:
             return value, f"{location}: {key!r} accepts only {_FORMALIZED!r}; omit the key otherwise"
         return folded, None
-    if key in {"mathlib", "not_ready"}:
+    if key in {"mathlib", "not_ready", "published"}:
         if folded not in _TRUE | _FALSE:
             return value, f"{location}: {key!r} accepts only true or false"
         return folded, None
@@ -772,4 +811,5 @@ __all__ = [
     "GraphValidationError",
     "Node",
     "load_graph",
+    "unpublished_content",
 ]
