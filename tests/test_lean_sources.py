@@ -3494,10 +3494,12 @@ _PRIVATE_MAIN = "private theorem Demo.main : True := trivial\n"
             [],
         ),
         ({"A.lean": _PRIVATE_MAIN, "B.lean": "\nproof_wanted Demo.main : True\n"}, [("A.lean", 1), ("B.lean", 2)], []),
+        # A universe binder on the keyword's line leaves the name as it is.
+        ({"A.lean": "def Demo.main.{u} : Nat := 0\n", "B.lean": _PUBLIC_MAIN}, [("A.lean", 1), ("B.lean", 2)], []),
     ],
     ids=[
         "earlier-private", "private-above", "private-alias", "later-private", "wanted",
-        "lone-private", "two-public", "two-private", "private-wanted",
+        "lone-private", "two-public", "two-private", "private-wanted", "universe-binder",
     ],
 )
 def test_a_name_selects_its_one_public_declaration_or_is_ambiguous(

@@ -1225,6 +1225,13 @@ What an existing repository meets when it moves to this version:
    link is now `<scope>.html#node=<id>`.
 9. Setup leaves an existing `mkdocs.yml` alone. A large site can add Material's
    `navigation.prune` feature by hand, as the scaffolded configuration does.
+10. A declaration whose name carries an explicit universe binder on its
+    keyword's line, as in `def f.{u}`, is now read as `f`, as it already was
+    when the name sat on the next line. A `lean:` name for such a declaration
+    now resolves, and an alias of one is read through its target for limits,
+    kind and size. A name declared that way in one file and plainly in another
+    is now `defined more than once` in `check` and `lean-target-ambiguous` in
+    `audit`, where earlier versions passed.
 
 ## Validation
 
