@@ -258,9 +258,10 @@ def assumption_contract(project_or_blueprint: str | Path) -> AssumptionContract:
     ``lean:`` name, so CI rejects its ``sorry``. Mathlib articles are listed too,
     never open and allowed nothing, so CI can check that their names exist and
     reach no open statement. Under the strict policy no article is open and
-    nothing is allowed. An open module catalog drops every name another
-    article's ``lean:`` also lists: that article owns the declaration, so its
-    state decides whether the name is open.
+    nothing is allowed. A module catalog is never open, so CI rejects a
+    ``sorry`` in a declaration only it lists. One that is not proved drops
+    every name a non-catalog article's ``lean:`` also lists: that article owns
+    the declaration, so its state decides whether the name is open.
     """
     runtime = load_runtime_graph(project_or_blueprint)
     declarations = {
@@ -271,13 +272,14 @@ def assumption_contract(project_or_blueprint: str | Path) -> AssumptionContract:
         node.id
         for node in runtime.nodes
         if runtime.open_statements
+        and node.catalog is None
         and not node.status.proved
         and not is_definition(node)
         and (node.status.stated or node.assertions.statement_retracted)
     }
     owned = {name for node in runtime.nodes if node.catalog is None for name in declarations[node.id]}
     for node in runtime.nodes:
-        if node.catalog is not None and node.id in open_ids:
+        if node.catalog is not None and not node.status.proved:
             declarations[node.id] = tuple(name for name in declarations[node.id] if name not in owned)
     articles: list[AssumptionArticle] = []
     for node in sorted(runtime.nodes, key=lambda candidate: candidate.id):

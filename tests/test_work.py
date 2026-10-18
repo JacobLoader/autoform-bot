@@ -877,10 +877,8 @@ def test_work_assumptions_does_not_open_a_never_stated_theorem_naming_a_draft_le
     )
 
 
-def test_work_assumptions_leaves_a_pending_catalog_only_the_names_no_other_article_lists(
-    repo_root: Path, tmp_path: Path, capsys
-) -> None:
-    """A proved article owns its declaration, so a pending catalog listing it too cannot open it."""
+def test_work_assumptions_never_opens_a_pending_catalog(repo_root: Path, tmp_path: Path, capsys) -> None:
+    """A stated, unproved catalog licenses no sorry, so nothing that rests on it assumes it."""
     project = _policy_project(tmp_path, "allowed")
     _article(
         project,
@@ -888,27 +886,63 @@ def test_work_assumptions_leaves_a_pending_catalog_only_the_names_no_other_artic
         title="Module",
         metadata=["catalog: module", "statement: formalized", "lean: Project.reduction Project.listed"],
     )
+    _article(
+        project,
+        "after.md",
+        title="After",
+        metadata=["declaration: theorem", "statement: formalized", "proof: formalized", "lean: Project.after"],
+        proof_depends="catalog.md",
+    )
 
     assert cli.main(["work", "assumptions", str(project), "--json"]) == 0
     output = capsys.readouterr().out
     articles = {article["id"]: article for article in json.loads(output)["articles"]}
 
-    # A name only the catalog lists stays open.
-    assert articles["chapter/catalog"] == _contract_article(
-        "chapter/catalog", None, "can_prove", ["Project.listed"], open_=True, allowed=("Project.listed",)
-    )
-    assert articles["chapter/reduction"]["open"] is False
+    # The proved article owns the name both list, so the catalog keeps only its own.
+    assert articles["chapter/catalog"] == _contract_article("chapter/catalog", None, "can_prove", ["Project.listed"])
+    assert articles["chapter/after"] == _contract_article("chapter/after", None, "proved", ["Project.after"])
 
     contract = tmp_path / "contract.json"
     contract.write_text(output, encoding="utf-8")
     entries = _load_helper(repo_root).load_assumption_contract(contract)
     assert {entry.name for entry in entries if entry.is_open} == {
-        "Project.listed",
         "Project.open_aux",
         "Project.open_thm",
         "Project.prove",
         "Project.uses",
     }
+
+
+def test_work_assumptions_leaves_a_name_a_pending_catalog_shares_open_through_its_owner(
+    repo_root: Path, tmp_path: Path, capsys
+) -> None:
+    """The audit refuses a name both open and not open, so a pending catalog drops an open article's name."""
+    project = _policy_project(tmp_path, "allowed")
+    _article(
+        project,
+        "catalog.md",
+        title="Module",
+        metadata=["catalog: module", "statement: formalized", "lean: Project.open_thm Project.listed"],
+    )
+    helper = _load_helper(repo_root)
+    contract = tmp_path / "contract.json"
+
+    assert cli.main(["work", "assumptions", str(project), "--json"]) == 0
+    output = capsys.readouterr().out
+    articles = {article["id"]: article for article in json.loads(output)["articles"]}
+    assert articles["chapter/catalog"]["declarations"] == ["Project.listed"]
+    contract.write_text(output, encoding="utf-8")
+    entries = helper.load_assumption_contract(contract)
+    assert [(entry.article, entry.is_open) for entry in entries if entry.name == "Project.open_thm"] == [
+        ("chapter/open", True)
+    ]
+
+    # A proved catalog that lists the name contradicts its open owner, and the audit still refuses it.
+    _edit(project, "catalog.md", "statement: formalized\n", "statement: formalized\nproof: formalized\n")
+    assert cli.main(["work", "assumptions", str(project), "--json"]) == 0
+    contract.write_text(capsys.readouterr().out, encoding="utf-8")
+    with pytest.raises(helper.AuditInputError, match="Project.open_thm is an open statement of chapter/open"):
+        helper.load_assumption_contract(contract)
 
 
 def test_work_assumptions_text_labels_only_conditional_articles_as_conditional(tmp_path: Path, capsys) -> None:

@@ -184,7 +184,7 @@ def derive(graph: Graph) -> dict[str, NodeStatus]:
     statuses: dict[str, NodeStatus] = {}
     # The open statements a proof reaches through each node, as the Lean walk
     # would: an open statement contributes itself and whatever its statement
-    # reaches, and a proved node is entered fully.
+    # reaches, and a proved node or a module catalog is entered fully.
     reaches: dict[str, frozenset[str]] = {}
     for node_id in topological_order(graph):
         node = graph.nodes[node_id]
@@ -218,11 +218,12 @@ def derive(graph: Graph) -> dict[str, NodeStatus]:
             # declaration, which stays in the build, sorry and all, until
             # Formalize restates it. A draft `lean:` on a never-stated theorem
             # is not an assumption. A retracted definition is not open, but its
-            # body still reaches what it used.
+            # body still reaches what it used. A pending module catalog licenses
+            # no sorry either, so nothing that rests on it assumes it.
             if not node.mathlib:
                 reached = frozenset().union(*(reaches.get(other, frozenset()) for other in node.dependencies))
                 assumes = tuple(sorted(reached))
-                if proved or (definition and node.lean):
+                if proved or ((definition or node.catalog is not None) and node.lean):
                     reaches[node_id] = reached
                 elif stated or node.statement_retracted:
                     reaches[node_id] = frozenset({node_id}).union(
