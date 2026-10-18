@@ -642,7 +642,7 @@ def _check(args: argparse.Namespace) -> int:
             print(f"error: {issue}")
         return 1
     if args.lean_root is not None:
-        source_warnings += library_citation_warnings(graph, args.lean_root)
+        source_warnings += [_human_text(warning) for warning in library_citation_warnings(graph, args.lean_root)]
 
     linker = None
     if args.lean_root is not None:

@@ -15,21 +15,23 @@ from collections.abc import Iterable
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from .. import status
 from ..graph import IMPLEMENTATION_NOTES_DIR, Graph
-from ..lean import LeanSourceError, snapshot_project_sources
+from ..lean import index_failure_message, resolve_lean_root, snapshot_project_sources
+from ..markdown import resolved_path
 from .listing import indexed_packages
-from .locate import LibraryError, WorkspaceError, read_workspace
+from .locate import LibraryError, read_workspace
 from .verify import load_library
 
 # A new-style identifier (2307.05244) or an old-style one (math/0210149, math.AG/0210149)
-# after an arxiv.org abs or pdf URL or an "arXiv" label. A version suffix stays outside the match.
+# after an arxiv.org URL or an "arXiv" label. A version suffix stays outside the match.
 _ARXIV = re.compile(
-    r"(?:arxiv\.org/(?:abs|pdf)/|\barxiv:?\s*)"
-    r"(?:(?P<new>\d{4}\.\d{4,5})|(?P<archive>[a-z][a-z-]*)(?:\.[a-z]{2})?/(?P<number>\d{7}))(?![\d/])",
+    r"(?:arxiv\.org/(?:abs|pdf|html|e-print|src)/|\barxiv:?\s*`?)"
+    r"(?:(?P<new>\d{4}\.\d{4,5})|(?P<archive>[a-z][a-z-]{0,15})(?:\.[a-z]{2})?/(?P<number>\d{7}))(?![\d/])",
     re.IGNORECASE,
 )
-# A DOI URL may percent-encode the slash after the registrant.
-_DOI = re.compile(r"(?:doi\.org/|\bdoi:?\s*)(?P<doi>10\.\d{4,9}(?:/|%2F)[^\s\"'<>`]+)", re.IGNORECASE)
+# A DOI URL may percent-encode the slash after the registrant; a DOI written as link text ends at its `]`.
+_DOI = re.compile(r"(?:doi\.org/|\bdoi:?\s*)(?P<doi>10\.\d{4,9}(?:/|%2F)[^\s\"'<>`\]]+)", re.IGNORECASE)
 _ARXIV_DOI = "10.48550/arxiv."
 #: A source page is notes about a source, so a larger file is not one.
 _PAGE_LIMIT = 4 * 1024 * 1024
@@ -46,8 +48,11 @@ def cited_sources(text: str | None) -> frozenset[str]:
     for match in _DOI.finditer(text):
         doi = unquote(match["doi"])
         # A DOI may hold parentheses, so only an unmatched closing one is the sentence's.
-        while doi[-1] in ".,;:]}" or (doi[-1] == ")" and doi.count(")") > doi.count("(")):
-            doi = doi[:-1]
+        end, unmatched = len(doi), doi.count(")") - doi.count("(")
+        while doi[end - 1] in ".,;:}" or (doi[end - 1] == ")" and unmatched > 0):
+            unmatched -= doi[end - 1] == ")"
+            end -= 1
+        doi = doi[:end]
         # arXiv's own DOIs name the paper its identifier does.
         paper = _ARXIV.fullmatch("arXiv:" + doi[len(_ARXIV_DOI) :]) if doi.lower().startswith(_ARXIV_DOI) else None
         found.add(f"arXiv {_paper(paper)}" if paper else f"DOI {doi.lower()}")
@@ -67,8 +72,8 @@ def library_citation_warnings(graph: Graph, lean_root: str | Path) -> list[str]:
     try:
         workspace = read_workspace(lean_root)
         packages = indexed_packages(lean_root)
-    except WorkspaceError:
-        return []  # without a Lake workspace there is no shared library to compare
+    except (OSError, RuntimeError, ValueError):
+        return []  # no Lake workspace to compare, or a Lean root build_linker reports
 
     warnings = []
     candidates: list[tuple[str, str, str, list[str]]] = []
@@ -87,7 +92,7 @@ def library_citation_warnings(graph: Graph, lean_root: str | Path) -> list[str]:
                 continue  # a wanted result is a placeholder, not a proof to reuse
             fields = (
                 ("docstring", cited_sources(declaration.docstring)),
-                ("module docstring", module_sources.get(declaration.module, frozenset())),
+                ("module docstring", module_sources[declaration.module]),
             )
             for field, sources in fields:
                 cited = sorted(sources & citing.keys(), key=lambda source: (-len(citing[source]), source))
@@ -101,11 +106,11 @@ def library_citation_warnings(graph: Graph, lean_root: str | Path) -> list[str]:
     unnamed = _unnamed([name for _, name, _, _ in candidates], _note_texts(graph.blueprint_dir))
     if unnamed:
         try:
-            snapshot = snapshot_project_sources(lean_root)
-        except (LeanSourceError, OSError) as error:
+            snapshot = snapshot_project_sources(resolve_lean_root(lean_root))
+        except OSError as error:
             warnings.append(
-                f"{len(unnamed)} library declaration(s) cite the blueprint's sources, but the project's Lean "
-                f"sources could not be read to see whether they name them: {error}"
+                f"{len(unnamed)} library declaration(s) cite the blueprint's sources, but whether the project's "
+                f"Lean files name them is unknown: {index_failure_message(error)}"
             )
             return warnings
         unnamed = _unnamed(sorted(unnamed), (data.decode("utf-8", "replace") for _, data in snapshot.source_files))
@@ -113,7 +118,7 @@ def library_citation_warnings(graph: Graph, lean_root: str | Path) -> list[str]:
     for library, name, field, cited in sorted(candidates):
         if name not in unnamed:
             continue
-        sources = " and ".join(_cited_by(source, len(citing[source])) for source in cited)
+        sources = ", and ".join(_cited_by(source, len(citing[source])) for source in cited)
         warnings.append(
             f"library {library} declares {name}, whose {field} cites {sources}; "
             "no implementation note or project Lean file names it"
@@ -122,20 +127,27 @@ def library_citation_warnings(graph: Graph, lean_root: str | Path) -> list[str]:
 
 
 def _cited_by(source: str, articles: int) -> str:
-    return f"{source}, which 1 article cites" if articles == 1 else f"{source}, which {articles} articles cite"
+    if articles == 1:
+        return f"{source}, which 1 unproved article cites"
+    return f"{source}, which {articles} unproved articles cite"
 
 
 def _blueprint_sources(graph: Graph) -> dict[str, set[str]]:
-    """Map each paper or DOI the articles' ``## Sources`` links cite to the articles citing it.
+    """Map each paper or DOI the unproved articles' ``## Sources`` links cite to the articles citing it.
 
     A link to a page under the blueprint counts with what the page cites, since
-    Roadmap records source locations in ``blueprint/sources/``.
+    Roadmap records source locations in ``blueprint/sources/``. A proved article
+    no longer counts: it needs no search, and audit asks for its implementation
+    note, which may have recorded a library declaration, to be deleted.
     """
 
     citing: dict[str, set[str]] = defaultdict(set)
     pages: dict[Path, frozenset[str]] = {}  # many articles link one source page
     blueprint = graph.blueprint_dir.resolve()
+    derived = status.derive(graph)
     for node in graph.nodes.values():
+        if derived[node.id].proved:
+            continue
         for target in node.sources:
             page = _linked_page(node.path, target, blueprint)
             if page is not None and page not in pages:
@@ -154,11 +166,8 @@ def _linked_page(article: Path, target: str, blueprint: Path) -> Path | None:
         return None
     if split.scheme or split.netloc or not split.path:
         return None
-    try:
-        path = Path(os.path.normpath(article.parent.resolve() / unquote(split.path))).resolve(strict=True)
-    except (OSError, ValueError):
-        return None
-    return path if path.is_relative_to(blueprint) and path.is_file() else None
+    page = resolved_path(article.parent / unquote(split.path))
+    return page if page is not None and page.is_relative_to(blueprint) and os.path.isfile(page) else None
 
 
 def _page_text(path: Path) -> str | None:
@@ -189,21 +198,20 @@ def _note_texts(blueprint: Path) -> list[str]:
 
 
 def _unnamed(names: list[str], texts: Iterable[str]) -> set[str]:
-    """The ``names`` whose last component no text names as a whole word.
+    """The ``names`` whose last component no text contains as a whole word.
 
     After ``open Nat``, a Lean file names ``Nat.foo`` as ``foo``, so the last
-    component stands for the name. That can take another ``foo`` for it and stay
-    silent, but it never claims that nothing names a declaration that is named.
+    component stands for the name. That can take another ``foo``, or ``foo'``,
+    for it and stay silent, but it never claims that nothing names a declaration
+    that is named.
     """
 
     # The same last component under two namespaces stands for both.
     by_last: dict[str, set[str]] = defaultdict(set)
     for name in names:
         by_last[name.rpartition(".")[2]].add(name)
-    if not by_last:
-        return set()
     pattern = re.compile(
-        r"(?<![\w'])(" + "|".join(re.escape(last) for last in sorted(by_last, key=len, reverse=True)) + r")(?![\w'!?])"
+        r"(?<!\w)(" + "|".join(re.escape(last) for last in sorted(by_last, key=len, reverse=True)) + r")(?!\w)"
     )
     found: set[str] = set()
     for text in texts:
@@ -211,3 +219,6 @@ def _unnamed(names: list[str], texts: Iterable[str]) -> set[str]:
         if len(found) == len(by_last):
             break
     return {name for last, group in by_last.items() if last not in found for name in group}
+
+
+__all__ = ["cited_sources", "library_citation_warnings"]

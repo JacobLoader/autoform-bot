@@ -10,6 +10,7 @@ from tests.library_fixture import declaration, make_library
 from tests.test_search import _article
 
 _THEOREM = "Nat.threeSquareRepresentationCount_eq_threeSquareRepresentationCount_div_four"
+_MORTENSON = "DOI 10.1007/s00222-012-0383-5"
 
 
 @pytest.mark.parametrize(
@@ -17,6 +18,10 @@ _THEOREM = "Nat.threeSquareRepresentationCount_eq_threeSquareRepresentationCount
     [
         ("Source: arXiv:2307.05244 `main.tex` lines 191-199", "arXiv 2307.05244"),
         ("arXiv 2307.05244v3", "arXiv 2307.05244"),
+        ("arXiv `2311.13047v1`", "arXiv 2311.13047"),
+        ("arXiv:1407.1234v2", "arXiv 1407.1234"),
+        ("https://export.arxiv.org/e-print/2209.11629", "arXiv 2209.11629"),
+        ("https://arxiv.org/html/2307.05244v1", "arXiv 2307.05244"),
         ("https://arxiv.org/abs/2307.05244v2", "arXiv 2307.05244"),
         ("http://arxiv.org/pdf/2307.05244v1.pdf", "arXiv 2307.05244"),
         ("https://doi.org/10.48550/arXiv.2307.05244", "arXiv 2307.05244"),
@@ -26,6 +31,7 @@ _THEOREM = "Nat.threeSquareRepresentationCount_eq_threeSquareRepresentationCount
         ("DOI: 10.1007/s00222-012-0383-5", "DOI 10.1007/s00222-012-0383-5"),
         ("(see https://dx.doi.org/10.1007%2Fs00222-012-0383-5)", "DOI 10.1007/s00222-012-0383-5"),
         ("[paper](https://doi.org/10.1016/0001-8708(77)90004-3)", "DOI 10.1016/0001-8708(77)90004-3"),
+        ("[doi:10.1007/s00222-012-0383-5](https://doi.org/10.1007/s00222-012-0383-5).", _MORTENSON),
     ],
 )
 def test_a_paper_is_one_source_in_each_of_its_usual_spellings(text: str, source: str) -> None:
@@ -44,22 +50,28 @@ def _consumer(
     docstring: str | None = "Source: arXiv:2307.05244 `main.tex` lines 191-199.",
     module_doc: str | None = None,
     articles: int = 1,
+    status: str = "complete",
+    proved: bool = False,
 ) -> Path:
     # The blueprint and the Lake project share one root, as in a real consumer.
     library = make_library(
         tmp_path,
-        declarations=(declaration(_THEOREM, docstring=docstring),),
+        declarations=(declaration(_THEOREM, status=status, docstring=docstring),),
         module_docs={"Lib.Convex": module_doc} if module_doc else None,
     )
     _article(library.project, "README.md", title="Three squares")
     for number in range(articles):
+        proof = ("declaration: theorem", "statement: formalized", "proof: formalized", f"lean: Project.step{number}")
         _article(
             library.project,
             f"step-{number}.md",
             title=f"Step {number}",
             body=f"A step of the proof.\n\n## Sources\n\n{sources}",
-            metadata=(f"article_id: af_{number:024x}",),
+            metadata=(f"article_id: af_{number:024x}", *(proof if proved else ())),
         )
+        if proved:
+            with (library.project / "Project.lean").open("a", encoding="utf-8") as lean:
+                lean.write(f"theorem Project.step{number} : True := trivial\n")
     return library.project
 
 
@@ -77,7 +89,7 @@ def test_check_warns_about_a_library_result_citing_the_paper_until_a_note_or_lea
         0,
         [
             f"warning: library atlas declares {_THEOREM}, whose docstring cites arXiv 2307.05244, "
-            "which 1 article cites; no implementation note or project Lean file names it"
+            "which 1 unproved article cites; no implementation note or project Lean file names it"
         ],
     )
 
@@ -115,7 +127,7 @@ def test_a_source_page_an_article_links_counts_with_what_it_cites(
         0,
         [
             f"warning: library atlas declares {_THEOREM}, whose module docstring cites "
-            "DOI 10.1007/s00222-012-0383-5, which 1 article cites; no implementation note or project Lean file names it"
+            f"{_MORTENSON}, which 1 unproved article cites; no implementation note or project Lean file names it"
         ],
     )
 
@@ -126,23 +138,41 @@ def test_the_warning_counts_every_article_citing_the_source(tmp_path: Path, caps
     status, warnings = _check(project, capsys)
 
     assert status == 0
-    assert [warning.split(", which ")[1].split(";")[0] for warning in warnings] == ["3 articles cite"]
+    assert [warning.split(", which ")[1].split(";")[0] for warning in warnings] == ["3 unproved articles cite"]
 
 
 def test_a_wanted_result_citing_the_paper_is_no_proof_to_reuse(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    wanted = declaration(_THEOREM, status="wanted", docstring="Source: arXiv:2307.05244.")
-    library = make_library(tmp_path, declarations=(wanted,))
-    _article(library.project, "README.md", title="Three squares")
-    _article(
-        library.project,
-        "step.md",
-        title="Step",
-        body="A step.\n\n## Sources\n\n- [Gauss](https://arxiv.org/abs/2307.05244)",
-    )
+    assert _check(_consumer(tmp_path, status="wanted"), capsys) == (0, [])
 
-    assert _check(library.project, capsys) == (0, [])
+
+def test_a_proved_article_no_longer_asks_for_a_search(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # Audit has its implementation note deleted, so a note can no longer record the declaration.
+    assert _check(_consumer(tmp_path, proved=True), capsys) == (0, [])
+
+
+def test_a_declaration_whose_docstring_and_module_docstring_both_cite_warns_once(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    status, warnings = _check(_consumer(tmp_path, module_doc="After arXiv:2307.05244."), capsys)
+
+    assert status == 0
+    assert [warning.split(", whose ")[1].split(" cites ")[0] for warning in warnings] == ["docstring"]
+
+
+def test_a_note_naming_a_longer_declaration_does_not_name_this_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _consumer(tmp_path)
+    note = project / f"blueprint/.implementation-notes/af_{0:024x}.md"
+    note.parent.mkdir()
+    note.write_text(f"Reuse `{_THEOREM}_aux`, then finish.\n", encoding="utf-8")
+
+    status, warnings = _check(project, capsys)
+
+    assert status == 0
+    assert len(warnings) == 1
 
 
 def test_a_library_citing_another_paper_or_an_uncited_blueprint_gives_no_warning(
@@ -171,3 +201,40 @@ def test_an_index_that_cannot_be_used_is_named_and_never_fails_the_check(
         "warning: library atlas: its index cannot be used, so its declarations were not compared with the "
         "blueprint's sources: "
     )
+
+
+def test_a_stale_index_is_not_read_when_the_blueprint_cites_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _consumer(tmp_path, sources="- [A talk](https://example.org/talk)")
+    source = project / ".lake/packages/atlas/Lib/Classic.lean"
+    source.write_text(source.read_text(encoding="utf-8") + "-- edited\n", encoding="utf-8")
+
+    assert _check(project, capsys) == (0, [])
+
+
+def test_a_lean_root_that_cannot_be_resolved_keeps_its_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _consumer(tmp_path)
+
+    assert main(["check", str(project / "blueprint"), "--lean-root", "~autoform-no-such-user/project"]) == 1
+    assert capsys.readouterr().out.splitlines()[-1].startswith("error: ")
+
+
+def test_a_symlinked_lean_root_is_compared_like_its_target(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _consumer(tmp_path)
+    link = tmp_path / "link"
+    try:
+        link.symlink_to(project, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    status = main(["check", str(project / "blueprint"), "--lean-root", str(link)])
+    warnings = [line for line in capsys.readouterr().out.splitlines() if line.startswith("warning:")]
+
+    assert status == 0
+    assert len(warnings) == 1
+    assert f"declares {_THEOREM}, whose docstring cites arXiv 2307.05244" in warnings[0]
