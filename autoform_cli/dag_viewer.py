@@ -167,35 +167,29 @@ def _atlas_positions(view: GraphView) -> dict[str, dict[str, int]]:
     region_header = 42
 
     def card_height(node: ViewNode) -> int:
-        if node.kind == "boundary":
-            return 88
         count = max(1, node.item_count)
         return max(88, min(116, round(84 + 4 * math.log2(count + 1))))
 
-    by_area: dict[str, list[tuple[int, ViewNode]]] = defaultdict(list)
-    for index, node in enumerate(view.nodes):
-        by_area[node.area or ""].append((index, node))
+    by_area: dict[str, list[ViewNode]] = defaultdict(list)
+    for node in view.nodes:
+        by_area[node.area or ""].append(node)
 
     blocks: list[tuple[str, dict[str, dict[str, int]], int, int]] = []
-    for area, indexed in sorted(by_area.items(), key=lambda item: (not item[0], item[0].casefold())):
-        indexed.sort(
-            key=lambda item: (-item[1].item_count, item[1].title.casefold(), item[1].id)
-        )
-        heights = {node.id: card_height(node) for _, node in indexed}
-        columns = min(3, max(1, math.ceil(math.sqrt(len(indexed)))))
+    for area, members in sorted(by_area.items(), key=lambda item: (not item[0], item[0].casefold())):
+        members.sort(key=lambda node: (-node.item_count, node.title.casefold(), node.id))
+        heights = {node.id: card_height(node) for node in members}
+        columns = min(3, max(1, math.ceil(math.sqrt(len(members)))))
         local: dict[str, dict[str, int]] = {}
         y = region_header if area else 0
-        rows = [indexed[offset : offset + columns] for offset in range(0, len(indexed), columns)]
+        rows = [members[offset : offset + columns] for offset in range(0, len(members), columns)]
         for row, entries in enumerate(rows):
-            row_height = max((heights[node.id] for _, node in entries), default=88)
-            for column, (order, node) in enumerate(entries):
+            row_height = max((heights[node.id] for node in entries), default=88)
+            for column, node in enumerate(entries):
                 height = heights[node.id]
                 x = column * (card_width + gap)
                 local[node.id] = {
                     "column": column,
                     "height": height,
-                    "order": order,
-                    "rank": 0,
                     "row": row,
                     "width": card_width,
                     "x": x,
@@ -607,7 +601,6 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-inventory-id { grid-row: 2; overflow: hidden; color: var(--dag-muted); font: .68rem ui-monospace, SFMono-Regular, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .bp-dag-inventory-meta { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--dag-muted); font-size: .68rem; }
 .bp-dag-load-more { justify-self: center; margin: .55rem; }
-.bp-dag-load-more[hidden] { display: none; }
 .bp-dag-inspector { position: absolute; z-index: 10; top: .8rem; right: .8rem; bottom: .8rem; width: min(24rem, calc(100% - 1.6rem)); min-width: 0; overflow: auto; border: 1px solid var(--dag-border); border-radius: 14px; background: color-mix(in srgb, var(--dag-panel) 96%, transparent); box-shadow: 0 18px 50px rgba(15, 23, 42, .22); visibility: hidden; opacity: 0; transform: translateX(calc(100% + 1.4rem)); transition: opacity .16s ease, transform .2s ease, visibility 0s linear .2s; backdrop-filter: blur(14px); }
 .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-inspector { visibility: visible; opacity: 1; transform: translateX(0); transition-delay: 0s; }
 .bp-dag-inspector-inner { padding: 1rem; }

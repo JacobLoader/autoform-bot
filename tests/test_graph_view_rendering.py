@@ -254,6 +254,8 @@ def test_high_level_topics_use_a_readable_grouped_knowledge_atlas(tmp_path: Path
         ("Foundations", 10),
     }
     assert len({(layout["x"], layout["y"]) for layout in layouts}) == len(nodes)
+    # The same fields a DAG's layout has, which are all the explorer reads.
+    assert all(set(layout) == {"column", "height", "row", "width", "x", "y"} for layout in layouts)
     assert all(layout["width"] > layout["height"] for layout in layouts)
     assert min(layout["width"] for layout in layouts) >= 220
     assert min(layout["height"] for layout in layouts) >= 88
