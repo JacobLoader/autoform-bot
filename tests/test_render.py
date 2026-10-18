@@ -2834,6 +2834,50 @@ def test_next_up_explains_readiness_without_naming_a_policy(tmp_path: Path, drop
     assert f'<div class="bp-next-why">{why}</div>' in landing
 
 
+@pytest.mark.parametrize(
+    ("section", "statement", "chapter"),
+    [
+        ("chapter", "roadmap/chapter/index.html#deep", "roadmap/chapter/index.html"),
+        ("chapter/part", "roadmap/chapter/part/index.html#deep", None),
+    ],
+    ids=["chapter", "nested-section"],
+)
+def test_next_up_links_the_published_statement_and_chapter(
+    tmp_path: Path, section: str, statement: str, chapter: str | None
+) -> None:
+    """MkDocs publishes a chapter's ``README.md`` as ``index.html``.
+
+    The card is the landing page's way into the book, so a link to
+    ``README.html``, or to the top-level chapter of a result placed in a nested
+    section, left the reader on a 404.
+    """
+    project = _project(tmp_path)
+    roadmap = project / "blueprint/roadmap"
+    parts = section.split("/")
+    for depth in range(len(parts)):
+        folder = roadmap.joinpath(*parts[: depth + 1])
+        folder.mkdir()
+        child = f"- [Part]({parts[depth + 1]}/README.md)\n" if depth + 1 < len(parts) else "- [Deep](deep.md)\n"
+        (folder / "README.md").write_text(f"# {parts[depth].title()}\n\n{child}", encoding="utf-8")
+    roadmap.joinpath(*parts, "deep.md").write_text(
+        "---\ndeclaration: theorem\n---\n\n# Deep\n\nA result still to state.\n", encoding="utf-8"
+    )
+    out = tmp_path / "out"
+
+    render_site(project / "blueprint", out, lean_root=project)
+
+    landing = (out / "README.md").read_text(encoding="utf-8")
+    start = landing.index('<div class="bp-next-target"')
+    card = landing[start : landing.index("</div></div>", landing.index("bp-next-actions", start))]
+    assert f'data-autoform-node-id="{section}/deep"' in card
+    assert f'<div class="bp-next-title"><a href="{statement}">Deep</a></div>' in card
+    if chapter is not None:
+        assert f'<a href="{chapter}">Chapter</a>' in card
+    published = _published_pages(out)
+    for href in re.findall(r'href="([^"]+)"', card):
+        assert Path(os.path.normpath(out / unquote(href.partition("#")[0]))) in published, href
+
+
 def _statement_box(page: str, node_id: str) -> str:
     start = page.index('<div class="bp-thmcontent"', page.index(f'data-autoform-node-id="{node_id}"'))
     return page[start : page.index("</div>", start)]

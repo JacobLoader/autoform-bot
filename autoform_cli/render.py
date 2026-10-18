@@ -616,6 +616,7 @@ def _render_pages(
                 group_pages=group_pages,
                 page=overview,
                 destination=destination,
+                targets=targets,
             ),
             encoding="utf-8",
         )
@@ -1452,7 +1453,7 @@ def _next_target(
     page: Path,
     destination: Path,
     group_pages: dict[str, Path] | None = None,
-    targets: dict[str, str] | None = None,
+    targets: dict[str, tuple[Path, str]] | None = None,
 ) -> str:
     """Name the result a contributor could pick up right now, with the way in.
 
@@ -1464,6 +1465,7 @@ def _next_target(
     chapter, and its dependency view.
     """
     containers = _containers(graph)
+    links = _anchored_links(targets or {}, page)
     for node_id in status.topological_order(graph):
         node_status = statuses.get(node_id)
         node = graph.nodes[node_id]
@@ -1474,10 +1476,7 @@ def _next_target(
 
         chapter_id = node.id.split("/", 1)[0] if "/" in node.id else ""
         chapter_page = (group_pages or {}).get(chapter_id)
-        statement = (targets or {}).get(node_id)
-        if statement is None and chapter_page is not None:
-            anchor = node.id.split("/", 1)[1].replace("/", "-") if "/" in node.id else node.id
-            statement = f"{mermaid.relative_link(chapter_page, page, '.html')}#{anchor}"
+        statement = links.get(node_id)
         graph_href = graph_pages.scope_page_href(destination, node.id, page, parent=node.parent)
 
         title = html.escape(node.title)
@@ -1492,7 +1491,7 @@ def _next_target(
         actions = [f'<a href="{html.escape(graph_href, quote=True)}">Dependencies</a>']
         if chapter_page is not None:
             chapter_title = _first_h1(chapter_page.read_text(encoding="utf-8")) or "chapter"
-            href = mermaid.relative_link(chapter_page, page, ".html")
+            href = _as_published(mermaid.relative_link(chapter_page, page, ".html"))
             actions.insert(
                 0, f'<a href="{html.escape(href, quote=True)}">{html.escape(chapter_title)}</a>'
             )
@@ -1611,7 +1610,7 @@ def _render_landing_page(
     group_pages: dict[str, Path],
     page: Path,
     destination: Path,
-    targets: dict[str, str] | None = None,
+    targets: dict[str, tuple[Path, str]] | None = None,
 ) -> str:
     """The landing page: what this is, how far it has got, and what is next.
 
