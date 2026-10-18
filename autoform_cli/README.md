@@ -909,9 +909,10 @@ against: every article whose `lean:` names a declaration, stated or not, with
 open statements its Lean may reach, plus its own when it is open. A `mathlib:
 true` article is listed with state `mathlib`, `open` false, and nothing assumed
 or allowed, so CI checks that its names exist and reach no open statement. A
-module catalog is never open; one that is not proved keeps only the names no
-non-catalog article's `lean:` lists, and is left out when none remain: that
-article's state decides whether such a name is open. Under the strict policy
+module catalog is never open; under the open policy, one that is not proved
+keeps only the names no non-catalog article's `lean:` lists, and is left out
+when none remain: that article's state decides whether such a name is open.
+Under the strict policy
 every such article is listed with `open` false and nothing allowed, and CI
 checks that its names exist. It reads Markdown only and needs no Lean build.
 
@@ -1817,7 +1818,8 @@ its proof prerequisites are stated. A retracted definition is not open either,
 but what rests on it still assumes the open statements its body reaches. A
 module catalog is never open, even while pending: it records inspection of
 existing Lean, not a statement to assume, so CI rejects a `sorry` in a
-declaration only it lists, and nothing that rests on it assumes it. Turn
+declaration only it lists, and nothing that rests on it assumes it, though what
+rests on it still assumes the open statements its own dependencies reach. Turn
 the policy back off only once no open statement remains, since the strict audit
 rejects every `sorry` and strict
 status shows a proof resting on one as proved, not conditional.
