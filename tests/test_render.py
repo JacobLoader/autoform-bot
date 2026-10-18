@@ -2839,12 +2839,12 @@ def test_next_up_explains_readiness_without_naming_a_policy(tmp_path: Path, drop
     ("section", "statement", "chapter"),
     [
         ("chapter", "roadmap/chapter/index.html#deep", "roadmap/chapter/index.html"),
-        ("chapter/part", "roadmap/chapter/part/index.html#deep", None),
+        ("chapter/part", "roadmap/chapter/part/index.html#deep", "roadmap/chapter/index.html"),
     ],
     ids=["chapter", "nested-section"],
 )
 def test_next_up_links_the_published_statement_and_chapter(
-    tmp_path: Path, section: str, statement: str, chapter: str | None
+    tmp_path: Path, section: str, statement: str, chapter: str
 ) -> None:
     """MkDocs publishes a chapter's ``README.md`` as ``index.html``.
 
@@ -2863,6 +2863,14 @@ def test_next_up_links_the_published_statement_and_chapter(
     roadmap.joinpath(*parts, "deep.md").write_text(
         "---\ndeclaration: theorem\n---\n\n# Deep\n\nA result still to state.\n", encoding="utf-8"
     )
+    if len(parts) > 1:
+        # An article of its own gives the top-level chapter the page the card links.
+        with (roadmap / parts[0] / "README.md").open("a", encoding="utf-8") as readme:
+            readme.write("- [Other](other.md)\n")
+        (roadmap / parts[0] / "other.md").write_text(
+            "---\ndeclaration: theorem\n---\n\n# Other\n\nUses the deep result.\n\n## Depends on\n\n- [Deep](part/deep.md)\n",
+            encoding="utf-8",
+        )
     out = tmp_path / "out"
 
     render_site(project / "blueprint", out, lean_root=project)
@@ -2872,8 +2880,7 @@ def test_next_up_links_the_published_statement_and_chapter(
     card = landing[start : landing.index("</div></div>", landing.index("bp-next-actions", start))]
     assert f'data-autoform-node-id="{section}/deep"' in card
     assert f'<div class="bp-next-title"><a href="{statement}">Deep</a></div>' in card
-    if chapter is not None:
-        assert f'<a href="{chapter}">Chapter</a>' in card
+    assert f'<a href="{chapter}">Chapter</a>' in card
     published = _published_pages(out)
     for href in re.findall(r'href="([^"]+)"', card):
         assert Path(os.path.normpath(out / unquote(href.partition("#")[0]))) in published, href
