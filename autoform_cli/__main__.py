@@ -31,6 +31,7 @@ from .impact import (
     revision_impact,
 )
 from .lean import build_linker, declaration_names, index_failure_message
+from .library.citations import library_citation_warnings
 from .library.generate import GenerateError, check_index, generate_index, write_index
 from .library.index import INDEX_FILE
 from .library.listing import indexed_packages, list_libraries
@@ -640,6 +641,8 @@ def _check(args: argparse.Namespace) -> int:
         for issue in source_issues:
             print(f"error: {issue}")
         return 1
+    if args.lean_root is not None:
+        source_warnings += library_citation_warnings(graph, args.lean_root)
 
     linker = None
     if args.lean_root is not None:
