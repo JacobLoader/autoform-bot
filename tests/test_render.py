@@ -1027,7 +1027,6 @@ def test_the_landing_page_is_one_full_page_explorer_opened_by_its_hero(
     front = overview.split("---")[1]
     assert all(f"  - {part}" in front for part in ("navigation", "toc", "footer"))
     assert 'data-graph-src="dependencies.json"' in overview
-    assert 'data-layout="app"' in overview
     assert overview.index('class="bp-dag-viewer"') < overview.index('class="bp-dag-intro bp-landing-intro"')
     intro = overview.split('class="bp-dag-intro bp-landing-intro"', 1)[1]
     assert intro.index("bp-hero-title") < intro.index("bp-hero-figures") < intro.index("bp-intro-book")

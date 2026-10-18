@@ -350,7 +350,6 @@ def test_explorer_host_is_escaped_responsive_and_accessible() -> None:
     assert 'href="roadmap/a&quot; onclick=&quot;oops"' in container
     assert "javascript:alert" not in container
     assert "Showing 1 of 5 linked nodes" in container
-    assert 'data-layout="app"' in container
     assert "<style data-autoform-dag-style>" in container
     assert "@media (max-width: 680px)" in container
     assert "@media (prefers-reduced-motion: reduce)" in container
@@ -362,13 +361,17 @@ def test_explorer_host_is_escaped_responsive_and_accessible() -> None:
     assert 'refs.navigation = element("aside", "bp-dag-navigation")' in script
     assert 'refs.navigation.setAttribute("aria-label", "Wiki hierarchy")' in script
     assert 'renderNavigation()' in script
+    # MathJax typesets the rail and the details, which carry authored TeX, and no other container.
+    assert "if (!M || !M.typesetPromise) return;" in script
+    assert "typeset(refs.navigationInner); refs.navigationInner.textContent" in script
+    assert "typeset(refs.inspector); refs.inspectorInner.textContent" in script
+    assert script.count("typeset(refs.") == 2
     assert 'refs.announcement.setAttribute("aria-live", "polite")' in script
     assert "control.dataset.autoformNodeId = node.id" in script
     assert "new ResizeObserver(resize)" in script
     assert "state.pointers.size === 2" in script
     assert "event.type === \"pointerup\" && wasSingle && !state.moved" in script
-    assert "touch-action: pan-y" in container
-    assert '.bp-dag-viewer[data-layout=app] .bp-dag-stage { touch-action: none; }' in container
+    assert "touch-action: none; cursor: grab;" in container
     assert 'url.origin === window.location.origin' in script
     assert 'w: node.width, h: node.height' in script
     assert 'spotlight.before.has(edge.source) && spotlight.before.has(edge.target)' in script
