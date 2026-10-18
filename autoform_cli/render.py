@@ -1530,7 +1530,7 @@ def _render_structure_page(
     HTML tree made this compatibility page larger than the rest of a small
     site, duplicated the explorer, and became unusable on repository-scale books.
     """
-    explorer = mermaid.relative_link(page.parent / "dependencies/full.md", page, ".md")
+    explorer = mermaid.relative_link(page.parent / "dependencies.md", page, ".md")
     return "\n".join(
         [
             "---",
@@ -1595,7 +1595,6 @@ def _render_summary_nav(
         [
             "- Graph",
             "    - [Dependency explorer](dependencies.md)",
-            "    - [Browse all mathematics](dependencies/full.md)",
         ]
     )
     return "\n".join(lines) + "\n"
