@@ -1318,6 +1318,11 @@ def test_the_explorer_draws_its_breadcrumb_once(desktop_page: object, site_url: 
     playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_hidden()
     # The textbook link shares the head's row and stays.
     playwright.expect(page.locator(".bp-dag-book")).to_be_visible()
+    # Up to 1,200px open details cover the rail, so the head draws the trail again.
+    page.set_viewport_size({"width": 1000, "height": 800})
+    _open_site(page, site_url, "dependencies/chapters/algebra.html#node=algebra%2Fresult")
+    playwright.expect(page.locator(".bp-dag-inspector")).to_be_visible()
+    playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_visible()
     # Phones hide the rail, so there the head draws the trail.
     page.set_viewport_size({"width": 390, "height": 844})
     playwright.expect(page.locator(".bp-dag-navigation")).to_be_hidden()

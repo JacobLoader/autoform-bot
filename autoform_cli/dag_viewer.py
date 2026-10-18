@@ -640,6 +640,7 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-sr-only, body.bp-dag-app-page .md-content__inner > h1 { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
 @media (max-width: 1200px) {
   .bp-dag-inspector { right: auto; left: .8rem; transform: translateX(calc(-100% - 1.4rem)); }
+  .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-breadcrumb { visibility: visible; }
 }
 @media (max-width: 1100px) {
   .bp-dag-viewer { --dag-navigation-width: 15.5rem; }
