@@ -79,8 +79,16 @@ covers waiting behind other hovers on the same project; waiting for a free
 project slot and starting or restarting the server count against
 `AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` instead, so a cold hover can take about 870
 seconds by default. A call that runs out fails rather than returning partial
-results, and a hover that runs out during its turn on the server also restarts
-it. `LEAN_LSP_TIMEOUT` must not exceed `AUTOFORM_MAX_LSP_REQUEST_SECONDS` (600
+results. A hover stops waiting for Lean five seconds before its budget ends, or
+a quarter of the budget early if that is less, and spends the rest closing its
+file, which makes Lean answer it. A hover that runs out therefore keeps the
+server, unless the file's worker, or a build it started, still runs after the
+close: then the server restarts, which stops it. It also restarts when the
+deadline cuts a reply off mid-frame, the close fails, or Lean leaves the closed
+file unanswered. A hover that Lean answers with an error keeps the server on
+the same terms, and one left less than a second (or half of `LEAN_LSP_TIMEOUT`,
+if that is less) after waiting behind other hovers is refused before it starts.
+`LEAN_LSP_TIMEOUT` must not exceed `AUTOFORM_MAX_LSP_REQUEST_SECONDS` (600
 seconds by default) or the runtime refuses to start, and raising that maximum to
 745 seconds or more also needs `AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` raised. Like
 the limits below, it is read when the runtime starts: run
