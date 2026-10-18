@@ -995,10 +995,11 @@ def test_check_counts_declaration_targets_and_every_lean_name_it_resolves(
     # A catalog's unresolved name may be one Lean generates, which no index records.
     catalog.write_text(catalog.read_text(encoding="utf-8").replace("Inv.c", "Inv.c Inv.mk"), encoding="utf-8")
     assert main(["check", str(blueprint), "--lean-root", str(lean_root)]) == 1
-    assert capsys.readouterr().out.splitlines()[-1] == (
+    assert capsys.readouterr().out.splitlines()[-2:] == [
         f"error: catalog: declaration not found in {lean_root}: Inv.mk; "
-        "a name Lean generates is not indexed and belongs in the catalog's ledger"
-    )
+        "a name Lean generates is not indexed and belongs in the catalog's ledger",
+        _LIBRARY_DECLARATION_NOTE,
+    ]
 
 
 def test_check_cli_reports_validation_errors(tmp_path: Path) -> None:
