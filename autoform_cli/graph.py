@@ -150,11 +150,7 @@ class Graph:
         return tuple(node.id for node in self.nodes.values() if node.parent == node_id)
 
     def lean_names(self) -> tuple[str, ...]:
-        """Return the distinct ``lean:`` names, in node order.
-
-        An index captured with ``names=`` answers only for the names requested,
-        so a consumer that looks names up requests exactly these.
-        """
+        """Return the distinct ``lean:`` names, in node order."""
         return tuple(dict.fromkeys(name for node in self.nodes.values() for name in declaration_names(node.lean or "")))
 
 

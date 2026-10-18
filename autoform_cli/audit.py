@@ -513,7 +513,7 @@ def _lean_findings(
 
     findings: list[AuditFinding] = []
     try:
-        snapshot = snapshot_project_sources(root, names=graph.lean_names())
+        snapshot = snapshot_project_sources(root)
     except OSError as error:
         return [
             AuditFinding(

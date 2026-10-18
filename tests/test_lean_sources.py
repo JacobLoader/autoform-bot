@@ -502,44 +502,7 @@ def test_sections_do_not_add_to_the_namespace(tmp_path: Path) -> None:
     assert index.find("Outer.Helpers.beta") is None
 
 
-def test_targeted_index_prefilters_files_but_preserves_file_context_and_digest(
-    tmp_path: Path,
-) -> None:
-    _index(tmp_path)
-    other = tmp_path / "Project/Other.lean"
-    # A skipped file still counts only the lines Lean reads, up to its `#exit`.
-    other.write_text("def unrelated : Nat := 0\n#exit\ndef dead : Nat := 1\n\n\n", encoding="utf-8")
-    full = index_project(tmp_path)
-
-    targeted = index_project(tmp_path, names=("Outer.alpha",))
-
-    assert targeted.find("Outer.alpha") is not None
-    assert targeted.find("Outer.beta") is not None
-    assert targeted.find("unrelated") is None
-    assert targeted.source_digest == full.source_digest
-    assert targeted.line_counts == full.line_counts
-    assert index_project(tmp_path, names=()).line_counts == {}
-
-
-def test_targeted_index_treats_inline_comments_as_lean_whitespace(
-    tmp_path: Path,
-) -> None:
-    _index(tmp_path, "theorem /- separator -/ target : True := by trivial\n")
-
-    targeted = index_project(tmp_path, names=("target",))
-
-    assert targeted.find("target") is not None
-
-
-def test_targeted_index_reads_each_name_of_an_iff_alias(tmp_path: Path) -> None:
-    _index(tmp_path, "theorem t_iff : True ↔ True := Iff.rfl\nalias ⟨mp, mpr⟩ := t_iff\n")
-
-    for name in ("mp", "mpr"):
-        assert index_project(tmp_path, names=(name,)).find(name) is not None, name
-
-
-def test_the_name_prefilter_admits_every_name_the_scan_indexes(tmp_path: Path) -> None:
-    """Each filtered capture (check, audit, render, runtime) loses a name the prefilter misreads."""
+def test_the_scan_indexes_every_declaration_form(tmp_path: Path) -> None:
     source = [
         "universe u v w",
         "namespace Outer",
@@ -579,8 +542,6 @@ def test_the_name_prefilter_admits_every_name_the_scan_indexes(tmp_path: Path) -
         "Outer.«dotted.name»",
         "rootLevel",
     ]
-    for name in index.declarations:
-        assert index_project(tmp_path, names=(name,)).find(name) is not None, name
 
 
 def test_every_scope_closes_at_its_own_end(tmp_path: Path) -> None:
@@ -3471,10 +3432,9 @@ def test_an_alias_is_followed_only_to_an_earlier_declaration_of_its_file(tmp_pat
         assert index.reached(index.find(name)) is None, name
 
 
-def test_a_name_filter_resolves_an_alias_as_the_unfiltered_index_does(tmp_path: Path) -> None:
+def test_an_alias_has_no_sure_target_before_its_file_declares_one(tmp_path: Path) -> None:
     # B.lean declares its `N.aux` only after the alias and A.lean declares one
-    # too, so the alias has no sure target, whether or not a request also
-    # names A.lean's `N.helper`.
+    # too, so the alias has no sure target.
     (tmp_path / "A.lean").write_text(
         "namespace N\nprivate theorem aux : True := trivial\ntheorem helper : True := trivial\nend N\n",
         encoding="utf-8",
@@ -3484,9 +3444,8 @@ def test_a_name_filter_resolves_an_alias_as_the_unfiltered_index_does(tmp_path: 
         encoding="utf-8",
     )
 
-    for names in (None, ("N.good",), ("N.good", "N.helper")):
-        index = index_project(tmp_path, names=names)
-        assert index.reached(index.find("N.good")) is None, names
+    index = index_project(tmp_path)
+    assert index.reached(index.find("N.good")) is None
 
 
 def _where(declarations) -> list[tuple[str, int]]:

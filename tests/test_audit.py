@@ -1165,8 +1165,8 @@ def test_audit_measures_an_alias_by_its_target_s_span(tmp_path: Path) -> None:
     }
 
 
-def test_a_source_span_does_not_depend_on_the_names_a_filter_admits(tmp_path: Path) -> None:
-    # B.lean's X.foo bounds X.bar even when A.lean, which also declares X.foo, is read too.
+def test_a_source_span_ends_at_its_own_file_s_next_declaration(tmp_path: Path) -> None:
+    # B.lean's X.foo bounds X.bar, though A.lean declares an X.foo too.
     root = tmp_path / "lean"
     root.mkdir()
     (root / "A.lean").write_text("theorem X.foo : True := trivial\ntheorem A.other : True := trivial\n", encoding="utf-8")
@@ -1176,9 +1176,8 @@ def test_a_source_span_does_not_depend_on_the_names_a_filter_admits(tmp_path: Pa
         encoding="utf-8",
     )
 
-    for names in (("X.bar",), ("X.bar", "A.other"), None):
-        index = index_project(root, names=names)
-        assert audit_module._source_spans(index)[index.find("X.bar")] == 9, names
+    index = index_project(root)
+    assert audit_module._source_spans(index)[index.find("X.bar")] == 9
 
 
 def test_an_alias_s_limits_do_not_depend_on_the_names_other_articles_request(tmp_path: Path) -> None:
@@ -1520,11 +1519,9 @@ def test_audit_reads_deprecation_from_the_captured_source_generation(
         encoding="utf-8",
     )
     real_snapshot_project_sources = audit_module.snapshot_project_sources
-    requested = []
 
-    def snapshot_then_rewrite(root: Path, **kwargs):
-        requested.append(kwargs)
-        snapshot = real_snapshot_project_sources(root, **kwargs)
+    def snapshot_then_rewrite(root: Path):
+        snapshot = real_snapshot_project_sources(root)
         source.write_text("theorem Project.result : True := trivial\n", encoding="utf-8")
         return snapshot
 
@@ -1538,8 +1535,6 @@ def test_audit_reads_deprecation_from_the_captured_source_generation(
             "lean target Project.result is deprecated; point lean: at its replacement",
         )
     ]
-    # Only the names the audit looks up are indexed.
-    assert requested == [{"names": ("Project.result",)}]
 
 
 def test_audit_checks_irreducible_def_kinds(tmp_path: Path) -> None:
@@ -1856,8 +1851,8 @@ def test_audit_measures_source_spans_from_the_captured_index(
     lean_root = _lean_project(tmp_path, spans)
     real_snapshot_project_sources = audit_module.snapshot_project_sources
 
-    def snapshot_then_mutate(root: Path, **kwargs):
-        snapshot = real_snapshot_project_sources(root, **kwargs)
+    def snapshot_then_mutate(root: Path):
+        snapshot = real_snapshot_project_sources(root)
         (root / "big.lean").write_text(
             "theorem Project.big : True := trivial\n", encoding="utf-8"
         )

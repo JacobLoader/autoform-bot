@@ -333,7 +333,7 @@ def build_runtime_graph(
         except LeanSourceError as error:
             raise RuntimeProjectionError([str(error)]) from error
         try:
-            lean_index = index_project(root, names=graph.lean_names())
+            lean_index = index_project(root)
         except OSError as error:
             raise RuntimeProjectionError([index_failure_message(error)]) from error
 

@@ -642,12 +642,12 @@ def _check(args: argparse.Namespace) -> int:
             print(f"error: {issue}")
         return 1
 
-    # Check reads only where each name is declared, never a permalink, so it
-    # skips the Git work a linker does.
+    # Check looks each name up and builds no permalink, so it skips the Git
+    # work a linker does.
     index = None
     if args.lean_root is not None:
         try:
-            index = index_project(args.lean_root, names=graph.lean_names())
+            index = index_project(args.lean_root)
         except OSError as error:
             print(f"error: {index_failure_message(error)}")
             return 1

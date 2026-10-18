@@ -393,9 +393,6 @@ def render_site(
         if coverage is None:
             raise PublicationError(["coverage contract could not be loaded"])
         expected = _destination_state(destination)
-        # The names select which files are scanned for declarations; every Lean
-        # file is still read, hashed and checked against the commit.
-        lean_names = graph.lean_names()
         # Without descriptor capture every Lean capture fails closed. The implicit
         # root is then not read and the site has no code links; an explicit Lean
         # root asks for links, so it still fails. Like every Lean capture, this one
@@ -404,7 +401,7 @@ def render_site(
         indexed = lean_root is not None or descriptor_capture_supported()
         try:
             lean = (
-                snapshot_project_sources(repo_root, exclude_roots=(copy_root,), names=lean_names)
+                snapshot_project_sources(repo_root, exclude_roots=(copy_root,))
                 if indexed
                 else IndexedSourceSnapshot(SourceIndex(repo_root, {}, ""), revision="")
             )
