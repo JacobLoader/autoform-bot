@@ -533,18 +533,19 @@ def test_audit_reports_a_source_link_through_a_symlink_loop_alike_on_every_pytho
     ]
 
 
-def test_audit_of_a_blueprint_behind_a_link_that_cannot_be_read_reports_it_once(
+def test_audit_of_a_blueprint_behind_a_link_that_cannot_be_read_matches_the_blueprint_itself(
     tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
 ) -> None:
-    # As load_graph does, rather than failing every coverage link as well.
+    # A link above the blueprint that cannot be read changes nothing inside it.
     real = tmp_path / "real" / "blueprint"
     _coverage(real, "| Area | Coverage | Evidence |\n| --- | --- | --- |\n| Result | DECOMPOSED | [R](../roadmap/result.md) |")
     _article(real, "result.md", declaration="theorem")
     unreadable_link(tmp_path / "via", tmp_path / "real")
 
-    assert [(f.article_path, f.code, f.reason) for f in audit_blueprint(tmp_path / "via" / "blueprint").findings] == [
-        (".", "invalid-graph", "blueprint directory cannot be resolved: .")
-    ]
+    findings = audit_blueprint(tmp_path / "via" / "blueprint").findings
+
+    assert findings == audit_blueprint(real).findings
+    assert "invalid-graph" not in {finding.code for finding in findings}
 
 
 @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")

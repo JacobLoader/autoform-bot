@@ -728,6 +728,46 @@ def resolved_path(path: Path) -> Path | None:
         return None
 
 
+def directory_path(path: Path) -> Path | None:
+    """``path`` as `resolved_path` gives it, or, for a directory it gives None
+    for, the path the system gives the opened directory; None when neither works.
+
+    For a blueprint root. `resolved_path` gives None at a link the system
+    follows but will not let anyone read, which macOS allows for another
+    user's symlink; above a blueprint such a link changes nothing inside it,
+    so the system is asked for the path of the directory it opened. Links
+    under that path then resolve as usual, and one inside the blueprint that
+    cannot be read still gives None.
+    """
+
+    resolved = resolved_path(path)
+    if resolved is not None or os.name == "nt":
+        return resolved
+    import fcntl
+
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    except (OSError, ValueError):
+        return None
+    try:
+        if hasattr(fcntl, "F_GETPATH"):  # macOS
+            opened = os.fsdecode(fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024)).split(b"\0", 1)[0])
+        else:  # Linux; elsewhere, without /proc, this fails and gives None
+            opened = os.readlink(f"/proc/self/fd/{descriptor}")
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+    return Path(opened)
+
+
+def blueprint_root(path: str | Path) -> Path:
+    """The directory ``path`` names, as `directory_path` gives it, or as written, made absolute."""
+
+    given = Path(path).expanduser()
+    return directory_path(given) or given.absolute()
+
+
 def local_target_issue(
     source_path: Path,
     target: str,
@@ -955,7 +995,9 @@ __all__ = [
     "article_parts",
     "Content",
     "content",
+    "blueprint_root",
     "content_lines",
+    "directory_path",
     "frontmatter_end",
     "has_substance",
     "is_placeholder",

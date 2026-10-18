@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -197,6 +198,21 @@ def test_cli_writes_only_the_graph_by_default(
     assert not (blueprint / "structure.md").exists()
     assert capsys.readouterr().out == f"{output}\n"
     assert 'click n0 "roadmap/only.md"' in output.read_text(encoding="utf-8")
+
+
+def test_exports_and_the_cli_work_through_a_link_that_cannot_be_read(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
+    blueprint = tmp_path / "real" / "blueprint"
+    _write_node(blueprint / "roadmap" / "only.md", "Only node")
+    unreadable_link(tmp_path / "via", tmp_path / "real")
+    through = tmp_path / "via" / "blueprint"
+
+    export_graph(through)
+    export_structure(through)
+
+    assert (blueprint / "dependencies.md").is_file() and (blueprint / "structure.md").is_file()
+    assert main([str(through), "--structure"]) == 0
 
 
 def test_default_cli_leaves_authored_structure_untouched(

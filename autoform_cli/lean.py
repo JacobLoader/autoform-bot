@@ -38,6 +38,7 @@ from ._tree_snapshot import (
     TreeSnapshot,
     TreeSnapshotError,
 )
+from .markdown import directory_path
 
 _NAMESPACE = re.compile(r"^\s*namespace\s+(.+)$")
 #: ``section`` in every form that opens one, e.g. ``@[expose] public section``.
@@ -300,7 +301,9 @@ def resolve_lean_root(lean_root: str | Path) -> Path:
     """
 
     try:
-        root = directory_binding.lexical_absolute_path(lean_root).resolve()
+        given = directory_binding.lexical_absolute_path(lean_root)
+        # As a blueprint root is resolved, so paths under both compare by spelling.
+        root = directory_path(given) or given.resolve()
         metadata = os.stat(root)
     except RuntimeError as error:
         # An unknown ~user, or before Python 3.13 a symbolic link loop.

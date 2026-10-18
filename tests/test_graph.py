@@ -206,19 +206,21 @@ def test_a_dependency_through_a_link_that_cannot_be_read_cannot_be_resolved(
     assert caught.value.issues == ("result: dependency target cannot be resolved: '../locked/a.md'",)
 
 
-def test_a_blueprint_behind_a_link_that_cannot_be_read_fails_once(
+def test_a_blueprint_behind_a_link_that_cannot_be_read_loads(
     tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
 ) -> None:
-    # Every link in it would fail to resolve, so the blueprint fails instead.
-    _node(tmp_path / "real" / "blueprint", "result.md", "# Result\n## Depends on\n[x](other.md)\n")
-    _node(tmp_path / "real" / "blueprint", "other.md", "# Other\n")
+    # A link above the blueprint that cannot be read changes nothing inside it.
+    real = tmp_path / "real" / "blueprint"
+    _node(real, "result.md", "# Result\n## Depends on\n[x](other.md)\n")
+    _node(real, "other.md", "# Other\n")
     unreadable_link(tmp_path / "via", tmp_path / "real")
     blueprint = tmp_path / "via" / "blueprint"
 
-    with pytest.raises(GraphValidationError) as caught:
-        load_graph(blueprint)
+    graph = load_graph(blueprint)
 
-    assert caught.value.issues == (f"blueprint directory cannot be resolved: {blueprint}",)
+    assert graph.blueprint_dir == real.resolve()
+    assert graph.nodes["result"].dependencies == ("other",)
+    assert main(["check", str(blueprint)]) == 0
 
 
 @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")
