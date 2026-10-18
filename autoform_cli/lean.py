@@ -265,14 +265,9 @@ class BoundProjectSources:
     root: Path
     tree: BoundDirectoryTree
 
-    def capture(
-        self,
-        *,
-        names: Iterable[str] | None = None,
-    ) -> IndexedSourceSnapshot:
-        """Capture the bound sources; *names* filters the index as for :func:`index_project`."""
+    def capture(self) -> IndexedSourceSnapshot:
         snapshot = self.tree.capture()
-        return _indexed_source_snapshot(self.root, snapshot, names=names)
+        return _indexed_source_snapshot(self.root, snapshot)
 
     def verify(self) -> None:
         self.tree.verify()
@@ -332,19 +327,9 @@ def resolve_lean_root(lean_root: str | Path) -> Path:
 
 
 def index_project(
-    root: str | Path,
-    *,
-    exclude_roots: Iterable[str | Path] = (),
-    names: Iterable[str] | None = None,
+    root: str | Path, *, exclude_roots: Iterable[str | Path] = ()
 ) -> SourceIndex:
     """Scan ``*.lean`` beneath *root* and index declarations by full name.
-
-    With *names*, only files that may declare one of their last components, or
-    that of a name an alias's target can mean, are indexed, so
-    :meth:`SourceIndex.find` answers for the requested names and aliases
-    resolve as in an unfiltered index. Each such file is indexed whole. The
-    digest still covers every file, and so do the line counts unless the
-    request is empty: an empty request scans and counts no file.
 
     Raises :class:`LeanSourceError` when the root cannot be used or its
     sources cannot be read.
@@ -358,7 +343,6 @@ def index_project(
     return snapshot_project_sources(
         root_path,
         exclude_roots=remapped_exclusions,
-        names=names,
     ).index
 
 
@@ -430,21 +414,17 @@ def snapshot_project_sources(
     *,
     exclude_roots: Iterable[str | Path] = (),
     limits: TreeCaptureLimits = TreeCaptureLimits(),
-    names: Iterable[str] | None = None,
 ) -> IndexedSourceSnapshot:
     """Read each Lean source once and derive its index and revision together.
 
     A bind or capture that races a concurrent edit is retried a bounded number
-    of times. *names* filters the index as for :func:`index_project`; the
-    source files and both revisions still cover every file.
+    of times.
     """
 
-    requested_names = None if names is None else tuple(names)
     bound, snapshot = _open_stable_project_sources(
         root,
         exclude_roots=tuple(exclude_roots),
         limits=limits,
-        names=requested_names,
     )
     bound.close()
     return snapshot
@@ -455,7 +435,6 @@ def _open_stable_project_sources(
     *,
     exclude_roots: tuple[str | Path, ...],
     limits: TreeCaptureLimits,
-    names: tuple[str, ...] | None = None,
 ) -> tuple[BoundProjectSources, IndexedSourceSnapshot]:
     """Open and capture a Lean root, retrying a bounded number of changed attempts.
 
@@ -475,7 +454,7 @@ def _open_stable_project_sources(
                 exclude_roots=exclude_roots,
                 limits=limits,
             )
-            return bound, bound.capture(names=names)
+            return bound, bound.capture()
         except BaseException as error:
             if bound is not None:
                 bound.close()
@@ -700,12 +679,7 @@ def _folded_path(path: PurePosixPath) -> tuple[str, ...]:
     return tuple(unicodedata.normalize("NFC", part).casefold() for part in path.parts)
 
 
-def _indexed_source_snapshot(
-    root: Path,
-    snapshot: TreeSnapshot,
-    *,
-    names: Iterable[str] | None = None,
-) -> IndexedSourceSnapshot:
+def _indexed_source_snapshot(root: Path, snapshot: TreeSnapshot) -> IndexedSourceSnapshot:
     # The Lean selection captures only .lean entries outside excluded folders,
     # so every captured entry is a source and the snapshot's own revisions
     # cover exactly the Lean inputs and the folders holding them.
@@ -718,53 +692,15 @@ def _indexed_source_snapshot(
     line_counts: dict[Path, int] = {}
     source_files: list[tuple[Path, bytes]] = []
     digest = hashlib.sha256(b"autoform-lean-source-index/v1\0")
-    wanted_short = (
-        None
-        if names is None
-        else frozenset(_short_name(name) for name in names)
-    )
-    # An alias resolves through the declarations its target can mean, so a
-    # filter also admits every file that may declare one. Files holding an
-    # alias are stripped and scanned once, here, to learn those names.
-    scanned: dict[str, tuple[list[str], tuple[list[Declaration], int]]] = {}
-    if wanted_short:
-        for relative_text, data in snapshot.files:
-            if b"alias" not in data:
-                continue
-            try:
-                lines = _without_lean_comments(data.decode("utf-8"), mask_literals=True).splitlines()
-            except UnicodeError:
-                continue
-            scan = _scan(lines, Path(relative_text))
-            scanned[relative_text] = lines, scan
-            wanted_short |= {
-                _short_name(candidate)
-                for declaration in scan[0]
-                if declaration.alias is not None
-                for candidate in declaration.alias.candidates
-            }
     for relative_text, data in snapshot.files:
         relative_path = Path(relative_text)
         _update_source_digest(digest, relative_path, data)
         source_files.append((relative_path, data))
-        if wanted_short is not None and not wanted_short:
+        try:
+            text = data.decode("utf-8")
+        except UnicodeError:
             continue
-        if relative_text in scanned:
-            lines, scan = scanned[relative_text]
-        else:
-            try:
-                text = data.decode("utf-8")
-            except UnicodeError:
-                continue
-            # The stripper keeps newlines, so both passes number lines as the file does.
-            lines, scan = _without_lean_comments(text, mask_literals=True).splitlines(), None
-        if wanted_short is not None and not _may_declare(lines, wanted_short):
-            # Nothing in this file is indexed, but its count still stops where Lean stops reading.
-            line_counts[relative_path] = next(
-                (number for number, line in enumerate(lines) if _EXIT.match(line)), len(lines)
-            )
-            continue
-        found, line_counts[relative_path] = _scan(lines, relative_path) if scan is None else scan
+        found, line_counts[relative_path] = _scan(text, relative_path)
         for declaration in found:
             by_name.setdefault(declaration.name, []).append(declaration)
     source_digest = digest.hexdigest()
@@ -782,39 +718,6 @@ def _indexed_source_snapshot(
         snapshot.generation_revision,
         tuple(source_files),
     )
-
-
-def _may_declare(lines: list[str], wanted_short: frozenset[str]) -> bool:
-    """Reject files that cannot contain a requested declaration.
-
-    ``lines`` are the file's lines with comments blanked, as :func:`_scan` reads them.
-    """
-
-    for line in lines:
-        match = _DECLARATION.match(line)
-        if match is None:
-            continue
-        if not match.group(2):
-            # A keyword alone on its line takes its name from a later line,
-            # under rules only `_scan` applies, so the file is scanned.
-            return True
-        if match.group(1) == "alias":
-            # As `_aliases` reads it: one name, or both names of `⟨mp, mpr⟩`.
-            alias = _ALIAS.match(match.group(2))
-            names = () if alias is None else (alias["name"], alias["mp"], alias["mpr"])
-        else:
-            names = (_name_token(match.group(2)),)
-        if any(name is not None and _short_name(name.removesuffix(".")) in wanted_short for name in names):
-            return True
-    return False
-
-
-def _short_name(name: str) -> str:
-    """Return the last Lean name component without splitting quoted dots."""
-
-    if name.endswith("»") and "«" in name:
-        return name[name.rfind("«") :]
-    return name.rsplit(".", 1)[-1]
 
 
 def _is_managed_output_manifest_bytes(data: bytes) -> bool:
@@ -871,12 +774,13 @@ def _select(occurrences: list[Declaration]) -> Declaration | None:
     return public[0] if len(public) == 1 else None
 
 
-def _scan(lines: list[str], relative: Path) -> tuple[list[Declaration], int]:
-    """The declarations in a file's ``lines``, comments and string literals blanked, and how many Lean reads."""
+def _scan(text: str, relative: Path) -> tuple[list[Declaration], int]:
+    """The declarations in ``text`` and the number of its lines Lean reads."""
     found: list[Declaration] = []
     namespaces: list[str] = []
     scopes: list[str | None] = []
 
+    lines = _without_lean_comments(text, mask_literals=True).splitlines()
     for number, line in enumerate(lines, start=1):
         if not line.strip():
             continue
@@ -1247,97 +1151,6 @@ class SourceLinker:
         return f"{self.repository_url}/blob/{encoded_ref}/{path}#L{declaration.line}"
 
 
-def build_linker(lean_root: str | Path) -> SourceLinker:
-    """Index *lean_root* and resolve repository coordinates."""
-    resolved_root = resolve_lean_root(lean_root)
-    snapshot, repository_url, ref, linkable_paths = _capture_link_state(resolved_root)
-    if repository_url is None:
-        repository_url = detect_repository_url(resolved_root)
-    return SourceLinker(
-        index=snapshot.index,
-        repository_url=repository_url,
-        ref=ref,
-        linkable_paths=linkable_paths,
-    )
-
-
-def _capture_link_state(
-    root: Path,
-) -> tuple[
-    IndexedSourceSnapshot,
-    str | None,
-    str | None,
-    frozenset[Path] | None,
-]:
-    """Capture source bytes and prove which ones belong to one stable commit."""
-
-    last_snapshot: IndexedSourceSnapshot | None = None
-    last_url: str | None = None
-    for attempt in range(_SNAPSHOT_ATTEMPTS):
-        if attempt:
-            time.sleep(_SNAPSHOT_RETRY_DELAY_SECONDS * attempt)
-        before_url = detect_repository_url(root)
-        before_ref = detect_ref(root)
-        snapshot = snapshot_project_sources(root)
-        last_snapshot = snapshot
-        last_url = before_url
-        after_url = detect_repository_url(root)
-        after_ref = detect_ref(root)
-        if before_url != after_url or before_ref != after_ref:
-            continue
-        if before_ref is None:
-            return snapshot, before_url, None, frozenset()
-        commit = _git(root, "rev-parse", "--verify", f"{before_ref}^{{commit}}")
-        if commit is None:
-            return snapshot, before_url, None, frozenset()
-        linkable = _committed_source_paths(root, snapshot, commit)
-        if linkable is None:
-            return snapshot, before_url, None, frozenset()
-        if (
-            detect_repository_url(root) == before_url
-            and detect_ref(root) == before_ref
-        ):
-            return snapshot, before_url, commit, linkable
-    assert last_snapshot is not None
-    return last_snapshot, last_url, None, frozenset()
-
-
-def _committed_source_paths(
-    root: Path,
-    snapshot: IndexedSourceSnapshot,
-    commit: str,
-) -> frozenset[Path] | None:
-    """Return captured files whose Git blob is exactly the commit's blob."""
-
-    top_level_text = _git(root, "rev-parse", "--show-toplevel")
-    algorithm = _git(root, "rev-parse", "--show-object-format")
-    if top_level_text is None or algorithm not in {"sha1", "sha256"}:
-        return None
-    top_level = Path(top_level_text).resolve()
-    try:
-        prefix = root.resolve().relative_to(top_level)
-    except (OSError, RuntimeError, ValueError):
-        return None
-    if prefix.parts:
-        # SourceLinker URLs are rooted at ``lean_root`` today.  Until that API
-        # carries a repository-relative prefix, refusing links is safer than
-        # emitting a valid commit with the wrong path.
-        return frozenset()
-    repo_paths = {
-        path: (prefix / path).as_posix()
-        for path, _data in snapshot.source_files
-    }
-    tree_oids = _git_tree_oids(root, commit, tuple(repo_paths.values()))
-    if tree_oids is None:
-        return None
-    linkable: set[Path] = set()
-    for path, data in snapshot.source_files:
-        framed = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
-        if hashlib.new(algorithm, framed).hexdigest() == tree_oids.get(repo_paths[path]):
-            linkable.add(path)
-    return frozenset(linkable)
-
-
 def verify_repository_snapshot(
     root: str | Path,
     requested_ref: str,
@@ -1599,7 +1412,6 @@ __all__ = [
     "SourceIndex",
     "SourceLinker",
     "bind_project_source_snapshot",
-    "build_linker",
     "declaration_names",
     "detect_ref",
     "detect_repository_url",

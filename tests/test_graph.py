@@ -153,6 +153,19 @@ def test_summary_reads_reference_links_and_definitions_as_the_page_does(tmp_path
     assert load_graph(blueprint).nodes["topic"].summary == "The statement cites the paper, Smith and [1] Jones."
 
 
+def test_summary_keeps_the_mathematics_and_code_a_tag_would_span(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(
+        blueprint,
+        "topic.md",
+        "# Ball\n\nFor $0 < a \\le b$ and $r > 0$ the <em>ball</em> `B<r>` is convex.\n",
+    )
+
+    assert load_graph(blueprint).nodes["topic"].summary == (
+        "For $0 < a \\le b$ and $r > 0$ the ball `B<r>` is convex."
+    )
+
+
 def test_summary_clips_a_long_paragraph_at_a_word(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     words = " ".join(f"word{index}" for index in range(200))
@@ -309,6 +322,14 @@ def test_loads_a_non_dispatchable_module_catalog_status(tmp_path: Path) -> None:
             "error: module: source target does not resolve to a file: '../sources/missing.md'",
             id="missing",
         ),
+        # Only audit fails a hidden note under sources/.
+        pytest.param(
+            "../sources/.private/module.md",
+            0,
+            "warning: module: source target names a hidden path, which only a repository link reaches, so it must "
+            "be committed: '../sources/.private/module.md'",
+            id="hidden",
+        ),
     ],
 )
 def test_check_warns_about_a_catalog_that_links_no_ledger_under_sources(
@@ -316,7 +337,7 @@ def test_check_warns_about_a_catalog_that_links_no_ledger_under_sources(
 ) -> None:
     """A catalog's ledger is a source link: only a dead one fails check, as for any article."""
     blueprint = tmp_path / "blueprint"
-    for ledger in ("sources/module.md", "notes/ledger.md"):
+    for ledger in ("sources/module.md", "sources/.private/module.md", "notes/ledger.md"):
         (blueprint / ledger).parent.mkdir(parents=True)
         (blueprint / ledger).write_text("# Module declarations\n", encoding="utf-8")
     _node(blueprint, "module.md", f"# Existing module\n\n## Sources\n\n- [Ledger]({link})\n", catalog="module")
@@ -1360,10 +1381,8 @@ def test_check_cli_reports_source_index_io_failure_before_success(
 ) -> None:
     blueprint = tmp_path / "blueprint"
     _node(blueprint, "base.md", "# Base\n", lean="Project.base")
-    requested = []
 
-    def fail_index(root: Path, **kwargs):
-        requested.append(kwargs)
+    def fail_index(root: Path):
         raise OSError(f"private host detail: {root}")
 
     monkeypatch.setattr("autoform_cli.__main__.index_project", fail_index)
@@ -1373,8 +1392,6 @@ def test_check_cli_reports_source_index_io_failure_before_success(
     assert captured.out == "error: Lean sources could not be indexed\n"
     assert captured.err == ""
     assert str(tmp_path) not in captured.out
-    # Only the names check looks up are indexed.
-    assert requested == [{"names": ("Project.base",)}]
 
 
 def test_check_cli_names_an_unsafe_lean_source_without_host_paths(

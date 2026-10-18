@@ -95,7 +95,8 @@ def test_render_publishes_dependencies_between_the_roadmap_root_and_a_chapter(
         (output / "dependencies/chapters/chapter.json").read_text(encoding="utf-8")
     )
     boundary = next(node for node in chapter_payload["nodes"] if node["kind"] == "boundary")
-    assert boundary["title"] == "Root result"
+    # It stands for what the project's Top level card does.
+    assert boundary["title"] == "Top level"
     assert boundary["url"] == "../../dependencies.html"
     assert 'class="bp-dag-viewer"' in full_page
     full_payload = json.loads((output / "dependencies/full.json").read_text(encoding="utf-8"))
@@ -108,6 +109,55 @@ def test_render_publishes_dependencies_between_the_roadmap_root_and_a_chapter(
         "Root result",
         "Chapter",
         "Chapter result",
+    }
+
+
+def test_a_boundary_to_the_root_opens_the_page_that_draws_its_articles(tmp_path: Path) -> None:
+    """The project page collapses the root's own articles into its Top level card.
+
+    So a boundary to the root, from a chapter or a nested section, opens the
+    Top level page, which draws them, and carries the card's title. The card
+    keeps the root's summary and area off, since those describe the project.
+    """
+    blueprint = tmp_path / "blueprint"
+    roadmap = blueprint / "roadmap"
+    section = roadmap / "chapter/section"
+    section.mkdir(parents=True)
+    (blueprint / "README.md").write_text("# Book\n\n- [Roadmap](roadmap/README.md)\n", encoding="utf-8")
+    (roadmap / "README.md").write_text(
+        "---\narea: Analysis\n---\n\n# Roadmap\n\nThe whole project.\n\n"
+        "- [Base](base.md)\n- [Chapter](chapter/README.md)\n",
+        encoding="utf-8",
+    )
+    (roadmap / "base.md").write_text("---\ndeclaration: def\n---\n\n# Base\n", encoding="utf-8")
+    (roadmap / "chapter/README.md").write_text(
+        "---\narea: Algebra\n---\n\n# Chapter\n\nChapter prose.\n\n"
+        "- [Result](result.md)\n- [Section](section/README.md)\n",
+        encoding="utf-8",
+    )
+    (section / "README.md").write_text("# Section\n\n- [Deep](deep.md)\n", encoding="utf-8")
+    for page, base in ((roadmap / "chapter/result.md", "../base.md"), (section / "deep.md", "../../base.md")):
+        page.write_text(
+            f"---\ndeclaration: theorem\n---\n\n# {page.stem.title()}\n\n## Depends on\n\n- [Base]({base})\n",
+            encoding="utf-8",
+        )
+    output = tmp_path / "site-src"
+
+    _render(blueprint, output)
+
+    for payload, url in (
+        ("chapters/chapter.json", "roadmap.html"),
+        ("scopes/chapter/section.json", "../../chapters/roadmap.html"),
+    ):
+        nodes = json.loads((output / "dependencies" / payload).read_text(encoding="utf-8"))["nodes"]
+        boundary = next(node for node in nodes if node["kind"] == "boundary")
+        assert (boundary["id"], boundary["title"], boundary["url"]) == ("boundary:roadmap", "Top level", url)
+    assert (output / "dependencies/chapters/roadmap.md").is_file()
+    project = json.loads((output / "dependencies.json").read_text(encoding="utf-8"))
+    cards = {node["id"]: (node["title"], node["summary"], node["area"]) for node in project["nodes"]}
+    assert cards == {
+        "scope:roadmap": ("Top level", None, None),
+        "scope:chapter": ("Chapter", "Chapter prose.", "Algebra"),
     }
 
 

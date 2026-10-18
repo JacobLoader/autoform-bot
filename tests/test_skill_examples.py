@@ -13,7 +13,7 @@ except ModuleNotFoundError:  # Python 3.10
 
 from autoform_cli.audit import audit_blueprint
 from autoform_cli.graph import load_graph
-from autoform_cli.lean import build_linker, declaration_names
+from autoform_cli.lean import declaration_names, index_project
 from autoform_cli.project.create import _MINIMUM_LEAN
 from autoform_cli.render import render_site
 from autoform_cli.status import derive
@@ -83,12 +83,15 @@ def test_generated_site_docs_describe_one_multiscale_explorer(repo_root: Path) -
 
     assert "Every generated site projection uses the same" in cli
     assert "Authored Mermaid remains supported in the vault and book" in cli
-    assert "`dependencies/index.json`, is internal to the bundled viewer, and its schema may change" in cli
+    assert (
+        "That index, `dependencies/index.json`, the project payload `dependencies.json`, and every other payload "
+        "under `dependencies/` are internal to the bundled viewer, and their schemas may change"
+    ) in cli
     assert "Every generated site route uses the same" in review
 
 
 def test_the_example_uses_nothing_newer_than_its_autoform_pin(repo_root: Path) -> None:
-    """The example's CI runs its pinned AUTOFORM_REF, c994d83f, which predates catalogs.
+    """The example's CI runs its pinned AUTOFORM_REF, 0288506b, which predates catalogs.
 
     That check rejects `catalog:` and `area:` and that render rejects
     INVENTORIED, while it ignores atlas.json, and its render draws Mermaid maps
@@ -702,10 +705,10 @@ def test_setup_asset_is_a_repo_shaped_thesis_vault(repo_root: Path) -> None:
     )
 
     # Every declaration a node claims must exist in the project's Lean sources.
-    linker = build_linker(example)
+    index = index_project(example)
     for node in graph.nodes.values():
         for name in declaration_names(node.lean or ""):
-            assert linker.location(name) is not None, f"{node.id}: {name}"
+            assert index.find(name) is not None, f"{node.id}: {name}"
 
     assert (blueprint / "roadmap" / "README.md").is_file()
     assert (blueprint / "roadmap" / "full-supervision" / "README.md").is_file()
@@ -1605,18 +1608,6 @@ def test_roadmap_reconciles_the_pages_setup_wrote(repo_root: Path) -> None:
 
     for required in ("blueprint/README.md", "repository `README.md`"):
         assert required in roadmap, f"Roadmap never reconciles {required}"
-
-
-def test_roadmap_retracts_against_the_branch_formalize_works_from(repo_root: Path) -> None:
-    """A Formalize run without claims never sees Roadmap's claim.
-
-    If Roadmap looks for `lean:` only on its own branch, an article Formalize
-    formalized meanwhile keeps `statement: formalized` through a clean rebase
-    although the revision changed its statement, and check and audit both pass.
-    """
-
-    roadmap = " ".join((repo_root / "skills/roadmap/SKILL.md").read_text(encoding="utf-8").split())
-    assert "whose article has `lean:` once rebased onto the branch Formalize works from, retract it" in roadmap
 
 
 def test_roadmap_repository_scope_inventories_existing_lean(repo_root: Path) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import json
 import os
@@ -97,7 +98,7 @@ def test_json_rpc_error_response_raises_protocol_error(monkeypatch):
     monkeypatch.setattr(
         session,
         "_read_message",
-        lambda timeout: {
+        lambda timeout, finish_by=None: {
             "jsonrpc": "2.0",
             "id": 1,
             "error": {"code": -32603, "message": "initialization failed"},
@@ -438,7 +439,7 @@ def test_did_close_failure_keeps_result_but_retires_session(tmp_path, monkeypatc
     monkeypatch.setattr(
         session,
         "_send_request",
-        lambda method, params, timeout=30: {"contents": "Nat : Type"},
+        lambda method, params, timeout=30, finish_by=None: {"contents": "Nat : Type"},
     )
 
     assert session.hover(str(source), 0, 0) == "Nat : Type"
@@ -467,6 +468,32 @@ def test_post_admission_budget_exhaustion_keeps_session_healthy(tmp_path, monkey
     assert session._retire_pending is False
 
 
+def test_queued_hover_left_a_sliver_is_refused_before_it_writes(tmp_path, monkeypatch):
+    # A write cut off midway desynchronizes Lean, so a hover that waited behind
+    # others nearly its whole budget is refused, and the server stays.
+    source = tmp_path / "Test.lean"
+    source.write_text("#check Nat\n")
+    session = _owned_session(_FakeProcess())
+    clock = {"now": 0.0}
+
+    class Queue:
+        def acquire(self, timeout):
+            clock["now"] = 59.5
+            return True
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(lsp.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(session, "_operation_lock", Queue())
+    monkeypatch.setattr(session, "_hover", lambda *args, **kwargs: pytest.fail("a sliver of budget ran hover"))
+
+    with pytest.raises(lsp.LspBusyError, match=r"60s \(LEAN_LSP_TIMEOUT\)"):
+        session.hover(str(source), 0, 0)
+    assert session.is_alive() is True
+    assert session._retire_pending is False
+
+
 def test_document_close_budget_exhaustion_retires_session(tmp_path, monkeypatch):
     source = tmp_path / "Test.lean"
     source.write_text("#check Nat\n")
@@ -480,7 +507,7 @@ def test_document_close_budget_exhaustion_retires_session(tmp_path, monkeypatch)
         lambda method, params, **kwargs: notifications.append(method),
     )
 
-    def answer_at_deadline(method, params, timeout=30):
+    def answer_at_deadline(method, params, timeout=30, finish_by=None):
         clock["now"] = 60.0
         return {"contents": "Nat : Type"}
 
@@ -1126,6 +1153,47 @@ def test_real_lean_hover_reopens_a_file_in_one_session(tmp_path):
         session.close()
 
 
+@_requires_real_lean
+def test_real_lean_hover_that_runs_out_keeps_the_server(tmp_path):
+    # #272: Lean elaborates nothing below the sleeping #eval, so it cannot answer a
+    # hover on line 1. Closing the file makes it answer, so the server keeps
+    # running and serves the next hover.
+    project = _real_lean_project(
+        tmp_path / "slow", "def probe : Nat := 3\n", Slow="#eval IO.sleep 120000\ndef late : Nat := 1\n"
+    )
+    session = lsp.LeanLspSession(lsp.LspConfig(cwd=str(project), timeout=20))
+    session.start()
+    try:
+        with pytest.raises(lsp.LspHoverTimeout, match="LEAN_LSP_TIMEOUT"):
+            session.hover(str(project / "Probe" / "Slow.lean"), 1, 4)
+        assert session.is_alive() is True
+        assert "Nat" in session.hover(str(project / "Probe" / "Main.lean"), 0, 4)
+    finally:
+        session.close()
+
+
+@_requires_real_lean
+def test_real_lean_hover_that_runs_out_while_building_leaves_nothing_running(tmp_path):
+    # A hover on a file whose import is unbuilt waits while Lake builds it, and the
+    # build sleeps. Closing the file makes the worker exit, and Lean stops the
+    # worker's process group, its build included, so the server stays with
+    # nothing of the file left running.
+    project = _real_lean_project(
+        tmp_path / "building",
+        "import Probe.Slow\ndef probe : Nat := late\n",
+        Slow="#eval IO.sleep 120000\ndef late : Nat := 1\n",
+    )
+    session = lsp.LeanLspSession(lsp.LspConfig(cwd=str(project), timeout=20))
+    session.start()
+    try:
+        with pytest.raises(lsp.LspHoverTimeout, match="LEAN_LSP_TIMEOUT"):
+            session.hover(str(project / "Probe" / "Main.lean"), 1, 4)
+        assert session.is_alive() is True
+        assert session._left_running(time.monotonic() + 5) is False
+    finally:
+        session.close()
+
+
 def test_hover_opens_and_closes_document(tmp_path: Path, monkeypatch):
     source = tmp_path / "Test.lean"
     source_text = "#check Nat\n"
@@ -1139,7 +1207,7 @@ def test_hover_opens_and_closes_document(tmp_path: Path, monkeypatch):
         lambda method, params, **kwargs: notifications.append((method, params)),
     )
 
-    def send_request(method, params, timeout=30):
+    def send_request(method, params, timeout=30, finish_by=None):
         assert method == "textDocument/hover"
         assert params["textDocument"]["uri"] == source.resolve().as_uri()
         return {"contents": {"kind": "plaintext", "value": "Nat : Type"}}
@@ -1174,7 +1242,7 @@ def test_hover_skips_a_server_request_that_reuses_its_id(tmp_path: Path, monkeyp
             {"jsonrpc": "2.0", "id": 1, "result": {"contents": "Nat : Type"}},
         ]
     )
-    monkeypatch.setattr(session, "_read_message", lambda timeout=5: next(messages))
+    monkeypatch.setattr(session, "_read_message", lambda timeout=5, finish_by=None: next(messages))
 
     assert session.hover(str(source), 0, 7) == "Nat : Type"
     assert session.is_alive() is True
@@ -1192,7 +1260,7 @@ def test_hover_closes_the_document_after_a_failed_request(tmp_path: Path, monkey
         lambda method, params, **kwargs: notifications.append(method),
     )
 
-    def timeout(method, params, timeout=30):
+    def timeout(method, params, timeout=30, finish_by=None):
         raise TimeoutError("no hover reply")
 
     monkeypatch.setattr(session, "_send_request", timeout)
@@ -1224,7 +1292,7 @@ def test_document_operations_are_serialized_per_session(tmp_path: Path, monkeypa
         lambda method, params, **kwargs: None,
     )
 
-    def request(method, params, timeout=30):
+    def request(method, params, timeout=30, finish_by=None):
         nonlocal calls
         with calls_lock:
             calls += 1
@@ -1325,6 +1393,58 @@ def _frame(msg):
 
 
 _PROGRESS = {"jsonrpc": "2.0", "method": "$/lean/fileProgress", "params": {}}
+_EMPTY_DIAGNOSTICS = {
+    "jsonrpc": "2.0",
+    "method": "textDocument/publishDiagnostics",
+    "params": {"uri": "file:///Test.lean", "diagnostics": []},
+}
+
+
+@contextlib.contextmanager
+def _paced_session(tmp_path, monkeypatch, on_write):
+    """A session with a ten-second budget reading Lean's frames from a pipe on a fake clock.
+
+    on_write(msg, now, arrivals, sent) schedules what Lean sends after each write,
+    as (time, bytes) pairs in time order.
+    """
+    import select
+
+    source = tmp_path / "Test.lean"
+    source.write_text("#check Nat\n")
+    read_fd, write_fd = os.pipe()
+    reader = os.fdopen(read_fd, "rb", buffering=0)
+    session = lsp.LeanLspSession(lsp.LspConfig(timeout=10))
+    session.process = SimpleNamespace(stdout=reader)
+    clock = {"now": 0.0}
+    arrivals: list[tuple[float, bytes]] = []
+    sent: list[str | None] = []
+    real_select = select.select
+
+    def paced_select(rlist, wlist, xlist, timeout):
+        # Return at once while the pipe holds data, else at the next arrival
+        # within the timeout, else after the whole timeout.
+        ready, _, _ = real_select(rlist, wlist, xlist, 0)
+        if not ready and arrivals and arrivals[0][0] <= clock["now"] + timeout:
+            at, data = arrivals.pop(0)
+            clock["now"] = max(clock["now"], at)
+            os.write(write_fd, data)
+            ready, _, _ = real_select(rlist, wlist, xlist, 0)
+        if not ready:
+            clock["now"] += timeout
+        return ready, [], []
+
+    def write(msg, timeout=30):
+        sent.append(msg.get("method"))
+        on_write(msg, clock["now"], arrivals, sent)
+
+    monkeypatch.setattr(lsp.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(select, "select", paced_select)
+    monkeypatch.setattr(session, "_write_message", write)
+    try:
+        yield SimpleNamespace(session=session, source=str(source), clock=clock, sent=sent)
+    finally:
+        os.close(write_fd)
+        reader.close()
 
 
 def test_hover_finishes_a_frame_whose_header_straddles_a_second(tmp_path, monkeypatch):
@@ -1386,69 +1506,179 @@ def test_hover_fails_closed_when_lean_exits_mid_wait(tmp_path, monkeypatch):
         reader.close()
 
 
+_SENT = ["textDocument/didOpen", "textDocument/hover"]
+_CUT_BODY = b"Content-Length: 10\r\n\r\n{}"
+
+
+_CLOSED = [*_SENT, "textDocument/didClose"]
+
+
 @pytest.mark.parametrize(
-    ("stall", "message"),
+    ("stall", "on_close", "message", "gave_up"),
     [
-        ([(4.9, b"C")], "reading an LSP header"),
-        ([(4.9, b"Content-Length: 10\r\n\r\n{}")], "reading an LSP body"),
-        ([], "waiting for LSP response"),
+        ([(4.9, b"C")], [], "reading an LSP header", 8.75),
+        ([(4.9, _CUT_BODY)], [], "reading an LSP body", 8.75),
+        ([], [], "closing the file brought no answer", 10),
+        ([], [(8.0, _CUT_BODY)], "closing the file brought no answer", 10),
     ],
-    ids=["header", "body", "silence"],
+    ids=["header", "body", "silence", "answer-cut-off"],
 )
 def test_hover_fails_at_its_deadline_when_the_reply_never_completes(
-    tmp_path, monkeypatch, stall, message
+    tmp_path, monkeypatch, stall, on_close, message, gave_up
 ):
-    import select
-
-    source = tmp_path / "Test.lean"
-    source.write_text("#check Nat\n")
-    read_fd, write_fd = os.pipe()
-    reader = os.fdopen(read_fd, "rb", buffering=0)
-    session = lsp.LeanLspSession(lsp.LspConfig(timeout=10))
-    session.process = SimpleNamespace(stdout=reader)
-    clock = {"now": 0.0}
-    arrivals: list[tuple[float, bytes]] = []
-    real_select = select.select
-
-    def paced_select(rlist, wlist, xlist, timeout):
-        # Return at once while the pipe holds data, else at the next arrival
-        # within the timeout, else after the whole timeout.
-        ready, _, _ = real_select(rlist, wlist, xlist, 0)
-        if not ready and arrivals and arrivals[0][0] <= clock["now"] + timeout:
-            at, data = arrivals.pop(0)
-            clock["now"] = max(clock["now"], at)
-            os.write(write_fd, data)
-            ready, _, _ = real_select(rlist, wlist, xlist, 0)
-        if not ready:
-            clock["now"] += timeout
-        return ready, [], []
-
-    methods: list[str] = []
-
-    def write(msg, timeout=30):
-        methods.append(msg.get("method"))
+    def lean(msg, now, arrivals, sent):
         if msg.get("method") == "textDocument/hover":
             # A progress notification three seconds in, then a frame that starts
             # mid-read and stalls, or nothing more, while Lean stays alive.
             arrivals.extend([(3.0, _frame(_PROGRESS)), *stall])
+        elif msg.get("method") == "textDocument/didClose":
+            arrivals.extend(on_close)
 
-    monkeypatch.setattr(lsp.time, "monotonic", lambda: clock["now"])
-    monkeypatch.setattr(select, "select", paced_select)
-    monkeypatch.setattr(session, "_write_message", write)
-    try:
-        # Only the operation's own deadline ends the wait, a read after the
-        # progress notification gets only what is left of it, and running out
-        # fails rather than returning no hover.
+    with _paced_session(tmp_path, monkeypatch, lean) as lsp_session:
+        # The request stops waiting at 7.5, a quarter of the budget early, to leave
+        # time to close the file; a frame already started may run on to 8.75, half
+        # that time. Running out fails rather than returning no hover, and retires
+        # the session.
         with pytest.raises(TimeoutError, match=message) as raised:
-            session.hover(str(source), 0, 7)
-        assert not isinstance(raised.value, lsp.LspBusyError)
-        assert clock["now"] == pytest.approx(10)
-        assert session.is_alive() is False
-        # The budget is gone, so no didClose is sent.
-        assert methods == ["textDocument/didOpen", "textDocument/hover"]
+            lsp_session.session.hover(lsp_session.source, 0, 7)
+        assert not isinstance(raised.value, (lsp.LspBusyError, lsp.LspHoverTimeout))
+        assert lsp_session.clock["now"] == pytest.approx(gave_up)
+        assert lsp_session.session.is_alive() is False
+        assert lsp_session.sent == _CLOSED
+
+
+def test_hover_finishes_a_reply_that_starts_before_it_stops_waiting(tmp_path, monkeypatch):
+    # A frame cut off at 7.5 would leave the stream out of step, so one already
+    # started may finish, by 8.75.
+    reply = _frame({"jsonrpc": "2.0", "id": 1, "result": {"contents": "Nat : Type"}})
+
+    def lean(msg, now, arrivals, sent):
+        if msg.get("method") == "textDocument/hover":
+            arrivals.extend([(7.4, reply[:5]), (8.0, reply[5:])])
+
+    with _paced_session(tmp_path, monkeypatch, lean) as lsp_session:
+        assert lsp_session.session.hover(lsp_session.source, 0, 7) == "Nat : Type"
+        assert lsp_session.clock["now"] == pytest.approx(8)
+        assert lsp_session.sent == _CLOSED
+        assert lsp_session.session.is_alive() is True
+
+
+def _answers_the_close(answer: dict):
+    """Lean as a hover that runs out finds it: silent until the close, which it answers."""
+
+    def lean(msg, now, arrivals, sent):
+        if msg.get("id") == 2:
+            arrivals.append((now + 0.1, _frame({"jsonrpc": "2.0", "id": 2, "result": {"contents": "Int : Type"}})))
+        elif msg.get("method") == "textDocument/didClose" and len(sent) == 3:
+            # Progress Lean sent before it saw the close comes first, and an empty
+            # publishDiagnostics follows the answer.
+            answered = _frame({"jsonrpc": "2.0", "id": 1, **answer})
+            arrivals.extend(
+                [(now + 0.2, _frame(_PROGRESS)), (now + 0.5, answered), (now + 0.6, _frame(_EMPTY_DIAGNOSTICS))]
+            )
+
+    return lean
+
+
+_CONTENT_MODIFIED = {"error": {"code": -32801, "message": "The file worker for file:///Test.lean has been terminated."}}
+
+
+@pytest.mark.parametrize(
+    ("answer", "hovered"),
+    [(_CONTENT_MODIFIED, None), ({"result": {"contents": "Nat : Type"}}, "Nat : Type")],
+    ids=["content-modified", "late-hover"],
+)
+def test_hover_keeps_the_server_when_lean_answers_the_closed_file(tmp_path, monkeypatch, answer, hovered):
+    # #272: closing a file makes Lean answer the hover still pending on it, with
+    # contentModified unless the hover's own answer wins the race. Either shows
+    # Lean still serves the project, so the server need not restart.
+    with _paced_session(tmp_path, monkeypatch, _answers_the_close(answer)) as lsp_session:
+        session = lsp_session.session
+        if hovered is None:
+            with pytest.raises(lsp.LspHoverTimeout, match=r"10s \(LEAN_LSP_TIMEOUT\)"):
+                session.hover(lsp_session.source, 0, 7)
+        else:
+            assert session.hover(lsp_session.source, 0, 7) == hovered
+        assert lsp_session.clock["now"] == pytest.approx(8)
+        assert session.is_alive() is True
+        assert session.hover(lsp_session.source, 0, 7) == "Int : Type"
+        assert lsp_session.sent == _CLOSED * 2
+
+
+def test_hover_restarts_the_server_when_the_closed_file_left_a_build_running(tmp_path, monkeypatch):
+    # A worker that does not exit when its file closes keeps its build running.
+    # Retiring the session stops both, so the server restarts.
+    with _paced_session(tmp_path, monkeypatch, _answers_the_close(_CONTENT_MODIFIED)) as lsp_session:
+        monkeypatch.setattr(lsp_session.session, "_left_running", lambda deadline: True)
+        with pytest.raises(TimeoutError, match="still ran after the close") as raised:
+            lsp_session.session.hover(lsp_session.source, 0, 7)
+        assert not isinstance(raised.value, lsp.LspHoverTimeout)
+        assert lsp_session.session.is_alive() is False
+
+
+def test_hover_restarts_the_server_when_lean_answers_the_closed_file_malformed(tmp_path, monkeypatch):
+    with _paced_session(tmp_path, monkeypatch, _answers_the_close({})) as lsp_session:
+        with pytest.raises(lsp.LspProtocolError, match="neither result nor error") as raised:
+            lsp_session.session.hover(lsp_session.source, 0, 7)
+        assert not isinstance(raised.value, lsp.LspErrorReply)
+        assert lsp_session.session.is_alive() is False
+
+
+def test_hover_restarts_the_server_when_its_file_cannot_be_closed(tmp_path, monkeypatch):
+    def lean(msg, now, arrivals, sent):
+        if msg.get("method") == "textDocument/didClose":
+            raise OSError("broken pipe")
+
+    with _paced_session(tmp_path, monkeypatch, lean) as lsp_session:
+        with pytest.raises(TimeoutError, match="closing the file failed") as raised:
+            lsp_session.session.hover(lsp_session.source, 0, 7)
+        assert not isinstance(raised.value, lsp.LspHoverTimeout)
+        assert lsp_session.clock["now"] == pytest.approx(7.5)
+        assert lsp_session.session.is_alive() is False
+
+
+@pytest.mark.parametrize("left_running", [False, True], ids=["nothing-left", "build-left"])
+def test_hover_keeps_the_server_after_an_error_reply_unless_a_build_is_left(tmp_path, monkeypatch, left_running):
+    # An error reply arrives as a whole frame, so the stream is in step, but a
+    # build a crashed worker started still has to be stopped, which retiring does.
+    source = tmp_path / "Test.lean"
+    source.write_text("#check Nat\n")
+    session = _owned_session(_FakeProcess())
+    methods: list[str] = []
+    replies = iter(
+        [
+            {"jsonrpc": "2.0", "id": 1, "error": {"code": -32902, "message": "worker crashed"}},
+            {"jsonrpc": "2.0", "id": 2, "result": {"contents": "Nat : Type"}},
+        ]
+    )
+    monkeypatch.setattr(session, "_write_message", lambda msg, timeout=30: methods.append(msg.get("method")))
+    monkeypatch.setattr(session, "_read_message", lambda timeout, finish_by=None: next(replies))
+    monkeypatch.setattr(session, "_left_running", lambda deadline: left_running)
+
+    with pytest.raises(lsp.LspErrorReply, match=r"\[-32902\]: worker crashed"):
+        session.hover(str(source), 0, 0)
+    assert session.is_alive() is not left_running
+    if not left_running:
+        assert session.hover(str(source), 0, 0) == "Nat : Type"
+        assert methods == _CLOSED * 2
+
+
+def test_a_token_process_outside_the_server_group_is_left_running():
+    # Lean starts each file worker, and so its builds, in a session of its own.
+    token = secrets.token_hex(8)
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"], env=_session_env(token), start_new_session=True
+    )
+    try:
+        session = _owned_session(_FakeProcess(), token=token)
+        assert session._left_running(time.monotonic() + 0.2) is True
+        child.kill()
+        child.wait()
+        assert session._left_running(time.monotonic() + 0.2) is False
     finally:
-        os.close(write_fd)
-        reader.close()
+        if child.poll() is None:
+            child.kill()
+            child.wait()
 
 
 def test_lsp_write_cannot_block_on_a_full_pipe():

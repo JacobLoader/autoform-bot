@@ -130,8 +130,9 @@ proof task. A catalog must be a leaf: `audit` reports one with contained
 articles as `catalog-container`. Every catalog links a declaration ledger under
 `blueprint/sources/` from its `## Sources` section: `check` warns about a
 catalog that links none and `audit` reports it as `catalog-missing-ledger`,
-while a link to a missing or hidden ledger fails both, as such a source link
-does for any article. A completed catalog also
+while a link to a missing ledger fails both, as such a source link does for any
+article. A hidden ledger under `sources/` draws a `check` warning and fails only
+`audit`, as [Validation](#validation) explains. A completed catalog also
 records in `lean:` the full name of every public declaration the module writes
 with a declaration keyword, which is what the Lean source index records (see
 [Validation](#validation)). Names Lean generates, such as constructors,
@@ -907,10 +908,13 @@ against: every article whose `lean:` names a declaration, stated or not, with
 `open`, `assumes`, and `allowed_open_declarations`, the declarations of the
 open statements its Lean may reach, plus its own when it is open. A `mathlib:
 true` article is listed with state `mathlib`, `open` false, and nothing assumed
-or allowed, so CI checks that its names exist and reach no open statement. Under
-the strict policy every such article is listed with `open` false and nothing
-allowed, and CI checks that its names exist. It reads Markdown only and needs
-no Lean build.
+or allowed, so CI checks that its names exist and reach no open statement. A
+module catalog is never open; under the open policy, one that is not proved
+keeps only the names no non-catalog article's `lean:` lists, and is left out
+when none remain: that article's state decides whether such a name is open.
+Under the strict policy
+every such article is listed with `open` false and nothing allowed, and CI
+checks that its names exist. It reads Markdown only and needs no Lean build.
 
 Ask what revising an article's Lean declarations would affect before editing
 them:
@@ -1174,8 +1178,9 @@ instead links its first eight names in its Lean row and counts the rest. Its
 `dependencies.md` opens a full-viewport application and rolls dependencies
 through the article hierarchy, with bounded project, chapter, and nested-scope
 projections. Global search loads a layout-free index and jumps to the smallest
-useful scope; that index, `dependencies/index.json`, is internal to the bundled
-viewer, and its schema may change. The compatibility `dependencies/full.md`
+useful scope. That index, `dependencies/index.json`, the project payload
+`dependencies.json`, and every other payload under `dependencies/` are internal
+to the bundled viewer, and their schemas may change. The compatibility `dependencies/full.md`
 route renders only the project shell and never fits the whole repository into
 one canvas. Every generated site projection uses the same deterministic
 JSON-derived Canvas and semantic-DOM explorer with search, filters, pan/zoom,
@@ -1186,9 +1191,11 @@ plain text, and loads Mermaid only on a page that has one: click callbacks and
 HTML in labels do not work there, while a link to a URL does, through
 Mermaid's URL sanitizer.
 A persistent hierarchy rail keeps the current ancestry and immediate contents
-visible. The project overview groups readable topic cards by authored
-mathematical area and reveals only a selected topic's direct dependency
-neighborhood; its detail drawer overlays the map instead of shrinking it.
+visible, except on phones and, up to 1,200 px wide, under open details, while
+the head shows the trail. The project overview groups readable topic cards by
+authored mathematical area and reveals only a selected topic's direct
+dependency neighborhood; its detail drawer overlays the map instead of
+shrinking it.
 Breadcrumbs return through the explorer hierarchy to the book (to the home page
 for a roadmap with neither a root article nor root leaves), and every formal
 statement links to the smallest explorer scope containing that item. Point
@@ -1238,16 +1245,27 @@ What an existing repository meets when it moves to this version:
    link is now `<scope>.html#node=<id>`.
 9. Setup leaves an existing `mkdocs.yml` alone. A large site can add Material's
    `navigation.prune` feature by hand, as the scaffolded configuration does.
-10. `autoform-visualize` writes a plain-Markdown dependency summary to
-   `blueprint/dependencies.md` in place of the Mermaid graph. It replaces a
-   missing page, its own, or the Mermaid page earlier versions wrote, and
-   refuses any other page with exit status 2.
-11. The site draws authored Mermaid diagrams in strict mode, with plain-text
-   labels, and only on pages that have one, so click callbacks and HTML in
-   labels stop working; links to URLs still work. A `mkdocs.yml` that loads
-   Mermaid from the CDN keeps working, and may drop that line once CI's
-   `AUTOFORM_REF` includes this change: a render pinned before it needs the
-   line to draw any diagram.
+10. A declaration whose name carries an explicit universe binder on its
+    keyword's line, as in `def f.{u}`, is now read as `f`, as it already was
+    when the name sat on the next line. A `lean:` name for such a declaration
+    now resolves, and an alias of one is read through its target for limits,
+    kind and size. A name declared that way in one file and plainly in another
+    is now `defined more than once` in `check` and `lean-target-ambiguous` in
+    `audit`, where earlier versions passed.
+11. Every `autoform search --json` hit now carries a nullable `catalog`,
+    `module` for a module catalog, while the schema stays
+    `autoform-search/v1`: `autoform-search/v2` already names the `--library`
+    output. A consumer that rejects unknown keys must accept the new one.
+12. `autoform-visualize` writes a plain-Markdown dependency summary to
+    `blueprint/dependencies.md` in place of the Mermaid graph. It replaces a
+    missing page, its own, or the Mermaid page earlier versions wrote, and
+    refuses any other page with exit status 2.
+13. The site draws authored Mermaid diagrams in strict mode, with plain-text
+    labels, and only on pages that have one, so click callbacks and HTML in
+    labels stop working; links to URLs still work. A `mkdocs.yml` that loads
+    Mermaid from the CDN keeps working, and may drop that line once CI's
+    `AUTOFORM_REF` includes this change: a render pinned before it needs the
+    line to draw any diagram.
 
 ## Validation
 
@@ -1824,7 +1842,11 @@ stated is not open even when it has `lean:`: a draft name does not become an
 assumption, and CI rejects its `sorry`. A definition is never open: its body
 is its proof, CI rejects a `sorry` in it, and its statement phase waits until
 its proof prerequisites are stated. A retracted definition is not open either,
-but what rests on it still assumes the open statements its body reaches. Turn
+but what rests on it still assumes the open statements its body reaches. A
+module catalog is never open, even while pending: it records inspection of
+existing Lean, not a statement to assume, so CI rejects a `sorry` in a
+declaration only it lists, and nothing that rests on it assumes it, though what
+rests on it still assumes the open statements its own dependencies reach. Turn
 the policy back off only once no open statement remains, since the strict audit
 rejects every `sorry` and strict
 status shows a proof resting on one as proved, not conditional.

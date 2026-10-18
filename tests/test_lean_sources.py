@@ -28,8 +28,9 @@ from autoform_cli._tree_snapshot import (
 from autoform_cli.lean import (
     Alias,
     SourceLinker,
-    build_linker,
     declaration_names,
+    detect_ref,
+    detect_repository_url,
     index_project,
     open_project_sources,
     snapshot_project_sources,
@@ -501,44 +502,7 @@ def test_sections_do_not_add_to_the_namespace(tmp_path: Path) -> None:
     assert index.find("Outer.Helpers.beta") is None
 
 
-def test_targeted_index_prefilters_files_but_preserves_file_context_and_digest(
-    tmp_path: Path,
-) -> None:
-    _index(tmp_path)
-    other = tmp_path / "Project/Other.lean"
-    # A skipped file still counts only the lines Lean reads, up to its `#exit`.
-    other.write_text("def unrelated : Nat := 0\n#exit\ndef dead : Nat := 1\n\n\n", encoding="utf-8")
-    full = index_project(tmp_path)
-
-    targeted = index_project(tmp_path, names=("Outer.alpha",))
-
-    assert targeted.find("Outer.alpha") is not None
-    assert targeted.find("Outer.beta") is not None
-    assert targeted.find("unrelated") is None
-    assert targeted.source_digest == full.source_digest
-    assert targeted.line_counts == full.line_counts
-    assert index_project(tmp_path, names=()).line_counts == {}
-
-
-def test_targeted_index_treats_inline_comments_as_lean_whitespace(
-    tmp_path: Path,
-) -> None:
-    _index(tmp_path, "theorem /- separator -/ target : True := by trivial\n")
-
-    targeted = index_project(tmp_path, names=("target",))
-
-    assert targeted.find("target") is not None
-
-
-def test_targeted_index_reads_each_name_of_an_iff_alias(tmp_path: Path) -> None:
-    _index(tmp_path, "theorem t_iff : True ↔ True := Iff.rfl\nalias ⟨mp, mpr⟩ := t_iff\n")
-
-    for name in ("mp", "mpr"):
-        assert index_project(tmp_path, names=(name,)).find(name) is not None, name
-
-
-def test_the_name_prefilter_admits_every_name_the_scan_indexes(tmp_path: Path) -> None:
-    """Each filtered capture (check, audit, render, runtime) loses a name the prefilter misreads."""
+def test_the_scan_indexes_every_declaration_form(tmp_path: Path) -> None:
     source = [
         "universe u v w",
         "namespace Outer",
@@ -578,8 +542,6 @@ def test_the_name_prefilter_admits_every_name_the_scan_indexes(tmp_path: Path) -
         "Outer.«dotted.name»",
         "rootLevel",
     ]
-    for name in index.declarations:
-        assert index_project(tmp_path, names=(name,)).find(name) is not None, name
 
 
 def test_every_scope_closes_at_its_own_end(tmp_path: Path) -> None:
@@ -3470,10 +3432,9 @@ def test_an_alias_is_followed_only_to_an_earlier_declaration_of_its_file(tmp_pat
         assert index.reached(index.find(name)) is None, name
 
 
-def test_a_name_filter_resolves_an_alias_as_the_unfiltered_index_does(tmp_path: Path) -> None:
+def test_an_alias_has_no_sure_target_before_its_file_declares_one(tmp_path: Path) -> None:
     # B.lean declares its `N.aux` only after the alias and A.lean declares one
-    # too, so the alias has no sure target, whether or not a request also
-    # names A.lean's `N.helper`.
+    # too, so the alias has no sure target.
     (tmp_path / "A.lean").write_text(
         "namespace N\nprivate theorem aux : True := trivial\ntheorem helper : True := trivial\nend N\n",
         encoding="utf-8",
@@ -3483,9 +3444,8 @@ def test_a_name_filter_resolves_an_alias_as_the_unfiltered_index_does(tmp_path: 
         encoding="utf-8",
     )
 
-    for names in (None, ("N.good",), ("N.good", "N.helper")):
-        index = index_project(tmp_path, names=names)
-        assert index.reached(index.find("N.good")) is None, names
+    index = index_project(tmp_path)
+    assert index.reached(index.find("N.good")) is None
 
 
 def _where(declarations) -> list[tuple[str, int]]:
@@ -3534,10 +3494,12 @@ _PRIVATE_MAIN = "private theorem Demo.main : True := trivial\n"
             [],
         ),
         ({"A.lean": _PRIVATE_MAIN, "B.lean": "\nproof_wanted Demo.main : True\n"}, [("A.lean", 1), ("B.lean", 2)], []),
+        # A universe binder on the keyword's line leaves the name as it is.
+        ({"A.lean": "def Demo.main.{u} : Nat := 0\n", "B.lean": _PUBLIC_MAIN}, [("A.lean", 1), ("B.lean", 2)], []),
     ],
     ids=[
         "earlier-private", "private-above", "private-alias", "later-private", "wanted",
-        "lone-private", "two-public", "two-private", "private-wanted",
+        "lone-private", "two-public", "two-private", "private-wanted", "universe-binder",
     ],
 )
 def test_a_name_selects_its_one_public_declaration_or_is_ambiguous(
@@ -3781,28 +3743,23 @@ def _init_git_repository(
 
 
 @pytest.mark.parametrize("object_format", ["sha1", "sha256"])
-def test_auto_linker_only_links_bytes_present_in_the_commit(
+def test_snapshot_attestation_accepts_only_bytes_present_in_the_commit(
     tmp_path: Path,
     object_format: str,
 ) -> None:
     root = tmp_path / object_format
     root.mkdir()
-    _index(root, "def committed : Nat := 0\n", "Committed.lean")
-    _index(root, "def dirty : Nat := 0\n", "Dirty.lean")
+    committed = root / "Committed.lean"
+    committed.write_text("def committed : Nat := 0\n")
+    dirty = root / "Dirty.lean"
+    dirty.write_text("def dirty : Nat := 0\n")
     commit = _init_git_repository(root, object_format=object_format)
-    (root / "Dirty.lean").write_text("def dirty : Nat := 1\n")
-    (root / "Untracked.lean").write_text("def untracked : Nat := 0\n")
+    dirty.write_text("def dirty : Nat := 1\n")
 
-    linker = build_linker(root)
-
-    assert linker.ref == commit
-    assert linker.url("committed") == (
-        f"https://github.com/owner/repo/blob/{commit}/Committed.lean#L1"
-    )
-    assert linker.location("dirty") is not None
-    assert linker.location("untracked") is not None
-    assert linker.url("dirty") is None
-    assert linker.url("untracked") is None
+    assert verify_repository_snapshot(root, commit, ((committed, committed.read_bytes()),)) == commit
+    assert verify_repository_snapshot(
+        root, commit, ((committed, committed.read_bytes()), (dirty, dirty.read_bytes()))
+    ) is None
 
 
 def test_tree_lookup_matches_the_spelling_git_committed_only_when_asked_to(
@@ -3834,62 +3791,7 @@ def test_permalink_names_the_spelling_git_committed(tmp_path: Path) -> None:
     assert linker.url("decomposed") == "https://github.com/owner/repo/blob/deadbeef/Poincar%C3%A9%E2%84%AB.lean#L1"
 
 
-def test_auto_linker_retries_ref_and_source_as_one_unit(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
-    source = root / "A.lean"
-    source.write_text("def first : Nat := 0\n")
-    first_commit = _init_git_repository(root)
-    original_snapshot = lean_module.snapshot_project_sources
-    captures = 0
-    second_commit = ""
-
-    def capture_then_commit(*args, **kwargs):
-        nonlocal captures, second_commit
-        snapshot = original_snapshot(*args, **kwargs)
-        captures += 1
-        if captures == 1:
-            source.write_text("def second : Nat := 0\n")
-            second_commit = _git_commit(root, "second", "A.lean")
-        return snapshot
-
-    monkeypatch.setattr(lean_module, "snapshot_project_sources", capture_then_commit)
-    monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
-
-    linker = build_linker(root)
-
-    assert captures == 2
-    assert first_commit != second_commit
-    assert linker.ref == second_commit
-    assert linker.location("first") is None
-    assert linker.url("second") == (
-        f"https://github.com/owner/repo/blob/{second_commit}/A.lean#L1"
-    )
-
-
-def test_auto_linker_supports_a_symlinked_repository_root(tmp_path: Path) -> None:
-    root = tmp_path / "root"
-    root.mkdir()
-    _index(root, "def linkedThroughAlias : Nat := 0\n", "A.lean")
-    commit = _init_git_repository(root)
-    alias = tmp_path / "alias"
-    try:
-        alias.symlink_to(root, target_is_directory=True)
-    except OSError:
-        pytest.skip("symlinks are unavailable")
-
-    linker = build_linker(alias)
-
-    assert linker.ref == commit
-    assert linker.url("linkedThroughAlias") == (
-        f"https://github.com/owner/repo/blob/{commit}/A.lean#L1"
-    )
-
-
-def test_auto_linker_ignores_git_replace_objects(tmp_path: Path) -> None:
+def test_snapshot_attestation_ignores_git_replace_objects(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
     source = root / "A.lean"
@@ -3901,14 +3803,13 @@ def test_auto_linker_ignores_git_replace_objects(tmp_path: Path) -> None:
     source.write_text("def replacementTree : Nat := 0\n")
     subprocess.run(["git", "replace", original, replacement], cwd=root, check=True)
 
-    linker = build_linker(root)
+    assert verify_repository_snapshot(root, original, ((source, source.read_bytes()),)) is None
+    assert verify_repository_snapshot(
+        root, original, ((source, b"def originalTree : Nat := 0\n"),)
+    ) == original
 
-    assert linker.ref == original
-    assert linker.location("replacementTree") is not None
-    assert linker.url("replacementTree") is None
 
-
-def test_auto_linker_ignores_inherited_repo_and_ci_redirects(
+def test_git_runner_ignores_inherited_repo_and_ci_redirects(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3930,14 +3831,13 @@ def test_auto_linker_ignores_inherited_repo_and_ci_redirects(
     monkeypatch.setenv("GITHUB_REPOSITORY", "owner/ci-wrong")
     monkeypatch.setenv("GITHUB_SHA", second_commit)
 
-    linker = build_linker(first)
+    source = first / "A.lean"
 
     assert first_commit != second_commit
-    assert linker.ref == first_commit
-    assert linker.repository_url == "https://github.com/owner/A"
-    assert linker.url("stableRepository") == (
-        f"https://github.com/owner/A/blob/{first_commit}/A.lean#L1"
-    )
+    assert detect_repository_url(first) == "https://github.com/owner/A"
+    assert detect_ref(first) == first_commit
+    assert verify_repository_snapshot(first, "HEAD", ((source, source.read_bytes()),)) == first_commit
+    assert verify_repository_snapshot(first, second_commit, ((source, source.read_bytes()),)) is None
 
 
 def test_snapshot_attestation_accepts_a_clean_checkout_with_eol_conversion(

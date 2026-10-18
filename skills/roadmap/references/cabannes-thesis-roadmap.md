@@ -56,7 +56,7 @@ contract.
 
 Existing and planned mathematics coexist in one book here: five of the seven
 nodes are already formalized, both supporting declarations and three of the
-five source targets, while Infimum loss and Supervision recovery remain
-planned. For a repository-wide inventory, generalize that pattern by
-inventorying all in-scope project declarations rather than selecting only the
-future-work slice.
+five source targets, while Infimum loss is ready to state and Supervision
+recovery remains planned. For a repository-wide inventory, generalize that
+pattern by inventorying all in-scope project declarations rather than selecting
+only the future-work slice.

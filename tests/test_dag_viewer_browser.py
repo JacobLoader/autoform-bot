@@ -181,7 +181,6 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         script_href="viewer.js",
         fallback_links=fallback_links,
         fallback_total=len(nodes),
-        layout="embedded",
         search_href="search.json",
     )
     failed_explorer = dag_viewer.render_container(
@@ -189,15 +188,6 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         script_href="viewer.js",
         fallback_links=fallback_links,
         fallback_total=len(nodes),
-        layout="embedded",
-        search_href="search.json",
-    )
-    app_explorer = dag_viewer.render_container(
-        "graph.json",
-        script_href="viewer.js",
-        fallback_links=fallback_links,
-        fallback_total=len(nodes),
-        layout="app",
         search_href="search.json",
     )
     page_shell = """<!doctype html>
@@ -208,22 +198,13 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
   <title>Autoform explorer regression fixture</title>
   <style>
     body { margin: 0; font-family: sans-serif; }
-    .page-spacer { height: 48rem; }
-    .fixture { max-width: 76rem; margin: 0 auto; padding: 1rem; }
   </style>
 </head>
 <body>
-  <div class="page-spacer" data-page-spacer="before"></div>
-  <main class="fixture">{explorer}</main>
-  <div class="page-spacer" data-page-spacer="after"></div>
+  <main>{explorer}</main>
 </body>
 </html>
 """
-    app_shell = (
-        page_shell.replace('<div class="page-spacer" data-page-spacer="before"></div>', "")
-        .replace('<div class="page-spacer" data-page-spacer="after"></div>', "")
-        .replace('class="fixture"', 'class="fixture" style="max-width:none;padding:0"')
-    )
     (tmp_path / "index.html").write_text(page_shell.replace("{explorer}", explorer), encoding="utf-8")
     (tmp_path / "failure.html").write_text(page_shell.replace("{explorer}", failed_explorer), encoding="utf-8")
     (tmp_path / "duplicate.html").write_text(
@@ -231,7 +212,7 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         encoding="utf-8",
     )
     (tmp_path / "other.html").write_text("<!doctype html><title>Remote scope</title>", encoding="utf-8")
-    (tmp_path / "app.html").write_text(app_shell.replace("{explorer}", app_explorer), encoding="utf-8")
+    (tmp_path / "app.html").write_text(page_shell.replace("{explorer}", explorer), encoding="utf-8")
     dense_nodes = tuple(
         ViewNode(
             id=f"dense/chapter-{index}",
@@ -390,9 +371,9 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
             else {}
         )
         dag_viewer.write_payload(tmp_path / f"{name}.json", dense_view, links=links)
-        host = dag_viewer.render_container(f"{name}.json", script_href="viewer.js", layout="app")
+        host = dag_viewer.render_container(f"{name}.json", script_href="viewer.js")
         (tmp_path / f"{name}.html").write_text(
-            app_shell.replace("{explorer}", host),
+            page_shell.replace("{explorer}", host),
             encoding="utf-8",
         )
 
@@ -499,7 +480,7 @@ def test_app_layout_fills_the_browser_viewport(desktop_page: object, explorer_ur
     page.set_viewport_size({"width": 1440, "height": 900})
     page.goto(f"{explorer_url}/app.html")
     page.locator(".bp-dag-stage").wait_for()
-    viewer = page.locator('.bp-dag-viewer[data-layout="app"]')
+    viewer = page.locator(".bp-dag-viewer")
     box = viewer.bounding_box()
     assert box is not None
     assert box["x"] <= 1
@@ -656,7 +637,7 @@ def test_a_click_on_empty_map_space_keeps_the_readers_zoom(desktop_page: object,
     assert node.evaluate("node => node.style.transform") == before
 
 
-def test_oversized_flat_scope_defaults_to_browse(desktop_page: object, explorer_url: str) -> None:
+def test_oversized_flat_scope_defaults_to_contents(desktop_page: object, explorer_url: str) -> None:
     page = desktop_page
     page.set_viewport_size({"width": 1440, "height": 900})
     page.goto(f"{explorer_url}/flat.html")
@@ -719,7 +700,7 @@ def test_a_node_chosen_on_a_phone_lands_above_the_open_sheet(mobile_page: object
     assert box["y"] + box["height"] <= sheet["y"]
 
 
-def test_mobile_browse_pagination_stays_above_the_collapsed_sheet(
+def test_mobile_contents_pagination_stays_above_the_collapsed_sheet(
     mobile_page: object, explorer_url: str
 ) -> None:
     page = mobile_page
@@ -746,23 +727,6 @@ def test_mobile_isolates_do_not_overlap_the_connected_dag(mobile_page: object, e
     assert a is not None and b is not None
     assert a["y"] + a["height"] <= b["y"] or b["y"] + b["height"] <= a["y"]
     playwright.expect(page.locator(".bp-dag-isolated")).to_be_visible()
-
-
-def test_plain_wheel_scrolls_the_page_instead_of_being_trapped(desktop_page: object, explorer_url: str) -> None:
-    page = desktop_page
-    page.set_viewport_size({"width": 1280, "height": 720})
-    _open_ready(page, explorer_url)
-    stage = page.locator(".bp-dag-stage")
-    stage.scroll_into_view_if_needed()
-    box = stage.bounding_box()
-    assert box is not None
-    before = page.evaluate("window.scrollY")
-
-    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-    page.mouse.wheel(0, 420)
-
-    page.wait_for_function("before => window.scrollY > before", arg=before)
-    assert page.evaluate("window.scrollY") > before
 
 
 def test_a_plain_wheel_pans_the_full_page_explorer(desktop_page: object, explorer_url: str) -> None:
@@ -878,7 +842,7 @@ def test_a_result_neither_drawn_here_nor_safely_linked_selects_nothing(
     assert page.url == url
 
 
-def test_a_browse_query_lists_only_this_scope(desktop_page: object, explorer_url: str) -> None:
+def test_a_contents_query_lists_only_this_scope(desktop_page: object, explorer_url: str) -> None:
     """Whole-roadmap matches belong to the search dropdown, not under "Contents of this scope".
 
     The dropdown opened on every keystroke and covered the list being filtered,
@@ -1226,6 +1190,116 @@ def test_on_a_phone_the_status_filter_and_search_results_open_in_view(mobile_pag
     assert lowest == [True, True]
 
 
+@pytest.mark.parametrize("width", (800, 1100, 1440))
+def test_a_node_chosen_on_a_wider_screen_lands_beside_the_open_details(
+    desktop_page: object, site_url: str, width: int
+) -> None:
+    """Centring in the whole stage put the chosen node, which also takes focus, under the drawer its selection opens."""
+    page = desktop_page
+    page.set_viewport_size({"width": width, "height": 900})
+    # The drawer slides in; without motion it is measured where it stops.
+    page.emulate_media(reduced_motion="reduce")
+    _open_site(page, site_url, "dependencies/chapters/algebra.html#node=algebra%2Fresult")
+    settled = "() => new Promise(done => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(done))))"
+
+    def assert_beside_the_details(node: object) -> None:
+        playwright.expect(node).to_have_attribute("data-selected", "true")
+        page.evaluate(settled)
+        box = node.bounding_box()
+        drawer = page.locator(".bp-dag-inspector").bounding_box()
+        stage = page.locator(".bp-dag-stage").bounding_box()
+        assert box is not None and drawer is not None and stage is not None
+        assert box["x"] + box["width"] <= drawer["x"] or drawer["x"] + drawer["width"] <= box["x"]
+        assert stage["x"] <= box["x"] and box["x"] + box["width"] <= stage["x"] + stage["width"]
+
+    result = page.locator('[data-autoform-node-id="algebra/result"]')
+    assert_beside_the_details(result)
+    # An arrow key from closed details centred the next node before its selection opened them.
+    page.get_by_role("button", name="Close details").click()
+    playwright.expect(result).to_be_focused()
+    stacked = page.locator(".bp-dag-stage").evaluate("stage => stage.clientWidth <= 620")
+    page.keyboard.press("ArrowUp" if stacked else "ArrowLeft")
+    base = page.locator('[data-autoform-node-id="algebra/base"]')
+    playwright.expect(base).to_be_focused()
+    assert_beside_the_details(base)
+
+
+def _paints_over_the_details(page: object, items: str, container: str) -> bool | None:
+    """Whether the first of *items* shown in *container* over the open details is what a click there would hit.
+
+    None means that no such item lies over the details.
+    """
+    return page.evaluate(
+        """([items, container]) => {
+          const drawer = document.querySelector(".bp-dag-inspector").getBoundingClientRect();
+          const shown = document.querySelector(container).getBoundingClientRect();
+          const inside = (box, [x, y]) => box.left < x && x < box.right && box.top < y && y < box.bottom;
+          const centre = item => {
+            const box = item.getBoundingClientRect();
+            return [box.x + box.width / 2, box.y + box.height / 2];
+          };
+          const item = Array.from(document.querySelectorAll(items))
+            .find(item => inside(drawer, centre(item)) && inside(shown, centre(item)));
+          return item ? item.contains(document.elementFromPoint(...centre(item))) : null;
+        }""",
+        [items, container],
+    )
+
+
+def test_the_toolbars_popovers_paint_over_the_open_details(desktop_page: object, site_url: str) -> None:
+    """The head stacked under the details drawer, which covered the Status popover and the search results."""
+    page = desktop_page
+    page.set_viewport_size({"width": 1000, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+
+    def every_status(route: object) -> None:
+        payload = route.fetch().json()
+        payload["nodes"] += [
+            {"id": f"more/{key}", "kind": "node", "status": key, "status_counts": [[key, 1]], "title": f"More {key}"}
+            for key in payload["palette"]
+        ]
+        route.fulfill(json=payload)
+
+    def lengthen_the_index(route: object) -> None:
+        index = route.fetch().json()
+        index["nodes"] += [
+            {"id": f"more/result-{n}", "kind": "node", "status": "planned", "title": f"Result {n}", "url": None}
+            for n in range(20)
+        ]
+        route.fulfill(json=index)
+
+    # A row per status makes the popover reach well down over the drawer.
+    page.route("**/algebra.json", every_status)
+    page.route("**/dependencies/index.json", lengthen_the_index)
+    _open_site(page, site_url, "dependencies/chapters/algebra.html#node=algebra%2Fresult")
+    playwright.expect(page.locator(".bp-dag-inspector h2")).to_have_text("Result")
+
+    page.locator(".bp-dag-filter-summary").click()
+    playwright.expect(page.locator(".bp-dag-filter-popover")).to_be_visible()
+    assert _paints_over_the_details(page, ".bp-dag-check", ".bp-dag-filter-popover") is True
+    page.locator(".bp-dag-filter-summary").click()
+
+    search = _load_search_index(page, 27)
+    for width in (1000, 800):
+        page.set_viewport_size({"width": width, "height": 900})
+        search.fill("")
+        search.fill("Result")
+        playwright.expect(page.locator(".bp-dag-search-results")).to_be_visible()
+        assert _paints_over_the_details(page, ".bp-dag-result", ".bp-dag-search-results") is True
+
+
+def test_a_short_phones_explorer_keeps_its_sheet_handle_on_screen(mobile_page: object, site_url: str) -> None:
+    """A 28rem floor, 560px under Material's root font, pushed the sheet's handle below a short window."""
+    page = mobile_page
+    page.set_viewport_size({"width": 390, "height": 480})
+    _open_site(page, site_url, "dependencies/chapters/algebra.html")
+    viewer = page.locator(".bp-dag-viewer").bounding_box()
+    handle = page.locator(".bp-dag-sheet-handle").bounding_box()
+    assert viewer is not None and handle is not None
+    assert viewer["height"] <= 480
+    assert 0 <= handle["y"] and handle["y"] + handle["height"] <= 480
+
+
 def test_a_phones_chapter_explorer_gives_its_breadcrumb_a_line_of_its_own(mobile_page: object, site_url: str) -> None:
     """The textbook link and kind pill shared the crumbs' line, cutting the chapter's name and Book's target short."""
     page = _open_site(mobile_page, site_url, "dependencies/chapters/algebra.html")
@@ -1234,6 +1308,30 @@ def test_a_phones_chapter_explorer_gives_its_breadcrumb_a_line_of_its_own(mobile
     assert current.evaluate("element => element.scrollWidth <= element.clientWidth")
     book = page.locator(".bp-dag-breadcrumb li").first.bounding_box()
     assert book is not None and book["width"] >= 24
+
+
+def test_the_explorer_draws_its_breadcrumb_once(desktop_page: object, site_url: str) -> None:
+    """On desktop the head and the hierarchy rail both drew the trail."""
+    page = _open_site(desktop_page, site_url, "dependencies/chapters/algebra.html")
+    playwright.expect(page.locator(".bp-dag-navigation-path li")).to_have_count(3)
+    playwright.expect(page.locator(".bp-dag-navigation-path")).to_be_visible()
+    playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_hidden()
+    # The textbook link shares the head's row and stays.
+    playwright.expect(page.locator(".bp-dag-book")).to_be_visible()
+    # Up to 1,200px open details cover the rail, so the head draws the trail again.
+    page.set_viewport_size({"width": 1000, "height": 800})
+    _open_site(page, site_url, "dependencies/chapters/algebra.html#node=algebra%2Fresult")
+    playwright.expect(page.locator(".bp-dag-inspector")).to_be_visible()
+    playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_visible()
+    # Phones hide the rail, so there the head draws the trail.
+    page.set_viewport_size({"width": 390, "height": 844})
+    playwright.expect(page.locator(".bp-dag-navigation")).to_be_hidden()
+    playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_visible()
+    # The landing page's rail holds the hero instead of a trail, so its head keeps the trail on desktop too.
+    page.set_viewport_size({"width": 1280, "height": 900})
+    _open_site(page, site_url, "index.html")
+    playwright.expect(page.locator(".bp-dag-navigation .bp-dag-intro")).to_be_visible()
+    playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_visible()
 
 
 def test_the_published_atlas_hides_the_isolate_toggle(desktop_page: object, site_url: str) -> None:
@@ -1247,9 +1345,6 @@ def test_published_explorer_controls_keep_their_own_styles_under_material(
     """Material's typeset rules stacked the breadcrumb and drew the status filter as an admonition."""
     page = _open_site(desktop_page, site_url, "dependencies/chapters/algebra.html")
 
-    crumbs = page.locator(".bp-dag-breadcrumb li")
-    playwright.expect(crumbs).to_have_count(3)
-    assert len({round(crumbs.nth(index).bounding_box()["y"]) for index in range(3)}) == 1
     summary = page.locator(".bp-dag-filter-summary")
     background = page.locator(".bp-dag-viewer").evaluate("element => getComputedStyle(element).backgroundColor")
     assert summary.evaluate("element => getComputedStyle(element).backgroundColor") == background
@@ -1266,6 +1361,13 @@ def test_published_explorer_controls_keep_their_own_styles_under_material(
         assert rail_list.locator("li").first.evaluate("element => getComputedStyle(element).marginLeft") == "0px"
     title = page.locator(".bp-dag-navigation-title")
     assert title.evaluate("element => getComputedStyle(element).fontWeight") == "650"
+    # The head draws the breadcrumb only where phones hide the rail.
+    page.set_viewport_size({"width": 390, "height": 844})
+    crumbs = page.locator(".bp-dag-breadcrumb li")
+    playwright.expect(crumbs).to_have_count(3)
+    playwright.expect(crumbs.first).to_be_visible()
+    assert len({round(crumbs.nth(index).bounding_box()["y"]) for index in range(3)}) == 1
+    page.set_viewport_size({"width": 1280, "height": 900})
 
     # The atlas overview's heading, in the details drawer, took Material's large, light h2 and its margin.
     page.goto(f"{site_url}/dependencies.html")
@@ -1344,3 +1446,39 @@ def test_slash_inside_the_explorer_opens_its_search_but_an_input_keeps_its_keys(
     isolates.focus()
     page.keyboard.press("Control+K")
     playwright.expect(isolates).to_be_focused()
+
+
+def test_the_explorer_typesets_the_math_it_draws_in_its_rail_and_details(desktop_page: object, site_url: str) -> None:
+    """MathJax typesets the page once when it starts, so authored TeX the explorer draws later stayed raw."""
+    page = desktop_page
+    # The site's mathjax.js assigns its configuration to window.MathJax, and offline the CDN script that
+    # would replace it is aborted, so a stub behind an accessor stands in for MathJax once started.
+    page.add_init_script(
+        """
+        window.typesetContainers = [];
+        const stub = {
+          startup: {promise: Promise.resolve()},
+          typesetClear() {},
+          typesetPromise(elements) {
+            elements.forEach((element) =>
+              window.typesetContainers.push({name: element.classList[0], text: element.textContent}));
+            return Promise.resolve();
+          },
+        };
+        Object.defineProperty(window, "MathJax", {configurable: true, get: () => stub, set() {}});
+        """
+    )
+    _open_site(page, site_url, "dependencies/chapters/algebra.html")
+    # The rail is empty until its first render, so text in the typeset container means it ran after the render.
+    page.wait_for_function(
+        "window.typesetContainers.some(({name, text}) => name === 'bp-dag-navigation-inner' && text.trim())"
+    )
+    page.evaluate("window.typesetContainers = []")
+    page.locator('[data-autoform-node-id="algebra/result"]').click()
+    playwright.expect(page.locator(".bp-dag-inspector-inner h2")).to_have_text("Result")
+    # The whole drawer is typeset, so the phone sheet's handle, which repeats the title, is too.
+    page.wait_for_function(
+        "window.typesetContainers.some(({name, text}) => name === 'bp-dag-inspector' && text.includes('Result'))"
+    )
+    # Map cards and search results are not typeset.
+    assert {entry["name"] for entry in page.evaluate("window.typesetContainers")} == {"bp-dag-inspector"}

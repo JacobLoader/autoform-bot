@@ -390,9 +390,6 @@ def render_site(
         if coverage is None:
             raise PublicationError(["coverage contract could not be loaded"])
         expected = _destination_state(destination)
-        # The names select which files are scanned for declarations; every Lean
-        # file is still read, hashed and checked against the commit.
-        lean_names = graph.lean_names()
         # Without descriptor capture every Lean capture fails closed. The implicit
         # root is then not read and the site has no code links; an explicit Lean
         # root asks for links, so it still fails. Like every Lean capture, this one
@@ -401,7 +398,7 @@ def render_site(
         indexed = lean_root is not None or descriptor_capture_supported()
         try:
             lean = (
-                snapshot_project_sources(repo_root, exclude_roots=(copy_root,), names=lean_names)
+                snapshot_project_sources(repo_root, exclude_roots=(copy_root,))
                 if indexed
                 else IndexedSourceSnapshot(SourceIndex(repo_root, {}, ""), revision="")
             )
@@ -613,6 +610,7 @@ def _render_pages(
                 group_pages=group_pages,
                 page=overview,
                 destination=destination,
+                targets=targets,
             ),
             encoding="utf-8",
         )
@@ -1449,7 +1447,7 @@ def _next_target(
     page: Path,
     destination: Path,
     group_pages: dict[str, Path] | None = None,
-    targets: dict[str, str] | None = None,
+    targets: dict[str, tuple[Path, str]] | None = None,
 ) -> str:
     """Name the result a contributor could pick up right now, with the way in.
 
@@ -1461,6 +1459,7 @@ def _next_target(
     chapter, and its dependency view.
     """
     containers = _containers(graph)
+    links = _anchored_links(targets or {}, page)
     for node_id in status.topological_order(graph):
         node_status = statuses.get(node_id)
         node = graph.nodes[node_id]
@@ -1471,10 +1470,7 @@ def _next_target(
 
         chapter_id = node.id.split("/", 1)[0] if "/" in node.id else ""
         chapter_page = (group_pages or {}).get(chapter_id)
-        statement = (targets or {}).get(node_id)
-        if statement is None and chapter_page is not None:
-            anchor = node.id.split("/", 1)[1].replace("/", "-") if "/" in node.id else node.id
-            statement = f"{relative_link(chapter_page, page, '.html')}#{anchor}"
+        statement = links.get(node_id)
         graph_href = graph_pages.scope_page_href(destination, node.id, page, parent=node.parent)
 
         title = html.escape(node.title)
@@ -1489,7 +1485,7 @@ def _next_target(
         actions = [f'<a href="{html.escape(graph_href, quote=True)}">Dependencies</a>']
         if chapter_page is not None:
             chapter_title = _first_h1(chapter_page.read_text(encoding="utf-8")) or "chapter"
-            href = relative_link(chapter_page, page, ".html")
+            href = _as_published(relative_link(chapter_page, page, ".html"))
             actions.insert(
                 0, f'<a href="{html.escape(href, quote=True)}">{html.escape(chapter_title)}</a>'
             )
@@ -1528,7 +1524,7 @@ def _render_structure_page(
     HTML tree made this compatibility page larger than the rest of a small
     site, duplicated the explorer, and became unusable on repository-scale books.
     """
-    explorer = relative_link(page.parent / "dependencies/full.md", page, ".md")
+    explorer = relative_link(page.parent / "dependencies.md", page, ".md")
     return "\n".join(
         [
             "---",
@@ -1593,7 +1589,6 @@ def _render_summary_nav(
         [
             "- Graph",
             "    - [Dependency explorer](dependencies.md)",
-            "    - [Browse all mathematics](dependencies/full.md)",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -1608,7 +1603,7 @@ def _render_landing_page(
     group_pages: dict[str, Path],
     page: Path,
     destination: Path,
-    targets: dict[str, str] | None = None,
+    targets: dict[str, tuple[Path, str]] | None = None,
 ) -> str:
     """The landing page: what this is, how far it has got, and what is next.
 

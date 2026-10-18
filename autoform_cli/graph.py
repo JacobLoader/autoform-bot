@@ -20,7 +20,16 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .lean import declaration_names
-from .markdown import directory_path, link_definitions, link_targets, mask_code_and_comments, resolved_path
+from .markdown import (
+    INLINE_CODE,
+    _INLINE_MATH,
+    _blank,
+    directory_path,
+    link_definitions,
+    link_targets,
+    mask_code_and_comments,
+    resolved_path,
+)
 
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
@@ -141,11 +150,7 @@ class Graph:
         return tuple(node.id for node in self.nodes.values() if node.parent == node_id)
 
     def lean_names(self) -> tuple[str, ...]:
-        """Return the distinct ``lean:`` names, in node order.
-
-        An index captured with ``names=`` answers only for the names requested,
-        so a consumer that looks names up requests exactly these.
-        """
+        """Return the distinct ``lean:`` names, in node order."""
         return tuple(dict.fromkeys(name for node in self.nodes.values() for name in declaration_names(node.lean or "")))
 
 
@@ -714,8 +719,7 @@ def _extract_summary(body: list[str], references: dict[str, str], *, limit: int 
             continue
         text = _MARKDOWN_LINK_TEXT.sub(r"\1", text)
         text = _REFERENCE_LINK_TEXT.sub(unwrap, text)
-        text = _HTML_TAG.sub("", text).replace("**", "").replace("__", "")
-        text = unescape(text).strip()
+        text = unescape(_strip_markup(text)).strip()
         if text:
             paragraph.append(text)
     if not paragraph:
@@ -725,6 +729,31 @@ def _extract_summary(body: list[str], references: dict[str, str], *, limit: int 
         return summary
     clipped = summary[: limit - 1].rsplit(" ", 1)[0]
     return (clipped or summary[: limit - 1]).rstrip() + "…"
+
+
+def _strip_markup(text: str) -> str:
+    """Drop inline HTML and strong emphasis from *text*, but not from its code or math.
+
+    A tag runs from ``<`` to ``>``, so stripping across inline math read
+    ``For $0 < a \\le b$ and $r > 0$`` as one tag. Code spans, then inline math,
+    are read first, as the page reads them.
+    """
+
+    def strip(prose: str) -> str:
+        return _HTML_TAG.sub("", prose).replace("**", "").replace("__", "")
+
+    code_masked = INLINE_CODE.sub(_blank, text)
+    spans = sorted(match.span() for match in (*INLINE_CODE.finditer(text), *_INLINE_MATH.finditer(code_masked)))
+    parts: list[str] = []
+    end = 0
+    for start, stop in spans:
+        # A code span inside inline math is already kept with it.
+        if start < end:
+            continue
+        parts.extend((strip(text[end:start]), text[start:stop]))
+        end = stop
+    parts.append(strip(text[end:]))
+    return "".join(parts)
 
 
 def _parse_frontmatter(node_id: str, lines: list[str]) -> tuple[dict[str, str], int, list[str]]:

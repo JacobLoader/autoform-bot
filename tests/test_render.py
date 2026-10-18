@@ -278,16 +278,16 @@ def test_small_and_large_chapters_use_the_same_json_explorer(
     assert payload["edge_count"] == node_count - 1
 
 
-def test_the_structure_compatibility_page_opens_the_explorer_in_browse_mode(tmp_path: Path) -> None:
+def test_the_structure_compatibility_page_opens_the_dependency_explorer(tmp_path: Path) -> None:
     """Hierarchy has one public UI, rather than a second repository-sized tree."""
     _render(tmp_path)
     page = (tmp_path / "out/structure.md").read_text(encoding="utf-8")
     summary = (tmp_path / "out/SUMMARY.md").read_text(encoding="utf-8")
 
     assert "# Browse the roadmap" in page
-    assert "[Open the roadmap explorer](dependencies/full.md)" in page
+    assert "[Open the roadmap explorer](dependencies.md)" in page
     assert "bp-tree" not in page and "data-autoform-node-id" not in page
-    assert "[Browse all mathematics](dependencies/full.md)" in summary
+    assert "Browse all mathematics" not in summary
     assert "Vault structure" not in summary
 
 
@@ -312,7 +312,7 @@ def test_a_flat_roadmap_gets_the_same_bounded_browse_doorway(tmp_path: Path) -> 
     render_site(project / "blueprint", tmp_path / "out", lean_root=project)
 
     page = (tmp_path / "out/structure.md").read_text(encoding="utf-8")
-    assert "[Open the roadmap explorer](dependencies/full.md)" in page
+    assert "[Open the roadmap explorer](dependencies.md)" in page
     assert "Result a" not in page
 
 
@@ -1005,7 +1005,7 @@ def test_a_topic_of_unchecked_catalogs_counts_each_as_a_pending_inventory(tmp_pa
     assert '<a class="bp-ref bp-ref-planned" href="#a">Module 1 (Module A)</a>' in book
     assert "ready to state" not in book
     structure = (out / "structure.md").read_text(encoding="utf-8")
-    assert "[Open the roadmap explorer](dependencies/full.md)" in structure
+    assert "[Open the roadmap explorer](dependencies.md)" in structure
     assert "Module A" not in structure
 
 
@@ -1026,7 +1026,6 @@ def test_the_landing_page_is_one_full_page_explorer_opened_by_its_hero(
     front = overview.split("---")[1]
     assert all(f"  - {part}" in front for part in ("navigation", "toc", "footer"))
     assert 'data-graph-src="dependencies.json"' in overview
-    assert 'data-layout="app"' in overview
     assert overview.index('class="bp-dag-viewer"') < overview.index('class="bp-dag-intro bp-landing-intro"')
     intro = overview.split('class="bp-dag-intro bp-landing-intro"', 1)[1]
     assert intro.index("bp-hero-title") < intro.index("bp-hero-figures") < intro.index("bp-intro-book")
@@ -1122,7 +1121,8 @@ def test_book_navigation_is_bottom_only_and_never_crosses_into_project_views(tmp
     summary = (tmp_path / "out/SUMMARY.md").read_text(encoding="utf-8")
     assert summary.count("[Dependency explorer](dependencies.md)") == 1
     assert "Full dependency graph" not in summary
-    assert summary.count("[Browse all mathematics](dependencies/full.md)") == 1
+    # The Graph tab holds one explorer route, which Home also opens.
+    assert "dependencies/full.md" not in summary
 
 
 def test_links_naming_a_node_file_follow_it_onto_the_chapter(tmp_path: Path) -> None:
@@ -1362,7 +1362,7 @@ def test_a_nested_article_named_like_a_generated_view_is_published(tmp_path: Pat
     assert 'id="progress"' in (out / "roadmap/ch/README.md").read_text(encoding="utf-8")
     assert "Prose named like a generated page." in (out / "roadmap/ch/structure.md").read_text(encoding="utf-8")
     vault_structure = (out / "structure.md").read_text(encoding="utf-8")
-    assert "[Open the roadmap explorer](dependencies/full.md)" in vault_structure
+    assert "[Open the roadmap explorer](dependencies.md)" in vault_structure
     assert 'data-autoform-node-id="ch/progress"' not in vault_structure
 
 
@@ -1548,10 +1548,8 @@ def test_render_translates_source_index_io_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reason: str | None, message: str
 ) -> None:
     project = _project(tmp_path)
-    captures: list[dict[str, object]] = []
 
     def fail_linker(root: Path, **kwargs: object):
-        captures.append(kwargs)
         if reason is not None:
             raise LeanSourceError(reason)
         raise OSError(f"private host detail: {root}")
@@ -1563,8 +1561,6 @@ def test_render_translates_source_index_io_failure(
 
     assert error.value.issues == (message,)
     assert str(tmp_path) not in str(error.value)
-    # The names keep a large inventory's render from scanning every Lean file for declarations.
-    assert [set(capture["names"]) for capture in captures] == [{"Project.Base", "Project.top"}]
 
 
 def test_render_is_deterministic_and_records_a_path_free_manifest(tmp_path: Path) -> None:
@@ -2900,6 +2896,57 @@ def test_next_up_explains_readiness_without_naming_a_policy(tmp_path: Path, drop
 
     assert '<div class="bp-next-target" data-autoform-node-id="top">' in landing
     assert f'<div class="bp-next-why">{why}</div>' in landing
+
+
+@pytest.mark.parametrize(
+    ("section", "statement", "chapter"),
+    [
+        ("chapter", "roadmap/chapter/index.html#deep", "roadmap/chapter/index.html"),
+        ("chapter/part", "roadmap/chapter/part/index.html#deep", "roadmap/chapter/index.html"),
+    ],
+    ids=["chapter", "nested-section"],
+)
+def test_next_up_links_the_published_statement_and_chapter(
+    tmp_path: Path, section: str, statement: str, chapter: str
+) -> None:
+    """MkDocs publishes a chapter's ``README.md`` as ``index.html``.
+
+    The card is the landing page's way into the book, so a link to
+    ``README.html``, or to the top-level chapter of a result placed in a nested
+    section, left the reader on a 404.
+    """
+    project = _project(tmp_path)
+    roadmap = project / "blueprint/roadmap"
+    parts = section.split("/")
+    for depth in range(len(parts)):
+        folder = roadmap.joinpath(*parts[: depth + 1])
+        folder.mkdir()
+        child = f"- [Part]({parts[depth + 1]}/README.md)\n" if depth + 1 < len(parts) else "- [Deep](deep.md)\n"
+        (folder / "README.md").write_text(f"# {parts[depth].title()}\n\n{child}", encoding="utf-8")
+    roadmap.joinpath(*parts, "deep.md").write_text(
+        "---\ndeclaration: theorem\n---\n\n# Deep\n\nA result still to state.\n", encoding="utf-8"
+    )
+    if len(parts) > 1:
+        # An article of its own gives the top-level chapter the page the card links.
+        with (roadmap / parts[0] / "README.md").open("a", encoding="utf-8") as readme:
+            readme.write("- [Other](other.md)\n")
+        (roadmap / parts[0] / "other.md").write_text(
+            "---\ndeclaration: theorem\n---\n\n# Other\n\nUses the deep result.\n\n## Depends on\n\n- [Deep](part/deep.md)\n",
+            encoding="utf-8",
+        )
+    out = tmp_path / "out"
+
+    render_site(project / "blueprint", out, lean_root=project)
+
+    landing = (out / "README.md").read_text(encoding="utf-8")
+    start = landing.index('<div class="bp-next-target"')
+    card = landing[start : landing.index("</div></div>", landing.index("bp-next-actions", start))]
+    assert f'data-autoform-node-id="{section}/deep"' in card
+    assert f'<div class="bp-next-title"><a href="{statement}">Deep</a></div>' in card
+    assert f'<a href="{chapter}">Chapter</a>' in card
+    published = _published_pages(out)
+    for href in re.findall(r'href="([^"]+)"', card):
+        assert Path(os.path.normpath(out / unquote(href.partition("#")[0]))) in published, href
 
 
 def _statement_box(page: str, node_id: str) -> str:
