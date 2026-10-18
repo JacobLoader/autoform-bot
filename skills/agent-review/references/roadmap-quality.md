@@ -24,8 +24,11 @@ scope against the sources, then inspect the fine DAG and its coarse roadmap.
    Include the project's usable shared libraries, as the
    [library search rules](../../formalize/references/library-search.md)
    describe, searching by the words of the result, since a library names it
-   differently; a library hit is not a duplicate of an article. List any
-   library refused.
+   differently; a library hit is not a duplicate of an article. Search the
+   intermediate results each proof proves or cites too: a `complete` library
+   hit for one of them, or for a result in scope, is a missed reuse unless the
+   article that states or uses it is proved or its implementation note names
+   the declaration. List any library refused.
 
 ## Source fidelity and coverage — 40%
 
@@ -53,7 +56,8 @@ scope against the sources, then inspect the fine DAG and its coarse roadmap.
   ledger under `blueprint/sources/`, and an `INVENTORIED` row reaches it. The
   pull-request-unit and unique-main-result rules do not apply to it.
 - Every dependency is genuinely used. Missing intermediates, spurious edges,
-  duplicates, and cross-milestone prerequisites are identified.
+  duplicates, missed library reuse, and cross-milestone prerequisites are
+  identified.
 - `## Depends on` contains statement prerequisites; `## Proof depends on`
   contains dependencies needed only by the proof.
 

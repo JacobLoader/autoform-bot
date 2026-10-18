@@ -10,6 +10,7 @@ from typing import Sequence
 
 from . import graph_views, mermaid, status
 from .graph import GraphValidationError, load_graph
+from .markdown import blueprint_root
 
 
 GENERATED_STRUCTURE_MARKER = "---\nkind: structure\nautoform_generated: true\n---"
@@ -73,7 +74,7 @@ def export_graph(
     title: str = "Dependency graph",
 ) -> Path:
     """Load and export ``blueprint_dir``; return the written Markdown path."""
-    blueprint_dir = Path(blueprint_dir).resolve()
+    blueprint_dir = blueprint_root(blueprint_dir)
     destination = _destination(output or blueprint_dir / "dependencies.md")
     graph = load_graph(blueprint_dir)
     statuses = status.derive(graph)
@@ -100,7 +101,7 @@ def export_structure(blueprint_dir: Path, output: Path | None = None) -> Path:
 
     Plain Markdown, no HTML: the site's stylesheet does not exist here.
     """
-    blueprint_dir = Path(blueprint_dir).resolve()
+    blueprint_dir = blueprint_root(blueprint_dir)
     destination = _destination(output or blueprint_dir / "structure.md")
     _preflight_structure(destination)
     graph = load_graph(blueprint_dir)
@@ -182,10 +183,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         structure = None
         graph_output = _destination(
-            args.output or Path(args.blueprint_dir).resolve() / "dependencies.md"
+            args.output or blueprint_root(args.blueprint_dir) / "dependencies.md"
         )
         if args.structure:
-            structure = _destination(Path(args.blueprint_dir).resolve() / "structure.md")
+            structure = _destination(blueprint_root(args.blueprint_dir) / "structure.md")
             if graph_output == structure:
                 raise VisualizationError(
                     f"graph and structure outputs must be different paths: {structure}"

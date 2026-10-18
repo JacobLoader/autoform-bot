@@ -413,7 +413,11 @@ autoform check blueprint --lean-root .
 autoform audit blueprint --lean-root .
 ```
 
-`check` validates the graph contract. `audit` adds deterministic completeness,
+`check` validates the graph contract. With `--lean-root` it resolves names only
+in the project's own Lean files, not in Mathlib or other dependencies under
+`.lake`; when a name is not found, a note at the end of the output says that a
+shared library's declaration belongs in the article's implementation note.
+`audit` adds deterministic completeness,
 provenance, coverage, checked-fact, and optional Lean-target checks. It is local
 and read-only: it neither contacts network services nor writes findings back
 into the blueprint. Pass `--json` for stable machine-readable output. A nonzero
@@ -813,13 +817,13 @@ A statement's source passage can travel with it. A `## Sources` link to a
 non-Markdown file inside the blueprint with a `#L<start>-L<end>` fragment, for
 example `../../../sources/lebl-ra/ch-real-nums.tex#L693-L714`, names the exact
 text the statement came from. External URLs are skipped, and so is a link with
-such a fragment to a Markdown file, in any letter case, which is a note; one
-that names no regular file in the blueprint counts as a locator whatever its
-suffix. A first local locator that names no text, because it points outside
-the blueprint, names an invalid path, a symlink loop, a link that cannot be
-read, a missing, unreadable or oversized file, something other than a regular
-file, or non-UTF-8 text, or names no lines of it, leaves the article's
-declarations unresolved while the other articles still extract.
+such a fragment that names a regular Markdown file in the blueprint, in any
+letter case: that is a note. Any other link with such a fragment is a locator,
+whatever its suffix. A first local locator that names no text leaves the
+article's declarations unresolved while the other articles still extract. It
+names no text when it points outside the blueprint; names an invalid path, a
+symlink loop, a link that cannot be read, or a missing, unreadable, oversized
+or non-regular file; or names non-UTF-8 text or no lines of its file.
 `--passages DIR` writes those passages beside the packets, one per article, in
 a separate, disjoint managed directory. It requires `--packets`. Each article
 directory also holds `article.lean`, the joint packet of every declaration the
@@ -1071,6 +1075,68 @@ board. A failed acquire or renew means the caller cannot prove ownership and
 must stop before committing or pushing protected work. Claims do not prove
 mathematical correctness and do not replace branch-level Git CAS.
 
+Ask the agent that led a Setup, Roadmap, or Formalize run what got in its way,
+and draft an AutoformBot issue from the answer:
+
+```bash
+autoform debrief orchestrator form . --skill formalize
+autoform debrief orchestrator record . --skill formalize < /tmp/answer.json
+```
+
+Orchestrator debriefs are on by default: `form` prints the form unless
+`AUTOFORM_DEBRIEF` is `0`, `false`, `no`, or `off`, or the platform cannot store
+the answer, and otherwise says the step is disabled. The form asks separately
+for friction caused by the user's local setup, independent of AutoformBot
+(`local_setup_friction`), and for friction or issues with AutoformBot itself
+(`autoform_friction`). `record` reads one JSON object answering the form from
+`--answer` or standard input, refuses anything else, and stores a new versioned
+record under `runs/` in the debrief store described below, together with the
+installed AutoformBot version. A directory without a roadmap, as during Setup,
+is accepted as the project. When `autoform_friction` is not empty, `record` also
+writes a draft issue for `facebookresearch/autoform-bot` to `issues/` in the
+store and prints a GitHub link that opens a new issue pre-filled with it (the
+title alone, when the draft is too long for a link). The draft holds only the
+AutoformBot friction and the environment, with the project path replaced by
+`$PROJECT` and home directories by `~`. Nothing is sent: the user reviews,
+edits, and submits the issue. With `--json`, `record` prints one object,
+`{"run_id": ..., "path": ..., "issue": null | {"path": ..., "url": ...,
+"url_has_body": true | false}}`.
+
+Ask the agent that just finished a formalization attempt what infrastructure
+would have made it cheaper, and keep its answer:
+
+```bash
+autoform debrief subagent form af_5b0e4d3c2a1f09e8d7c6b5a4 . --phase proof
+autoform debrief subagent record af_5b0e4d3c2a1f09e8d7c6b5a4 . --phase proof \
+  --worker-id agent-name < /tmp/answer.json
+autoform debrief subagent render .
+```
+
+Subagent debriefs are opt-in: `form` prints the form only when
+`AUTOFORM_SUBAGENT_DEBRIEF=1` on a platform that can store the answer, and
+otherwise says the step is disabled. It fills in the attempt's outcome from the
+runtime: the phase succeeded when the article's statement (for `statement`) or
+proof (for `proof`) is now recorded as formalized. Pass `--note` with the reason
+when it did not. `record` reads one JSON object answering the form from
+`--answer` or standard input, refuses anything else, re-reads the outcome from
+the runtime rather than trusting the caller, and stores a new versioned record;
+it never edits the project. Like the claim commands, it requires `--worker-id`
+or `AUTOFORM_WORKER_ID`. With `--json` it prints one object,
+`{"attempt_id": ..., "outcome": "succeeded" | "not-succeeded", "path": ...}`,
+where `path` is the stored record. `render` rebuilds `views/` inside the store
+from the validated records, escaping all agent text and deleting reports whose
+record is gone; the records stay the source of truth.
+
+Both kinds of debrief share one store. Records are bounded, normalised, and
+created exclusively without following symbolic links, so a record is complete
+or absent and never overwritten; platforms that cannot retain directory
+descriptors, such as Windows, refuse to read or write them. They live under
+`autoform/debriefs/` in the repository's Git common directory, which every
+worktree shares and Git does not track; outside Git they fall back to
+`$XDG_STATE_HOME/autoform/debriefs/<project>-<hash>/`. Set
+`AUTOFORM_DEBRIEF_DIR` to an absolute path outside the Git working tree to
+choose another store.
+
 Write the Mermaid dependency graph into the vault, where Obsidian renders it:
 
 ```bash
@@ -1165,7 +1231,10 @@ it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
 `mathlib: true`. A `## Sources` link to a local path must name a file
 inside the blueprint, as `audit` also requires: a missing file, a directory, an
-invalid path or URL, or a target outside the blueprint fails. So does a target
+invalid path or URL, or a target outside the blueprint fails. The path must open
+as written, so one through a missing folder or a symbolic link loop fails too,
+even where its `..` steps would cancel that part as text (Windows itself applies
+`..` as text). So does a target
 whose path as written, once its `..` steps are applied, has a part below the
 blueprint starting with `.`, unless the article citing it is hidden too,
 because render omits hidden files and directories. Under `sources/`, such a
@@ -1188,10 +1257,8 @@ also fails on a `lean:` name that is absent from the sources (as
 once in them (see below). It validates structure and leaves mathematical
 correctness to the agent and the Lean kernel.
 
-Contracting that acyclic article graph into chapters or nested scopes can put
-an edge in both directions between two containers. Generated views retain and
-draw both relations: an authored dependency is not deleted merely to make a
-coarser projection acyclic.
+Only the article graph must be acyclic, so project, chapter, and scope maps can
+relate two containers in both directions.
 
 Source-aware `--lean-root` inspection requires directory-descriptor traversal.
 Platforms without that capability, including Windows, fail closed instead of
@@ -1529,7 +1596,11 @@ proof; `used_by_count` counts all. `shared_title` marks a title another article
 repeats and is advisory. `matched_fields` lists, best first and once each, the
 fields in which some term found its best match; it does not say which term.
 No hit is `"hits":[]` with exit 0. Human output shortens the statement, omits
-sources and dependent names, and is not a contract.
+sources and dependent names, and is not a contract. It opens with how many
+matches each list shows, the blueprint's and each library's, and puts each
+hit's statement, or a library hit's signature, on the hit's first line, so
+output cut short still gives every list's count and, for each hit it shows,
+the statement or signature.
 
 Search rereads each article it matches against and refuses, with exit 2, bytes
 other than those the graph was built from, as it refuses a symlinked roadmap

@@ -1424,6 +1424,30 @@ def test_roadmap_states_the_library_search_without_the_link(repo_root: Path) -> 
     assert "Search the pinned Mathlib checkout and every usable shared library before planning a replacement" in flat
 
 
+def test_roadmap_searches_the_results_a_proof_uses_and_reads_all_of_the_output(repo_root: Path) -> None:
+    """A library may prove a step of an article's proof, which only a search of that step finds.
+
+    In a trial (#346), Roadmap searched in two broad batches before writing 36 articles, and piped every
+    search through `head`, which cut off the statement of an ATLAS theorem proving a step of one proof.
+    The plan proved that step again, and check and audit passed; the review rubric searched only main
+    results, so a review would have missed it too.
+    """
+
+    def sentences(relative: str) -> list[str]:
+        blocks = (repo_root / relative).read_text(encoding="utf-8").split("\n\n")
+        search = next(" ".join(block.split()) for block in blocks if "`autoform search`" in block)
+        return re.split(r"(?<=\.) ", search)
+
+    roadmap = sentences("skills/roadmap/SKILL.md")
+    # These check that each instruction is present, in one sentence of the search rule, not how it is worded.
+    assert any("`autoform search`" in s and "proof" in s for s in roadmap), roadmap
+    # A rule that names `head` must forbid it, and a batch search must still go article by article.
+    assert any(re.search(r"\bhead\b", s) and re.search(r"\b(?:never|not)\b", s) for s in roadmap), roadmap
+    assert any("batch" in s and "proof" in s and re.search(r"\b(?:each|every)\b", s) for s in roadmap), roadmap
+    rubric = sentences("skills/agent-review/references/roadmap-quality.md")
+    assert any("proof" in s and "missed reuse" in s for s in rubric), rubric
+
+
 def test_roadmap_leaves_lean_unset_for_a_library_declaration(repo_root: Path) -> None:
     """A library declaration goes in the implementation note, and `lean:` waits for the project's declaration.
 

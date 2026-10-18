@@ -15,6 +15,7 @@ from urllib.parse import unquote, urlsplit
 
 from .graph import Graph, load_graph, roadmap_symlink_issues
 from .lean import LeanSourceError, declaration_names, index_failure_message, index_project, resolve_lean_root
+from .markdown import directory_path, resolved_path
 from .status import derive, is_definition
 
 RUNTIME_SCHEMA = "autoform-runtime/v4"
@@ -205,8 +206,8 @@ def resolve_runtime_paths(project_or_blueprint: str | Path) -> RuntimePaths:
     supplied = Path(project_or_blueprint).expanduser()
     if supplied.is_symlink():
         raise RuntimeProjectionError(["project or blueprint path is a symbolic link"])
-    candidate = supplied.resolve()
-    if not candidate.is_dir():
+    candidate = directory_path(supplied)
+    if candidate is None or not candidate.is_dir():
         raise RuntimeProjectionError(["project or blueprint directory does not exist"])
 
     is_blueprint = (candidate / "roadmap").is_dir()
@@ -215,7 +216,9 @@ def resolve_runtime_paths(project_or_blueprint: str | Path) -> RuntimePaths:
         raise RuntimeProjectionError(["input is ambiguous between a project and blueprint directory"])
     if is_project:
         project_root = candidate
-        blueprint_dir = (candidate / "blueprint").resolve()
+        blueprint_dir = directory_path(candidate / "blueprint")
+        if blueprint_dir is None:
+            raise RuntimeProjectionError(["blueprint directory cannot be resolved"])
     elif is_blueprint:
         blueprint_dir = candidate
         project_root = candidate.parent.resolve()
@@ -453,11 +456,8 @@ def _source_target_is_confined(article: Path, target: str, blueprint: Path) -> b
     windows = PureWindowsPath(value)
     if path.is_absolute() or windows.is_absolute():
         return False
-    try:
-        (article.parent / path).resolve().relative_to(blueprint)
-    except (OSError, RuntimeError, ValueError):  # RuntimeError: a symlink loop before Python 3.13
-        return False
-    return True
+    resolved = resolved_path(article.parent / path)
+    return resolved is not None and resolved.is_relative_to(blueprint)
 
 
 def _portable_mathlib_file(value: str | None) -> str | None:
