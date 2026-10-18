@@ -83,12 +83,15 @@ def test_generated_site_docs_describe_one_multiscale_explorer(repo_root: Path) -
 
     assert "Every generated site projection uses the same" in cli
     assert "Authored Mermaid remains supported in the vault and book" in cli
-    assert "`dependencies/index.json`, is internal to the bundled viewer, and its schema may change" in cli
+    assert (
+        "That index, `dependencies/index.json`, the project payload `dependencies.json`, and every other payload "
+        "under `dependencies/` are internal to the bundled viewer, and their schemas may change"
+    ) in cli
     assert "Every generated site route uses the same" in review
 
 
 def test_the_example_uses_nothing_newer_than_its_autoform_pin(repo_root: Path) -> None:
-    """The example's CI runs its pinned AUTOFORM_REF, c994d83f, which predates catalogs.
+    """The example's CI runs its pinned AUTOFORM_REF, 0288506b, which predates catalogs.
 
     That check rejects `catalog:` and `area:` and that render rejects
     INVENTORIED, while it ignores atlas.json, and its render draws Mermaid maps.

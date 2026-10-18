@@ -1166,8 +1166,9 @@ instead links its first eight names in its Lean row and counts the rest. Its
 `dependencies.md` opens a full-viewport application and rolls dependencies
 through the article hierarchy, with bounded project, chapter, and nested-scope
 projections. Global search loads a layout-free index and jumps to the smallest
-useful scope; that index, `dependencies/index.json`, is internal to the bundled
-viewer, and its schema may change. The compatibility `dependencies/full.md`
+useful scope. That index, `dependencies/index.json`, the project payload
+`dependencies.json`, and every other payload under `dependencies/` are internal
+to the bundled viewer, and their schemas may change. The compatibility `dependencies/full.md`
 route renders only the project shell and never fits the whole repository into
 one canvas. Every generated site projection uses the same deterministic
 JSON-derived Canvas and semantic-DOM explorer with search, filters, pan/zoom,

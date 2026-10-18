@@ -575,11 +575,12 @@ def _lean_findings(
                         )
                     )
 
-        # Catalog declarations must resolve like every other asserted Lean
-        # target. A catalog inventories code that already exists, so its
-        # limits are only warnings, read like a declaration article's from
-        # what each alias reaches, and declaration-specific policy is
-        # inapplicable to a non-dispatchable inventory container.
+        # Catalog declarations were resolved above like every other Lean target,
+        # and the wanted check applies to them. A catalog inventories code
+        # that already exists, so its limits are only warnings, read like a
+        # declaration article's from what each alias reaches, and the
+        # deprecation, kind and size checks below apply only to declaration
+        # articles.
         if node.catalog is not None:
             catalogs[article_path] = tuple(
                 dict.fromkeys(index.reached(declaration) or declaration for declaration in resolved)
@@ -749,7 +750,8 @@ def _catalog_limit_warnings(
 ) -> list[AuditWarning]:
     """Aggregate what :func:`_limit_findings` reports into one warning per catalog and code.
 
-    A catalog can name thousands of declarations, so each file is read once.
+    A catalog can name thousands of declarations, so each file is read once per
+    indentation its catalogued declarations start at, not once per declaration.
     """
 
     starts: dict[Path, set[int]] = {}
