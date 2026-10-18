@@ -400,6 +400,15 @@ def test_audit_reports_invalid_note_at_its_blueprint_path(
     ]
 
 
+def test_audit_skips_a_hidden_coverage_file_as_render_does(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _coverage(blueprint)
+    _article(blueprint, "result.md", declaration="theorem")
+    (blueprint / "coverage" / ".draft.md").write_text("[Gone](../roadmap/gone.md)\n", encoding="utf-8")
+
+    assert "coverage/.draft.md" not in {finding.article_path for finding in audit_blueprint(blueprint).findings}
+
+
 def test_audit_reports_a_misplaced_notes_directory_where_it_is(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)
@@ -411,7 +420,8 @@ def test_audit_reports_a_misplaced_notes_directory_where_it_is(tmp_path: Path) -
 
     paths = {finding.article_path for finding in audit_blueprint(blueprint).findings}
 
-    assert f"roadmap/.implementation-notes/{article_id}.md" in paths
+    # Hidden entries are no part of the roadmap, as for render, so the directory itself is named.
+    assert "roadmap/.implementation-notes" in paths
     assert ".implementation-notes" not in paths
 
 

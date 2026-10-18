@@ -752,6 +752,47 @@ def test_check_warns_about_a_hidden_note_under_sources(tmp_path: Path, capsys: p
     ]
 
 
+def test_check_ignores_hidden_roadmap_entries_as_render_does(tmp_path: Path) -> None:
+    """Issue #206: render omits hidden entries, so check must count the same articles."""
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "base.md", "# Base\n")
+    _node(blueprint, ".helper.md", "# Helper\n")
+    # A hidden folder needs no chapter page, since nothing in it is published.
+    _roadmap_page(blueprint, ".drafts/draft.md", _node_text("# Draft\n"))
+    try:
+        # Emacs leaves this lock symlink beside a page with unsaved edits.
+        (blueprint / "roadmap" / ".#base.md").symlink_to("user@host.1234:1700000000")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    assert list(load_graph(blueprint).nodes) == ["base"]
+
+
+def test_a_dependency_on_a_hidden_page_names_the_hidden_path(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, ".draft.md", "# Draft\n")
+    _node(blueprint, "base.md", "# Base\n## Depends on\n[Draft](.draft.md)\n")
+
+    with pytest.raises(GraphValidationError) as caught:
+        load_graph(blueprint)
+
+    assert caught.value.issues == ("base: dependency target names a hidden path, which render omits: '.draft.md'",)
+
+
+def test_check_rejects_a_sources_link_to_a_view_render_generates(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Render rebuilds dependencies.md and omits the vault's copy, so the link cannot be checked against it.
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "result.md", "# Result\n\n## Sources\n\n- [Graph](../dependencies.md)\n")
+    (blueprint / "dependencies.md").write_text("# Dependencies\n", encoding="utf-8")
+
+    assert main(["check", str(blueprint)]) == 1
+    assert capsys.readouterr().out == (
+        "error: result: source target names a view render generates instead of reading: '../dependencies.md'\n"
+    )
+
+
 def test_check_warns_about_a_mathlib_file_search_reports_as_null(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1233,6 +1274,19 @@ def test_hidden_entries_beside_implementation_notes_are_ignored(tmp_path: Path) 
         pytest.skip("symlinks are unavailable")
 
     assert list(load_graph(blueprint).nodes) == ["result"]
+
+
+def test_an_implementation_note_for_a_hidden_page_names_no_article(tmp_path: Path) -> None:
+    # Render leaves the hidden page out, and check agrees.
+    blueprint = tmp_path / "blueprint"
+    article_id = "af_0123456789abcdef01234567"
+    _node(blueprint, "base.md", "# Base\n")
+    _node(blueprint, ".parked.md", "# Parked\n", article_id=article_id)
+    (blueprint / ".implementation-notes").mkdir()
+    (blueprint / ".implementation-notes" / f"{article_id}.md").write_text("route\n", encoding="utf-8")
+
+    with pytest.raises(GraphValidationError, match="implementation note names no roadmap article"):
+        load_graph(blueprint)
 
 
 def test_implementation_notes_directory_must_not_be_a_symlink(tmp_path: Path) -> None:

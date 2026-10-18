@@ -710,6 +710,20 @@ def _anchors_from_body(body: str) -> frozenset[str]:
     return frozenset(html.unescape(found) for found in _HEADING_ID.findall(rendered))
 
 
+#: Views render writes at the blueprint root from the graph. Its input omits
+#: any copy in the vault, so a link to one cannot be checked against it.
+GENERATED_VIEWS = frozenset(
+    {
+        "dependencies.md",
+        "dependencies.html",
+        "graph.html",
+        "progress.md",
+        # The vault keeps its own Obsidian-readable copy; the site builds one.
+        "structure.md",
+    }
+)
+
+
 def resolved_path(path: Path) -> Path | None:
     """``path`` with its symbolic links resolved, or None when the system cannot open it.
 
@@ -803,6 +817,8 @@ def local_target_issue(
     spelled = Path(os.path.normpath(source_path.parent.resolve() / raw_path))
     if Path(raw_path).is_absolute() or not _is_within(spelled, boundary):
         return f"{label}-escapes-blueprint", f"{label} link escapes the blueprint: {target!r}"
+    if spelled.parent == boundary and spelled.name in GENERATED_VIEWS:
+        return f"generated-{label}-target", f"{label} link names a view render generates instead of reading: {target!r}"
     candidate = resolved_path(source_path.parent / raw_path if raw_path else source_path)
     if candidate is None:
         return f"{label}-not-found", f"{label} link does not resolve to a file: {target!r}"
@@ -814,7 +830,7 @@ def local_target_issue(
     # repository link reaches a hidden note under `sources/`, and render writes one
     # when it links the other source notes there; that link resolves only once the
     # note is committed, so it is reported too, and `check` only warns about it.
-    if _is_hidden_path(spelled, boundary) and not _is_hidden_path(source_path.resolve(), boundary):
+    if _is_hidden_path(spelled, boundary):
         return f"hidden-{label}-target", f"{label} link names a hidden path, which render omits: {target!r}"
     # Before Python 3.14, `Path.is_file` raises under an unreadable directory.
     if not os.path.isfile(candidate):
@@ -986,6 +1002,7 @@ __all__ = [
     "EXTERNAL_SCHEMES",
     "FENCE",
     "FENCE_CLOSE",
+    "GENERATED_VIEWS",
     "HEADING",
     "INLINE_CODE",
     "SITE_EXTENSIONS",

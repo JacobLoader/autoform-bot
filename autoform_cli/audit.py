@@ -43,6 +43,7 @@ from .markdown import first_unclosed_fence as _first_unclosed_fence
 from .markdown import frontmatter_end as _frontmatter_end
 from .markdown import has_substance as _has_substance
 from .markdown import HEADING as _HEADING
+from .markdown import _is_hidden_path
 from .markdown import is_placeholder as _is_placeholder
 from .markdown import local_target_issue as _local_target_issue
 from .markdown import markdown_links as _markdown_links
@@ -406,7 +407,10 @@ def _coverage_findings(
                     )
                 )
 
-    coverage_files = sorted(path for path in coverage_root.rglob("*.md") if path.is_file())
+    # Render omits hidden files, so their links are never published.
+    coverage_files = sorted(
+        path for path in coverage_root.rglob("*.md") if path.is_file() and not _is_hidden_path(path, blueprint)
+    )
     for path in coverage_files:
         article_path = _relative_path(path, blueprint)
         try:
@@ -692,8 +696,9 @@ def _stable_validation_reason(blueprint: Path, issue: str) -> str:
 
 
 def _validation_article_path(blueprint: Path, issue: str) -> str:
-    issue_root = issue.split("/", 1)[0].split(":", 1)[0]
-    if issue_root.casefold() == IMPLEMENTATION_NOTES_DIR.casefold():
+    # The notes directory, or one misplaced under roadmap/, as the issue names it.
+    subject = issue.split(":", 1)[0].split("/")
+    if IMPLEMENTATION_NOTES_DIR.casefold() in {part.casefold() for part in subject[:2]}:
         for marker in _IMPLEMENTATION_NOTE_ISSUE_MARKERS:
             boundary = issue.rfind(marker)
             if boundary >= 0:
