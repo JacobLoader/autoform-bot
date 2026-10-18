@@ -775,7 +775,7 @@ def test_search_cli_reports_identity_mathlib_sources_and_dependents(tmp_path: Pa
 
     assert cli.main(["search", str(project), "exists_extension_norm_eq"]) == 0
     lines = capsys.readouterr().out.splitlines()
-    assert "Extension (convexity/hahn) [af_000000000000000000000001]" in lines
+    assert "Extension (convexity/hahn) [af_000000000000000000000001]: Extends a functional." in lines
     assert "  theorem, mathlib, used by 1, title shared with another article" in lines
     assert "  Mathlib: exists_extension_norm_eq" in lines
 
@@ -791,13 +791,14 @@ def test_search_cli_human_output_escapes_project_text(tmp_path: Path, capsys) ->
     assert cli.main(["search", str(project), "separating", "--lean-root", str(project)]) == 0
     output = capsys.readouterr().out
     assert "\x1b" not in output and "\x07" not in output
-    lines = output.splitlines()
-    assert "Separating hyperplane\\x1b[2J (convexity/hyperplane)" in lines
-    assert "  theo\\x1brem, can_prove, used by 1" in lines
-    assert "  Lean: Project.separation (Project.lean:3)" in lines
-    assert "  Statement: Two disjoint convex sets are separated by an affine\\x07 functional." in lines
-    assert "  Matched: title" in lines
-    assert lines[-1] == "1 of 1 matching article(s) shown."
+    assert output.splitlines() == [
+        "1 of 1 matching article(s) shown.",
+        "Separating hyperplane\\x1b[2J (convexity/hyperplane): "
+        "Two disjoint convex sets are separated by an affine\\x07 functional.",
+        "  theo\\x1brem, can_prove, used by 1",
+        "  Lean: Project.separation (Project.lean:3)",
+        "  Matched: title",
+    ]
 
     _article(
         project,
@@ -821,15 +822,20 @@ def test_search_cli_cuts_a_long_statement_and_counts_what_the_limit_hides(tmp_pa
     _article(project, "convexity/long.md", title="Longwinded", body="convex " * 100 + "\n\nSecond paragraph.")
 
     assert cli.main(["search", str(project), "convex", "--declaration", "lemma", "--limit", "1"]) == 0
-    assert capsys.readouterr().out.splitlines()[0] == "Supporting functional (convexity/support)"
+    assert capsys.readouterr().out.splitlines()[1].startswith("Supporting functional (convexity/support): ")
 
     assert cli.main(["search", str(project), "convex", "--limit", "1"]) == 0
-    assert capsys.readouterr().out.splitlines()[-1] == "1 of 4 matching article(s) shown."
+    assert capsys.readouterr().out.splitlines()[0] == "1 of 4 matching article(s) shown."
+
+    _article(project, "convexity/bare.md", title="Bare", body="")
+    assert cli.main(["search", str(project), "bare"]) == 0
+    assert capsys.readouterr().out.splitlines()[1] == "Bare (convexity/bare)"
 
     assert cli.main(["search", str(project), "longwinded"]) == 0
-    statement = next(line for line in capsys.readouterr().out.splitlines() if line.startswith("  Statement: "))
-    assert len(statement) <= len("  Statement: ") + 200
-    assert statement.endswith("...")
+    heading = "Longwinded (convexity/long): "
+    (line,) = [line for line in capsys.readouterr().out.splitlines() if line.startswith(heading)]
+    assert len(line) <= len(heading) + 200
+    assert line.endswith("...")
 
 
 def test_search_cli_reports_errors_on_stderr_with_exit_2(

@@ -69,7 +69,7 @@ from .lean import (
     verify_repository_snapshot,
 )
 from .markdown import INLINE_CODE, _BRACKET_ESCAPE, _INLINE_MATH, _blank, article_parts, site_converter
-from .markdown import mask_fences_and_comments, relative_link
+from .markdown import blueprint_root, directory_path, mask_fences_and_comments, relative_link
 from .status import is_definition
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
@@ -346,13 +346,14 @@ def render_site(
     Lean sources are each read once, and every page, link and hash comes from
     those bytes. The site is built beside the output and swapped in whole.
     """
-    blueprint = Path(blueprint_dir).expanduser().resolve()
+    blueprint = blueprint_root(blueprint_dir)
     requested_destination = Path(output_dir).expanduser()
     if requested_destination.name in {"", ".."}:  # the swap below would rename a working directory
         raise PublicationError(["output directory must name one ordinary directory"])
     if requested_destination.is_symlink():
         raise PublicationError(["refusing symlink output directory"])
-    destination = requested_destination.resolve()
+    # Spelled as the blueprint is, so an output that holds it is refused below.
+    destination = directory_path(requested_destination) or requested_destination.resolve()
     if (
         _is_within(destination, blueprint)
         or _is_within(blueprint, destination)
@@ -795,7 +796,7 @@ def _load_graph(copy: Path, blueprint: Path) -> Graph:
 
 def load_publication_source(blueprint_dir: str | Path) -> tuple[str, Graph]:
     """Read the blueprint once; return its publication revision and the graph of those bytes."""
-    blueprint = Path(blueprint_dir).expanduser().resolve()
+    blueprint = blueprint_root(blueprint_dir)
     snapshot = _capture_blueprint(blueprint)
     # The graph reads the articles and the atlas.
     with _private_copy(snapshot, prefix=("roadmap/", "atlas.json")) as (_root, copy):
@@ -1222,7 +1223,7 @@ def _source_revision(snapshot: TreeSnapshot) -> str:
 def publication_source_revision(blueprint_dir: str | Path) -> str:
     """Return the deterministic source hash stored in ``publication.json``."""
 
-    return _source_revision(_capture_blueprint(Path(blueprint_dir).expanduser().resolve()))
+    return _source_revision(_capture_blueprint(blueprint_root(blueprint_dir)))
 
 
 def _write_publication_manifest(

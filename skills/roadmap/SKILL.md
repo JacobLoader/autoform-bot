@@ -97,12 +97,17 @@ attribution that the available sources do not support. Read
 Zulip work.
 
 Before adding a formalizable article, run `autoform search` over the blueprint
-for its result, by a few distinctive words of the statement and by a Lean name
-when one is known; the
-[search contract](../../autoform_cli/README.md#search-contract) says what is
-matched. Read each hit's statement, and narrow a query whose listing the limit
-cut short. Matching is literal, so the result is new only when retries with
-fewer words, and under other usual names for its objects, also show no article
+for its result and for each intermediate result its proof proves or cites, by a
+few distinctive words of each statement and by a Lean name when one is known;
+the [search contract](../../autoform_cli/README.md#search-contract) says what
+is matched. Bound a listing with search's limit, never by dropping lines (as
+`| head` does), since that drops later hits and the library listings, which
+print last. Read each hit's statement, or a library hit's signature, and the
+counts the output opens with; a line ending in `...` is shortened, and the
+JSON output has it whole. Narrow a query whose count shows the limit cut it
+short. Matching is literal, so a
+result is new only when retries with fewer words, and under other usual names
+for its objects, also show no article
 stating it. Search the project's usable shared libraries in the same call: run
 `autoform library list .` once, and pass each package it reports as usable to
 every search as `--library NAME --lean-root .`, even while the blueprint is
@@ -120,7 +125,8 @@ project's own Lean files, since `autoform check --lean-root` resolves no other.
 A refusal (exit 2) is not an empty result: resolve what it reports without
 adding the article, and search again, except that a refusal naming a library is
 handled as the library search rules say. A dependency link to a page not yet
-written causes one, so search for a batch of articles before writing the first.
+written causes one, so search for a batch of articles before writing the first,
+for each one's result and the intermediate results its proof proves or cites.
 When another formalizable article already states the result, link to it from
 each article that needs it, under `## Depends on` or `## Proof depends on`, and
 from the coverage row, instead of adding a node. A hit that is more general, a
@@ -145,9 +151,10 @@ into fictional future work. Ground each statement and proof sketch in the
 source. Put genuine statement prerequisites under `## Depends on` and
 proof-only prerequisites under `## Proof depends on`.
 Never delete or reverse a genuine article edge to make a chapter-level or
-scope-level projection acyclic. The authored leaf DAG is the mathematical
-record; a coarser view may have relations in both directions and must present
-them honestly.
+scope-level projection acyclic. When the project's CI pins an older
+`AUTOFORM_REF`, its `autoform check` still rejects such a cycle as a
+`rolled-up dependency cycle`: leave out the edge that closes it until the pin
+moves, and report the old pin and that edge.
 Assign durable `article_id` metadata to new articles; run
 `autoform migrate article-ids blueprint --write` after creating the pages to
 add deterministic IDs.
@@ -265,5 +272,6 @@ in-scope declaration reconciled. Do not stop after discovery, a coarse
 proposal, one chapter, or unchanged validation. Report the material delta,
 evidence, remaining blockers, and the next execution frontier, and for a
 repository inventory the existing/formalized versus wishlist/conjectural/planned
-counts and the reconciliation gaps. Mark an active Goal complete only after
-these conditions hold.
+counts and the reconciliation gaps. Before reporting, follow
+[Debrief Orchestrator](../debrief-orchestrator/SKILL.md) with `--skill roadmap`.
+Mark an active Goal complete only after these conditions hold.

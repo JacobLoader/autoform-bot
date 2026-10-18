@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -688,7 +689,7 @@ def test_audit_validates_local_source_links_without_network_access(tmp_path: Pat
 
 
 def test_audit_reports_a_source_link_through_a_symlink_loop_alike_on_every_python(tmp_path: Path) -> None:
-    # Before Python 3.13 resolving a loop raises; from 3.13 it returns the looping path.
+    # The kernel stops at the loop, wherever the rest of the path would lead.
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)
     (blueprint / "sources").mkdir()
@@ -700,26 +701,32 @@ def test_audit_reports_a_source_link_through_a_symlink_loop_alike_on_every_pytho
         # A loop behind a symbolic link that leaves the blueprint, and one before it.
         (blueprint / "sources" / "away").symlink_to(tmp_path / "away")
         (tmp_path / "away" / "loop.md").symlink_to("loop.md")
-        # A loop and `..` 45 times over, then out of the blueprint, and a chain past the recursion limit.
-        for n in range(45):
-            (blueprint / "sources" / f"hop{n}.txt").symlink_to(f"loop.md/../hop{n + 1}.txt")
-        (blueprint / "sources" / "hop45.txt").symlink_to("away/note.txt")
-        for n in range(1000):
-            (blueprint / "sources" / f"chain{n}.txt").symlink_to(f"chain{n + 1}.txt")
     except OSError:
         pytest.skip("symlinks are unavailable")
     sources = ("../sources/loop.md", "../../outer.md", "../sources/away/loop.md", "../sources/loop.md/../away/note.txt")
-    sources += ("../sources/hop0.txt", "../sources/chain0.txt")
     _article(blueprint, "result.md", declaration="theorem", origin="cited", sources=sources)
 
     assert _finding_map(blueprint)["roadmap/result.md"] == [
         ("source-escapes-blueprint", "source link escapes the blueprint: '../../outer.md'"),
-        ("source-escapes-blueprint", "source link escapes the blueprint: '../sources/away/loop.md'"),
-        ("source-escapes-blueprint", "source link escapes the blueprint: '../sources/hop0.txt'"),
-        ("source-escapes-blueprint", "source link escapes the blueprint: '../sources/loop.md/../away/note.txt'"),
-        ("source-not-found", "source link does not resolve to a file: '../sources/chain0.txt'"),
+        ("source-not-found", "source link does not resolve to a file: '../sources/away/loop.md'"),
         ("source-not-found", "source link does not resolve to a file: '../sources/loop.md'"),
+        ("source-not-found", "source link does not resolve to a file: '../sources/loop.md/../away/note.txt'"),
     ]
+
+
+def test_audit_of_a_blueprint_behind_a_link_that_cannot_be_read_matches_the_blueprint_itself(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
+    # A link above the blueprint that cannot be read changes nothing inside it.
+    real = tmp_path / "real" / "blueprint"
+    _coverage(real, "| Area | Coverage | Evidence |\n| --- | --- | --- |\n| Result | DECOMPOSED | [R](../roadmap/result.md) |")
+    _article(real, "result.md", declaration="theorem")
+    unreadable_link(tmp_path / "via", tmp_path / "real")
+
+    findings = audit_blueprint(tmp_path / "via" / "blueprint").findings
+
+    assert findings == audit_blueprint(real).findings
+    assert "invalid-graph" not in {finding.code for finding in findings}
 
 
 @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")

@@ -20,7 +20,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .lean import declaration_names
-from .markdown import link_definitions, link_targets, mask_code_and_comments, resolved_path
+from .markdown import directory_path, link_definitions, link_targets, mask_code_and_comments, resolved_path
 
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
@@ -172,13 +172,13 @@ class _NodeSource:
 def load_graph(blueprint_dir: str | Path) -> Graph:
     """Load and validate Markdown nodes beneath *blueprint_dir*."""
 
-    # As every link in it is resolved, so a link above it that cannot be read
-    # fails here once instead of failing every link.
-    blueprint = resolved_path(Path(blueprint_dir).expanduser())
+    given = Path(blueprint_dir).expanduser()
+    if not os.path.isdir(given):
+        raise GraphValidationError([f"blueprint directory does not exist: {given}"])
+    # Resolved as its links are, even behind a link above it that cannot be read.
+    blueprint = directory_path(given)
     if blueprint is None:
         raise GraphValidationError([f"blueprint directory cannot be resolved: {blueprint_dir}"])
-    if not blueprint.is_dir():
-        raise GraphValidationError([f"blueprint directory does not exist: {blueprint}"])
 
     issues: list[str] = []
     parsed: list[_ParsedNode] = []
@@ -860,9 +860,14 @@ def _resolve_target(
     if relative.is_absolute() or relative.suffix != ".md":
         return None, f"{node.id}: dependency target must be a relative .md file: {target!r}"
 
+    # A path that leaves the blueprint as spelled escapes it; nothing outside is looked at.
+    if not _is_within(Path(os.path.normpath(node.path.parent / relative)), blueprint):
+        return None, f"{node.id}: dependency target escapes the blueprint directory: {target!r}"
     resolved = resolved_path(node.path.parent / relative)
     if resolved is None:
-        return None, f"{node.id}: dependency target does not exist: {target!r}"
+        # The kernel reaches a file behind a link only `readlink` refuses.
+        why = "cannot be resolved" if os.path.exists(node.path.parent / relative) else "does not exist"
+        return None, f"{node.id}: dependency target {why}: {target!r}"
     if not _is_within(resolved, blueprint):
         return None, f"{node.id}: dependency target escapes the blueprint directory: {target!r}"
     # Before Python 3.14, `Path.is_file` raises under an unreadable directory.

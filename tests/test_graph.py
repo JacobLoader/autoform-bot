@@ -446,10 +446,9 @@ def test_rejects_invalid_nodes(tmp_path: Path, body: str, message: str) -> None:
 
 
 def test_a_dependency_through_a_symlink_loop_is_reported_alike_on_every_python(tmp_path: Path) -> None:
-    # Before Python 3.13 resolving a loop raises; from 3.13 it returns the looping path.
+    # The kernel stops at the loop, wherever the rest of the path would lead.
     blueprint = tmp_path / "blueprint"
     links = "[x](../loop.md)\n[y](../../outer.md)\n[z](../away/loop.md)\n[w](../loop.md/../away/note.md)\n"
-    links += "[v](../hop0.md)\n[u](../chain0.md)\n"
     _node(blueprint, "result.md", f"# Result\n## Depends on\n{links}")
     (tmp_path / "away").mkdir()
     (tmp_path / "away" / "note.md").write_text("# Note\n", encoding="utf-8")
@@ -459,12 +458,6 @@ def test_a_dependency_through_a_symlink_loop_is_reported_alike_on_every_python(t
         # A loop behind a symbolic link that leaves the blueprint, and one before it.
         (blueprint / "away").symlink_to(tmp_path / "away")
         (tmp_path / "away" / "loop.md").symlink_to("loop.md")
-        # A loop and `..` 45 times over, then out of the blueprint, and a chain past the recursion limit.
-        for n in range(45):
-            (blueprint / f"hop{n}.md").symlink_to(f"loop.md/../hop{n + 1}.md")
-        (blueprint / "hop45.md").symlink_to("away/note.md")
-        for n in range(1000):
-            (blueprint / f"chain{n}.md").symlink_to(f"chain{n + 1}.md")
     except OSError:
         pytest.skip("symlinks are unavailable")
 
@@ -474,16 +467,15 @@ def test_a_dependency_through_a_symlink_loop_is_reported_alike_on_every_python(t
     assert caught.value.issues == (
         "result: dependency target does not exist: '../loop.md'",
         "result: dependency target escapes the blueprint directory: '../../outer.md'",
-        "result: dependency target escapes the blueprint directory: '../away/loop.md'",
-        "result: dependency target escapes the blueprint directory: '../loop.md/../away/note.md'",
-        "result: dependency target escapes the blueprint directory: '../hop0.md'",
-        "result: dependency target does not exist: '../chain0.md'",
+        "result: dependency target does not exist: '../away/loop.md'",
+        "result: dependency target does not exist: '../loop.md/../away/note.md'",
     )
 
 
-def test_check_passes_a_sources_link_that_reaches_its_file_through_loops(tmp_path: Path) -> None:
-    # Each `loop.md/..` resolves past the loop, as on Python 3.13. Before 3.13
-    # the runtime's own resolution of the link then raised.
+def test_check_rejects_a_sources_link_through_symlink_loops(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # No program can open `loop.md/../paper.md`, though `..` would cancel the loop as text.
     blueprint = tmp_path / "blueprint"
     _node(blueprint, "result.md", "# Result\n\n## Sources\n\n- [Paper](../sources/s1.md)\n")
     sources = blueprint / "sources"
@@ -496,10 +488,11 @@ def test_check_passes_a_sources_link_that_reaches_its_file_through_loops(tmp_pat
     except OSError:
         pytest.skip("symlinks are unavailable")
 
-    assert main(["check", str(blueprint)]) == 0
+    assert main(["check", str(blueprint)]) == 1
+    assert capsys.readouterr().out == "error: result: source target does not resolve to a file: '../sources/s1.md'\n"
 
 
-def test_a_dependency_through_a_link_that_cannot_be_read_does_not_exist(
+def test_a_dependency_through_a_link_that_cannot_be_read_cannot_be_resolved(
     tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
 ) -> None:
     blueprint = tmp_path / "blueprint"
@@ -511,22 +504,24 @@ def test_a_dependency_through_a_link_that_cannot_be_read_does_not_exist(
     with pytest.raises(GraphValidationError) as caught:
         load_graph(blueprint)
 
-    assert caught.value.issues == ("result: dependency target does not exist: '../locked/a.md'",)
+    assert caught.value.issues == ("result: dependency target cannot be resolved: '../locked/a.md'",)
 
 
-def test_a_blueprint_behind_a_link_that_cannot_be_read_fails_once(
+def test_a_blueprint_behind_a_link_that_cannot_be_read_loads(
     tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
 ) -> None:
-    # Every link in it would fail to resolve, so the blueprint fails instead.
-    _node(tmp_path / "real" / "blueprint", "result.md", "# Result\n## Depends on\n[x](other.md)\n")
-    _node(tmp_path / "real" / "blueprint", "other.md", "# Other\n")
+    # A link above the blueprint that cannot be read changes nothing inside it.
+    real = tmp_path / "real" / "blueprint"
+    _node(real, "result.md", "# Result\n## Depends on\n[x](other.md)\n")
+    _node(real, "other.md", "# Other\n")
     unreadable_link(tmp_path / "via", tmp_path / "real")
     blueprint = tmp_path / "via" / "blueprint"
 
-    with pytest.raises(GraphValidationError) as caught:
-        load_graph(blueprint)
+    graph = load_graph(blueprint)
 
-    assert caught.value.issues == (f"blueprint directory cannot be resolved: {blueprint}",)
+    assert graph.blueprint_dir == real.resolve()
+    assert graph.nodes["result"].dependencies == ("other",)
+    assert main(["check", str(blueprint)]) == 0
 
 
 @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")
@@ -572,7 +567,7 @@ def test_rejects_cycle(tmp_path: Path) -> None:
         load_graph(blueprint)
 
 
-def test_keeps_acyclic_edges_that_form_a_cycle_only_after_chapter_contraction(tmp_path: Path) -> None:
+def test_accepts_cycle_created_only_by_chapter_contraction(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _roadmap_page(blueprint, "a/README.md", "# A\n")
     _roadmap_page(blueprint, "b/README.md", "# B\n")
@@ -1000,10 +995,11 @@ def test_check_counts_declaration_targets_and_every_lean_name_it_resolves(
     # A catalog's unresolved name may be one Lean generates, which no index records.
     catalog.write_text(catalog.read_text(encoding="utf-8").replace("Inv.c", "Inv.c Inv.mk"), encoding="utf-8")
     assert main(["check", str(blueprint), "--lean-root", str(lean_root)]) == 1
-    assert capsys.readouterr().out.splitlines()[-1] == (
+    assert capsys.readouterr().out.splitlines()[-2:] == [
         f"error: catalog: declaration not found in {lean_root}: Inv.mk; "
-        "a name Lean generates is not indexed and belongs in the catalog's ledger"
-    )
+        "a name Lean generates is not indexed and belongs in the catalog's ledger",
+        _LIBRARY_DECLARATION_NOTE,
+    ]
 
 
 def test_check_cli_reports_validation_errors(tmp_path: Path) -> None:
@@ -1068,6 +1064,7 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
 
     (blueprint / "sources").mkdir()
     (blueprint / "sources" / "paper.md").write_text("# Paper\n", encoding="utf-8")
+    (blueprint / ".x").mkdir()
     sources += "- [Book](https://example.org/book)\n- [Author](mailto:author@example.org)\n"
     sources += "- [Same paper](../.x/../sources/paper.md)\n"
     _node(blueprint, "result.md", sources)
@@ -1182,6 +1179,51 @@ def test_check_resolves_a_name_beside_a_private_twin_and_rejects_two_public_ones
     assert main(["check", str(blueprint), "--lean-root", str(lean_root)]) == (1 if errors else 0)
     lines = capsys.readouterr().out.splitlines()
     assert [line for line in lines if line.startswith("error:")] == [error.format(root=lean_root) for error in errors]
+
+
+_LIBRARY_DECLARATION_NOTE = (
+    "note: check resolves lean: names only in the project's own Lean files, not in Mathlib or other dependencies "
+    "under .lake; if a name is a shared library's declaration, record it in the article's implementation note instead"
+)
+
+
+@pytest.mark.parametrize(
+    ("lean", "expected"),
+    [
+        (
+            "Lib.base Lib.other",
+            [
+                "error: base: declaration not found in {root}: Lib.base",
+                "error: base: declaration not found in {root}: Lib.other",
+                _LIBRARY_DECLARATION_NOTE,
+            ],
+        ),
+        (
+            "Project.base",
+            ["error: base: declaration defined more than once in {root}: Project.base (A.lean:1, B.lean:1)"],
+        ),
+    ],
+    ids=["library-declarations", "two-public-declarations"],
+)
+def test_check_says_where_a_library_declaration_goes_when_a_name_is_not_found(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], lean: str, expected: list[str]
+) -> None:
+    """Issue #346: a trial put library declarations in `lean:`, and the error alone did not say where they go."""
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "base.md", "# Base\n", lean=lean)
+    lean_root = tmp_path / "lean"
+    (lean_root / ".lake/packages/lib").mkdir(parents=True)
+    (lean_root / ".lake/packages/lib/Lib.lean").write_text(
+        "def Lib.base : Nat := 0\ndef Lib.other : Nat := 0\n", encoding="utf-8"
+    )
+    (lean_root / "A.lean").write_text("def Project.base : Nat := 0\n", encoding="utf-8")
+    (lean_root / "B.lean").write_text("theorem Project.base : True := trivial\n", encoding="utf-8")
+
+    assert main(["check", str(blueprint), "--lean-root", str(lean_root)]) == 1
+    lines = capsys.readouterr().out.splitlines()
+    expected = [line.format(root=lean_root) for line in expected]
+    # The errors, then one note however many names are missing, end the output; a name defined twice gets no note.
+    assert [line for line in lines if line.startswith(("error:", "note:"))] == lines[-len(expected) :] == expected
 
 
 def test_check_prints_its_warnings_after_the_whole_summary(

@@ -29,7 +29,6 @@ from __future__ import annotations
 import html
 import os
 import re
-import stat
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -711,90 +710,62 @@ def _anchors_from_body(body: str) -> frozenset[str]:
     return frozenset(html.unescape(found) for found in _HEADING_ID.findall(rendered))
 
 
-# More link spellings than any one path in a blueprint needs. On a
-# case-insensitive file system, each level of links can double the spellings
-# of the same link, and resolving them all would take exponential time.
-_MAX_LINKS = 4096
-
-
 def resolved_path(path: Path) -> Path | None:
-    """``path`` with its symbolic links resolved, or None if that fails or a link cannot be read.
+    """``path`` with its symbolic links resolved, or None when the system cannot open it.
 
-    On POSIX, `_realpath_posix` resolves it as Python 3.13's `os.path.realpath`
-    does, on every version: a symlink loop stays as written and the rest of the
-    path resolves past it. Before 3.13, `realpath` recurses once per link and
-    stops at a loop, applying the rest of the path's `..` steps as written, so
-    a link after the loop could lead out of the blueprint unresolved, and
-    `Path.resolve` raises when the path `realpath` returns still runs through a
-    loop. From 3.13 it runs too, because `realpath` keeps a link it cannot read
-    as written, so a target outside the blueprint would look inside. So a link
-    gets the same verdict on every supported version; callers still check where
-    it points and whether it is a file. Windows `realpath` applies `..` as
-    written on every version, as Windows itself does.
+    The kernel follows the links first, so a missing part, a symlink loop or a
+    chain past its link limit gives None on every Python, and that limit bounds
+    the work `os.path.realpath` then does. Strict `realpath` also gives None at
+    a link it cannot read, which macOS follows anyway. Windows applies `..` as
+    text before it looks anything up. Callers still check where the result
+    points and whether it is a file.
     """
 
     try:
-        if os.name == "nt":
-            return Path(os.path.realpath(path))
-        resolved = _realpath_posix(os.fspath(path))
-    except (OSError, ValueError):
-        # A NUL in the path, which callers check for first, `os.getcwd` failing
-        # for a relative path, or a path Windows refuses to resolve, such as one
-        # over its length limit.
+        os.stat(path)
+        return Path(os.path.realpath(path, strict=True))
+    except (OSError, ValueError):  # ValueError: a NUL in the path
         return None
-    return None if resolved is None else Path(resolved)
 
 
-def _realpath_posix(path: str) -> str | None:
-    """Python 3.13's POSIX `os.path.realpath`, or None at a link it cannot read.
+def directory_path(path: Path) -> Path | None:
+    """``path`` as `resolved_path` gives it, or, for a directory it gives None
+    for, the path the system gives the opened directory; None when neither works.
 
-    Each spelling of a link is read once. A link met again before its target is
-    resolved is a loop and stays as written; a later `..` leaves it again. A
-    part that cannot be looked up, missing or under a loop, also stays as
-    written, and the parts after it still resolve. Unlike 3.13, a link that
-    cannot be read leaves the path unresolved: macOS follows a link whose mode
-    forbids reading it, so keeping that link as written would hide where it
-    leads. A path that needs more than `_MAX_LINKS` spellings of links is not
-    resolved either.
+    For a blueprint root. `resolved_path` gives None at a link the system
+    follows but will not let anyone read, which macOS allows for another
+    user's symlink; above a blueprint such a link changes nothing inside it,
+    so the system is asked for the path of the directory it opened. Links
+    under that path then resolve as usual, and one inside the blueprint that
+    cannot be read still gives None.
     """
 
-    pending: list[str | None] = path.split("/")[::-1]
-    resolved = "/" if path.startswith("/") else os.getcwd()
-    # Each link seen, mapped to its resolved target, or to None while that is pending.
-    links: dict[str, str | None] = {}
-    while pending:
-        name = pending.pop()
-        if name is None:
-            # The link popped next has its target resolved.
-            links[pending.pop()] = resolved
-            continue
-        if name in ("", "."):
-            continue
-        if name == "..":
-            resolved = resolved[: resolved.rindex("/")] or "/"
-            continue
-        joined = os.path.join(resolved, name)
-        try:
-            is_link = stat.S_ISLNK(os.lstat(joined).st_mode)
-        except OSError:
-            is_link = False
-        if not is_link:
-            resolved = joined
-            continue
-        if joined in links:
-            resolved = links[joined] or joined
-            continue
-        if len(links) >= _MAX_LINKS:
-            return None
-        try:
-            target = os.readlink(joined)
-        except OSError:
-            return None
-        if target.startswith("/"):
-            resolved = "/"
-        links[joined] = None
-        pending += [joined, None, *target.split("/")[::-1]]
-    return resolved
+    resolved = resolved_path(path)
+    if resolved is not None or os.name == "nt":
+        return resolved
+    import fcntl
+
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    except (OSError, ValueError):
+        return None
+    try:
+        if hasattr(fcntl, "F_GETPATH"):  # macOS
+            opened = os.fsdecode(fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024)).split(b"\0", 1)[0])
+        else:  # Linux; elsewhere, without /proc, this fails and gives None
+            opened = os.readlink(f"/proc/self/fd/{descriptor}")
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+    return Path(opened)
+
+
+def blueprint_root(path: str | Path) -> Path:
+    """The directory ``path`` names, as `directory_path` gives it, or as written, made absolute."""
+
+    given = Path(path).expanduser()
+    return directory_path(given) or given.absolute()
 
 
 def local_target_issue(
@@ -826,27 +797,23 @@ def local_target_issue(
     raw_path = unquote(split.path)
     if "\x00" in raw_path:
         return f"malformed-{label}-link", f"{label} link contains an invalid path: {target!r}"
-    if not raw_path:
-        candidate = source_path
-    else:
-        relative = Path(raw_path)
-        if relative.is_absolute():
-            return f"{label}-escapes-blueprint", f"{label} link escapes the blueprint: {target!r}"
-        candidate = source_path.parent / relative
-    candidate = resolved_path(candidate)
+    boundary = boundary.resolve()
+    # The path the link spells, after its `..` steps. One that leaves the
+    # blueprint escapes it, and nothing outside is looked at.
+    spelled = Path(os.path.normpath(source_path.parent.resolve() / raw_path))
+    if Path(raw_path).is_absolute() or not _is_within(spelled, boundary):
+        return f"{label}-escapes-blueprint", f"{label} link escapes the blueprint: {target!r}"
+    candidate = resolved_path(source_path.parent / raw_path if raw_path else source_path)
     if candidate is None:
         return f"{label}-not-found", f"{label} link does not resolve to a file: {target!r}"
-
-    boundary = boundary.resolve()
     if not _is_within(candidate, boundary):
         return f"{label}-escapes-blueprint", f"{label} link escapes the blueprint: {target!r}"
     # Render resolves links in a copy of the vault that has no hidden paths and no
     # symbolic links, so a link on a page it publishes breaks when the path it spells
-    # is hidden. `.x/../paper.md` still passes. Only a repository link reaches a
-    # hidden note under `sources/`, and render writes one when it links the other
-    # source notes there; that link resolves only once the note is committed, so it
-    # is reported too, and `check` only warns about it.
-    spelled = Path(os.path.normpath(source_path.parent.resolve() / raw_path))
+    # is hidden. `.x/../paper.md`, with `.x` a folder, still passes. Only a
+    # repository link reaches a hidden note under `sources/`, and render writes one
+    # when it links the other source notes there; that link resolves only once the
+    # note is committed, so it is reported too, and `check` only warns about it.
     if _is_hidden_path(spelled, boundary) and not _is_hidden_path(source_path.resolve(), boundary):
         return f"hidden-{label}-target", f"{label} link names a hidden path, which render omits: {target!r}"
     # Before Python 3.14, `Path.is_file` raises under an unreadable directory.
@@ -1036,7 +1003,9 @@ __all__ = [
     "article_parts",
     "Content",
     "content",
+    "blueprint_root",
     "content_lines",
+    "directory_path",
     "frontmatter_end",
     "has_substance",
     "is_placeholder",
