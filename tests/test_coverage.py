@@ -812,16 +812,21 @@ def test_a_comment_that_leaves_the_columns_alone_is_accepted(tmp_path: Path) -> 
     assert summary.entries[0].evidence == "narrative only"
 
 
-def test_a_roadmap_link_through_a_symlink_to_another_folder_is_not_a_roadmap_article(tmp_path: Path) -> None:
+@pytest.mark.parametrize("link", ["alias.md", "figure.txt"], ids=["symlink-to-another-folder", "not-markdown"])
+def test_a_roadmap_link_that_names_no_markdown_file_in_the_roadmap_is_not_a_roadmap_article(
+    tmp_path: Path, link: str
+) -> None:
     blueprint = tmp_path / "blueprint"
     (blueprint / "sources").mkdir(parents=True)
     (blueprint / "sources" / "note.md").write_text("# Note\n", encoding="utf-8")
     (blueprint / "roadmap").mkdir()
+    (blueprint / "roadmap" / "figure.txt").write_text("figure\n", encoding="utf-8")
     try:
         (blueprint / "roadmap" / "alias.md").symlink_to("../sources/note.md")
     except OSError:
-        pytest.skip("symlinks are unavailable")
-    _contract(blueprint, "| Aliased | DECOMPOSED | [Alias](../roadmap/alias.md) |\n")
+        if link == "alias.md":
+            pytest.skip("symlinks are unavailable")
+    _contract(blueprint, f"| Linked | DECOMPOSED | [Linked](../roadmap/{link}) |\n")
 
     summary, issues = load_coverage(blueprint)
 
@@ -847,18 +852,16 @@ def test_a_coverage_link_through_a_link_that_cannot_be_read_does_not_resolve(
     assert [issue.reason for issue in issues] == ["coverage link does not resolve to a file: '../roadmap/alias.md'"]
 
 
-def test_a_roadmap_link_to_a_file_that_is_not_markdown_is_not_a_roadmap_article(tmp_path: Path) -> None:
-    blueprint = tmp_path / "blueprint"
-    (blueprint / "roadmap").mkdir(parents=True)
-    (blueprint / "roadmap" / "figure.txt").write_text("figure\n", encoding="utf-8")
-    _contract(blueprint, "| Figure | DECOMPOSED | [Figure](../roadmap/figure.txt) |\n")
+def test_coverage_of_a_blueprint_behind_a_link_that_cannot_be_read_matches_the_blueprint_itself(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
+    real = tmp_path / "real" / "blueprint"
+    (real / "roadmap").mkdir(parents=True)
+    (real / "roadmap" / "result.md").write_text("# Result\n", encoding="utf-8")
+    _contract(real, "| Result | DECOMPOSED | [Result](../roadmap/result.md) |\n")
+    unreadable_link(tmp_path / "via", tmp_path / "real")
 
-    summary, issues = load_coverage(blueprint)
-
-    assert summary is None
-    assert [issue.reason for issue in issues] == [
-        "DECOMPOSED coverage evidence has no link to an existing roadmap article"
-    ]
+    assert load_coverage(tmp_path / "via" / "blueprint") == load_coverage(real)
 
 
 def test_malformed_evidence_paths_are_reported_without_raising(tmp_path: Path) -> None:

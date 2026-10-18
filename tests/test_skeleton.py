@@ -2214,10 +2214,12 @@ def test_probe_comment_ranges_must_cover_comments(tmp_path: Path, ranges: object
         ("../../sources/chapter.md#L1-L1", "names something other than a regular file"),
         ("../../sources/binary.tex#L1-L1", "not readable UTF-8 text"),
         ("../../../outside.tex#L1-L1", "points outside the blueprint"),
+        # Nothing outside the blueprint is looked up, so a missing file there is outside too.
+        ("../../../absent.tex#L1-L1", "points outside the blueprint"),
         ("../../sources/loop.txt#L1-L1", "names a path that cannot be resolved"),
         ("../../sources/loopdir/book.tex#L1-L1", "names a path that cannot be resolved"),
-        ("../../sources/away/loop.tex#L1-L1", "points outside the blueprint"),
-        ("../../sources/loop.txt/../away/secret.tex#L1-L1", "points outside the blueprint"),
+        ("../../sources/away/loop.tex#L1-L1", "names a path that cannot be resolved"),
+        ("../../sources/loop.txt/../away/secret.tex#L1-L1", "names a path that cannot be resolved"),
         pytest.param("../../sources/" + "a" * 300 + ".tex#L1-L1", "names a path that cannot be resolved", id="long-name"),
         ("../../sources/bo\x00ok.tex#L1-L1", "contains an invalid path"),
         ("../../sources/bo%00ok.tex#L1-L1", "contains an invalid path"),
@@ -2265,16 +2267,14 @@ def test_extraction_reports_a_locator_that_names_no_passage(tmp_path: Path, link
 @pytest.mark.parametrize(
     ("link", "why"),
     [
-        ("../../sources/hop0.tex#L1-L1", "points outside the blueprint"),
-        ("../../sources/loop.txt/../sub/back/../book.tex#L1-L1", "points outside the blueprint"),
-        ("../../sources/chain0.tex#L1-L1", "names a missing file"),
+        ("../../sources/loop.txt/../sub/back/../book.tex#L1-L1", "names a path that cannot be resolved"),
         ("../../sources/dangling.tex#L1-L1", "names a missing file"),
         ("../../sources/outside.tex#L1-L1", "points outside the blueprint"),
     ],
-    ids=["loop-hops", "after-a-loop", "deep-chain", "dangling-to-markdown", "outside-markdown"],
+    ids=["after-a-loop", "dangling-to-markdown", "outside-markdown"],
 )
 def test_extraction_reports_a_locator_through_links_alike_on_every_python(tmp_path: Path, link: str, why: str) -> None:
-    # Before Python 3.13, `os.path.realpath` recurses once per link and stops at a loop.
+    # The kernel resolves the links, so a locator gets one verdict on every Python.
     project = _project(tmp_path)
     blueprint = _blueprint(tmp_path, lean={"determined": "Skel.observation_determined"})
     sources = blueprint / "sources"
@@ -2286,11 +2286,6 @@ def test_extraction_reports_a_locator_through_links_alike_on_every_python(tmp_pa
         (sources / "loop.txt").symlink_to("loop.txt")
         (sources / "away").symlink_to(tmp_path / "away")
         (sources / "sub" / "back").symlink_to("../away")
-        for n in range(45):
-            (sources / f"hop{n}.tex").symlink_to(f"loop.txt/../hop{n + 1}.tex")
-        (sources / "hop45.tex").symlink_to("away/secret.md")
-        for n in range(1000):
-            (sources / f"chain{n}.tex").symlink_to(f"chain{n + 1}.tex")
         # A Markdown file is a note only once the link names it in the blueprint.
         (sources / "dangling.tex").symlink_to("gone.md")
         (sources / "outside.tex").symlink_to(tmp_path / "away" / "secret.md")

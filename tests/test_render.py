@@ -12,6 +12,7 @@ import stat
 import subprocess
 import threading
 import tracemalloc
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
@@ -1006,6 +1007,66 @@ def test_render_is_deterministic_and_records_a_path_free_manifest(tmp_path: Path
         path: hashlib.sha256(data).hexdigest() for path, data in first.items() if path != PUBLICATION_MANIFEST
     }
     assert str(tmp_path).encode() not in b"".join(first.values())
+
+
+def test_the_source_revision_of_a_blueprint_behind_a_link_that_cannot_be_read_is_its_own(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
+    (tmp_path / "real/blueprint/roadmap").mkdir(parents=True)
+    (tmp_path / "real/blueprint/roadmap/README.md").write_bytes(b"# Roadmap\n")
+    unreadable_link(tmp_path / "via", tmp_path / "real")
+
+    assert publication_source_revision(tmp_path / "via/blueprint") == publication_source_revision(
+        tmp_path / "real/blueprint"
+    )
+
+
+@pytest.mark.parametrize("through_the_link", [True, False], ids=["lean-root-through-the-link", "lean-root-as-itself"])
+def test_a_site_rendered_through_a_link_that_cannot_be_read_keeps_its_source_links(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None], through_the_link: bool
+) -> None:
+    # The blueprint and the Lean root are compared by spelling, so they resolve alike.
+    repo = tmp_path / "real" / "repo"
+    (repo / "docs").mkdir(parents=True)
+    _project(repo / "docs")
+    ref = _commit_project(repo)
+    unreadable_link(tmp_path / "via", tmp_path / "real")
+    via_repo = tmp_path / "via" / "repo"
+
+    render_site(
+        via_repo / "docs" / "project" / "blueprint",
+        tmp_path / "out",
+        lean_root=via_repo if through_the_link else repo,
+        repository_url="https://github.com/owner/repo",
+        ref=ref,
+    )
+
+    pages = "".join(page.read_text(encoding="utf-8") for page in sorted((tmp_path / "out").rglob("*.md")))
+    assert f"blob/{ref}/docs/project/blueprint/" in pages
+
+
+def test_an_output_holding_a_blueprint_behind_a_link_that_cannot_be_read_is_refused(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
+    _project(tmp_path / "real")
+    unreadable_link(tmp_path / "via", tmp_path / "real")
+    project = tmp_path / "via" / "project"
+
+    with pytest.raises(PublicationError, match="must be disjoint"):
+        render_site(project / "blueprint", project)
+
+
+def test_the_publication_source_of_a_blueprint_behind_a_link_that_cannot_be_read_is_its_own(
+    tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
+) -> None:
+    _project(tmp_path / "real")
+    unreadable_link(tmp_path / "via", tmp_path / "real")
+
+    revision, graph = load_publication_source(tmp_path / "via" / "project" / "blueprint")
+    direct_revision, direct = load_publication_source(tmp_path / "real" / "project" / "blueprint")
+
+    assert revision == direct_revision
+    assert sorted(graph.nodes) == sorted(direct.nodes)
 
 
 def test_the_source_revision_of_a_fixed_blueprint_is_pinned(tmp_path: Path) -> None:

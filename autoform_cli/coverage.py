@@ -21,6 +21,7 @@ from .markdown import (
     INLINE_CODE,
     Content,
     PublishedTable,
+    blueprint_root,
     content,
     link_targets,
     local_target_issue,
@@ -117,7 +118,7 @@ class CoverageSummary:
 def load_coverage(blueprint_dir: str | Path) -> tuple[CoverageSummary | None, tuple[CoverageIssue, ...]]:
     """Read and validate ``coverage/README.md`` without modifying it."""
 
-    blueprint = Path(blueprint_dir).expanduser().resolve()
+    blueprint = blueprint_root(blueprint_dir)
     path = blueprint / "coverage" / "README.md"
     try:
         content = path.read_bytes()
@@ -529,14 +530,14 @@ def _is_roadmap_article(target: str, *, coverage_path: Path, roadmap: Path) -> b
     parsed = urlsplit(target)
     if parsed.scheme or parsed.netloc:
         return False
-    raw_path = unquote(parsed.path)
-    if not raw_path or "\x00" in raw_path:
-        return False
-    candidate = resolved_path(coverage_path.parent / raw_path)
-    if candidate is None:
-        # load_coverage reports such a link first, through local_target_issue.
-        return False
-    return candidate.is_relative_to(roadmap) and os.path.isfile(candidate) and candidate.suffix.casefold() == ".md"
+    # None only for a link load_coverage has already reported through local_target_issue.
+    candidate = resolved_path(coverage_path.parent / unquote(parsed.path))
+    return (
+        candidate is not None
+        and candidate.is_relative_to(roadmap)
+        and os.path.isfile(candidate)
+        and candidate.suffix.casefold() == ".md"
+    )
 
 
 def _cells(line: str) -> tuple[str, ...]:

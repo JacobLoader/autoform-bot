@@ -145,10 +145,9 @@ def test_rejects_invalid_nodes(tmp_path: Path, body: str, message: str) -> None:
 
 
 def test_a_dependency_through_a_symlink_loop_is_reported_alike_on_every_python(tmp_path: Path) -> None:
-    # Before Python 3.13 resolving a loop raises; from 3.13 it returns the looping path.
+    # The kernel stops at the loop, wherever the rest of the path would lead.
     blueprint = tmp_path / "blueprint"
     links = "[x](../loop.md)\n[y](../../outer.md)\n[z](../away/loop.md)\n[w](../loop.md/../away/note.md)\n"
-    links += "[v](../hop0.md)\n[u](../chain0.md)\n"
     _node(blueprint, "result.md", f"# Result\n## Depends on\n{links}")
     (tmp_path / "away").mkdir()
     (tmp_path / "away" / "note.md").write_text("# Note\n", encoding="utf-8")
@@ -158,12 +157,6 @@ def test_a_dependency_through_a_symlink_loop_is_reported_alike_on_every_python(t
         # A loop behind a symbolic link that leaves the blueprint, and one before it.
         (blueprint / "away").symlink_to(tmp_path / "away")
         (tmp_path / "away" / "loop.md").symlink_to("loop.md")
-        # A loop and `..` 45 times over, then out of the blueprint, and a chain past the recursion limit.
-        for n in range(45):
-            (blueprint / f"hop{n}.md").symlink_to(f"loop.md/../hop{n + 1}.md")
-        (blueprint / "hop45.md").symlink_to("away/note.md")
-        for n in range(1000):
-            (blueprint / f"chain{n}.md").symlink_to(f"chain{n + 1}.md")
     except OSError:
         pytest.skip("symlinks are unavailable")
 
@@ -173,16 +166,15 @@ def test_a_dependency_through_a_symlink_loop_is_reported_alike_on_every_python(t
     assert caught.value.issues == (
         "result: dependency target does not exist: '../loop.md'",
         "result: dependency target escapes the blueprint directory: '../../outer.md'",
-        "result: dependency target escapes the blueprint directory: '../away/loop.md'",
-        "result: dependency target escapes the blueprint directory: '../loop.md/../away/note.md'",
-        "result: dependency target escapes the blueprint directory: '../hop0.md'",
-        "result: dependency target does not exist: '../chain0.md'",
+        "result: dependency target does not exist: '../away/loop.md'",
+        "result: dependency target does not exist: '../loop.md/../away/note.md'",
     )
 
 
-def test_check_passes_a_sources_link_that_reaches_its_file_through_loops(tmp_path: Path) -> None:
-    # Each `loop.md/..` resolves past the loop, as on Python 3.13. Before 3.13
-    # the runtime's own resolution of the link then raised.
+def test_check_rejects_a_sources_link_through_symlink_loops(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # No program can open `loop.md/../paper.md`, though `..` would cancel the loop as text.
     blueprint = tmp_path / "blueprint"
     _node(blueprint, "result.md", "# Result\n\n## Sources\n\n- [Paper](../sources/s1.md)\n")
     sources = blueprint / "sources"
@@ -195,10 +187,11 @@ def test_check_passes_a_sources_link_that_reaches_its_file_through_loops(tmp_pat
     except OSError:
         pytest.skip("symlinks are unavailable")
 
-    assert main(["check", str(blueprint)]) == 0
+    assert main(["check", str(blueprint)]) == 1
+    assert capsys.readouterr().out == "error: result: source target does not resolve to a file: '../sources/s1.md'\n"
 
 
-def test_a_dependency_through_a_link_that_cannot_be_read_does_not_exist(
+def test_a_dependency_through_a_link_that_cannot_be_read_cannot_be_resolved(
     tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
 ) -> None:
     blueprint = tmp_path / "blueprint"
@@ -210,22 +203,24 @@ def test_a_dependency_through_a_link_that_cannot_be_read_does_not_exist(
     with pytest.raises(GraphValidationError) as caught:
         load_graph(blueprint)
 
-    assert caught.value.issues == ("result: dependency target does not exist: '../locked/a.md'",)
+    assert caught.value.issues == ("result: dependency target cannot be resolved: '../locked/a.md'",)
 
 
-def test_a_blueprint_behind_a_link_that_cannot_be_read_fails_once(
+def test_a_blueprint_behind_a_link_that_cannot_be_read_loads(
     tmp_path: Path, unreadable_link: Callable[[Path, Path | str], None]
 ) -> None:
-    # Every link in it would fail to resolve, so the blueprint fails instead.
-    _node(tmp_path / "real" / "blueprint", "result.md", "# Result\n## Depends on\n[x](other.md)\n")
-    _node(tmp_path / "real" / "blueprint", "other.md", "# Other\n")
+    # A link above the blueprint that cannot be read changes nothing inside it.
+    real = tmp_path / "real" / "blueprint"
+    _node(real, "result.md", "# Result\n## Depends on\n[x](other.md)\n")
+    _node(real, "other.md", "# Other\n")
     unreadable_link(tmp_path / "via", tmp_path / "real")
     blueprint = tmp_path / "via" / "blueprint"
 
-    with pytest.raises(GraphValidationError) as caught:
-        load_graph(blueprint)
+    graph = load_graph(blueprint)
 
-    assert caught.value.issues == (f"blueprint directory cannot be resolved: {blueprint}",)
+    assert graph.blueprint_dir == real.resolve()
+    assert graph.nodes["result"].dependencies == ("other",)
+    assert main(["check", str(blueprint)]) == 0
 
 
 @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="permissions do not bind root")
@@ -271,7 +266,7 @@ def test_rejects_cycle(tmp_path: Path) -> None:
         load_graph(blueprint)
 
 
-def test_keeps_acyclic_edges_that_form_a_cycle_only_after_chapter_contraction(tmp_path: Path) -> None:
+def test_accepts_cycle_created_only_by_chapter_contraction(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _roadmap_page(blueprint, "a/README.md", "# A\n")
     _roadmap_page(blueprint, "b/README.md", "# B\n")
@@ -697,6 +692,7 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
 
     (blueprint / "sources").mkdir()
     (blueprint / "sources" / "paper.md").write_text("# Paper\n", encoding="utf-8")
+    (blueprint / ".x").mkdir()
     sources += "- [Book](https://example.org/book)\n- [Author](mailto:author@example.org)\n"
     sources += "- [Same paper](../.x/../sources/paper.md)\n"
     _node(blueprint, "result.md", sources)
