@@ -461,7 +461,8 @@ def viewer_script() -> str:
 # stacks above the bottom sheet so that neither of its popovers paints under
 # it. The explorer hides the page's own heading because the hierarchy rail
 # carries it; while phones hide the rail, the heading stays for assistive
-# technology as hidden text.
+# technology as hidden text. Where the rail shows and draws the trail, the
+# head's breadcrumb is hidden so that the trail appears once.
 _STYLE = r"""
 .bp-dag-viewer {
   --dag-border: var(--bp-rule, #d8dade); --dag-bg: var(--bp-surface, #fff);
@@ -497,6 +498,7 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-breadcrumb li + li::before { content: "/"; margin-right: .35rem; color: var(--dag-border); }
 .bp-dag-breadcrumb li:not(:first-child, [aria-current]) { flex-shrink: 4; }
 .bp-dag-breadcrumb [aria-current=page] { color: var(--dag-fg); font-weight: 650; }
+@media (min-width: 681px) { .bp-dag-viewer:has(.bp-dag-navigation-path) .bp-dag-breadcrumb { visibility: hidden; } }
 .bp-dag-book { flex: none; color: var(--dag-link); font-size: .72rem; font-weight: 650; text-decoration: none; }
 .bp-dag-swatch { flex: none; width: .7rem; height: .7rem; border: 2px solid var(--dag-swatch-light-stroke); border-radius: 50%; background: var(--dag-swatch-light-fill); }
 [data-md-color-scheme=slate] .bp-dag-swatch { border-color: var(--dag-swatch-dark-stroke); background: var(--dag-swatch-dark-fill); }

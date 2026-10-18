@@ -1200,6 +1200,25 @@ def test_a_phones_chapter_explorer_gives_its_breadcrumb_a_line_of_its_own(mobile
     assert book is not None and book["width"] >= 24
 
 
+def test_the_explorer_draws_its_breadcrumb_once(desktop_page: object, site_url: str) -> None:
+    """On desktop the head and the hierarchy rail both drew the trail."""
+    page = _open_site(desktop_page, site_url, "dependencies/chapters/algebra.html")
+    playwright.expect(page.locator(".bp-dag-navigation-path li")).to_have_count(3)
+    playwright.expect(page.locator(".bp-dag-navigation-path")).to_be_visible()
+    playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_hidden()
+    # The textbook link shares the head's row and stays.
+    playwright.expect(page.locator(".bp-dag-book")).to_be_visible()
+    # Phones hide the rail, so there the head draws the trail.
+    page.set_viewport_size({"width": 390, "height": 844})
+    playwright.expect(page.locator(".bp-dag-navigation")).to_be_hidden()
+    playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_visible()
+    # The landing page's rail holds the hero instead of a trail, so its head keeps the trail on desktop too.
+    page.set_viewport_size({"width": 1280, "height": 900})
+    _open_site(page, site_url, "index.html")
+    playwright.expect(page.locator(".bp-dag-navigation .bp-dag-intro")).to_be_visible()
+    playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_visible()
+
+
 def test_the_published_atlas_hides_the_isolate_toggle(desktop_page: object, site_url: str) -> None:
     page = _open_site(desktop_page, site_url, "dependencies.html")
     playwright.expect(page.locator(".bp-dag-isolated")).to_be_hidden()
@@ -1211,9 +1230,6 @@ def test_published_explorer_controls_keep_their_own_styles_under_material(
     """Material's typeset rules stacked the breadcrumb and drew the status filter as an admonition."""
     page = _open_site(desktop_page, site_url, "dependencies/chapters/algebra.html")
 
-    crumbs = page.locator(".bp-dag-breadcrumb li")
-    playwright.expect(crumbs).to_have_count(3)
-    assert len({round(crumbs.nth(index).bounding_box()["y"]) for index in range(3)}) == 1
     summary = page.locator(".bp-dag-filter-summary")
     background = page.locator(".bp-dag-viewer").evaluate("element => getComputedStyle(element).backgroundColor")
     assert summary.evaluate("element => getComputedStyle(element).backgroundColor") == background
@@ -1230,6 +1246,13 @@ def test_published_explorer_controls_keep_their_own_styles_under_material(
         assert rail_list.locator("li").first.evaluate("element => getComputedStyle(element).marginLeft") == "0px"
     title = page.locator(".bp-dag-navigation-title")
     assert title.evaluate("element => getComputedStyle(element).fontWeight") == "650"
+    # The head draws the breadcrumb only where phones hide the rail.
+    page.set_viewport_size({"width": 390, "height": 844})
+    crumbs = page.locator(".bp-dag-breadcrumb li")
+    playwright.expect(crumbs).to_have_count(3)
+    playwright.expect(crumbs.first).to_be_visible()
+    assert len({round(crumbs.nth(index).bounding_box()["y"]) for index in range(3)}) == 1
+    page.set_viewport_size({"width": 1280, "height": 900})
 
     # The atlas overview's heading, in the details drawer, took Material's large, light h2 and its margin.
     page.goto(f"{site_url}/dependencies.html")
