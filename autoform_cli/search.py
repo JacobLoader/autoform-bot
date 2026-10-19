@@ -165,8 +165,9 @@ def search_blueprint(
         raise SearchError("search query has no terms")
     terms = tuple(dict.fromkeys(_stem(word) for word in words))
     # A term has lost the prime, ``?`` or ``!`` that can end a Lean name; the
-    # words as typed keep it, so they can tell ``foo'`` from ``foo``.
-    typed = frozenset(_unquoted(_as_typed(word)) for word in _normalize(query).split())
+    # words as typed keep it, so they can tell ``foo'`` from ``foo``. A filler
+    # word the terms dropped names nothing here either.
+    typed = frozenset(_unquoted(_as_typed(word)) for word in _normalize(query).split() if _bare(word) in words)
     if limit < 1:
         raise SearchError("search limit must be a positive integer")
     wanted_states = tuple(sorted(set(states)))
@@ -338,7 +339,7 @@ def _names(node: RuntimeNode) -> list[str]:
 
 
 def _spells_a_name(words: frozenset[str], names: Sequence[str]) -> bool:
-    """Whether one of ``words`` is one of ``names``, or its last components, exactly as typed."""
+    """Whether one of ``words`` spells one of ``names``, or its last components, ignoring case."""
 
     for name in names:
         components = _unquoted(_normalize(name)).split(".")

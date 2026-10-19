@@ -321,6 +321,38 @@ def test_a_name_in_single_quotes_is_compared_without_them(tmp_path: Path) -> Non
     assert _ids(project, "'Project.foo''")[:2] == ["convexity/marked", "convexity/plain"]
 
 
+def test_the_exact_name_key_reads_whole_components_of_lean_and_mathlib_names(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    theorem = ("declaration: theorem",)
+    mathlib = ("declaration: theorem", "mathlib: true", "mathlib_file: Mathlib/Order/Basic.lean")
+    # Per query: the name it spells, and a rival a dependent would put first on any later tie.
+    cases = {
+        "Convex.foo'": (theorem, "lean: Project.Convex.foo'", "lean: Project.Convex.foo"),
+        "Foo.bar'": (mathlib, "mathlib_declaration: Foo.bar'", "mathlib_declaration: Foo.bar"),
+        "qux": (theorem, "lean: Project.qux", "lean: Project.xqux"),
+        "sep": (theorem, "lean: Project.«sep»", "lean: Project.sepal"),
+    }
+    for index, (kind, named, rival) in enumerate(cases.values()):
+        _article(project, f"convexity/named{index}.md", title=f"Named {index}", metadata=(*kind, named))
+        _article(project, f"convexity/rival{index}.md", title=f"Rival {index}", metadata=(*kind, rival))
+    _article(project, "convexity/fan.md", title="Fan", depends=tuple(f"rival{index}.md" for index in range(len(cases))))
+
+    for index, query in enumerate(cases):
+        order = _ids(project, query)
+        assert order.index(f"convexity/named{index}") < order.index(f"convexity/rival{index}"), query
+
+
+def test_a_filler_word_names_no_declaration(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    free = ("declaration: def", "lean: Project.FreeGroup.of")
+    _article(project, "convexity/free.md", title="Free group units", metadata=free)
+    _article(project, "convexity/units.md", title="Group units")
+    _article(project, "convexity/fan.md", title="Fan", depends=("units.md",))
+
+    # `of` is dropped from the terms, so it does not make the owner of `FreeGroup.of` an exact match.
+    assert _ids(project, "group of units")[:2] == ["convexity/units", "convexity/free"]
+
+
 def test_a_namespace_inside_quoting_marks_matches_as_a_namespace(tmp_path: Path) -> None:
     project = _project(tmp_path)
     _article(

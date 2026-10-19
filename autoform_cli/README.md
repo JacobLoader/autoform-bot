@@ -1310,10 +1310,11 @@ Hits sort by the best field any term matched. Among hits with the same best
 field, those that contain every word as typed, in any field, come before those
 reached only through a shortened word; then by the weakest field any term
 needed, then an article owning a Lean name, or the name's last components,
-that a query word spells exactly, a final prime, `?`, or `!` included and
-quotation marks, brackets, and punctuation around the word ignored
-(`Project.foo'` puts the owner of `Project.foo'` before that of
-`Project.foo`), then more dependents first, then node ID.
+that a query word spells, ignoring case and dropped filler words: a final
+prime, `?`, or `!` counts, while quotation marks, parentheses, `*` emphasis,
+and punctuation around the word do not (`Project.foo'` puts the owner of
+`Project.foo'` before that of `Project.foo`); then more dependents first, then
+node ID.
 
 `--state` takes exact derived state keys, which `autoform search --help` lists
 (`proved` does not include `fully_proved`), and `--declaration` frontmatter
