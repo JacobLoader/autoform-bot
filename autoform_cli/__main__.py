@@ -43,6 +43,7 @@ from .render import SOURCES_DIR, PublicationError, render_site
 from .runtime import RuntimeProjectionError, projection_omissions, resolve_runtime_paths
 from .scaffold import ScaffoldError, scaffold_project
 from .search import SearchError, search_blueprint, statement_preview
+from .site_check import SiteCheckError, check_site
 from .skeleton import (
     DEFAULT_PROBE_TIMEOUT,
     SkeletonError,
@@ -120,6 +121,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=_port,
         default=0,
         help="local port (default: choose an available port)",
+    )
+
+    site = subparsers.add_parser("site", help="inspect a site MkDocs built from rendered source")
+    site_subparsers = site.add_subparsers(dest="site_command", required=True)
+    site_check = site_subparsers.add_parser(
+        "check", help="report dead internal links, missing anchors and statement cards the build lost"
+    )
+    site_check.add_argument("site_dir", help="the built site: MkDocs's site_dir")
+    site_check.add_argument(
+        "--source",
+        type=Path,
+        help="the rendered source the site was built from (MkDocs's docs_dir), to check every statement card",
     )
 
     project = subparsers.add_parser("project", help="create or inspect local projects and supported releases")
@@ -482,6 +495,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _search(args)
     if args.command == "library":
         return _library_index(args) if args.library_command == "index" else _library_list(args)
+    if args.command == "site":
+        return _site_check(args)
     if args.command == "claim":
         return _claim(args)
     if args.command == "debrief":
@@ -752,6 +767,20 @@ def _dashboard(args: argparse.Namespace) -> int:
         return 2
     except KeyboardInterrupt:
         return 130
+    return 0
+
+
+def _site_check(args: argparse.Namespace) -> int:
+    try:
+        report = check_site(args.site_dir, args.source)
+    except SiteCheckError as exc:
+        print(f"error: {exc}")
+        return 1
+
+    print(f"{args.site_dir}: {report.pages} pages, {len(report.issues)} problem(s)")
+    for issue in report.issues:
+        print(f"warning: {issue}")
+    # It informs: what it finds never fails the build.
     return 0
 
 
