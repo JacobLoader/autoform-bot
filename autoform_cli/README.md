@@ -196,6 +196,7 @@ An article asserts only facts a human or agent verified:
 | `discussion: 42` | Issue number or URL where the article is being discussed. |
 | `article_id: af_...` | Durable identity, `af_` plus 24 lowercase hex digits; `autoform work` requires it on unfinished formalizable leaves. |
 | `open_statements: allowed` | Project policy, valid only in `roadmap/README.md`: a theorem's statement may land with a `sorry` proof (see [Open statements](#open-statements)). Absent or `forbidden` keeps the strict policy. |
+| `published: false` | Folder setting, valid only in the `README.md` of a folder below `roadmap/`: `check` and `audit` validate the folder and everything in it, but render leaves it out of the site and of the publication hash. No link on a published page may point into it, whether a dependency, a source or prose, and `audit` and render reject coverage evidence that does. A folder inside an unpublished one is unpublished too, whatever its own README says. |
 
 Everything a reader thinks of as progress is *derived* from the DAG on every
 run, so it cannot go stale. Readiness depends on the project's policy: under
@@ -1283,22 +1284,31 @@ What an existing repository meets when it moves to this version:
 ## Validation
 
 `autoform check` rejects cycles between authored articles, missing targets,
-escaping paths, symbolic links anywhere under `roadmap/`, self-dependencies,
+escaping paths, symbolic links under `roadmap/`, self-dependencies,
 missing or multiple H1 titles, unsupported frontmatter keys, assertion values
 it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
-`mathlib: true`. A `## Sources` link to a local path must name a file
+`mathlib: true`. Hidden files and folders under `roadmap/`, those with a part
+starting with `.`, are no part of the roadmap, since render omits them: they
+hold no articles, need no chapter page, and may be symbolic links, such as an
+editor's lock file. A dependency on a hidden page fails, naming the hidden
+path, as does one that steps through a hidden folder and back out, and so does
+an `.implementation-notes` folder under `roadmap/`, which nothing reads there.
+A `## Sources` link to a local path must name a file
 inside the blueprint, as `audit` also requires: a missing file, a directory, an
 invalid path or URL, or a target outside the blueprint fails. The path must open
 as written, so one through a missing folder or a symbolic link loop fails too,
 even where its `..` steps would cancel that part as text (Windows itself applies
 `..` as text). So does a target
 whose path as written, once its `..` steps are applied, has a part below the
-blueprint starting with `.`, unless the article citing it is hidden too,
-because render omits hidden files and directories. Under `sources/`, such a
+blueprint starting with `.`, because render omits hidden files and
+directories. Under `sources/`, such a
 target passes `check` with a warning instead, and `audit` still reports it:
 only a repository link reaches the note, and render writes one when it links
-the other source notes there, so the note must be committed. `audit` alone checks
+the other source notes there, so the note must be committed. A `## Sources`
+link to a view generated at the blueprint root, such as `dependencies.md` or
+`structure.md`, fails as well, because render omits the vault's copy; `audit`
+and render reject coverage evidence that names one. `audit` alone checks
 fragments and fails links with other schemes or a network location. Such a link
 passes `check` with a warning, because work and search leave it out; so does a
 `mathlib_file` that is not a portable relative path, which search reports as
@@ -1575,8 +1585,11 @@ held to the same placeholder rule.
 ## Search contract
 
 `autoform search` is a read-only projection of Markdown: it writes nothing,
-builds no index, and starts no process. The query splits on whitespace into
-terms. Words that carry no meaning (`a`, `an`, `and`, `are`, `as`, `at`, `be`,
+builds no index, and starts no process. The contract is the JSON shape, the
+exit codes, and the rule that an article is a hit only when every term occurs
+in it; how the terms are cut, folded, and ranked, described below, may change.
+The query splits on whitespace into terms. Words that carry no meaning (`a`,
+`an`, `and`, `are`, `as`, `at`, `be`,
 `by`, `can`, `do`, `does`, `for`, `from`, `has`, `have`, `if`, `in`, `is`,
 `it`, `its`, `let`, `of`, `on`, `or`, `such`, `that`, `the`, `then`, `there`,
 `these`, `this`, `to`, `we`, `when`, `where`, `which`, `whose`, `with`) are
@@ -1605,8 +1618,8 @@ without `_root_.` and `«»`; a prime, `?`, or `!` ending a name is not compared
 so `Project.foo` is also a `lean` match for `Project.foo'`); `node_id` (the
 last component of the path ID);
 `statement_text`; `ancestors` (titles of containing articles below the roadmap
-root); `qualified_names` (the path ID and Lean names in full, which is where a
-namespace alone matches). A title is
+root); `qualified_names` (the path ID and Lean names in full, also without
+`_root_.` and `«»`, which is where a namespace alone matches). A title is
 matched without its Markdown markup. The statement is
 matched as the site publishes it, without headings, code blocks, diagrams,
 comments, and elements carrying `hidden`; inline code and mathematics count,
@@ -1624,15 +1637,22 @@ search for each spelling.
 Hits sort by the best field any term matched. Among hits with the same best
 field, those that contain every word as typed, in any field, come before those
 reached only through a shortened word; then by the weakest field any term
-needed, then more dependents first, then node ID.
+needed, then an article owning a Lean name, or the name's last components,
+that a query word spells, ignoring case and dropped filler words: a final
+prime, `?`, or `!` counts, while quotation marks, parentheses, `*` emphasis,
+and punctuation around the word do not (`Project.foo'` puts the owner of
+`Project.foo'` before that of `Project.foo`); then more dependents first, then
+node ID.
 
 `--state` takes exact derived state keys, which `autoform search --help` lists
 (`proved` does not include `fully_proved`), and `--declaration` frontmatter
 `declaration` kinds, each repeatable; they apply before `total_matches` is
 counted and `--limit` (default 20) after. `--declaration def` also keeps
-`noncomputable def`, but not `definition`. A kind that no article in the
-blueprint declares is refused with exit code 2 and the kinds in use, rather
-than answered with no hits.
+`noncomputable def`, but not `definition`. When no article in the blueprint
+declares any of the requested kinds, the search is refused with exit code 2 and
+the kinds in use, rather than answered with no hits. A requested kind that no
+article declares, beside one that some article does, adds nothing, and a note
+on standard error names it.
 
 `--json` writes `autoform-search/v1`: `schema`, `source_revision`,
 `open_statements`, `query`, `terms`, `filters` (`declaration` and `state`,
@@ -1706,8 +1726,9 @@ declaration record, a module's `module_doc` or `module_system`, or the
 header's `generator`, `probe`, or `package`.
 
 A declaration matches when every term occurs in its last name component
-(`lean`), docstring, module header (`module_doc`), full name or module
-(`qualified_names`), the constants in its type (`mentions`), or its keyword
+(`lean`), docstring, module header (`module_doc`), full name (also without
+`_root_.` and `«»`) or module (`qualified_names`), the constants in its type
+(`mentions`), or its keyword
 (`kind`), ranked in that order. Hits sort by best field, then the words as
 typed before a stem, then worst field, then `complete` before `wanted`, then
 name. `--state` and `--declaration` apply to articles only; `--limit` applies

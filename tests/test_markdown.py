@@ -444,14 +444,18 @@ def test_local_targets_are_resolved_against_the_boundary(tmp_path: Path) -> None
     assert issue("../roadmap/node.md") is None
     assert issue("../roadmap/node.md#results") is None
     assert issue("../.drafts/../roadmap/node.md") is None
+    # Render omits the vault's copies of the root views, whether or not one exists.
+    (tmp_path / "structure.md").write_text("# Structure\n", encoding="utf-8")
+    assert issue("../structure.md") == issue("../dependencies.md") == "generated-coverage-target"
+    (tmp_path / "sources").mkdir()
+    (tmp_path / "sources" / "structure.md").write_text("# Structure notes\n", encoding="utf-8")
+    assert issue("../sources/structure.md") is None
     assert issue("../.x/../roadmap/node.md") == "coverage-not-found"
     assert issue("https://example.invalid/page") is None
     assert issue("../roadmap/node.md#absent") == "coverage-anchor-not-found"
     assert issue("../roadmap/absent.md") == "coverage-not-found"
     assert issue("../../outside.md") == "coverage-escapes-blueprint"
     assert issue("../.drafts/notes.md") == "hidden-coverage-target"
-    # Render publishes neither a hidden page nor its links.
-    assert local_target_issue(hidden, "#notes", tmp_path, label="coverage") is None
     assert issue("mailto:someone@example.invalid") == "unsupported-coverage-link"
     assert issue("//example.invalid/page") == "unsupported-coverage-link"
 

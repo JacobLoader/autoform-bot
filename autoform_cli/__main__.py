@@ -284,7 +284,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="keep articles whose frontmatter declaration is KIND: theorem, lemma, def, ... (repeatable)",
     )
     search.add_argument(
-        "--limit", type=int, default=20, metavar="N", help="show at most N articles (default 20)"
+        "--limit",
+        type=int,
+        default=20,
+        metavar="N",
+        help="show at most N hits from the blueprint and from each --library (default 20)",
     )
     search.add_argument(
         "--library",
@@ -586,6 +590,7 @@ def _source_link_issues(graph: Graph) -> tuple[list[str], list[str]]:
         "malformed-source-url": "is not a valid URL",
         "malformed-source-link": "contains an invalid path",
         "hidden-source-target": "names a hidden path, which render omits",
+        "generated-source-target": "names a generated view, which render omits",
     }
     issues, warnings = [], []
     for node in graph.nodes.values():
@@ -989,10 +994,16 @@ def _search(args: argparse.Namespace) -> int:
         print("error: project, blueprint, or Lean root path cannot be read", file=sys.stderr)
         return 2
 
+    notes = []
+    if result.unused_declarations:
+        kinds = ", ".join(result.unused_declarations)
+        notes.append(_human_text(f"note: no article declares kind {kinds}, so the search used only the other kinds"))
     note = None if args.libraries else _unsearched_library_note(args.target, args.lean_root)
+    if note:
+        notes.append(note)
     if args.json:
         print(result.to_json() if combined is None else combined.to_json())
-        if note:
+        for note in notes:
             print(note, file=sys.stderr)
         return 0
     # Every count comes first, and each hit's statement on its first line, so output cut short still shows them.
@@ -1027,9 +1038,10 @@ def _search(args: argparse.Namespace) -> int:
         print("  Matched: " + ", ".join(hit.matched_fields))
     for library in libraries:
         _print_library(library)
-    if note:
+    if notes:
         sys.stdout.flush()
-        print(note, file=sys.stderr)
+        for note in notes:
+            print(note, file=sys.stderr)
     return 0
 
 

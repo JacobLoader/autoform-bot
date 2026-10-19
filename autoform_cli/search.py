@@ -36,6 +36,8 @@ _FILLER_WORDS = frozenset(
 _WORD_ENDINGS = ("ing", "ed", "es", "s")
 #: Punctuation and quoting a sentence or Markdown leaves around a word.
 _QUOTING = ".,;:!?\"'`"
+#: Marks around a query word that never begin or end a Lean name.
+_WRAPPING = "`\"(),;:.$*"
 #: Characters that can make a title read differently on the page than in its source.
 _TITLE_MARKUP = re.compile(r"[*_`\[\]<>&$\\~]")
 #: Dashes and quotation marks a typist replaces with the keyboard's own.
@@ -125,6 +127,9 @@ class SearchResult:
     limit: int
     total_matches: int
     hits: tuple[SearchHit, ...]
+    #: Requested kinds no article declares, beside one that some article does.
+    #: The CLI names them; the JSON does not carry them.
+    unused_declarations: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -162,6 +167,10 @@ def search_blueprint(
     if not words:
         raise SearchError("search query has no terms")
     terms = tuple(dict.fromkeys(_stem(word) for word in words))
+    # A term has lost the prime, ``?`` or ``!`` that can end a Lean name; the
+    # words as typed keep it, so they can tell ``foo'`` from ``foo``. A filler
+    # word the terms dropped names nothing here either.
+    typed = frozenset(_unquoted(_as_typed(word)) for word in _normalize(query).split() if _bare(word) in words)
     if limit < 1:
         raise SearchError("search limit must be a positive integer")
     wanted_states = tuple(sorted(set(states)))
@@ -179,10 +188,12 @@ def search_blueprint(
     root_page = (paths.blueprint_dir / "roadmap" / "README.md").resolve()
     root = next((node_id for node_id, node in graph.nodes.items() if node.path.resolve() == root_page), None)
 
-    # A kind no article uses would give an empty answer, which reads as "this
-    # result is new" when the kind was only misspelled.
-    unused = [kind for kind in wanted_declarations if not any(_declares(node, (kind,)) for node in runtime.nodes)]
-    if unused:
+    # A filter no article matches would give an empty answer, which reads as
+    # "this result is new" when a kind was only misspelled. Beside a kind in
+    # use, an unused kind adds nothing to the answer, so the answer stands and
+    # the CLI names the unused kind.
+    unused = tuple(kind for kind in wanted_declarations if not any(_declares(node, (kind,)) for node in runtime.nodes))
+    if unused and len(unused) == len(wanted_declarations):
         in_use = sorted({_normalize(node.declaration) for node in runtime.nodes if node.declaration})
         raise SearchError(
             f"no article declares kind {', '.join(unused)}; this blueprint uses: {', '.join(in_use) or 'none'}"
@@ -196,7 +207,7 @@ def search_blueprint(
         title = _normalize(node.title)
         title_count[title] = title_count.get(title, 0) + 1
 
-    matches: list[tuple[bool, int, int, SearchHit]] = []
+    matches: list[tuple[int, bool, int, bool, SearchHit]] = []
     for node in runtime.nodes:
         if wanted_states and node.status.state not in wanted_states:
             continue
@@ -229,12 +240,14 @@ def search_blueprint(
             matched_fields=tuple(_FIELDS[rank] for rank in sorted(set(ranks))),
             shared_title=title_count[_normalize(node.title)] > 1,
         )
-        matches.append((min(ranks), _ranks(words, fields) is None, max(ranks), hit))
+        named = _spells_a_name(typed, _names(node))
+        matches.append((min(ranks), _ranks(words, fields) is None, max(ranks), not named, hit))
 
     # The best field first, and within it the articles holding the words as
     # typed. Among equals, the article whose worst-placed term sits in a
-    # better field, then the one more articles depend on.
-    matches.sort(key=lambda match: (*match[:3], -match[3].used_by_count, match[3].node_id))
+    # better field, then one owning a Lean name that a query word spells
+    # exactly, then the one more articles depend on.
+    matches.sort(key=lambda match: (*match[:4], -match[4].used_by_count, match[4].node_id))
     return SearchResult(
         source_revision=runtime.source_revision,
         open_statements=runtime.open_statements,
@@ -244,7 +257,8 @@ def search_blueprint(
         declarations=wanted_declarations,
         limit=limit,
         total_matches=len(matches),
-        hits=tuple(match[3] for match in matches[:limit]),
+        hits=tuple(match[4] for match in matches[:limit]),
+        unused_declarations=unused,
     )
 
 
@@ -285,7 +299,7 @@ def _ranks(terms: tuple[str, ...], fields: dict[str, str], order: tuple[str, ...
         rank = next((rank for rank, name in enumerate(order) if term in fields[name]), None)
         # A declaration's whole name, or its last components, names the
         # declaration as its last component does. A namespace alone does not.
-        if f".{_lean_name(term)} " in fields["lean_names"]:
+        if f".{_lean_name(term)}\n" in fields["lean_names"]:
             rank = min(order.index("lean"), len(order) if rank is None else rank)
         if rank is None:
             return None
@@ -300,7 +314,42 @@ def _lean_name(name: str) -> str:
     the prime, ``?`` or ``!`` a name ends with, so the name loses it as well.
     """
 
-    return name.removeprefix("_root_.").replace("\u00ab", "").replace("\u00bb", "").rstrip(_QUOTING)
+    return _unquoted(name).rstrip(_QUOTING)
+
+
+def _unquoted(name: str) -> str:
+    """Return a Lean name without ``_root_.`` and its quoting marks, its ending kept."""
+
+    return name.removeprefix("_root_.").replace("\u00ab", "").replace("\u00bb", "")
+
+
+def _as_typed(word: str) -> str:
+    """Return a query word without the marks around it, keeping a final prime, ``?`` or ``!``.
+
+    A Lean name never begins with a prime, so a leading one opens a quotation
+    that the last prime closes.
+    """
+
+    typed = word.strip(_WRAPPING)
+    if typed.startswith("'"):
+        typed = typed[1:].removesuffix("'")
+    return typed
+
+
+def _names(node: RuntimeNode) -> list[str]:
+    """Return the Lean and Mathlib names an article owns, as written."""
+
+    return [*(target.declaration for target in node.lean_targets), *node.mathlib_declarations]
+
+
+def _spells_a_name(words: frozenset[str], names: Sequence[str]) -> bool:
+    """Whether one of ``words`` spells one of ``names``, or its last components, ignoring case."""
+
+    for name in names:
+        components = _unquoted(_normalize(name)).split(".")
+        if any(".".join(components[index:]) in words for index in range(len(components))):
+            return True
+    return False
 
 
 def _words(query: str) -> tuple[str, ...]:
@@ -431,17 +480,20 @@ def _fields(
     while parent is not None and parent != root:
         ancestors.append(_title(nodes[parent].title))
         parent = nodes[parent].parent
-    names = [*(target.declaration for target in node.lean_targets), *node.mathlib_declarations]
+    names = _names(node)
     return {
         "title": _normalize(_title(node.title)),
         "lean": _normalize("\n".join(name.rpartition(".")[2] for name in names)),
         "node_id": _normalize(node.id.rpartition("/")[2]),
         "statement_text": _normalize(visible_prose(parts.statement)),
         "ancestors": _normalize("\n".join(ancestors)),
-        "qualified_names": _normalize("\n".join([node.id, *names])),
-        # Not a field of its own: each name between a dot and a space, so that
-        # a term is looked up as a whole name or as its last components.
-        "lean_names": "".join(f".{_lean_name(_normalize(name))} " for name in names),
+        # The names also without ``_root_.`` and quoting marks, so a namespace
+        # that a quoted component spells is found here.
+        "qualified_names": _normalize("\n".join(dict.fromkeys([node.id, *names, *map(_unquoted, names)]))),
+        # Not a field of its own: each name between a dot and a newline, which
+        # no name holds, so that a term is looked up as a whole name or as its
+        # last components.
+        "lean_names": "".join(f".{_lean_name(_normalize(name))}\n" for name in names),
     }
 
 
