@@ -338,14 +338,12 @@ def _unpublished_link_issues(sources: list[_NodeSource], unpublished: tuple[Path
     return issues
 
 
-def unpublished_content(
-    files: tuple[tuple[str, bytes], ...],
-) -> tuple[tuple[str, ...], frozenset[str], frozenset[str]]:
-    """The folders captured *files* mark ``published: false``, and the article and node IDs inside them.
+def unpublished_content(files: tuple[tuple[str, bytes], ...]) -> tuple[tuple[str, ...], frozenset[str]]:
+    """The folders captured *files* mark ``published: false``, and the article IDs inside them.
 
     For render, which leaves those folders out before it loads the graph but
-    still knows their articles' implementation notes and atlas entries. A
-    README that cannot be read here fails ``load_graph`` too.
+    still knows their articles' implementation notes. A README that cannot be
+    read here fails ``load_graph`` too.
     """
     folders = []
     for name, data in files:
@@ -357,18 +355,29 @@ def unpublished_content(
                 continue
             if metadata.get("published") in _FALSE:
                 folders.append(name.removesuffix("/README.md"))
-    article_ids, node_ids = set(), set()
+    article_ids = set()
     for name, data in files:
         if name.endswith(".md") and any(name.startswith(f"{folder}/") for folder in folders):
-            # As _article_id names them: a folder's README is the folder's node.
-            node_ids.add(name.removeprefix("roadmap/").removesuffix(".md").removesuffix("/README"))
             try:
                 article_id = _parse_frontmatter(name, data.decode("utf-8").splitlines())[0].get("article_id")
             except UnicodeError:
                 continue
             if article_id is not None:
                 article_ids.add(article_id)
-    return tuple(folders), frozenset(article_ids), frozenset(node_ids)
+    return tuple(folders), frozenset(article_ids)
+
+
+def unpublished_node_ids(files: tuple[tuple[str, bytes], ...], folders: tuple[str, ...]) -> frozenset[str]:
+    """The node IDs of the articles in *folders*, as ``_article_id`` names them: a folder's README is the folder.
+
+    For render's atlas warnings, since atlas entries name node IDs, not
+    article IDs.
+    """
+    return frozenset(
+        name.removeprefix("roadmap/").removesuffix(".md").removesuffix("/README")
+        for name, _data in files
+        if name.endswith(".md") and any(name.startswith(f"{folder}/") for folder in folders)
+    )
 
 
 def atlas_omissions(graph: Graph, unpublished: frozenset[str] = frozenset()) -> list[str]:
@@ -1063,4 +1072,5 @@ __all__ = [
     "catalogs_without_ledger",
     "load_graph",
     "unpublished_content",
+    "unpublished_node_ids",
 ]

@@ -57,6 +57,7 @@ from .graph import (
     atlas_omissions,
     load_graph,
     unpublished_content,
+    unpublished_node_ids,
 )
 from .graph_views import _containers, _countable, _is_countable, _module_inventories
 from .lean import (
@@ -710,7 +711,8 @@ def _capture_blueprint(blueprint: Path) -> tuple[TreeSnapshot, frozenset[str], f
         if isinstance(error, TreeChangedError):
             raise PublicationError(["blueprint changed while it was read; retry"]) from error
         raise PublicationError([f"blueprint could not be captured: {error}"]) from error
-    folders, article_ids, node_ids = unpublished_content(snapshot.files)
+    folders, article_ids = unpublished_content(snapshot.files)
+    node_ids = unpublished_node_ids(snapshot.files, folders)
 
     def kept(name: str) -> bool:
         return not any(name == folder or name.startswith(f"{folder}/") for folder in folders)
