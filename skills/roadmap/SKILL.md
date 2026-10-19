@@ -62,12 +62,17 @@ and contacting people requires permission. Read [Setup's Zulip workflow](../setu
 requested Zulip work.
 
 Before adding a formalizable article, run `autoform search` over the blueprint
-for its result, by a few distinctive words of the statement and by a Lean name
-when one is known; the
-[search contract](../../autoform_cli/README.md#search-contract) says what is
-matched. Read each hit's statement, and narrow a query whose listing the limit
-cut short. Matching is literal, so the result is new only when retries with
-fewer words, and under other usual names for its objects, also show no article
+for its result and for each intermediate result its proof proves or cites, by a
+few distinctive words of each statement and by a Lean name when one is known;
+the [search contract](../../autoform_cli/README.md#search-contract) says what
+is matched. Bound a listing with search's limit, never by dropping lines (as
+`| head` does), since that drops later hits and the library listings, which
+print last. Read each hit's statement, or a library hit's signature, and the
+counts the output opens with; a line ending in `...` is shortened, and the
+JSON output has it whole. Narrow a query whose count shows the limit cut it
+short. Matching is literal, so a
+result is new only when retries with fewer words, and under other usual names
+for its objects, also show no article
 stating it. Search the project's usable shared libraries in the same call: run
 `autoform library list .` once, and pass each package it reports as usable to
 every search as `--library NAME --lean-root .`, even while the blueprint is
@@ -85,7 +90,8 @@ project's own Lean files, since `autoform check --lean-root` resolves no other.
 A refusal (exit 2) is not an empty result: resolve what it reports without
 adding the article, and search again, except that a refusal naming a library is
 handled as the library search rules say. A dependency link to a page not yet
-written causes one, so search for a batch of articles before writing the first.
+written causes one, so search for a batch of articles before writing the first,
+for each one's result and the intermediate results its proof proves or cites.
 When another formalizable article already states the result, link to it from
 each article that needs it, under `## Depends on` or `## Proof depends on`, and
 from the coverage row, instead of adding a node. A hit that is more general, a
@@ -168,16 +174,22 @@ Reconcile every affected source and milestone page, the coverage contract,
 
 ## Finish
 
-After the final edit, use the CLI reference to run `autoform check` and
-`autoform audit`, refresh the Mermaid graph, and resolve every finding introduced
-by this work or inside the adopted boundary. Report unrelated pre-existing
-findings instead of silently widening scope. Commit the vault and refreshed
-graph only after this final validation; pushing is outward-facing and requires
-a user request.
+After the final edit, use the CLI reference to run `autoform check` with
+`--lean-root .` and `autoform audit`, refresh the Mermaid graph, and resolve
+every finding introduced by this work or inside the adopted boundary. A `check`
+warning that a shared library declares a result citing one of the blueprint's
+sources usually means a library search was skipped: search for that declaration
+and reuse it as the library search rules say, or name it in the implementation
+note of the article it concerns, with why it does not apply. Report unrelated
+pre-existing findings instead of silently widening scope. Commit the vault and
+refreshed graph only after this final validation; pushing is outward-facing and
+requires a user request.
 
 Finish only when the adopted boundary has no `MAPPED` rows, every `DECOMPOSED`
 area links to a source-grounded fine DAG, affected pages and the graph agree,
 and the latest commit contains every change from the pass. Do not stop after
 discovery, a coarse proposal, one chapter, or unchanged validation. Report the
 material delta, evidence, remaining explicit blockers, and next execution
-frontier. Mark an active Goal complete only after these conditions hold.
+frontier. Before reporting, follow
+[Debrief Orchestrator](../debrief-orchestrator/SKILL.md) with `--skill roadmap`.
+Mark an active Goal complete only after these conditions hold.

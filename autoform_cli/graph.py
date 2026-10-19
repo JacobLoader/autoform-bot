@@ -18,7 +18,15 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .lean import declaration_names
-from .markdown import directory_path, link_definitions, link_targets, mask_code_and_comments, resolved_path
+from .markdown import (
+    _is_hidden_path,
+    directory_path,
+    link_definitions,
+    link_targets,
+    markdown_links,
+    mask_code_and_comments,
+    resolved_path,
+)
 
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
@@ -37,6 +45,7 @@ _FRONTMATTER_KEYS = frozenset(
         "origin",
         "discussion",
         "open_statements",
+        "published",
     }
 )
 _FORMALIZED = "formalized"
@@ -114,6 +123,9 @@ class Graph:
     #: statement may land with a ``sorry`` proof. Absent or ``forbidden`` keeps
     #: the strict policy, where CI rejects every ``sorry``.
     open_statements: bool = False
+    #: Folders whose ``README.md`` says ``published: false``: check validates
+    #: them, and render leaves them out of the site.
+    unpublished: tuple[Path, ...] = ()
 
     @property
     def edge_count(self) -> int:
@@ -199,6 +211,10 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
                     )
                 else:
                     open_statements = policy == "allowed"
+            if "published" in node.metadata and (canonical.name != "README.md" or canonical == policy_page):
+                issues.append(
+                    f"{node.id}: published is a folder setting; set it in a folder's README.md below roadmap/"
+                )
             parsed.append(node)
 
     if not issues:
@@ -210,6 +226,8 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
     issues.extend(_containment_cycles(parents))
     if issues:
         raise GraphValidationError(issues)
+    unpublished = tuple(sorted(node.path.parent for node in parsed if node.metadata.get("published") in _FALSE))
+    issues.extend(_unpublished_link_issues(sources, unpublished))
     nodes: dict[str, Node] = {}
     for parsed_node in parsed:
 
@@ -262,7 +280,57 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
         issues.extend(_find_cycles(nodes))
     if issues:
         raise GraphValidationError(issues)
-    return Graph(blueprint_dir=blueprint, nodes=nodes, open_statements=open_statements)
+    return Graph(blueprint_dir=blueprint, nodes=nodes, open_statements=open_statements, unpublished=unpublished)
+
+
+def _unpublished_link_issues(sources: list[_NodeSource], unpublished: tuple[Path, ...]) -> list[str]:
+    """Name each link from a published page into an unpublished folder, which the site lacks.
+
+    Render rewrites a page's links as text, applying their ``..`` steps, so they
+    are read that way here: a dependency, a source and a prose link alike.
+    """
+    issues = []
+    for source in sources:
+        if any(_is_within(source.path, folder) for folder in unpublished):
+            continue
+        for _, target in markdown_links(source.text):
+            try:
+                split = urlsplit(target)
+            except ValueError:
+                continue  # never a path into the folder; other checks report it
+            spelled = Path(os.path.normpath(source.path.parent / unquote(split.path)))
+            if not (split.scheme or split.netloc) and any(_is_within(spelled, folder) for folder in unpublished):
+                issues.append(f"{source.id}: links to {target!r}, in an unpublished folder render omits")
+    return issues
+
+
+def unpublished_content(files: tuple[tuple[str, bytes], ...]) -> tuple[tuple[str, ...], frozenset[str]]:
+    """The folders captured *files* mark ``published: false``, and the article IDs inside them.
+
+    For render, which leaves those folders out before it loads the graph but
+    still knows their articles' implementation notes. A README that cannot be
+    read here fails ``load_graph`` too.
+    """
+    folders = []
+    for name, data in files:
+        parts = name.split("/")
+        if len(parts) > 2 and parts[0] == "roadmap" and parts[-1] == "README.md":
+            try:
+                metadata = _parse_frontmatter(name, data.decode("utf-8").splitlines())[0]
+            except UnicodeError:
+                continue
+            if metadata.get("published") in _FALSE:
+                folders.append(name.removesuffix("/README.md"))
+    article_ids = set()
+    for name, data in files:
+        if name.endswith(".md") and any(name.startswith(f"{folder}/") for folder in folders):
+            try:
+                article_id = _parse_frontmatter(name, data.decode("utf-8").splitlines())[0].get("article_id")
+            except UnicodeError:
+                continue
+            if article_id is not None:
+                article_ids.add(article_id)
+    return tuple(folders), frozenset(article_ids)
 
 
 def _discover_nodes(blueprint: Path) -> tuple[list[_NodeSource], list[str]]:
@@ -283,10 +351,20 @@ def _discover_nodes(blueprint: Path) -> tuple[list[_NodeSource], list[str]]:
     def unlistable(exc: OSError) -> None:
         issues.append(f"cannot list roadmap directory {exc.filename}: {exc.strerror}")
 
-    # Unlike a glob, a walk reports each directory it cannot list.
-    entries = sorted(
-        Path(directory, name) for directory, _, files in os.walk(roadmap_root, onerror=unlistable) for name in files
-    )
+    # Unlike a glob, a walk reports each directory it cannot list. Render omits
+    # hidden entries, so they are no part of the roadmap here either.
+    entries: list[Path] = []
+    for directory, directories, files in os.walk(roadmap_root, onerror=unlistable):
+        for name in directories:
+            if name.casefold() == IMPLEMENTATION_NOTES_DIR.casefold():
+                misplaced = (Path(directory) / name).relative_to(roadmap_root.parent).as_posix()
+                issues.append(
+                    f"{misplaced}: implementation notes directory belongs at the blueprint root, "
+                    f"as {IMPLEMENTATION_NOTES_DIR}; nothing reads it here"
+                )
+        directories[:] = [name for name in directories if not name.startswith(".")]
+        entries.extend(Path(directory, name) for name in files if not name.startswith("."))
+    entries.sort()
     issues.sort()  # a walk visits directories in arbitrary order
     for path in entries:
         if path.suffix != ".md" and path.name.casefold() != "readme.md":
@@ -323,7 +401,7 @@ def _discover_nodes(blueprint: Path) -> tuple[list[_NodeSource], list[str]]:
 
 
 def roadmap_symlink_issues(blueprint: Path) -> list[str]:
-    """Report the symbolic links among ``roadmap/`` and every path beneath it.
+    """Report the symbolic links among ``roadmap/`` and the paths beneath it that are not hidden.
 
     Graph loading and runtime projection share this policy, so ``autoform check``
     accepts exactly the roadmaps the runtime does.
@@ -332,7 +410,10 @@ def roadmap_symlink_issues(blueprint: Path) -> list[str]:
     roadmap = blueprint / "roadmap"
     # os.path.islink is False for a path it cannot stat, which discovery then reports; Path.is_symlink raises
     # before 3.14.
-    paths = [roadmap] if roadmap.is_symlink() else [path for path in sorted(roadmap.rglob("*")) if os.path.islink(path)]
+    # Hidden entries, such as an editor's lock symlink, are no part of the roadmap.
+    paths = [roadmap] if roadmap.is_symlink() else [
+        path for path in sorted(roadmap.rglob("*")) if os.path.islink(path) and not _is_hidden_path(path, roadmap)
+    ]
     return [f"roadmap contains a symbolic link: {path.relative_to(blueprint).as_posix()}" for path in paths]
 
 
@@ -364,12 +445,14 @@ def _chapter_issues(roadmap_root: Path) -> list[str]:
     """
 
     try:
-        chapters = sorted(path for path in roadmap_root.iterdir() if path.is_dir())
+        chapters = sorted(path for path in roadmap_root.iterdir() if path.is_dir() and not path.name.startswith("."))
     except OSError:
         return []
     issues = []
     for chapter in chapters:
-        articles = [path for path in chapter.rglob("*.md") if os.path.isfile(path)]
+        articles = [
+            path for path in chapter.rglob("*.md") if os.path.isfile(path) and not _is_hidden_path(path, chapter)
+        ]
         if not articles:
             continue
         if os.path.isfile(chapter / "README.md"):
@@ -641,7 +724,7 @@ def _normalize_value(node_id: str, line_number: int, key: str, value: str) -> tu
         if folded != _FORMALIZED:
             return value, f"{location}: {key!r} accepts only {_FORMALIZED!r}; omit the key otherwise"
         return folded, None
-    if key in {"mathlib", "not_ready"}:
+    if key in {"mathlib", "not_ready", "published"}:
         if folded not in _TRUE | _FALSE:
             return value, f"{location}: {key!r} accepts only true or false"
         return folded, None
@@ -684,8 +767,12 @@ def _resolve_target(
         return None, f"{node.id}: dependency target must be a relative .md file: {target!r}"
 
     # A path that leaves the blueprint as spelled escapes it; nothing outside is looked at.
-    if not _is_within(Path(os.path.normpath(node.path.parent / relative)), blueprint):
+    spelled = Path(os.path.normpath(node.path.parent / relative))
+    if not _is_within(spelled, blueprint):
         return None, f"{node.id}: dependency target escapes the blueprint directory: {target!r}"
+    # Render's copy has no hidden folder, so it cannot step through one and back out either.
+    if any(part.startswith(".") and part != ".." for part in relative.parts):
+        return None, f"{node.id}: dependency target names a hidden path, which render omits: {target!r}"
     resolved = resolved_path(node.path.parent / relative)
     if resolved is None:
         # The kernel reaches a file behind a link only `readlink` refuses.
@@ -756,4 +843,5 @@ __all__ = [
     "GraphValidationError",
     "Node",
     "load_graph",
+    "unpublished_content",
 ]

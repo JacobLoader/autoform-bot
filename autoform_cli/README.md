@@ -138,6 +138,7 @@ An article asserts only facts a human or agent verified:
 | `discussion: 42` | Issue number or URL where the article is being discussed. |
 | `article_id: af_...` | Durable identity, `af_` plus 24 lowercase hex digits; `autoform work` requires it on unfinished formalizable leaves. |
 | `open_statements: allowed` | Project policy, valid only in `roadmap/README.md`: a theorem's statement may land with a `sorry` proof (see [Open statements](#open-statements)). Absent or `forbidden` keeps the strict policy. |
+| `published: false` | Folder setting, valid only in the `README.md` of a folder below `roadmap/`: `check` and `audit` validate the folder and everything in it, but render leaves it out of the site and of the publication hash. No link on a published page may point into it, whether a dependency, a source or prose, and `audit` and render reject coverage evidence that does. A folder inside an unpublished one is unpublished too, whatever its own README says. |
 
 Everything a reader thinks of as progress is *derived* from the DAG on every
 run, so it cannot go stale. Readiness depends on the project's policy: under
@@ -356,7 +357,24 @@ autoform check blueprint --lean-root .
 autoform audit blueprint --lean-root .
 ```
 
-`check` validates the graph contract. `audit` adds deterministic completeness,
+`check` validates the graph contract. With `--lean-root` it resolves names only
+in the project's own Lean files, not in Mathlib or other dependencies under
+`.lake`; when a name is not found, a note at the end of the output says that a
+shared library's declaration belongs in the article's implementation note. It
+also warns about each complete declaration in a usable shared library (see
+`autoform library list`) whose docstring, or whose module's docstring, cites an
+arXiv paper or DOI that an article's `## Sources` links cite, directly or
+through a blueprint page they link, when no implementation note and no project
+Lean file names it. An article stops counting once it is proved, when audit asks
+for its implementation note to go. Such a declaration usually proves part of the
+source being formalized, so reuse it rather than proving it again, or name it in
+the implementation note of the article it concerns to record why not.
+Identifiers match across their usual forms: versions, `abs` and `pdf` URLs, the
+`arXiv:` prefix, arXiv's own DOIs, and `doi:` or `https://doi.org/`. These
+warnings never change the exit status, and comparing a library costs one read of
+its indexed sources.
+
+`audit` adds deterministic completeness,
 provenance, coverage, checked-fact, and optional Lean-target checks. It is local
 and read-only: it neither contacts network services nor writes findings back
 into the blueprint. Pass `--json` for stable machine-readable output; a nonzero
@@ -973,6 +991,68 @@ board. A failed acquire or renew means the caller cannot prove ownership and
 must stop before committing or pushing protected work. Claims do not prove
 mathematical correctness and do not replace branch-level Git CAS.
 
+Ask the agent that led a Setup, Roadmap, or Formalize run what got in its way,
+and draft an AutoformBot issue from the answer:
+
+```bash
+autoform debrief orchestrator form . --skill formalize
+autoform debrief orchestrator record . --skill formalize < /tmp/answer.json
+```
+
+Orchestrator debriefs are on by default: `form` prints the form unless
+`AUTOFORM_DEBRIEF` is `0`, `false`, `no`, or `off`, or the platform cannot store
+the answer, and otherwise says the step is disabled. The form asks separately
+for friction caused by the user's local setup, independent of AutoformBot
+(`local_setup_friction`), and for friction or issues with AutoformBot itself
+(`autoform_friction`). `record` reads one JSON object answering the form from
+`--answer` or standard input, refuses anything else, and stores a new versioned
+record under `runs/` in the debrief store described below, together with the
+installed AutoformBot version. A directory without a roadmap, as during Setup,
+is accepted as the project. When `autoform_friction` is not empty, `record` also
+writes a draft issue for `facebookresearch/autoform-bot` to `issues/` in the
+store and prints a GitHub link that opens a new issue pre-filled with it (the
+title alone, when the draft is too long for a link). The draft holds only the
+AutoformBot friction and the environment, with the project path replaced by
+`$PROJECT` and home directories by `~`. Nothing is sent: the user reviews,
+edits, and submits the issue. With `--json`, `record` prints one object,
+`{"run_id": ..., "path": ..., "issue": null | {"path": ..., "url": ...,
+"url_has_body": true | false}}`.
+
+Ask the agent that just finished a formalization attempt what infrastructure
+would have made it cheaper, and keep its answer:
+
+```bash
+autoform debrief subagent form af_5b0e4d3c2a1f09e8d7c6b5a4 . --phase proof
+autoform debrief subagent record af_5b0e4d3c2a1f09e8d7c6b5a4 . --phase proof \
+  --worker-id agent-name < /tmp/answer.json
+autoform debrief subagent render .
+```
+
+Subagent debriefs are opt-in: `form` prints the form only when
+`AUTOFORM_SUBAGENT_DEBRIEF=1` on a platform that can store the answer, and
+otherwise says the step is disabled. It fills in the attempt's outcome from the
+runtime: the phase succeeded when the article's statement (for `statement`) or
+proof (for `proof`) is now recorded as formalized. Pass `--note` with the reason
+when it did not. `record` reads one JSON object answering the form from
+`--answer` or standard input, refuses anything else, re-reads the outcome from
+the runtime rather than trusting the caller, and stores a new versioned record;
+it never edits the project. Like the claim commands, it requires `--worker-id`
+or `AUTOFORM_WORKER_ID`. With `--json` it prints one object,
+`{"attempt_id": ..., "outcome": "succeeded" | "not-succeeded", "path": ...}`,
+where `path` is the stored record. `render` rebuilds `views/` inside the store
+from the validated records, escaping all agent text and deleting reports whose
+record is gone; the records stay the source of truth.
+
+Both kinds of debrief share one store. Records are bounded, normalised, and
+created exclusively without following symbolic links, so a record is complete
+or absent and never overwritten; platforms that cannot retain directory
+descriptors, such as Windows, refuse to read or write them. They live under
+`autoform/debriefs/` in the repository's Git common directory, which every
+worktree shares and Git does not track; outside Git they fall back to
+`$XDG_STATE_HOME/autoform/debriefs/<project>-<hash>/`. Set
+`AUTOFORM_DEBRIEF_DIR` to an absolute path outside the Git working tree to
+choose another store.
+
 Write the Mermaid dependency graph into the vault, where Obsidian renders it:
 
 ```bash
@@ -1082,22 +1162,31 @@ render's own is.
 ## Validation
 
 `autoform check` rejects cycles between authored articles, missing targets,
-escaping paths, symbolic links anywhere under `roadmap/`, self-dependencies,
+escaping paths, symbolic links under `roadmap/`, self-dependencies,
 missing or multiple H1 titles, unsupported frontmatter keys, assertion values
 it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
-`mathlib: true`. A `## Sources` link to a local path must name a file
+`mathlib: true`. Hidden files and folders under `roadmap/`, those with a part
+starting with `.`, are no part of the roadmap, since render omits them: they
+hold no articles, need no chapter page, and may be symbolic links, such as an
+editor's lock file. A dependency on a hidden page fails, naming the hidden
+path, as does one that steps through a hidden folder and back out, and so does
+an `.implementation-notes` folder under `roadmap/`, which nothing reads there.
+A `## Sources` link to a local path must name a file
 inside the blueprint, as `audit` also requires: a missing file, a directory, an
 invalid path or URL, or a target outside the blueprint fails. The path must open
 as written, so one through a missing folder or a symbolic link loop fails too,
 even where its `..` steps would cancel that part as text (Windows itself applies
 `..` as text). So does a target
 whose path as written, once its `..` steps are applied, has a part below the
-blueprint starting with `.`, unless the article citing it is hidden too,
-because render omits hidden files and directories. Under `sources/`, such a
+blueprint starting with `.`, because render omits hidden files and
+directories. Under `sources/`, such a
 target passes `check` with a warning instead, and `audit` still reports it:
 only a repository link reaches the note, and render writes one when it links
-the other source notes there, so the note must be committed. `audit` alone checks
+the other source notes there, so the note must be committed. A `## Sources`
+link to a view generated at the blueprint root, such as `dependencies.md` or
+`structure.md`, fails as well, because render omits the vault's copy; `audit`
+and render reject coverage evidence that names one. `audit` alone checks
 fragments and fails links with other schemes or a network location. Such a link
 passes `check` with a warning, because work and search leave it out; so does a
 `mathlib_file` that is not a portable relative path, which search reports as
@@ -1393,8 +1482,11 @@ held to the same placeholder rule.
 ## Search contract
 
 `autoform search` is a read-only projection of Markdown: it writes nothing,
-builds no index, and starts no process. The query splits on whitespace into
-terms. Words that carry no meaning (`a`, `an`, `and`, `are`, `as`, `at`, `be`,
+builds no index, and starts no process. The contract is the JSON shape, the
+exit codes, and the rule that an article is a hit only when every term occurs
+in it; how the terms are cut, folded, and ranked, described below, may change.
+The query splits on whitespace into terms. Words that carry no meaning (`a`,
+`an`, `and`, `are`, `as`, `at`, `be`,
 `by`, `can`, `do`, `does`, `for`, `from`, `has`, `have`, `if`, `in`, `is`,
 `it`, `its`, `let`, `of`, `on`, `or`, `such`, `that`, `the`, `then`, `there`,
 `these`, `this`, `to`, `we`, `when`, `where`, `which`, `whose`, `with`) are
@@ -1423,8 +1515,8 @@ without `_root_.` and `«»`; a prime, `?`, or `!` ending a name is not compared
 so `Project.foo` is also a `lean` match for `Project.foo'`); `node_id` (the
 last component of the path ID);
 `statement_text`; `ancestors` (titles of containing articles below the roadmap
-root); `qualified_names` (the path ID and Lean names in full, which is where a
-namespace alone matches). A title is
+root); `qualified_names` (the path ID and Lean names in full, also without
+`_root_.` and `«»`, which is where a namespace alone matches). A title is
 matched without its Markdown markup. The statement is
 matched as the site publishes it, without headings, code blocks, diagrams,
 comments, and elements carrying `hidden`; inline code and mathematics count,
@@ -1442,15 +1534,22 @@ search for each spelling.
 Hits sort by the best field any term matched. Among hits with the same best
 field, those that contain every word as typed, in any field, come before those
 reached only through a shortened word; then by the weakest field any term
-needed, then more dependents first, then node ID.
+needed, then an article owning a Lean name, or the name's last components,
+that a query word spells, ignoring case and dropped filler words: a final
+prime, `?`, or `!` counts, while quotation marks, parentheses, `*` emphasis,
+and punctuation around the word do not (`Project.foo'` puts the owner of
+`Project.foo'` before that of `Project.foo`); then more dependents first, then
+node ID.
 
 `--state` takes exact derived state keys, which `autoform search --help` lists
 (`proved` does not include `fully_proved`), and `--declaration` frontmatter
 `declaration` kinds, each repeatable; they apply before `total_matches` is
 counted and `--limit` (default 20) after. `--declaration def` also keeps
-`noncomputable def`, but not `definition`. A kind that no article in the
-blueprint declares is refused with exit code 2 and the kinds in use, rather
-than answered with no hits.
+`noncomputable def`, but not `definition`. When no article in the blueprint
+declares any of the requested kinds, the search is refused with exit code 2 and
+the kinds in use, rather than answered with no hits. A requested kind that no
+article declares, beside one that some article does, adds nothing, and a note
+on standard error names it.
 
 `--json` writes `autoform-search/v1`: `schema`, `source_revision`,
 `open_statements`, `query`, `terms`, `filters` (`declaration` and `state`,
@@ -1471,7 +1570,11 @@ proof; `used_by_count` counts all. `shared_title` marks a title another article
 repeats and is advisory. `matched_fields` lists, best first and once each, the
 fields in which some term found its best match; it does not say which term.
 No hit is `"hits":[]` with exit 0. Human output shortens the statement, omits
-sources and dependent names, and is not a contract.
+sources and dependent names, and is not a contract. It opens with how many
+matches each list shows, the blueprint's and each library's, and puts each
+hit's statement, or a library hit's signature, on the hit's first line, so
+output cut short still gives every list's count and, for each hit it shows,
+the statement or signature.
 
 Search rereads each article it matches against and refuses, with exit 2, bytes
 other than those the graph was built from, as it refuses a symlinked roadmap
@@ -1519,8 +1622,9 @@ declaration record, a module's `module_doc` or `module_system`, or the
 header's `generator`, `probe`, or `package`.
 
 A declaration matches when every term occurs in its last name component
-(`lean`), docstring, module header (`module_doc`), full name or module
-(`qualified_names`), the constants in its type (`mentions`), or its keyword
+(`lean`), docstring, module header (`module_doc`), full name (also without
+`_root_.` and `«»`) or module (`qualified_names`), the constants in its type
+(`mentions`), or its keyword
 (`kind`), ranked in that order. Hits sort by best field, then the words as
 typed before a stem, then worst field, then `complete` before `wanted`, then
 name. `--state` and `--declaration` apply to articles only; `--limit` applies

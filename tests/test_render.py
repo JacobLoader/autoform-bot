@@ -665,6 +665,29 @@ def test_a_hoisted_body_can_link_to_the_chapter_it_lands_on(tmp_path: Path) -> N
     assert "[the chapter](.)" in chapter
 
 
+def test_render_leaves_an_unpublished_folder_out(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    drafts = project / "blueprint" / "roadmap" / "drafts"
+    drafts.mkdir()
+    (drafts / "README.md").write_text("---\npublished: false\n---\n\n# Drafts\n", encoding="utf-8")
+    article_id = "af_0123456789abcdef01234567"
+    idea = drafts / "idea.md"
+    idea.write_text(f"---\narticle_id: {article_id}\n---\n\n# Idea\n\nAn idea.\n", encoding="utf-8")
+    # Its implementation note still belongs to an article, though render reads none of the folder.
+    (project / "blueprint" / ".implementation-notes").mkdir()
+    (project / "blueprint" / ".implementation-notes" / f"{article_id}.md").write_text("route\n", encoding="utf-8")
+    # Nor is anything in it refused, since none of it is published.
+    (drafts / "scratch.log").write_text("local\n", encoding="utf-8")
+    revision = publication_source_revision(project / "blueprint")
+
+    render_site(project / "blueprint", tmp_path / "out", lean_root=project)
+
+    assert (tmp_path / "out" / "roadmap" / "README.md").exists()
+    assert not (tmp_path / "out" / "roadmap" / "drafts").exists()
+    idea.write_text(idea.read_text(encoding="utf-8") + "\nAn edit.\n", encoding="utf-8")
+    assert publication_source_revision(project / "blueprint") == revision
+
+
 def test_malformed_link_targets_are_published_as_written(tmp_path: Path) -> None:
     """Issue #305: an unbalanced IPv6 bracket or a decoded NUL stopped render in a traceback.
 

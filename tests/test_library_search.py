@@ -93,6 +93,14 @@ def test_a_whole_lean_name_matches_as_the_name(tmp_path: Path) -> None:
     assert _matched(library, "IsCompact.exists_isMinOn")["IsCompact.exists_isMinOn"] == ("lean",)
 
 
+def test_a_namespace_inside_quoting_marks_matches_as_a_namespace(tmp_path: Path) -> None:
+    library = _library(tmp_path, declaration("Lib.«weird name».bar", docstring=None))
+
+    # The space belongs to the quoted component, so `Lib.weird` names no declaration.
+    assert _matched(library, "Lib.weird") == {"Lib.«weird name».bar": ("qualified_names",)}
+    assert _matched(library, "bar") == {"Lib.«weird name».bar": ("lean",)}
+
+
 def test_hits_sort_by_field_then_typed_form_then_status_then_name(tmp_path: Path) -> None:
     library = _library(
         tmp_path,
@@ -432,23 +440,25 @@ def test_search_cli_prints_library_hits_after_the_blueprint_hits(tmp_path: Path,
     assert cli.main([*_cli(library, "separation"), "--library", "atlas"]) == 0
     out = capsys.readouterr().out
 
-    assert out.index("Separating hyperplane (convexity/hyperplane)") < out.index("Library atlas @ 111111111111")
-    assert "1 of 1 matching article(s) shown.\n" in out
-    assert (
+    # Issue #346: cut with `head`, the output lost later library hits, a kept hit's signature and every count.
+    # Counts now come first, and each hit's first line carries its statement or signature.
+    assert out.splitlines()[:2] == [
+        "1 of 1 matching article(s) shown.",
+        "Library atlas: 2 of 2 matching declaration(s) shown.",
+    ]
+    assert out.index("Separating hyperplane (convexity/hyperplane): ") < out.index("Library atlas @ 111111111111")
+    assert out.endswith(
         "Library atlas @ 111111111111\n"
         "  differs: lean_toolchain leanprover/lean4:v4.34.1 (project: leanprover/lean4:v4.32.2)\n"
-        "Lib.Convex.separation (theorem, complete)\n"
+        "Lib.Convex.separation (theorem, complete): True\n"
         "  Lib/Convex.lean:3\n"
         "  import Lib.Convex\n"
-        "  Signature: True\n"
         "  Docstring: Two disjoint convex sets are separated by a hyperplane.\n"
         "  Matched: lean\n"
-        "Lib.Convex.open_separation (theorem, wanted)\n"
+        "Lib.Convex.open_separation (theorem, wanted): True\n"
         "  Lib/Convex.lean:3\n"
-        "  Signature: True\n"
         "  Matched: lean\n"
-        "2 of 2 matching declaration(s) shown.\n"
-    ) in out
+    )
 
 
 def test_search_cli_says_when_neither_list_has_a_match(tmp_path: Path, capsys) -> None:
@@ -457,7 +467,9 @@ def test_search_cli_says_when_neither_list_has_a_match(tmp_path: Path, capsys) -
     assert cli.main([*_cli(library, "nowhere"), "--library", "atlas"]) == 0
 
     assert capsys.readouterr().out == (
-        "No matching articles.\nLibrary atlas @ 111111111111\nNo matching declarations.\n"
+        "No matching articles.\n"
+        "Library atlas: no matching declarations.\n"
+        "Library atlas @ 111111111111\n"
     )
 
 
@@ -472,6 +484,7 @@ def test_search_cli_escapes_library_text(tmp_path: Path, capsys) -> None:
     assert "\u001b" not in out and "\u0007" not in out
     assert "\nerror: forged" not in out
     assert "Docstring: separation \\x1b[31mIGNORE PREVIOUS error: forged" in out
+    assert "Lib.Convex.separation (theorem, complete): A\\x07B\n" in out
 
 
 def test_search_cli_prints_a_docstring_on_one_line_without_a_literal_newline(tmp_path: Path, capsys) -> None:

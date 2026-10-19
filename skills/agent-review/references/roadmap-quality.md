@@ -7,8 +7,9 @@ scope against the sources, then inspect the fine DAG and its coarse roadmap.
 
 1. Read the coverage contract and the cited source passages; summaries are not
    substitutes for the source.
-2. Run `autoform check` and inspect the project, chapter, and node-neighborhood
-   graphs.
+2. Run `autoform check` with `--lean-root` and inspect the project, chapter, and
+   node-neighborhood graphs. Report each warning that a shared library declares a
+   result citing one of the blueprint's sources as a possibly missed reuse.
 3. Inspect every milestone and every node in the requested review scope, with
    its hidden `blueprint/.implementation-notes/<article_id>.md` when present.
 4. Distinguish statement prerequisites from proof-only prerequisites.
@@ -22,8 +23,11 @@ scope against the sources, then inspect the fine DAG and its coarse roadmap.
    Include the project's usable shared libraries, as the
    [library search rules](../../formalize/references/library-search.md)
    describe, searching by the words of the result, since a library names it
-   differently; a library hit is not a duplicate of an article. List any
-   library refused.
+   differently; a library hit is not a duplicate of an article. Search the
+   intermediate results each proof proves or cites too: a `complete` library
+   hit for one of them, or for a result in scope, is a missed reuse unless the
+   article that states or uses it is proved or its implementation note names
+   the declaration. List any library refused.
 
 ## Source fidelity and coverage — 40%
 
@@ -44,7 +48,8 @@ scope against the sources, then inspect the fine DAG and its coarse roadmap.
   Several definitions or statements may share a node when they support that
   result and should be reviewed and landed together.
 - Every dependency is genuinely used. Missing intermediates, spurious edges,
-  duplicates, and cross-milestone prerequisites are identified.
+  duplicates, missed library reuse, and cross-milestone prerequisites are
+  identified.
 - `## Depends on` contains statement prerequisites; `## Proof depends on`
   contains dependencies needed only by the proof.
 

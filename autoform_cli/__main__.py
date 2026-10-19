@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from . import status
+from . import debrief, debrief_orchestrator, status
 from .article_identity import ArticleIdWriteError, plan_article_ids, write_article_ids
 from .audit import audit_blueprint
 from .claims import CLAIM_TTL_S, ClaimBoard, ClaimTransportError, author_claim_key
@@ -31,6 +31,7 @@ from .impact import (
     revision_impact,
 )
 from .lean import build_linker, declaration_names, index_failure_message
+from .library.citations import library_citation_warnings
 from .library.generate import GenerateError, check_index, generate_index, write_index
 from .library.index import INDEX_FILE
 from .library.listing import indexed_packages, list_libraries
@@ -282,7 +283,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="keep articles whose frontmatter declaration is KIND: theorem, lemma, def, ... (repeatable)",
     )
     search.add_argument(
-        "--limit", type=int, default=20, metavar="N", help="show at most N articles (default 20)"
+        "--limit",
+        type=int,
+        default=20,
+        metavar="N",
+        help="show at most N hits from the blueprint and from each --library (default 20)",
     )
     search.add_argument(
         "--library",
@@ -336,6 +341,46 @@ def main(argv: Sequence[str] | None = None) -> int:
     _add_claim_board_arguments(claim_list)
     claim_cleanup = claim_subparsers.add_parser("cleanup")
     _add_claim_board_arguments(claim_cleanup)
+
+    debrief_parser = subparsers.add_parser("debrief", help="feedback forms agents fill in about their work")
+    debrief_kinds = debrief_parser.add_subparsers(dest="debrief_kind", required=True)
+    orchestrator = debrief_kinds.add_parser(
+        "orchestrator", help="feedback on AutoformBot from the agent that led a Setup, Roadmap or Formalize run"
+    )
+    orchestrator_subparsers = orchestrator.add_subparsers(dest="debrief_command", required=True)
+    for operation, help_text in (
+        ("form", "print the form for a finished run (or report that orchestrator debriefs are disabled)"),
+        ("record", "validate an answer, store it, and draft an issue for any AutoformBot friction"),
+    ):
+        command = orchestrator_subparsers.add_parser(operation, help=help_text)
+        command.add_argument("target", nargs="?", default=".", help="project root or blueprint directory")
+        command.add_argument("--skill", required=True, choices=debrief_orchestrator.SKILLS, help="skill that ran")
+        if operation == "record":
+            command.add_argument("--answer", type=Path, help="answer file (default: standard input)")
+            command.add_argument("--json", action="store_true", help="write stable machine-readable output")
+    subagent = debrief_kinds.add_parser(
+        "subagent", help="opt-in form the agent that worked a formalization attempt fills in"
+    )
+    debrief_subparsers = subagent.add_subparsers(dest="debrief_command", required=True)
+    for operation, help_text in (
+        ("form", "print the form for a finished attempt (or report that subagent debriefs are disabled)"),
+        ("record", "validate an answer and store it as a new debrief record"),
+    ):
+        command = debrief_subparsers.add_parser(operation, help=help_text)
+        command.add_argument("selector", help="path-derived node id or durable article_id")
+        command.add_argument("target", nargs="?", default=".", help="project root or blueprint directory")
+        command.add_argument("--phase", required=True, choices=("statement", "proof"), help="phase attempted")
+        command.add_argument("--note", default="", help="why the attempt did not succeed, if it did not")
+        if operation == "record":
+            command.add_argument("--answer", type=Path, help="answer file (default: standard input)")
+            command.add_argument(
+                "--worker-id",
+                default=os.environ.get("AUTOFORM_WORKER_ID"),
+                help="stable identity for this agent (or set AUTOFORM_WORKER_ID)",
+            )
+            command.add_argument("--json", action="store_true", help="write stable machine-readable output")
+    debrief_render = debrief_subparsers.add_parser("render", help="rebuild Markdown views of the records")
+    debrief_render.add_argument("target", nargs="?", default=".", help="project root or blueprint directory")
 
     migrate = subparsers.add_parser("migrate", help="plan or apply authored migrations")
     migrate_subparsers = migrate.add_subparsers(dest="migrate_command", required=True)
@@ -443,6 +488,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _library_index(args) if args.library_command == "index" else _library_list(args)
     if args.command == "claim":
         return _claim(args)
+    if args.command == "debrief":
+        return _debrief(args)
     if args.command == "migrate":
         return _migrate(args)
     if args.command == "skeleton":
@@ -542,6 +589,7 @@ def _source_link_issues(graph: Graph) -> tuple[list[str], list[str]]:
         "malformed-source-url": "is not a valid URL",
         "malformed-source-link": "contains an invalid path",
         "hidden-source-target": "names a hidden path, which render omits",
+        "generated-source-target": "names a generated view, which render omits",
     }
     issues, warnings = [], []
     for node in graph.nodes.values():
@@ -598,6 +646,8 @@ def _check(args: argparse.Namespace) -> int:
         for issue in source_issues:
             print(f"error: {issue}")
         return 1
+    if args.lean_root is not None:
+        source_warnings += [_human_text(warning) for warning in library_citation_warnings(graph, args.lean_root)]
 
     linker = None
     if args.lean_root is not None:
@@ -624,6 +674,12 @@ def _check(args: argparse.Namespace) -> int:
         ]
         for issue in missing:
             print(f"error: {issue}")
+        if any(": declaration not found in " in issue for issue in missing):
+            print(
+                "note: check resolves lean: names only in the project's own Lean files, not in Mathlib or other "
+                "dependencies under .lake; if a name is a shared library's declaration, record it in the article's "
+                "implementation note instead"
+            )
         if missing:
             return 1
         declared = sum(1 for node in graph.nodes.values() if node.lean)
@@ -922,17 +978,34 @@ def _search(args: argparse.Namespace) -> int:
         print("error: project, blueprint, or Lean root path cannot be read", file=sys.stderr)
         return 2
 
+    notes = []
+    if result.unused_declarations:
+        kinds = ", ".join(result.unused_declarations)
+        notes.append(_human_text(f"note: no article declares kind {kinds}, so the search used only the other kinds"))
     note = None if args.libraries else _unsearched_library_note(args.target, args.lean_root)
+    if note:
+        notes.append(note)
     if args.json:
         print(result.to_json() if combined is None else combined.to_json())
-        if note:
+        for note in notes:
             print(note, file=sys.stderr)
         return 0
-    if not result.hits:
+    # Every count comes first, and each hit's statement on its first line, so output cut short still shows them.
+    if result.hits:
+        print(f"{len(result.hits)} of {result.total_matches} matching article(s) shown.")
+    else:
         print("No matching articles.")
+    for library in libraries:
+        if library.hits:
+            shown = f"{len(library.hits)} of {library.total_matches} matching declaration(s) shown."
+            print(_human_text(f"Library {library.name}: {shown}"))
+        else:
+            print(_human_text(f"Library {library.name}: no matching declarations."))
     for hit in result.hits:
         durable = f" [{hit.article_id}]" if hit.article_id else ""
-        print(_human_text(f"{hit.title} ({hit.node_id}){durable}"))
+        preview = statement_preview(hit)
+        statement = f": {preview}" if preview else ""
+        print(_human_text(f"{hit.title} ({hit.node_id}){durable}{statement}"))
         summary = [
             hit.declaration or "no declaration",
             hit.state,
@@ -946,17 +1019,13 @@ def _search(args: argparse.Namespace) -> int:
             print(_human_text(f"  Lean: {target.declaration}{location}"))
         if hit.mathlib_declarations:
             print(_human_text("  Mathlib: " + ", ".join(hit.mathlib_declarations)))
-        preview = statement_preview(hit)
-        if preview:
-            print(_human_text(f"  Statement: {preview}"))
         print("  Matched: " + ", ".join(hit.matched_fields))
-    if result.hits:
-        print(f"{len(result.hits)} of {result.total_matches} matching article(s) shown.")
     for library in libraries:
         _print_library(library)
-    if note:
+    if notes:
         sys.stdout.flush()
-        print(note, file=sys.stderr)
+        for note in notes:
+            print(note, file=sys.stderr)
     return 0
 
 
@@ -996,20 +1065,17 @@ def _print_library(library: LibraryResult) -> None:
         else:
             held = f"project: {difference.project}"
         print(_human_text(f"  differs: {what} {difference.library} ({held})"))
-    if not library.hits:
-        print("No matching declarations.")
-        return
     for hit in library.hits:
         declaration = hit.declaration
-        print(_human_text(f"{declaration.name} ({declaration.kind}, {declaration.status})"))
+        heading = f"{declaration.name} ({declaration.kind}, {declaration.status})"
+        signature = _one_line(declaration.signature)
+        print(_human_text(f"{heading}: {signature}" if signature else heading))
         print(_human_text(f"  {hit.source_file}:{declaration.line}"))
         if hit.import_line is not None:
             print(_human_text(f"  {hit.import_line}"))
-        print(_human_text(f"  Signature: {_one_line(declaration.signature)}"))
         if declaration.docstring:
             print(_human_text(f"  Docstring: {_one_line(declaration.docstring)}"))
         print("  Matched: " + ", ".join(hit.matched_fields))
-    print(f"{len(library.hits)} of {library.total_matches} matching declaration(s) shown.")
 
 
 def _one_line(text: str) -> str:
@@ -1176,6 +1242,99 @@ def _work_impact(args: argparse.Namespace) -> int:
     lines = format_impact(report) if args.work_command == "impact" else format_module_import_impact(report)
     for line in lines:
         print(_human_text(line))
+    return 0
+
+
+def _read_answer(args: argparse.Namespace) -> str:
+    if args.answer is not None:
+        with args.answer.open("rb") as handle:
+            raw = handle.read(debrief.MAX_ANSWER_BYTES + 1)
+    else:
+        raw = sys.stdin.buffer.read(debrief.MAX_ANSWER_BYTES + 1)
+    return raw.decode("utf-8", "replace")
+
+
+def _debrief(args: argparse.Namespace) -> int:
+    if args.debrief_kind == "orchestrator":
+        return _debrief_orchestrator(args)
+    try:
+        if args.debrief_command == "render":
+            root = debrief.debrief_root(args.target)
+            written = debrief.render(root)
+            print(f"rendered {len(written)} debrief report(s) into {_human_text(root / debrief.VIEWS)}")
+            return 0
+        if args.debrief_command == "form":
+            if not debrief.enabled():
+                print(
+                    f"Subagent debriefs are disabled ({debrief.SUBAGENT_DEBRIEF_ENV} is not set, "
+                    "or this platform cannot store them); skip this step."
+                )
+                return 0
+            print(debrief.form(args.target, args.selector, phase=args.phase, note=args.note))
+            return 0
+        entry, path = debrief.record(
+            args.target,
+            args.selector,
+            _read_answer(args),
+            phase=args.phase,
+            note=args.note,
+            worker_id=args.worker_id,
+        )
+    except (GraphValidationError, RuntimeProjectionError) as error:
+        for issue in error.issues:
+            print(f"error: {_human_text(issue)}", file=sys.stderr)
+        return 2
+    except (debrief.DebriefError, OSError) as error:
+        print(f"error: {_human_text(error)}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(
+            {"attempt_id": entry.attempt_id, "outcome": entry.outcome, "path": str(path)},
+            sort_keys=True,
+            separators=(",", ":"),
+        ))
+    else:
+        print(_human_text(f"recorded debrief {entry.attempt_id} ({entry.outcome_label}) at {path}"))
+    return 0
+
+
+def _debrief_orchestrator(args: argparse.Namespace) -> int:
+    try:
+        if args.debrief_command == "form":
+            if not debrief_orchestrator.enabled():
+                print(
+                    f"Orchestrator debriefs are disabled ({debrief_orchestrator.DEBRIEF_ENV} is off, "
+                    "or this platform cannot store them); skip this step."
+                )
+                return 0
+            print(debrief_orchestrator.form(args.skill))
+            return 0
+        entry, path, issue = debrief_orchestrator.record(args.target, _read_answer(args), skill=args.skill)
+    except (GraphValidationError, RuntimeProjectionError) as error:
+        for issue_text in error.issues:
+            print(f"error: {_human_text(issue_text)}", file=sys.stderr)
+        return 2
+    except (debrief.DebriefError, OSError) as error:
+        print(f"error: {_human_text(error)}", file=sys.stderr)
+        return 2
+    if args.json:
+        draft = None
+        if issue is not None:
+            draft = {"path": str(issue.path), "url": issue.url, "url_has_body": issue.url_has_body}
+        print(json.dumps(
+            {"run_id": entry.run_id, "path": str(path), "issue": draft},
+            sort_keys=True,
+            separators=(",", ":"),
+        ))
+        return 0
+    print(_human_text(f"recorded orchestrator debrief {entry.run_id} at {path}"))
+    if issue is None:
+        print("no AutoformBot friction reported; no issue drafted")
+        return 0
+    print(_human_text(f"drafted an issue for {debrief_orchestrator.ISSUE_REPOSITORY} at {issue.path}"))
+    if not issue.url_has_body:
+        print("the draft is too long for a link; paste its body into the issue form")
+    print(f"nothing has been sent; to review, edit and submit it, open: {issue.url}")
     return 0
 
 

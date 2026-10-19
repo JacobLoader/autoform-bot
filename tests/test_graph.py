@@ -752,6 +752,105 @@ def test_check_warns_about_a_hidden_note_under_sources(tmp_path: Path, capsys: p
     ]
 
 
+def test_check_ignores_hidden_roadmap_entries_as_render_does(tmp_path: Path) -> None:
+    """Issue #206: render omits hidden entries, so check must count the same articles."""
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "base.md", "# Base\n")
+    _node(blueprint, ".helper.md", "# Helper\n")
+    # A hidden folder needs no chapter page, since nothing in it is published.
+    _roadmap_page(blueprint, ".drafts/draft.md", _node_text("# Draft\n"))
+    # Nor does a folder whose only page is hidden.
+    _roadmap_page(blueprint, "drafts/.wip.md", _node_text("# Work in progress\n"))
+    try:
+        # Emacs leaves this lock symlink beside a page with unsaved edits.
+        (blueprint / "roadmap" / ".#base.md").symlink_to("user@host.1234:1700000000")
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    assert list(load_graph(blueprint).nodes) == ["base"]
+
+
+def test_a_dependency_on_a_hidden_page_names_the_hidden_path(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, ".draft.md", "# Draft\n")
+    _node(blueprint, "cited.md", "# Cited\n")
+    # Render's copy has no .x to step through, though the vault has one.
+    (blueprint / "roadmap" / ".x").mkdir()
+    _node(blueprint, "base.md", "# Base\n## Depends on\n[Draft](.draft.md)\n[Cited](.x/../cited.md)\n")
+
+    with pytest.raises(GraphValidationError) as caught:
+        load_graph(blueprint)
+
+    assert caught.value.issues == (
+        "base: dependency target names a hidden path, which render omits: '.draft.md'",
+        "base: dependency target names a hidden path, which render omits: '.x/../cited.md'",
+    )
+
+
+def test_an_unpublished_folder_is_checked_and_named(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "base.md", "# Base\n")
+    _node(blueprint, "drafts/README.md", "# Drafts\n", published="false")
+    _node(blueprint, "drafts/idea.md", "# Idea\n## Depends on\n[Base](../base.md)\n")
+
+    graph = load_graph(blueprint)
+
+    assert sorted(graph.nodes) == ["base", "drafts", "drafts/idea"]
+    assert graph.unpublished == ((blueprint / "roadmap" / "drafts").resolve(),)
+
+
+def test_published_is_a_folder_setting(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _roadmap_page(blueprint, "README.md", _node_text("# Roadmap\n", published="false"))
+    _node(blueprint, "base.md", "# Base\n", published="false")
+
+    with pytest.raises(GraphValidationError) as caught:
+        load_graph(blueprint)
+
+    assert caught.value.issues == tuple(
+        f"{node}: published is a folder setting; set it in a folder's README.md below roadmap/"
+        for node in ("roadmap", "base")
+    )
+
+
+def test_a_published_page_may_not_link_into_an_unpublished_folder(tmp_path: Path) -> None:
+    """The site lacks the folder, so a strict MkDocs build fails on any link into it."""
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "drafts/README.md", "# Drafts\n", published="false")
+    _node(blueprint, "drafts/idea.md", "# Idea\n")
+    # Unpublished pages may link to each other, across folders too.
+    _node(blueprint, "notes/README.md", "# Notes\n", published="false")
+    _node(blueprint, "notes/aside.md", "# Aside\n## Depends on\n[Idea](../drafts/idea.md)\n")
+    _node(
+        blueprint,
+        "base.md",
+        "# Base\n\nSee [the drafts](drafts/README.md).\n\n## Depends on\n[Idea](drafts/idea.md)\n\n"
+        "## Sources\n\n- [Idea][idea]\n\n[idea]: <drafts/idea.md#idea>\n\n`[Not a link](drafts/)`\n",
+    )
+
+    with pytest.raises(GraphValidationError) as caught:
+        load_graph(blueprint)
+
+    assert caught.value.issues == tuple(
+        f"base: links to {target!r}, in an unpublished folder render omits"
+        for target in ("drafts/README.md", "drafts/idea.md", "drafts/idea.md#idea")
+    )
+
+
+def test_check_rejects_a_sources_link_to_a_generated_view(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Render writes its own dependencies.md and omits the vault's copy, so the link cannot be checked against it.
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "result.md", "# Result\n\n## Sources\n\n- [Graph](../dependencies.md)\n")
+    (blueprint / "dependencies.md").write_text("# Dependencies\n", encoding="utf-8")
+
+    assert main(["check", str(blueprint)]) == 1
+    assert capsys.readouterr().out == (
+        "error: result: source target names a generated view, which render omits: '../dependencies.md'\n"
+    )
+
+
 def test_check_warns_about_a_mathlib_file_search_reports_as_null(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -807,6 +906,51 @@ def test_check_resolves_a_name_beside_a_private_twin_and_rejects_two_public_ones
     assert main(["check", str(blueprint), "--lean-root", str(lean_root)]) == (1 if errors else 0)
     lines = capsys.readouterr().out.splitlines()
     assert [line for line in lines if line.startswith("error:")] == [error.format(root=lean_root) for error in errors]
+
+
+_LIBRARY_DECLARATION_NOTE = (
+    "note: check resolves lean: names only in the project's own Lean files, not in Mathlib or other dependencies "
+    "under .lake; if a name is a shared library's declaration, record it in the article's implementation note instead"
+)
+
+
+@pytest.mark.parametrize(
+    ("lean", "expected"),
+    [
+        (
+            "Lib.base Lib.other",
+            [
+                "error: base: declaration not found in {root}: Lib.base",
+                "error: base: declaration not found in {root}: Lib.other",
+                _LIBRARY_DECLARATION_NOTE,
+            ],
+        ),
+        (
+            "Project.base",
+            ["error: base: declaration defined more than once in {root}: Project.base (A.lean:1, B.lean:1)"],
+        ),
+    ],
+    ids=["library-declarations", "two-public-declarations"],
+)
+def test_check_says_where_a_library_declaration_goes_when_a_name_is_not_found(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], lean: str, expected: list[str]
+) -> None:
+    """Issue #346: a trial put library declarations in `lean:`, and the error alone did not say where they go."""
+    blueprint = tmp_path / "blueprint"
+    _node(blueprint, "base.md", "# Base\n", lean=lean)
+    lean_root = tmp_path / "lean"
+    (lean_root / ".lake/packages/lib").mkdir(parents=True)
+    (lean_root / ".lake/packages/lib/Lib.lean").write_text(
+        "def Lib.base : Nat := 0\ndef Lib.other : Nat := 0\n", encoding="utf-8"
+    )
+    (lean_root / "A.lean").write_text("def Project.base : Nat := 0\n", encoding="utf-8")
+    (lean_root / "B.lean").write_text("theorem Project.base : True := trivial\n", encoding="utf-8")
+
+    assert main(["check", str(blueprint), "--lean-root", str(lean_root)]) == 1
+    lines = capsys.readouterr().out.splitlines()
+    expected = [line.format(root=lean_root) for line in expected]
+    # The errors, then one note however many names are missing, end the output; a name defined twice gets no note.
+    assert [line for line in lines if line.startswith(("error:", "note:"))] == lines[-len(expected) :] == expected
 
 
 def test_check_prints_its_warnings_after_the_whole_summary(
@@ -1188,6 +1332,19 @@ def test_hidden_entries_beside_implementation_notes_are_ignored(tmp_path: Path) 
         pytest.skip("symlinks are unavailable")
 
     assert list(load_graph(blueprint).nodes) == ["result"]
+
+
+def test_an_implementation_note_for_a_hidden_page_names_no_article(tmp_path: Path) -> None:
+    # Render leaves the hidden page out, and check agrees.
+    blueprint = tmp_path / "blueprint"
+    article_id = "af_0123456789abcdef01234567"
+    _node(blueprint, "base.md", "# Base\n")
+    _node(blueprint, ".parked.md", "# Parked\n", article_id=article_id)
+    (blueprint / ".implementation-notes").mkdir()
+    (blueprint / ".implementation-notes" / f"{article_id}.md").write_text("route\n", encoding="utf-8")
+
+    with pytest.raises(GraphValidationError, match="implementation note names no roadmap article"):
+        load_graph(blueprint)
 
 
 def test_implementation_notes_directory_must_not_be_a_symlink(tmp_path: Path) -> None:
