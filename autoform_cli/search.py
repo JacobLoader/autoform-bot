@@ -233,8 +233,7 @@ def search_blueprint(
             matched_fields=tuple(_FIELDS[rank] for rank in sorted(set(ranks))),
             shared_title=title_count[_normalize(node.title)] > 1,
         )
-        named = _spells_a_name(typed, _names(node))
-        matches.append((min(ranks), _ranks(words, fields) is None, max(ranks), not named, hit))
+        matches.append((*_rank_key(ranks, words, fields, _FIELDS, typed, _names(node)), hit))
 
     # The best field first, and within it the articles holding the words as
     # typed. Among equals, the article whose worst-placed term sits in a
@@ -298,6 +297,24 @@ def _ranks(terms: tuple[str, ...], fields: dict[str, str], order: tuple[str, ...
             return None
         ranks.append(rank)
     return ranks
+
+
+def _rank_key(
+    ranks: list[int],
+    words: tuple[str, ...],
+    fields: dict[str, str],
+    order: tuple[str, ...],
+    typed: frozenset[str],
+    names: Sequence[str],
+) -> tuple[int, bool, int, bool]:
+    """Return the keys a hit sorts by first, the same for articles and library declarations.
+
+    The best field a term matched, then whether every word occurs as typed,
+    then the worst field a term needed, then whether a query word names one
+    of ``names`` exactly.
+    """
+
+    return min(ranks), _ranks(words, fields, order) is None, max(ranks), not _spells_a_name(typed, names)
 
 
 def _lean_name(name: str) -> str:

@@ -12,8 +12,8 @@ from ..search import (
     SearchResult,
     _lean_name,
     _normalize,
+    _rank_key,
     _ranks,
-    _spells_a_name,
     _typed_words,
     _unquoted,
     _words,
@@ -172,7 +172,7 @@ def match_index(
     words: tuple[str, ...],
     terms: tuple[str, ...],
     limit: int,
-    typed: frozenset[str] = frozenset(),
+    typed: frozenset[str],
 ) -> tuple[int, tuple[LibraryHit, ...]]:
     """Return how many declarations hold every term, and the first ``limit`` of them in order.
 
@@ -205,10 +205,7 @@ def match_index(
             continue
         matches.append(
             (
-                min(ranks),
-                _ranks(words, fields, LIBRARY_FIELDS) is None,
-                max(ranks),
-                not _spells_a_name(typed, (declaration.name,)),
+                *_rank_key(ranks, words, fields, LIBRARY_FIELDS, typed, (declaration.name,)),
                 declaration.status == "wanted",
                 declaration.name,
                 declaration.module,
