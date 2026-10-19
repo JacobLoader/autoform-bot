@@ -468,6 +468,15 @@ def test_explorer_head_is_one_row_where_the_rail_always_shows() -> None:
         ".bp-dag-viewer:has(.bp-dag-navigation-path):not(.bp-dag-has-selection.bp-dag-sheet-open) "
         ".bp-dag-head:not(:has(.bp-dag-book)) .bp-dag-context { display: none; }"
     ) in style.split("@media (min-width: 681px) and (max-width: 1100px) {\n", 1)[1].split("\n}", 1)[0]
+    # That row grows the head while details open, so the map shifts back by it instead of jumping under the pointer.
+    assert (
+        'var top = refs.body.offsetTop; host.classList.toggle("bp-dag-sheet-open", Boolean(open));\n'
+        "state.transform.y += top - refs.body.offsetTop; schedule();"
+    ) in script
+    # The row's rule reads the selection too, so the sheet closes while it is still set.
+    assert 'host.classList.remove("bp-dag-has-selection"); setSheet(false)' not in script
+    assert script.count('setSheet(false); host.classList.remove("bp-dag-has-selection");') == 3
+    assert 'host.classList.add("bp-dag-has-selection"); setSheet(true);' in script
 
 
 def test_explorer_drops_the_map_guide_and_keeps_a_plain_note_for_real_crops() -> None:

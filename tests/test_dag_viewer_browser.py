@@ -1284,6 +1284,38 @@ def test_a_head_without_a_textbook_link_has_no_blank_row(desktop_page: object, s
         assert stage["y"] >= head["y"] + head["height"] - 1
 
 
+def test_opening_details_keeps_the_clicked_card_under_the_pointer(desktop_page: object, site_url: str) -> None:
+    """From 681px to 1,100px details open the head's first row, and the map and the card just clicked jumped 28px."""
+    page = desktop_page
+    page.set_viewport_size({"width": 1000, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    settled = "() => new Promise(done => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(done))))"
+    _open_site(page, site_url, "dependencies.html")
+    card, context = page.locator('[data-autoform-node-id="scope:algebra"]'), page.locator(".bp-dag-context")
+    playwright.expect(context).to_be_hidden()
+
+    def top() -> float:
+        page.evaluate(settled)
+        box = card.bounding_box()
+        assert box is not None
+        return box["y"]
+
+    start = top()
+    for close in ("Escape", "Close details"):
+        card.click()
+        playwright.expect(card).to_have_attribute("data-selected", "true")
+        playwright.expect(context).to_be_visible()
+        assert abs(top() - start) < 2
+        if close == "Escape":
+            playwright.expect(card).to_be_focused()
+            page.keyboard.press("Escape")
+            playwright.expect(card).not_to_have_attribute("data-selected", "true")
+        else:
+            page.get_by_role("button", name="Close details").click()
+        playwright.expect(context).to_be_hidden()
+        assert abs(top() - start) < 2
+
+
 def test_the_rail_under_the_open_details_leaves_the_tab_order(desktop_page: object, site_url: str) -> None:
     """Up to 1,100px open details cover the rail, and Tab still walked its links under the drawer."""
     page = desktop_page
