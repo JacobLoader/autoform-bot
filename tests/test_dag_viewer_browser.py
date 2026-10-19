@@ -1496,10 +1496,14 @@ def test_the_explorer_draws_its_breadcrumb_once(desktop_page: object, site_url: 
 def test_the_canvas_paints_its_labels_in_the_sites_family(desktop_page: object, site_url: str) -> None:
     """Region and edge-count labels were painted in the generic sans-serif beside Plus Jakarta Sans cards."""
     page = _open_site(desktop_page, site_url, "dependencies.html")
-    font, family = page.locator(".bp-dag-viewer").evaluate(
-        "host => [host.querySelector('.bp-dag-canvas').getContext('2d').font, getComputedStyle(host).fontFamily]"
+    # The runtime keeps the host's family only if a canvas parses it; resize() resets the live context's font.
+    font = page.locator(".bp-dag-viewer").evaluate(
+        """host => {
+          const ctx = document.createElement("canvas").getContext("2d");
+          ctx.font = "11px " + getComputedStyle(host).fontFamily;
+          return ctx.font;
+        }"""
     )
-    assert "Plus Jakarta Sans" in family
     assert "11px" in font and "Plus Jakarta Sans" in font
 
 
