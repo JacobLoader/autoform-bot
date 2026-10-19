@@ -1169,7 +1169,7 @@ def test_a_source_span_ends_at_its_own_file_s_next_declaration(tmp_path: Path) -
     # B.lean's X.foo bounds X.bar, though A.lean declares an X.foo too.
     root = tmp_path / "lean"
     root.mkdir()
-    (root / "A.lean").write_text("theorem X.foo : True := trivial\ntheorem A.other : True := trivial\n", encoding="utf-8")
+    (root / "A.lean").write_text("theorem X.foo : True := trivial\n", encoding="utf-8")
     (root / "B.lean").write_text(
         "theorem X.bar : True := trivial\n" + "\n" * 8 + "theorem X.foo : True := trivial\n" + "\n" * 9
         + "theorem X.baz : True := trivial\n",

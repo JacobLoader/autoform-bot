@@ -158,11 +158,14 @@ def test_summary_keeps_the_mathematics_and_code_a_tag_would_span(tmp_path: Path)
     _node(
         blueprint,
         "topic.md",
-        "# Ball\n\nFor $0 < a \\le b$ and $r > 0$ the <em>ball</em> `B<r>` is convex.\n",
+        "# Ball\n\nFor $0 < a \\le b$ and $r > 0$ the <em>ball</em> `B<r>` is convex.\n"
+        "If a < b and c > d, the set $\\{(x, y) :\nx<y, y>0\\}$ is open. The code `Map<String,\nInt>` is shown.\n",
     )
 
+    # A bare `<` opens no tag, and inline math and code may wrap across the paragraph's lines.
     assert load_graph(blueprint).nodes["topic"].summary == (
-        "For $0 < a \\le b$ and $r > 0$ the ball `B<r>` is convex."
+        "For $0 < a \\le b$ and $r > 0$ the ball `B<r>` is convex. "
+        "If a < b and c > d, the set $\\{(x, y) : x<y, y>0\\}$ is open. The code `Map<String, Int>` is shown."
     )
 
 

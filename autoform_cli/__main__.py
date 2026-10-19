@@ -32,6 +32,7 @@ from .impact import (
     revision_impact,
 )
 from .lean import declaration_names, index_failure_message, index_project
+from .library.citations import library_citation_warnings
 from .library.generate import GenerateError, check_index, generate_index, write_index
 from .library.index import INDEX_FILE
 from .library.listing import indexed_packages, list_libraries
@@ -641,6 +642,8 @@ def _check(args: argparse.Namespace) -> int:
         for issue in source_issues:
             print(f"error: {issue}")
         return 1
+    if args.lean_root is not None:
+        source_warnings += [_human_text(warning) for warning in library_citation_warnings(graph, args.lean_root)]
 
     # Check looks each name up and builds no permalink, so it skips the Git
     # work a linker does.

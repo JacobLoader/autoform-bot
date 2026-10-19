@@ -368,6 +368,8 @@ def test_explorer_host_is_escaped_responsive_and_accessible() -> None:
     assert "typeset(refs.navigationInner); refs.navigationInner.textContent" in script
     assert "typeset(refs.inspector); refs.inspectorInner.textContent" in script
     assert script.count("typeset(refs.") == 2
+    # Relation rows that Show more appends to the details are typeset in their list.
+    assert 'more.addEventListener("click", function () { appendNextBatch(); typeset(list); });' in script
     assert 'refs.announcement.setAttribute("aria-live", "polite")' in script
     assert "control.dataset.autoformNodeId = node.id" in script
     assert "new ResizeObserver(resize)" in script

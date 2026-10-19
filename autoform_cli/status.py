@@ -138,7 +138,9 @@ class NodeStatus:
     next phase, in authored order. ``assumes`` names the open statements (not
     proved, but stated or a theorem whose ``statement: retracted`` keeps its
     ``lean:`` declaration in the build) a proof of this node rests on; it is
-    empty unless the project allows open statements.
+    empty unless the project allows open statements. A module catalog is never
+    an open statement, but a proof resting on one with ``lean:`` assumes the
+    open statements the catalog rests on.
     """
 
     node_id: str

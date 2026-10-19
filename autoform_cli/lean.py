@@ -1118,7 +1118,6 @@ class SourceLinker:
     index: SourceIndex
     repository_url: str | None = None
     ref: str | None = None
-    linkable_paths: frozenset[Path] | None = None
     indexed: bool = True
     """False when the sources were not read, so no name was looked up."""
     links_blueprint: bool = False
@@ -1132,15 +1131,7 @@ class SourceLinker:
     def url(self, name: str) -> str | None:
         """Return a permanent link to *name*, or ``None`` if it cannot be built."""
         declaration = self.index.find(name)
-        if (
-            declaration is None
-            or not self.repository_url
-            or not self.ref
-            or (
-                self.linkable_paths is not None
-                and declaration.path not in self.linkable_paths
-            )
-        ):
+        if declaration is None or not self.repository_url or not self.ref:
             return None
         encoded_ref = quote_from_bytes(os.fsencode(self.ref), safe="")
         relative = declaration.path.as_posix()

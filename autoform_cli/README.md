@@ -417,7 +417,20 @@ autoform audit blueprint --lean-root .
 `check` validates the graph contract. With `--lean-root` it resolves names only
 in the project's own Lean files, not in Mathlib or other dependencies under
 `.lake`; when a name is not found, a note at the end of the output says that a
-shared library's declaration belongs in the article's implementation note.
+shared library's declaration belongs in the article's implementation note. It
+also warns about each complete declaration in a usable shared library (see
+`autoform library list`) whose docstring, or whose module's docstring, cites an
+arXiv paper or DOI that an article's `## Sources` links cite, directly or
+through a blueprint page they link, when no implementation note and no project
+Lean file names it. An article stops counting once it is proved, when audit asks
+for its implementation note to go. Such a declaration usually proves part of the
+source being formalized, so reuse it rather than proving it again, or name it in
+the implementation note of the article it concerns to record why not.
+Identifiers match across their usual forms: versions, `abs` and `pdf` URLs, the
+`arXiv:` prefix, arXiv's own DOIs, and `doi:` or `https://doi.org/`. These
+warnings never change the exit status, and comparing a library costs one read of
+its indexed sources.
+
 `audit` adds deterministic completeness,
 provenance, coverage, checked-fact, and optional Lean-target checks. It is local
 and read-only: it neither contacts network services nor writes findings back
@@ -912,9 +925,9 @@ or allowed, so CI checks that its names exist and reach no open statement. A
 module catalog is never open; under the open policy, one that is not proved
 keeps only the names no non-catalog article's `lean:` lists, and is left out
 when none remain: that article's state decides whether such a name is open.
-Under the strict policy
-every such article is listed with `open` false and nothing allowed, and CI
-checks that its names exist. It reads Markdown only and needs no Lean build.
+Under the strict policy every such article is listed with `open` false and
+nothing allowed, and CI checks that its names exist. It reads Markdown only
+and needs no Lean build.
 
 Ask what revising an article's Lean declarations would affect before editing
 them:
@@ -1846,7 +1859,8 @@ but what rests on it still assumes the open statements its body reaches. A
 module catalog is never open, even while pending: it records inspection of
 existing Lean, not a statement to assume, so CI rejects a `sorry` in a
 declaration only it lists, and nothing that rests on it assumes it, though what
-rests on it still assumes the open statements its own dependencies reach. Turn
+rests on one with `lean:` still assumes the open statements its own
+dependencies reach. Turn
 the policy back off only once no open statement remains, since the strict audit
 rejects every `sorry` and strict
 status shows a proof resting on one as proved, not conditional.

@@ -212,7 +212,6 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         encoding="utf-8",
     )
     (tmp_path / "other.html").write_text("<!doctype html><title>Remote scope</title>", encoding="utf-8")
-    (tmp_path / "app.html").write_text(page_shell.replace("{explorer}", explorer), encoding="utf-8")
     dense_nodes = tuple(
         ViewNode(
             id=f"dense/chapter-{index}",
@@ -478,7 +477,7 @@ def test_mobile_node_interaction_and_selected_sheet_collapse(mobile_page: object
 def test_app_layout_fills_the_browser_viewport(desktop_page: object, explorer_url: str) -> None:
     page = desktop_page
     page.set_viewport_size({"width": 1440, "height": 900})
-    page.goto(f"{explorer_url}/app.html")
+    page.goto(f"{explorer_url}/index.html")
     page.locator(".bp-dag-stage").wait_for()
     viewer = page.locator(".bp-dag-viewer")
     box = viewer.bounding_box()
@@ -732,7 +731,7 @@ def test_mobile_isolates_do_not_overlap_the_connected_dag(mobile_page: object, e
 def test_a_plain_wheel_pans_the_full_page_explorer(desktop_page: object, explorer_url: str) -> None:
     """The full-page explorer leaves nothing else to scroll, and a plain wheel or trackpad scroll did nothing there."""
     page = desktop_page
-    page.goto(f"{explorer_url}/app.html")
+    page.goto(f"{explorer_url}/index.html")
     node = page.locator('[data-autoform-node-id="chapter/middle"]')
     node.wait_for()
     frames = "() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))"
@@ -882,18 +881,18 @@ def test_global_search_jumps_to_the_smallest_context(desktop_page: object, explo
 
 def test_legacy_node_hash_resolves_through_the_global_index(desktop_page: object, explorer_url: str) -> None:
     page = desktop_page
-    page.goto(f"{explorer_url}/app.html#node=remote%2Fdeep-theorem")
+    page.goto(f"{explorer_url}/index.html#node=remote%2Fdeep-theorem")
     page.wait_for_url("**/other.html#node=remote%2Fdeep-theorem")
 
     navigations: list[str] = []
     page.on("request", lambda request: navigations.append(request.url) if request.is_navigation_request() else None)
     with page.expect_response("**/search.json"):
-        page.goto(f"{explorer_url}/app.html#node=unknown%2Fitem")
+        page.goto(f"{explorer_url}/index.html#node=unknown%2Fitem")
     # The placeholder changes in the same promise chain, just before the redirect decision.
     playwright.expect(page.locator(".bp-dag-search")).to_have_attribute("placeholder", "Search 64 roadmap entries")
     # One more task lets a redirect that decision started reach the network.
     page.evaluate("() => new Promise(done => setTimeout(done))")
-    assert page.url.endswith("app.html#node=unknown%2Fitem")
+    assert page.url.endswith("index.html#node=unknown%2Fitem")
     assert len(navigations) == 1
 
 
@@ -1224,6 +1223,46 @@ def test_a_node_chosen_on_a_wider_screen_lands_beside_the_open_details(
     assert_beside_the_details(base)
 
 
+def test_the_rail_under_the_open_details_leaves_the_tab_order(desktop_page: object, site_url: str) -> None:
+    """Up to 1,200px open details cover the rail, and Tab still walked its links under the drawer."""
+    page = desktop_page
+    page.set_viewport_size({"width": 1000, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    _open_site(page, site_url, "dependencies/chapters/algebra.html#node=algebra%2Fresult")
+    result = page.locator('[data-autoform-node-id="algebra/result"]')
+    playwright.expect(result).to_have_attribute("data-selected", "true")
+    playwright.expect(page.locator(".bp-dag-navigation")).to_be_hidden()
+    page.get_by_role("button", name="Fit shown nodes").focus()
+    page.keyboard.press("Tab")
+    playwright.expect(result).to_be_focused()
+    # Closing the details uncovers the rail and brings it back.
+    page.get_by_role("button", name="Close details").click()
+    playwright.expect(page.locator(".bp-dag-navigation-link").first).to_be_visible()
+
+
+def test_contents_start_right_of_the_open_details(desktop_page: object, site_url: str) -> None:
+    """Up to 1,200px open details covered the start of every Contents row, its heading and the selected marker."""
+    page = desktop_page
+    page.set_viewport_size({"width": 1000, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    # The list view never draws a map node, so the list itself is what to wait for.
+    _offline(page, site_url)
+    page.goto(f"{site_url}/dependencies/chapters/algebra.html#node=algebra%2Fresult&view=list")
+    playwright.expect(page.locator(".bp-dag-inventory")).to_be_visible()
+    playwright.expect(page.locator('.bp-dag-inventory-row[aria-current="true"]')).to_contain_text("Result")
+    drawer = page.locator(".bp-dag-inspector").bounding_box()
+    assert drawer is not None
+    edge = drawer["x"] + drawer["width"]
+    for item in (".bp-dag-inventory-head h2", ".bp-dag-inventory-row", ".bp-dag-inventory-title"):
+        box = page.locator(item).first.bounding_box()
+        assert box is not None and box["x"] >= edge, item
+    # Closed details give the list the whole stage again.
+    page.get_by_role("button", name="Close details").click()
+    main = page.locator(".bp-dag-main").bounding_box()
+    inventory = page.locator(".bp-dag-inventory").bounding_box()
+    assert main is not None and inventory is not None and abs(inventory["x"] - main["x"]) < 1
+
+
 def _paints_over_the_details(page: object, items: str, container: str) -> bool | None:
     """Whether the first of *items* shown in *container* over the open details is what a click there would hit.
 
@@ -1482,3 +1521,25 @@ def test_the_explorer_typesets_the_math_it_draws_in_its_rail_and_details(desktop
     )
     # Map cards and search results are not typeset.
     assert {entry["name"] for entry in page.evaluate("window.typesetContainers")} == {"bp-dag-inspector"}
+
+    def many_dependents(route: object) -> None:
+        payload = route.fetch().json()
+        key = next(node["status"] for node in payload["nodes"] if node["id"] == "topology/result")
+        payload["nodes"] += [
+            {"id": f"later/{n}", "kind": "node", "status": key, "status_counts": [[key, 1]], "title": f"Later {n}"}
+            for n in range(55)
+        ]
+        payload["edges"] += [{"source": "topology/result", "target": f"later/{n}"} for n in range(55)]
+        route.fulfill(json=payload)
+
+    # Relation rows past the first 50, which Show more appends to the drawer later, stayed raw.
+    page.route("**/topology.json", many_dependents)
+    _open_site(page, site_url, "dependencies/chapters/topology.html#node=topology%2Fresult")
+    more = page.get_by_role("button", name="Show 5 more", exact=True)
+    playwright.expect(more).to_be_visible()
+    page.evaluate("window.typesetContainers = []")
+    more.click()
+    playwright.expect(page.get_by_role("button", name="Later 54", exact=True)).to_be_visible()
+    page.wait_for_function(
+        "window.typesetContainers.some(({name, text}) => name === 'bp-dag-relation-list' && text.includes('Later 54'))"
+    )

@@ -3436,7 +3436,7 @@ def test_an_alias_has_no_sure_target_before_its_file_declares_one(tmp_path: Path
     # B.lean declares its `N.aux` only after the alias and A.lean declares one
     # too, so the alias has no sure target.
     (tmp_path / "A.lean").write_text(
-        "namespace N\nprivate theorem aux : True := trivial\ntheorem helper : True := trivial\nend N\n",
+        "namespace N\nprivate theorem aux : True := trivial\nend N\n",
         encoding="utf-8",
     )
     (tmp_path / "B.lean").write_text(
