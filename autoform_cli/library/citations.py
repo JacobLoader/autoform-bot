@@ -73,7 +73,7 @@ def library_citation_warnings(graph: Graph, lean_root: str | Path) -> list[str]:
         workspace = read_workspace(lean_root)
         packages = indexed_packages(lean_root)
     except (OSError, RuntimeError, ValueError):
-        return []  # no Lake workspace to compare, or a Lean root build_linker reports
+        return []  # no Lake workspace to compare, or a Lean root check reports itself
 
     warnings = []
     candidates: list[tuple[str, str, str, list[str]]] = []
