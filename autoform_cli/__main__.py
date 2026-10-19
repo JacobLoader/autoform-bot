@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.metadata
 import json
 import os
 import shlex
@@ -54,6 +55,15 @@ from .skeleton import (
 from .work import WORK_SCHEMA, WorkError, assumption_contract, list_ready_work, work_context
 
 
+def _installed_version() -> str:
+    """The installed release's version, which pyproject.toml sets; "unknown" from a bare checkout."""
+
+    try:
+        return importlib.metadata.version("autoform")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     if os.name == "posix" and signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN:
         # An ignored SIGCHLD, on Linux even one inherited across exec, has the kernel
@@ -61,6 +71,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # waits for its own children.
         signal.signal(signal.SIGCHLD, signal.SIG_DFL)
     parser = argparse.ArgumentParser(prog="autoform")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {_installed_version()}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init = subparsers.add_parser("init", help="write the blueprint vault, site config, and CI")
