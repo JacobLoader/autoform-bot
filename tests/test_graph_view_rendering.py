@@ -435,6 +435,21 @@ def test_explorer_chrome_is_sized_in_px_not_in_materials_growing_rem() -> None:
     assert "left: calc(408px - var(--dag-navigation-width));" in style
 
 
+def test_explorer_head_is_one_row_where_the_rail_always_shows() -> None:
+    """Over the rail the hidden breadcrumb left a head row holding only the textbook link."""
+    style = dag_viewer._STYLE
+    one_row = style.split("@media (min-width: 1101px) {\n", 1)[1].split("\n}", 1)[0]
+    assert ".bp-dag-context { display: contents; }" in one_row
+    assert ".bp-dag-viewer:has(.bp-dag-navigation-path) .bp-dag-breadcrumb { display: none; }" in one_row
+    assert ".bp-dag-book { order: 1; }" in one_row
+    # Up to 1,100px open details cover the rail, so the head keeps a row where the trail then appears.
+    assert (
+        "@media (min-width: 681px) and (max-width: 1100px) { "
+        ".bp-dag-viewer:has(.bp-dag-navigation-path) .bp-dag-breadcrumb { visibility: hidden; } }"
+    ) in style
+    assert ".bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-breadcrumb { visibility: visible; }" in style
+
+
 def test_explorer_elevation_is_two_shadows_and_a_selection_ring_that_keeps_the_card_still() -> None:
     """A selected card took a 3px border, shifting its text, and blurred panels sat on five shadows."""
     style = dag_viewer._STYLE

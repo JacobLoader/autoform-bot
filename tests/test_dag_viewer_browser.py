@@ -1364,8 +1364,16 @@ def test_the_explorer_draws_its_breadcrumb_once(desktop_page: object, site_url: 
     for retired in (".bp-dag-view-kind", ".bp-dag-navigation-kicker", ".bp-dag-navigation-home"):
         playwright.expect(page.locator(retired)).to_have_count(0)
     playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_hidden()
-    # The textbook link shares the head's row and stays.
+    # Above 1,100px the head is one row: the search, the controls and, at the row's end, the textbook link.
     playwright.expect(page.locator(".bp-dag-book")).to_be_visible()
+    head, search, book, fit = (
+        page.locator(selector).bounding_box()
+        for selector in (".bp-dag-head", ".bp-dag-search", ".bp-dag-book", ".bp-dag-zoom")
+    )
+    assert head is not None and search is not None and book is not None and fit is not None
+    assert abs((search["y"] + search["height"] / 2) - (book["y"] + book["height"] / 2)) < 2
+    assert book["x"] >= fit["x"] + fit["width"]
+    assert head["height"] <= 54
     # Up to 1,100px open details cover the rail, so the head draws the trail again.
     page.set_viewport_size({"width": 1000, "height": 800})
     _open_site(page, site_url, "dependencies/chapters/algebra.html#node=algebra%2Fresult")

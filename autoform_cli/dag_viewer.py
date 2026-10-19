@@ -469,7 +469,11 @@ def viewer_script() -> str:
 # explorer hides the page's own heading because the hierarchy rail carries
 # it; while phones hide the rail, the heading stays for assistive technology
 # as hidden text. Where the rail shows and draws the trail, the head's
-# breadcrumb is hidden so that the trail appears once.
+# breadcrumb is hidden so that the trail appears once. Above 1100px, where
+# the rail always shows, the head is one row of search, controls and the
+# textbook link; at 1100px and below its first row keeps the breadcrumb's
+# place, so the trail appears there while details cover the rail without
+# moving the map.
 _STYLE = r"""
 .bp-dag-viewer {
   --dag-border: var(--bp-rule, #d8dade); --dag-bg: var(--bp-surface, #fff);
@@ -509,11 +513,19 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 :is(.bp-dag-breadcrumb, .bp-dag-navigation-path) li + li::before { content: "/"; margin-right: 6px; color: var(--dag-border); }
 :is(.bp-dag-breadcrumb, .bp-dag-navigation-path) li:not(:first-child, [aria-current]) { flex-shrink: 4; }
 .bp-dag-breadcrumb [aria-current=page] { color: var(--dag-fg); font-weight: 600; }
-@media (min-width: 681px) { .bp-dag-viewer:has(.bp-dag-navigation-path) .bp-dag-breadcrumb { visibility: hidden; } }
-.bp-dag-book { flex: none; color: var(--dag-link); font-size: 12px; font-weight: 600; text-decoration: none; }
+@media (min-width: 681px) and (max-width: 1100px) { .bp-dag-viewer:has(.bp-dag-navigation-path) .bp-dag-breadcrumb { visibility: hidden; } }
+.bp-dag-book { flex: none; color: var(--dag-link); font-size: 12px; font-weight: 600; text-decoration: none; white-space: nowrap; }
 .bp-dag-swatch { flex: none; width: 11px; height: 11px; border: 2px solid var(--dag-swatch-light-stroke); border-radius: 50%; background: var(--dag-swatch-light-fill); }
 [data-md-color-scheme=slate] .bp-dag-swatch { border-color: var(--dag-swatch-dark-stroke); background: var(--dag-swatch-dark-fill); }
 .bp-dag-toolbar { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 4px 16px 12px; font-size: 13px; }
+@media (min-width: 1101px) {
+  .bp-dag-head { display: flex; align-items: center; gap: 12px; padding: 8px 16px; }
+  .bp-dag-context { display: contents; }
+  .bp-dag-breadcrumb { flex: 0 1 auto; }
+  .bp-dag-viewer:has(.bp-dag-navigation-path) .bp-dag-breadcrumb { display: none; }
+  .bp-dag-toolbar { flex: 1; min-width: 0; min-height: 36px; padding: 0; }
+  .bp-dag-book { order: 1; }
+}
 .bp-dag-search-wrap { position: relative; flex: 1 1 384px; min-width: 160px; max-width: 672px; }
 .bp-dag-search { width: 100%; min-height: 36px; margin: 0; padding: 7px 12px 7px 32px; border: 1px solid var(--dag-border); border-radius: var(--dag-radius-control); outline: 0; background: var(--dag-panel); color: var(--dag-fg); font: inherit; }
 .bp-dag-search-wrap::before { content: "⌕"; position: absolute; z-index: 2; left: 12px; top: 8px; color: var(--dag-muted); font-size: 14px; pointer-events: none; }
