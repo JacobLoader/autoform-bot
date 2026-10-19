@@ -457,6 +457,10 @@ def test_explorer_head_is_one_row_where_the_rail_always_shows() -> None:
     assert ".bp-dag-book { grid-area: 1 / 2;" in narrow and ".bp-dag-toolbar { grid-column: 1 / -1; }" in narrow
     phones = style.split("@media (max-width: 680px) {\n", 1)[1].split("\n}", 1)[0]
     assert ".bp-dag-book { grid-area: 2 / 1;" in phones
+    # Margins, not padding, space the link, so its focus ring sits on the text.
+    assert ".bp-dag-book { grid-area: 1 / 2; align-self: center; margin-right: 16px; }" in narrow
+    assert ".bp-dag-book { grid-area: 2 / 1; justify-self: start; margin: 4px 8px 0; }" in phones
+    assert not [rule for rule in style.splitlines() if ".bp-dag-book {" in rule and "padding" in rule]
     # Up to 1,100px open details cover the rail, so the head keeps a row where the trail then appears.
     assert (
         "@media (min-width: 681px) and (max-width: 1100px) { "
