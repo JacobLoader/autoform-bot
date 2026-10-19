@@ -269,15 +269,6 @@ def assumption_contract(project_or_blueprint: str | Path) -> AssumptionContract:
         node.id: tuple(target.declaration for target in node.lean_targets)
         for node in runtime.nodes
     }
-    open_ids = {
-        node.id
-        for node in runtime.nodes
-        if runtime.open_statements
-        and node.catalog is None
-        and not node.status.proved
-        and not is_definition(node)
-        and (node.status.stated or node.assertions.statement_retracted)
-    }
     owned = {name for node in runtime.nodes if node.catalog is None for name in declarations[node.id]}
     for node in runtime.nodes:
         if runtime.open_statements and node.catalog is not None and not node.status.proved:
@@ -286,7 +277,13 @@ def assumption_contract(project_or_blueprint: str | Path) -> AssumptionContract:
     for node in sorted(runtime.nodes, key=lambda candidate: candidate.id):
         if not declarations[node.id]:
             continue
-        is_open = node.id in open_ids
+        is_open = (
+            runtime.open_statements
+            and node.catalog is None
+            and not node.status.proved
+            and not is_definition(node)
+            and (node.status.stated or node.assertions.statement_retracted)
+        )
         allowed = {name for assumed in node.status.assumes for name in declarations.get(assumed, ())}
         if is_open:
             allowed.update(declarations[node.id])
