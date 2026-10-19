@@ -357,7 +357,20 @@ autoform audit blueprint --lean-root .
 `check` validates the graph contract. With `--lean-root` it resolves names only
 in the project's own Lean files, not in Mathlib or other dependencies under
 `.lake`; when a name is not found, a note at the end of the output says that a
-shared library's declaration belongs in the article's implementation note.
+shared library's declaration belongs in the article's implementation note. It
+also warns about each complete declaration in a usable shared library (see
+`autoform library list`) whose docstring, or whose module's docstring, cites an
+arXiv paper or DOI that an article's `## Sources` links cite, directly or
+through a blueprint page they link, when no implementation note and no project
+Lean file names it. An article stops counting once it is proved, when audit asks
+for its implementation note to go. Such a declaration usually proves part of the
+source being formalized, so reuse it rather than proving it again, or name it in
+the implementation note of the article it concerns to record why not.
+Identifiers match across their usual forms: versions, `abs` and `pdf` URLs, the
+`arXiv:` prefix, arXiv's own DOIs, and `doi:` or `https://doi.org/`. These
+warnings never change the exit status, and comparing a library costs one read of
+its indexed sources.
+
 `audit` adds deterministic completeness,
 provenance, coverage, checked-fact, and optional Lean-target checks. It is local
 and read-only: it neither contacts network services nor writes findings back

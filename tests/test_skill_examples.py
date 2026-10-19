@@ -1101,7 +1101,7 @@ def test_roadmap_skill_commits_the_final_checked_pass(repo_root: Path) -> None:
 
     for required in (
         "After the final edit",
-        "`autoform check`",
+        "`autoform check` with `--lean-root .`",
         "`autoform audit`",
         "Commit the vault and refreshed graph only after this final validation",
         "no `MAPPED` rows",

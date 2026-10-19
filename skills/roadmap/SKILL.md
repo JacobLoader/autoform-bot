@@ -174,12 +174,16 @@ Reconcile every affected source and milestone page, the coverage contract,
 
 ## Finish
 
-After the final edit, use the CLI reference to run `autoform check` and
-`autoform audit`, refresh the Mermaid graph, and resolve every finding introduced
-by this work or inside the adopted boundary. Report unrelated pre-existing
-findings instead of silently widening scope. Commit the vault and refreshed
-graph only after this final validation; pushing is outward-facing and requires
-a user request.
+After the final edit, use the CLI reference to run `autoform check` with
+`--lean-root .` and `autoform audit`, refresh the Mermaid graph, and resolve
+every finding introduced by this work or inside the adopted boundary. A `check`
+warning that a shared library declares a result citing one of the blueprint's
+sources usually means a library search was skipped: search for that declaration
+and reuse it as the library search rules say, or name it in the implementation
+note of the article it concerns, with why it does not apply. Report unrelated
+pre-existing findings instead of silently widening scope. Commit the vault and
+refreshed graph only after this final validation; pushing is outward-facing and
+requires a user request.
 
 Finish only when the adopted boundary has no `MAPPED` rows, every `DECOMPOSED`
 area links to a source-grounded fine DAG, affected pages and the graph agree,
