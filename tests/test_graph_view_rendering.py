@@ -403,6 +403,42 @@ def test_explorer_counts_agree_with_their_nouns() -> None:
     assert '.toLocaleString() + " dependencies"' not in script
 
 
+def _contrast(foreground: str, background: str) -> float:
+    def luminance(colour: str) -> float:
+        channels = [int(colour.lstrip("#")[index:index + 2], 16) / 255 for index in (0, 2, 4)]
+        linear = [value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4 for value in channels]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    lighter, darker = sorted((luminance(foreground), luminance(background)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def test_card_meta_counts_items_in_a_readable_colour() -> None:
+    """Topic cards read "1 item · 0 internal links" at three-quarter opacity, jargon in a faded grey."""
+    script = dag_viewer.viewer_script()
+    assert 'var scopeMeta = node.kind === "scope" ? plural(node.member_count || 0, "item", "items") :' in script
+    assert "internal link" not in script
+    rule = re.search(r"\.bp-dag-node-meta \{([^}]*)\}", dag_viewer._STYLE)
+    assert rule is not None and "opacity" not in rule.group(1) and "font-size: 12px" in rule.group(1)
+    share = re.search(r"color: color-mix\(in srgb, var\(--dag-node-text\) (\d+)%, var\(--dag-node-fill\)\)", rule.group(1))
+    assert share is not None
+    weight = int(share.group(1)) / 100
+
+    def mixed(text: str, fill: str) -> str:
+        pairs = ((int(text[index:index + 2], 16), int(fill[index:index + 2], 16)) for index in (1, 3, 5))
+        return "#" + "".join(f"{round(a * weight + b * (1 - weight)):02x}" for a, b in pairs)
+
+    below = set()
+    for state in (*status.STATES, *status.INVENTORY_STATES):
+        for text, fill in ((state.text, state.fill), (state.dark_text, state.dark_fill)):
+            if _contrast(text, fill) < 4.5:
+                # The title on this card falls short too; no mix of its colours can do better.
+                below.add(state.key)
+            else:
+                assert _contrast(mixed(text, fill), fill) >= 4.5, state.key
+    assert below == {"fully_proved"}
+
+
 def test_explorer_shows_statuses_and_areas_but_never_internal_ids() -> None:
     """Cards, the details, Contents and search all printed ids such as "algebra/base" beside the titles."""
     script = dag_viewer.viewer_script()

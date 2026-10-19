@@ -600,7 +600,7 @@ def test_a_view_of_topics_and_results_draws_readable_result_cards(desktop_page: 
     assert not page.locator(".bp-dag-viewer").evaluate("element => element.classList.contains('bp-dag-atlas')")
     assert title.evaluate("element => element.scrollWidth <= element.clientWidth")
     meta = page.locator('[data-autoform-node-id="topics/compactness"] .bp-dag-node-meta')
-    playwright.expect(meta).to_have_text("1 item · 0 internal links")
+    playwright.expect(meta).to_have_text("1 item")
     # A drawn DAG counts its nodes by status; only an atlas counts topics by their least-complete item.
     playwright.expect(page.locator(".bp-dag-inspector h3")).to_have_text("Nodes by status")
     page.locator('[data-autoform-node-id="topics/library"]').click()
