@@ -1819,7 +1819,8 @@ but what rests on it still assumes the open statements its body reaches. A
 module catalog is never open, even while pending: it records inspection of
 existing Lean, not a statement to assume, so CI rejects a `sorry` in a
 declaration only it lists, and nothing that rests on it assumes it, though what
-rests on it still assumes the open statements its own dependencies reach. Turn
+rests on one with `lean:` still assumes the open statements its own
+dependencies reach. Turn
 the policy back off only once no open statement remains, since the strict audit
 rejects every `sorry` and strict
 status shows a proof resting on one as proved, not conditional.

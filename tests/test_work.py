@@ -913,6 +913,35 @@ def test_work_assumptions_never_opens_a_pending_catalog(repo_root: Path, tmp_pat
     }
 
 
+def test_work_assumptions_reach_through_a_pending_catalog_as_through_a_proved_article(tmp_path: Path, capsys) -> None:
+    """What rests on a catalog with `lean:` assumes the open statements the catalog rests on, never the catalog."""
+    project = _policy_project(tmp_path, "allowed")
+    _article(
+        project,
+        "catalog.md",
+        title="Module",
+        metadata=["catalog: module", "statement: formalized", "lean: Project.listed"],
+        depends="open.md",
+    )
+    _article(
+        project,
+        "after.md",
+        title="After",
+        metadata=["declaration: theorem", "statement: formalized", "proof: formalized", "lean: Project.after"],
+        proof_depends="catalog.md",
+    )
+    open_declarations = ("Project.open_aux", "Project.open_thm")
+
+    assert cli.main(["work", "assumptions", str(project), "--json"]) == 0
+    articles = {article["id"]: article for article in json.loads(capsys.readouterr().out)["articles"]}
+    assert articles["chapter/catalog"] == _contract_article(
+        "chapter/catalog", None, "can_prove", ["Project.listed"], assumes=("chapter/open",), allowed=open_declarations
+    )
+    assert articles["chapter/after"] == _contract_article(
+        "chapter/after", None, "conditional", ["Project.after"], assumes=("chapter/open",), allowed=open_declarations
+    )
+
+
 def test_work_assumptions_under_the_strict_policy_lists_each_catalog_whole(tmp_path: Path, capsys) -> None:
     """Nothing is open under the strict policy, so a pending catalog keeps a name a proved article lists too."""
     project = _policy_project(tmp_path, "forbidden")
