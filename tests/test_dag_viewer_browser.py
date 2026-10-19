@@ -452,6 +452,9 @@ def test_mobile_node_interaction_and_selected_sheet_collapse(mobile_page: object
 
     playwright.expect(node).to_have_attribute("data-selected", "true")
     playwright.expect(page.locator(".bp-dag-inspector h2")).to_have_text("Middle lemma")
+    # The card and the details name the status, never the internal id.
+    playwright.expect(node.locator(".bp-dag-node-meta")).to_have_text("ready to prove")
+    playwright.expect(page.locator(".bp-dag-inspector")).not_to_contain_text("chapter/middle")
     handle = page.locator(".bp-dag-sheet-handle")
     inspector_inner = page.locator(".bp-dag-inspector-inner")
     playwright.expect(handle).to_have_attribute("aria-expanded", "true")
@@ -583,8 +586,9 @@ def test_atlas_hierarchy_keeps_topics_readable_and_details_out_of_the_way(
     playwright.expect(page.locator(".bp-dag-status-pill")).to_have_text("inventory only")
     # Contents names each topic's region, which the map paints only on the canvas.
     page.get_by_role("button", name="Contents").click()
-    topology = page.locator(".bp-dag-inventory-row").filter(has=page.get_by_text("atlas/topology", exact=True))
+    topology = page.locator(".bp-dag-inventory-row").filter(has=page.get_by_text("Topology", exact=True))
     playwright.expect(topology.locator(".bp-dag-inventory-meta")).to_contain_text("Geometry & Topology")
+    playwright.expect(topology).not_to_contain_text("atlas/topology")
 
 
 def test_a_view_of_topics_and_results_draws_readable_result_cards(desktop_page: object, explorer_url: str) -> None:
@@ -888,8 +892,12 @@ def test_global_search_jumps_to_the_smallest_context(desktop_page: object, explo
     page = desktop_page
     _open_ready(page, explorer_url)
     search = page.locator(".bp-dag-search")
+    # A Lean name finds its entry, which shows its status rather than its id or why it matched.
     search.fill("Remote.Namespace.deepTheorem")
-    playwright.expect(page.locator(".bp-dag-result-reason").first).to_have_text("Exact Lean name")
+    first = page.locator(".bp-dag-result").first
+    playwright.expect(first.locator(".bp-dag-result-title")).to_have_text("Remote theorem")
+    playwright.expect(first.locator(".bp-dag-result-meta")).to_have_text("planned")
+    playwright.expect(first).not_to_contain_text("remote/deep-theorem")
     search.fill("spectral gap")
     playwright.expect(page.locator(".bp-dag-result", has_text="Remote theorem")).to_be_visible()
     search.fill("Remote theorem")

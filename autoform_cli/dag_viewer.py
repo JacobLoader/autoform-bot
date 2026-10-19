@@ -545,13 +545,11 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-search-results { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; right: 0; max-height: min(432px, 60vh); overflow: auto; padding: 6px; border: 1px solid var(--dag-overlay-border); border-radius: var(--dag-radius-panel); background: var(--dag-bg); box-shadow: var(--dag-e2); }
 .bp-dag-viewer.bp-dag-viewer :is(.bp-dag-results, .bp-dag-relation-list, .bp-dag-inventory-list) { display: block; margin: 0; padding: 0; list-style: none; }
 .bp-dag-viewer.bp-dag-viewer :is(.bp-dag-results, .bp-dag-relation-list, .bp-dag-inventory-list) > li { margin: 0; }
-.bp-dag-result { display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; gap: 2px 10px; padding: 8px 9px; border: 0; border-radius: var(--dag-radius-row); background: transparent; color: var(--dag-fg); text-align: left; cursor: pointer; }
+.bp-dag-result { display: flex; align-items: baseline; width: 100%; gap: 10px; padding: 8px 9px; border: 0; border-radius: var(--dag-radius-row); background: transparent; color: var(--dag-fg); text-align: left; cursor: pointer; }
 .bp-dag-result:hover, .bp-dag-result:focus-visible { background: color-mix(in srgb, var(--dag-link) 9%, transparent); }
 .bp-dag-result:focus-visible, .bp-dag-inventory-row:focus-visible { outline: 3px solid color-mix(in srgb, var(--dag-link) 52%, transparent); outline-offset: -3px; }
-.bp-dag-result-title { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.bp-dag-result-id, .bp-dag-result-reason { color: var(--dag-muted); font-size: 12px; }
-.bp-dag-result-id { grid-column: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--dag-mono); }
-.bp-dag-result-reason { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+.bp-dag-result-title, .bp-dag-inventory-title { flex: 1 1 auto; min-width: 0; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.bp-dag-result-meta, .bp-dag-inventory-meta { min-width: 0; overflow: hidden; color: var(--dag-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .bp-dag-button, .bp-dag-filter-summary, .bp-dag-mode-button, .bp-dag-pivot, .bp-dag-hidden-button, .bp-dag-whole-search, .bp-dag-load-more { min-height: 36px; padding: 6px 10px; border: 1px solid var(--dag-border); border-radius: var(--dag-radius-control); background: var(--dag-bg); color: var(--dag-fg); font: inherit; font-weight: 600; cursor: pointer; }
 .bp-dag-button:hover, .bp-dag-filter-summary:hover, .bp-dag-mode-button:hover, .bp-dag-pivot:hover, .bp-dag-load-more:hover { border-color: var(--dag-link); color: var(--dag-link); }
 .bp-dag-button:focus-visible, .bp-dag-filter-summary:focus-visible, .bp-dag-mode-button:focus-visible, .bp-dag-pivot:focus-visible, .bp-dag-node:focus-visible, .bp-dag-sheet-handle:focus-visible { outline: 3px solid color-mix(in srgb, var(--dag-link) 45%, transparent); outline-offset: 2px; }
@@ -622,12 +620,9 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-viewer.bp-dag-viewer .bp-dag-inventory-head h2 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: normal; line-height: 1.3; }
 .bp-dag-inventory-summary { color: var(--dag-muted); font-size: 12px; }
 .bp-dag-inventory-scroll { overflow: auto; padding: 7px; }
-.bp-dag-inventory-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; gap: 2px 13px; padding: 10px 11px; border: 0; border-radius: var(--dag-radius-row); background: transparent; color: var(--dag-fg); text-align: left; cursor: pointer; }
+.bp-dag-inventory-row { display: flex; align-items: baseline; width: 100%; gap: 13px; padding: 10px 11px; border: 0; border-radius: var(--dag-radius-row); background: transparent; color: var(--dag-fg); text-align: left; cursor: pointer; }
 .bp-dag-inventory-row:hover, .bp-dag-inventory-row:focus-visible { background: var(--dag-panel); }
 .bp-dag-inventory-row[aria-current=true] { background: color-mix(in srgb, var(--dag-link) 10%, var(--dag-bg)); box-shadow: inset 3px 0 0 var(--dag-link); }
-.bp-dag-inventory-title { font-weight: 600; }
-.bp-dag-inventory-id { grid-row: 2; overflow: hidden; color: var(--dag-muted); font-size: 12px; font-family: var(--dag-mono); text-overflow: ellipsis; white-space: nowrap; }
-.bp-dag-inventory-meta { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--dag-muted); font-size: 12px; }
 .bp-dag-load-more { justify-self: center; margin: 9px; }
 .bp-dag-inspector { position: absolute; z-index: 10; top: 12px; right: 12px; bottom: 12px; width: min(384px, calc(100% - 24px)); min-width: 0; overflow: auto; border: 1px solid var(--dag-overlay-border); border-radius: var(--dag-radius-panel); font-size: 13px; background: var(--dag-bg); box-shadow: var(--dag-e2); visibility: hidden; opacity: 0; transform: translateX(calc(100% + 24px)); transition: opacity .16s ease, transform .2s ease, visibility 0s linear .2s; }
 .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-inspector { visibility: visible; opacity: 1; transform: translateX(0); transition-delay: 0s; }
@@ -638,7 +633,6 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-viewer.bp-dag-viewer .bp-dag-inspector-inner > h2 { margin: 0 0 8px; font-size: 17px; font-weight: 700; letter-spacing: normal; line-height: 1.25; }
 .bp-dag-close { min-width: 32px; min-height: 32px; padding: 3px; border: 0; background: transparent; color: var(--dag-muted); cursor: pointer; }
 .bp-dag-kicker { margin: 0 0 6px; color: var(--dag-muted); font-size: 12px; font-weight: 500; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-node-id { display: block; margin: 7px 0; padding: 0; overflow-wrap: anywhere; border-radius: 0; background: none; color: var(--dag-muted); font-size: 12px; font-family: var(--dag-mono); }
 .bp-dag-status-pill { display: inline-flex; align-items: center; gap: 6px; margin: 5px 0 10px; color: var(--dag-muted); font-size: 12px; }
 .bp-dag-status-pill::before { content: ""; width: 9px; height: 9px; border: 2px solid var(--dag-pill-stroke); border-radius: 50%; background: var(--dag-pill-fill); }
 .bp-dag-open { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 6px 12px; border-radius: var(--dag-radius-control); background: var(--dag-link); color: #fff !important; font-size: 13px; font-weight: 600; text-decoration: none !important; }
@@ -1385,7 +1379,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
         (scopeMeta || statusLabel(node.status)) + (node.isolated ? ", no dependency edges in this view" : ""));
       var content = atlas && node.kind === "scope" ? element("span", "bp-dag-node-core") : control;
       content.appendChild(element("span", "bp-dag-node-title", node.title));
-      content.appendChild(element("span", "bp-dag-node-meta", scopeMeta || statusLabel(node.status) + " · " + node.id));
+      content.appendChild(element("span", "bp-dag-node-meta", scopeMeta || statusLabel(node.status)));
       content.appendChild(element("span", "bp-dag-node-relation", ""));
       if (content !== control) control.appendChild(content);
       control.addEventListener("click", function (event) { event.stopPropagation(); activateNode(node, false); });
@@ -1450,18 +1444,13 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
     function searchScore(node, query) {
       var title = node.title.toLocaleLowerCase(), id = node.id.toLocaleLowerCase();
       var lean = (node.lean || "").toLocaleLowerCase(), summary = (node.summary || "").toLocaleLowerCase();
-      if (title === query) return [0, "Exact title"]; if (id === query) return [1, "Exact id"];
-      if (lean === query) return [2, "Exact Lean name"];
-      if (title.startsWith(query)) return [3, "Title prefix"]; if (id.startsWith(query)) return [4, "Id prefix"];
-      if (lean.startsWith(query)) return [5, "Lean prefix"];
-      if (title.split(/\s+/).some(function (word) { return word.startsWith(query); })) return [6, "Word prefix"];
-      if (title.indexOf(query) >= 0) return [7, "Title match"]; if (id.indexOf(query) >= 0) return [8, "Id match"];
-      if (lean.indexOf(query) >= 0) return [9, "Lean match"];
-      if (summary.indexOf(query) >= 0) return [10, "Statement match"];
+      if (title === query) return 1; if (id === query) return 2; if (lean === query) return 3;
+      if (title.startsWith(query)) return 4; if (id.startsWith(query)) return 5; if (lean.startsWith(query)) return 6;
+      if (title.split(/\s+/).some(function (word) { return word.startsWith(query); })) return 7;
+      if (title.indexOf(query) >= 0) return 8; if (id.indexOf(query) >= 0) return 9;
+      if (lean.indexOf(query) >= 0) return 10; if (summary.indexOf(query) >= 0) return 11;
       var terms = query.split(/\s+/).filter(Boolean), all = [title, id, lean, summary].join(" ");
-      if (terms.length > 1 && terms.every(function (term) { return all.indexOf(term) >= 0; }))
-        return [11, "All terms match"];
-      return null;
+      return terms.length > 1 && terms.every(function (term) { return all.indexOf(term) >= 0; }) ? 12 : 0;
     }
     function ensureGlobalSearch() {
       var source = host.getAttribute("data-catalog-src");
@@ -1504,7 +1493,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
     }
     function rankMatches(nodes, query) {
       return nodes.map(function (node) {
-        var score = searchScore(node, query); return score ? {node: node, rank: score[0], reason: score[1]} : null;
+        var rank = searchScore(node, query); return rank ? {node: node, rank: rank} : null;
       }).filter(Boolean).sort(function (a, b) { return a.rank - b.rank || a.node._index - b.node._index; });
     }
     function searchMatches() {
@@ -1519,8 +1508,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       matches.slice(0, state.searchLimit).forEach(function (match) {
         var item = element("li"), choose = button("bp-dag-result", ""); choose.dataset.resultId = match.node.id;
         choose.appendChild(element("span", "bp-dag-result-title", match.node.title));
-        choose.appendChild(element("span", "bp-dag-result-id", match.node.id));
-        choose.appendChild(element("span", "bp-dag-result-reason", match.reason));
+        choose.appendChild(element("span", "bp-dag-result-meta", match.node.area || statusLabel(match.node.status)));
         choose.addEventListener("click", function () { activateNode(match.node, true); }); item.appendChild(choose); list.appendChild(item);
         choose.addEventListener("keydown", searchResultKeydown);
       });
@@ -1692,7 +1680,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
         var chosen = state.selected && (state.mode === "list" ? refs.inventoryRows.get(state.selected.id) : overlays.get(state.selected.id));
         if (chosen) chosen.focus();
       });
-      header.appendChild(close); refs.inspectorInner.appendChild(header); refs.inspectorInner.appendChild(element("code", "bp-dag-node-id", node.id));
+      header.appendChild(close); refs.inspectorInner.appendChild(header);
       var inventoryOnly = node.kind === "scope" && (node.status_counts || []).length > 0 && node.status_counts.every(function (entry) {
         return palette[entry[0]] && palette[entry[0]].neutral;
       });
@@ -1767,9 +1755,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
         if (node === state.selected) row.setAttribute("aria-current", "true");
         refs.inventoryRows.set(node.id, row);
         row.appendChild(element("span", "bp-dag-inventory-title", node.title));
-        row.appendChild(element("span", "bp-dag-inventory-id", node.id));
-        row.appendChild(element("span", "bp-dag-inventory-meta",
-          statusLabel(node.status) + (node.area ? " · " + node.area : "") + (node.isolated ? " · isolated" : "")));
+        row.appendChild(element("span", "bp-dag-inventory-meta", statusLabel(node.status) + (node.area ? " · " + node.area : "")));
         row.addEventListener("click", function () { activateNode(node, true); }); item.appendChild(row); refs.inventoryList.appendChild(item);
       });
       refs.inventorySummary.textContent = visible.length + " of " + nodes.length + " listed" +

@@ -387,8 +387,23 @@ def test_explorer_host_is_escaped_responsive_and_accessible() -> None:
     assert "if (query === state.searchCacheQuery) return state.searchCache" in script
     assert 'data.schema !== "autoform-dag-view/v2"' in script
     assert 'ctx.fillText("×" + count' in script
-    assert "Title prefix" in script and "Id prefix" in script and "Word prefix" in script
-    assert "Exact Lean name" in script and "Statement match" in script and "All terms match" in script
+    # Search ranks exact, then prefix, then substring matches of title, id and Lean name, and says nothing of why.
+    assert "if (title === query) return 1; if (id === query) return 2; if (lean === query) return 3;" in script
+    assert "if (title.startsWith(query)) return 4; if (id.startsWith(query)) return 5;" in script
+    assert "if (lean.indexOf(query) >= 0) return 10; if (summary.indexOf(query) >= 0) return 11;" in script
+    assert "Exact Lean name" not in script and "bp-dag-result-reason" not in script
+
+
+def test_explorer_shows_statuses_and_areas_but_never_internal_ids() -> None:
+    """Cards, the details, Contents and search all printed ids such as "algebra/base" beside the titles."""
+    script = dag_viewer.viewer_script()
+    style = dag_viewer.render_container("graph.json")
+
+    assert 'element("span", "bp-dag-node-meta", scopeMeta || statusLabel(node.status))' in script
+    assert 'element("span", "bp-dag-inventory-meta", statusLabel(node.status) + (node.area ? " · " + node.area : ""))' in script
+    assert 'element("span", "bp-dag-result-meta", match.node.area || statusLabel(match.node.status))' in script
+    for gone in ("bp-dag-node-id", "bp-dag-inventory-id", "bp-dag-result-id"):
+        assert gone not in script and gone not in style
 
 
 def test_explorer_pages_relations_and_clamps_zoom() -> None:
