@@ -1385,7 +1385,8 @@ def test_a_click_that_opens_details_over_its_card_pans_it_clear(desktop_page: ob
     assert box["x"] + box["width"] <= drawer["x"]
     assert abs(box["y"] - before["y"]) < 1
     # A card already clear of the open details stays where it is.
-    other = page.locator(".bp-dag-node[data-selected=false]").first
+    other_id = page.locator(".bp-dag-node[data-selected=false]").first.get_attribute("data-autoform-node-id")
+    other = page.locator(f'[data-autoform-node-id="{other_id}"]')
     clear = other.bounding_box()
     assert clear is not None and clear["x"] + clear["width"] <= drawer["x"]
     other.click()
