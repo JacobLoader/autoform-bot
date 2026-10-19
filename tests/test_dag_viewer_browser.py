@@ -1372,6 +1372,12 @@ def test_a_phones_chapter_explorer_gives_its_breadcrumb_a_line_of_its_own(mobile
     assert current.evaluate("element => element.scrollWidth <= element.clientWidth")
     book = page.locator(".bp-dag-breadcrumb li").first.bounding_box()
     assert book is not None and book["width"] >= 24
+    # The textbook link takes the next line, above the search box.
+    crumbs, link, search = (
+        page.locator(selector).bounding_box() for selector in (".bp-dag-breadcrumb", ".bp-dag-book", ".bp-dag-search")
+    )
+    assert crumbs is not None and link is not None and search is not None
+    assert crumbs["y"] + crumbs["height"] <= link["y"] and link["y"] + link["height"] <= search["y"]
 
 
 def test_the_explorer_draws_its_breadcrumb_once(desktop_page: object, site_url: str) -> None:
@@ -1399,11 +1405,28 @@ def test_the_explorer_draws_its_breadcrumb_once(desktop_page: object, site_url: 
     assert book["x"] >= zoom["x"] + zoom["width"]
     # One row of 36px controls, about 54px with its padding and rule; two rows were 89px.
     assert head["height"] < 70
+    # Tab walks the row left to right: the textbook link, drawn last, was the head's first stop.
+    lefts = page.locator(".bp-dag-head").evaluate(
+        """head => Array.from(head.querySelectorAll("a[href], button, input"))
+          .filter(control => control.getClientRects().length && getComputedStyle(control).visibility === "visible")
+          .map(control => control.getBoundingClientRect().left)"""
+    )
+    assert len(lefts) >= 5 and lefts == sorted(lefts)
+    page.get_by_role("button", name="Fit shown nodes").focus()
+    page.keyboard.press("Tab")
+    playwright.expect(page.locator(".bp-dag-book")).to_be_focused()
     # Up to 1,100px open details cover the rail, so the head draws the trail again.
     page.set_viewport_size({"width": 1000, "height": 800})
     _open_site(page, site_url, "dependencies/chapters/algebra.html#node=algebra%2Fresult")
     playwright.expect(page.locator(".bp-dag-inspector")).to_be_visible()
     playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_visible()
+    # There the textbook link ends the trail's row, above the search box.
+    crumbs, book, search = (
+        page.locator(selector).bounding_box() for selector in (".bp-dag-breadcrumb", ".bp-dag-book", ".bp-dag-search")
+    )
+    assert crumbs is not None and book is not None and search is not None
+    assert abs((crumbs["y"] + crumbs["height"] / 2) - (book["y"] + book["height"] / 2)) < 2
+    assert book["x"] >= crumbs["x"] + crumbs["width"] and book["y"] + book["height"] <= search["y"]
     # Phones hide the rail, so there the head draws the trail.
     page.set_viewport_size({"width": 390, "height": 844})
     playwright.expect(page.locator(".bp-dag-navigation")).to_be_hidden()

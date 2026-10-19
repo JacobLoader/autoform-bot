@@ -441,7 +441,16 @@ def test_explorer_head_is_one_row_where_the_rail_always_shows() -> None:
     one_row = style.split("@media (min-width: 1101px) {\n", 1)[1].split("\n}", 1)[0]
     assert ".bp-dag-context { display: contents; }" in one_row
     assert ".bp-dag-viewer:has(.bp-dag-navigation-path) .bp-dag-breadcrumb { display: none; }" in one_row
-    assert ".bp-dag-book { order: 1; }" in one_row
+    # The textbook link ends the row in the DOM too, so Tab follows the row instead of starting at its end.
+    assert "order:" not in one_row
+    script = dag_viewer.viewer_script()
+    assert script.index("head.appendChild(toolbar);") < script.index("head.appendChild(bookLink);")
+    assert "context.appendChild(bookLink)" not in script
+    # At 1,100px and below a grid draws the link at the end of the first row, under phones on a line of its own.
+    narrow = style.split("@media (max-width: 1100px) {\n", 1)[1].split("\n}", 1)[0]
+    assert ".bp-dag-book { grid-area: 1 / 2;" in narrow and ".bp-dag-toolbar { grid-column: 1 / -1; }" in narrow
+    phones = style.split("@media (max-width: 680px) {\n", 1)[1].split("\n}", 1)[0]
+    assert ".bp-dag-book { grid-area: 2 / 1;" in phones
     # Up to 1,100px open details cover the rail, so the head keeps a row where the trail then appears.
     assert (
         "@media (min-width: 681px) and (max-width: 1100px) { "
