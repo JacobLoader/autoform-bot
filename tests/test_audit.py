@@ -400,6 +400,20 @@ def test_audit_reports_invalid_note_at_its_blueprint_path(
     ]
 
 
+def test_coverage_may_not_link_into_an_unpublished_folder(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    _article(blueprint, "drafts/README.md", published="false")
+    _article(blueprint, "drafts/idea.md", declaration="theorem")
+    _coverage(
+        blueprint, "| Area | Coverage | Evidence |\n| --- | --- | --- |\n| Ideas | DECOMPOSED | [Idea](../roadmap/drafts/idea.md) |"
+    )
+
+    assert ("unpublished-coverage-target", "coverage link names an unpublished folder, which render omits: "
+            "'../roadmap/drafts/idea.md' (line 5)") in {
+        (finding.code, finding.reason) for finding in audit_blueprint(blueprint).findings
+    }
+
+
 def test_audit_skips_a_hidden_coverage_file_as_render_does(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)

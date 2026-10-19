@@ -115,8 +115,10 @@ class CoverageSummary:
         return json.dumps(self.as_dict(), sort_keys=True, separators=(",", ":"))
 
 
-def load_coverage(blueprint_dir: str | Path) -> tuple[CoverageSummary | None, tuple[CoverageIssue, ...]]:
-    """Read and validate ``coverage/README.md`` without modifying it."""
+def load_coverage(
+    blueprint_dir: str | Path, *, unpublished: tuple[Path, ...] = ()
+) -> tuple[CoverageSummary | None, tuple[CoverageIssue, ...]]:
+    """Read and validate ``coverage/README.md`` without modifying it; it may not link into *unpublished* folders."""
 
     blueprint = blueprint_root(blueprint_dir)
     path = blueprint / "coverage" / "README.md"
@@ -131,7 +133,7 @@ def load_coverage(blueprint_dir: str | Path) -> tuple[CoverageSummary | None, tu
         return None, (CoverageIssue(0, "coverage contract cannot be read"),)
 
     rows, issues = _parse_table(text)
-    issues.extend(_validate_evidence(rows, blueprint=blueprint, coverage_path=path))
+    issues.extend(_validate_evidence(rows, blueprint=blueprint, coverage_path=path, unpublished=unpublished))
     if issues:
         return None, tuple(issues)
     return (
@@ -468,6 +470,7 @@ def _validate_evidence(
     *,
     blueprint: Path,
     coverage_path: Path,
+    unpublished: tuple[Path, ...],
 ) -> list[CoverageIssue]:
     issues: list[CoverageIssue] = []
     roadmap = (blueprint / "roadmap").resolve()
@@ -496,7 +499,7 @@ def _validate_evidence(
         # One good link beside a broken one is a broken claim.
         broken: list[str] = []
         for target in targets:
-            problem = local_target_issue(coverage_path, target, blueprint, label="coverage")
+            problem = local_target_issue(coverage_path, target, blueprint, label="coverage", unpublished=unpublished)
             if problem is not None:
                 broken.append(problem[1])
         if broken:

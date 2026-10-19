@@ -788,12 +788,14 @@ def local_target_issue(
     boundary: Path,
     *,
     label: str,
+    unpublished: tuple[Path, ...] = (),
 ) -> tuple[str, str] | None:
     """Return ``(code, reason)`` when a local link does not resolve, or names a path render omits.
 
     ``source_path`` is the file containing the link, ``boundary`` the directory
-    the link may not escape. External schemes are the reader's problem and are
-    reported as fine. A fragment on a Markdown target must name a real heading.
+    the link may not escape, and ``unpublished`` the folders render leaves out.
+    External schemes are the reader's problem and are reported as fine. A
+    fragment on a Markdown target must name a real heading.
     """
 
     try:
@@ -819,6 +821,9 @@ def local_target_issue(
         return f"{label}-escapes-blueprint", f"{label} link escapes the blueprint: {target!r}"
     if spelled.parent == boundary and spelled.name in GENERATED_VIEWS:
         return f"generated-{label}-target", f"{label} link names a generated view, which render omits: {target!r}"
+    if any(_is_within(spelled, folder) for folder in unpublished):
+        reason = f"{label} link names an unpublished folder, which render omits: {target!r}"
+        return f"unpublished-{label}-target", reason
     candidate = resolved_path(source_path.parent / raw_path if raw_path else source_path)
     if candidate is None:
         return f"{label}-not-found", f"{label} link does not resolve to a file: {target!r}"

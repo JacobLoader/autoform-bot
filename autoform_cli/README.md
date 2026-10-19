@@ -136,6 +136,7 @@ An article asserts only facts a human or agent verified:
 | `discussion: 42` | Issue number or URL where the article is being discussed. |
 | `article_id: af_...` | Durable identity, `af_` plus 24 lowercase hex digits; `autoform work` requires it on unfinished formalizable leaves. |
 | `open_statements: allowed` | Project policy, valid only in `roadmap/README.md`: a theorem's statement may land with a `sorry` proof (see [Open statements](#open-statements)). Absent or `forbidden` keeps the strict policy. |
+| `published: false` | Folder setting, valid only in the `README.md` of a folder below `roadmap/`: `check` and `audit` validate the folder and everything in it, but render leaves it out of the site and of the publication hash. No link on a published page may point into it, whether a dependency, a source or prose, and `audit` and render reject coverage evidence that does. A folder inside an unpublished one is unpublished too, whatever its own README says. |
 
 Everything a reader thinks of as progress is *derived* from the DAG on every
 run, so it cannot go stale. Readiness depends on the project's policy: under
