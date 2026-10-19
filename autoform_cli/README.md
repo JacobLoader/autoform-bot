@@ -1075,7 +1075,8 @@ starting with `.`, are no part of the roadmap, since render omits them: they
 hold no articles, need no chapter page, and may be symbolic links, such as an
 editor's lock file. A dependency on a hidden page fails, naming the hidden
 path, as does one that steps through a hidden folder and back out, and so does
-an `.implementation-notes` folder under `roadmap/`, which nothing reads there. A `## Sources` link to a local path must name a file
+an `.implementation-notes` folder under `roadmap/`, which nothing reads there.
+A `## Sources` link to a local path must name a file
 inside the blueprint, as `audit` also requires: a missing file, a directory, an
 invalid path or URL, or a target outside the blueprint fails. The path must open
 as written, so one through a missing folder or a symbolic link loop fails too,
