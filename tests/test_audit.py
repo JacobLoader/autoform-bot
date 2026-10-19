@@ -409,19 +409,20 @@ def test_audit_skips_a_hidden_coverage_file_as_render_does(tmp_path: Path) -> No
     assert "coverage/.draft.md" not in {finding.article_path for finding in audit_blueprint(blueprint).findings}
 
 
-def test_audit_reports_a_misplaced_notes_directory_where_it_is(tmp_path: Path) -> None:
+@pytest.mark.parametrize("folder", ["roadmap", "roadmap/chapter"])
+def test_audit_reports_a_misplaced_notes_directory_where_it_is(tmp_path: Path, folder: str) -> None:
     blueprint = tmp_path / "blueprint"
     _coverage(blueprint)
     article_id = "af_0123456789abcdef01234567"
     _article(blueprint, "result.md", article_id=article_id, declaration="theorem")
-    misplaced = blueprint / "roadmap" / ".implementation-notes"
-    misplaced.mkdir()
+    misplaced = blueprint / folder / ".implementation-notes"
+    misplaced.mkdir(parents=True)
     (misplaced / f"{article_id}.md").write_text("Mathlib gap.\n", encoding="utf-8")
 
     paths = {finding.article_path for finding in audit_blueprint(blueprint).findings}
 
     # Hidden entries are no part of the roadmap, as for render, so the directory itself is named.
-    assert "roadmap/.implementation-notes" in paths
+    assert f"{folder}/.implementation-notes" in paths
     assert ".implementation-notes" not in paths
 
 
