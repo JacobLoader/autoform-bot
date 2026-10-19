@@ -152,6 +152,23 @@ def test_a_proved_article_no_longer_asks_for_a_search(tmp_path: Path, capsys: py
     assert _check(_consumer(tmp_path, proved=True), capsys) == (0, [])
 
 
+def test_a_module_catalog_asks_for_no_search(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A pending catalog is not proved, but it inventories existing Lean rather than awaiting a proof."""
+    project = _consumer(tmp_path, articles=0)
+    ledger = project / "blueprint/sources/ledger.md"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text("# Ledger\n\nAfter https://arxiv.org/abs/2307.05244.\n", encoding="utf-8")
+    _article(
+        project,
+        "catalog.md",
+        title="Existing module",
+        body="The module's declarations.\n\n## Sources\n\n- [Declaration ledger](../sources/ledger.md)",
+        metadata=("catalog: module",),
+    )
+
+    assert _check(project, capsys) == (0, [])
+
+
 def test_a_declaration_whose_docstring_and_module_docstring_both_cite_warns_once(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

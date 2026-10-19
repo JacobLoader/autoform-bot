@@ -57,6 +57,7 @@ from .graph import (
     atlas_omissions,
     load_graph,
     unpublished_content,
+    unpublished_node_ids,
 )
 from .graph_views import _containers, _countable, _is_countable, _module_inventories
 from .lean import (
@@ -72,6 +73,7 @@ from .lean import (
     detect_ref,
     detect_repository_url,
     index_failure_message,
+    repository_top_level,
     resolve_lean_root,
     snapshot_project_sources,
     verify_repository_snapshot,
@@ -363,7 +365,7 @@ def render_site(
             ["blueprint and output directories must be disjoint; refusing destructive render"]
         )
     recovered = _recover_backup(destination)
-    snapshot, unpublished_ids = _capture_blueprint(blueprint)
+    snapshot, unpublished_ids, unpublished_nodes = _capture_blueprint(blueprint)
     # The repository root, not the vault's parent. A blueprint nested at
     # <repo>/docs/blueprint would otherwise be described as <repo>/blueprint,
     # and every generated permalink would 404.
@@ -371,10 +373,14 @@ def render_site(
         repo_root = resolve_lean_root(lean_root) if lean_root is not None else blueprint.parent
     except LeanSourceError as error:
         raise PublicationError([index_failure_message(error)]) from error
+    # Links name paths from the Git top level, which may hold the Lean root, or without one the vault's
+    # parent, in a subdirectory.
+    top_level = repository_top_level(repo_root) or repo_root
+    root_prefix = "/".join(repo_root.relative_to(top_level).parts)
     # Everything below reads a private copy of the captured bytes. The copy keeps
     # the blueprint's place in the repository, so a path below the copy's root is
     # the repository path it had when render read the vault.
-    relative = blueprint.relative_to(repo_root) if _is_within(blueprint, repo_root) else Path("blueprint")
+    relative = blueprint.relative_to(top_level) if _is_within(blueprint, top_level) else Path("blueprint")
     with _private_copy(snapshot, relative) as (copy_root, copy):
         graph = _load_graph(copy, blueprint, unpublished_ids)
         coverage, coverage_issues = load_coverage(copy)
@@ -423,7 +429,7 @@ def render_site(
             )
         # A code link depends only on the Lean bytes. A link into the blueprint also needs the blueprint's
         # bytes in that commit, which a blueprint outside the repository's working tree never has.
-        if commit is not None and _in_working_tree(blueprint, repo_root):
+        if commit is not None and _in_working_tree(blueprint, top_level):
             links_blueprint = (
                 verify_repository_snapshot(
                     repo_root,
@@ -445,6 +451,7 @@ def render_site(
             indexed=indexed,
             links_blueprint=links_blueprint,
             spellings=spellings,
+            root_prefix=root_prefix,
         )
         source_revision = _source_revision(snapshot)
         report = _publish(
@@ -460,6 +467,7 @@ def render_site(
                 sources=sources,
                 source_revision=source_revision,
                 lean_source_revision=lean.revision,
+                unpublished_nodes=unpublished_nodes,
             ),
         )
     report.warnings[:0] = recovered
@@ -493,19 +501,21 @@ def _render_pages(
     sources: bool,
     source_revision: str,
     lean_source_revision: str,
+    unpublished_nodes: frozenset[str],
 ) -> RenderReport:
     """Write the site into *destination* from the private copy at *blueprint*."""
     # Audit reports coverage-role issues and the atlas.json entries the loader
     # ignored. A valid contract still publishes with them, as it does with
     # MAPPED rows. An issue without a line already names the contract in its
-    # reason, so it gets no prefix.
+    # reason, so it gets no prefix. Check accepts an entry naming an article
+    # in an unpublished folder, so render does not warn about it either.
     coverage_warnings = [
         f"coverage contract line {issue.line}: {issue.reason}"
         if issue.line
         else issue.reason
         for issue in validate_coverage_roles(graph, coverage)
     ]
-    coverage_warnings += (f"atlas.json: {omission}" for omission in atlas_omissions(graph))
+    coverage_warnings += (f"atlas.json: {omission}" for omission in atlas_omissions(graph, unpublished_nodes))
     statuses = status.derive(graph)
     numbers = _number_nodes(graph)
     used_by = _reverse_edges(graph)
@@ -566,6 +576,10 @@ def _render_pages(
         # Source notes leave the site entirely once readers can reach them in
         # the repository, so the book has one reference surface rather than two.
         if sources_base is not None and relative.parts[:1] == (SOURCES_DIR,):
+            continue
+        # The graph has read atlas.json, and nothing on the site reads it. It may
+        # name articles in unpublished folders, so it stays out of the site.
+        if relative.as_posix().casefold() == "atlas.json":
             continue
         target = destination / relative
         # Directories are created on demand below, so a directory holding
@@ -685,13 +699,13 @@ def _render_pages(
     return report
 
 
-def _capture_blueprint(blueprint: Path) -> tuple[TreeSnapshot, frozenset[str]]:
+def _capture_blueprint(blueprint: Path) -> tuple[TreeSnapshot, frozenset[str], frozenset[str]]:
     """Read the blueprint once, refusing what must not be published.
 
     Through descriptors where the host has them; elsewhere (Windows) as two
     pathname captures that must agree. Folders whose README says ``published:
     false`` are left out before anything is refused or published, so no page,
-    hash or check sees them; the article IDs in them come beside the snapshot.
+    hash or check sees them; the article and node IDs in them come beside the snapshot.
     """
     try:
         selection = _PUBLICATION_SELECTION
@@ -704,6 +718,7 @@ def _capture_blueprint(blueprint: Path) -> tuple[TreeSnapshot, frozenset[str]]:
             raise PublicationError(["blueprint changed while it was read; retry"]) from error
         raise PublicationError([f"blueprint could not be captured: {error}"]) from error
     folders, article_ids = unpublished_content(snapshot.files)
+    node_ids = unpublished_node_ids(snapshot.files, folders)
 
     def kept(name: str) -> bool:
         return not any(name == folder or name.startswith(f"{folder}/") for folder in folders)
@@ -747,7 +762,7 @@ def _capture_blueprint(blueprint: Path) -> tuple[TreeSnapshot, frozenset[str]]:
             )
     if issues:
         raise PublicationError(issues)
-    return snapshot, article_ids
+    return snapshot, article_ids, node_ids
 
 
 def _is_sensitive(relative: PurePosixPath) -> bool:
@@ -812,7 +827,7 @@ def _load_graph(copy: Path, blueprint: Path, unpublished_ids: frozenset[str]) ->
 def load_publication_source(blueprint_dir: str | Path) -> tuple[str, Graph]:
     """Read the blueprint once; return its publication revision and the graph of those bytes."""
     blueprint = blueprint_root(blueprint_dir)
-    snapshot, unpublished_ids = _capture_blueprint(blueprint)
+    snapshot, unpublished_ids, _nodes = _capture_blueprint(blueprint)
     # The graph reads the articles and the atlas.
     with _private_copy(snapshot, prefix=("roadmap/", "atlas.json")) as (_root, copy):
         return _source_revision(snapshot), _load_graph(copy, blueprint, unpublished_ids)
@@ -2064,6 +2079,9 @@ def _rewrite_links(
             # Nothing outside the blueprint is published: "" keeps only the text.
             return ""
         relative = candidate.relative_to(blueprint)
+        # atlas.json stays off the site, so a link to it keeps only its text.
+        if relative.as_posix().casefold() == "atlas.json":
+            return ""
         # A repository link to a note the captured blueprint lacks would 404, so
         # it stays site-relative, where a strict build reports the page missing.
         # The capture skips hidden files, so a hidden note keeps its repository

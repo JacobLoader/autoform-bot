@@ -33,6 +33,7 @@ from autoform_cli.lean import (
     detect_repository_url,
     index_project,
     open_project_sources,
+    repository_top_level,
     snapshot_project_sources,
     strip_lean_comments,
     verify_repository_snapshot,
@@ -3689,6 +3690,21 @@ def test_permalink_percent_encodes_source_path_components(tmp_path: Path) -> Non
     )
 
 
+def test_permalink_names_the_lean_root_s_path_in_the_repository(tmp_path: Path) -> None:
+    linker = SourceLinker(
+        index=_index(tmp_path),
+        repository_url="https://github.com/owner/repo",
+        ref="deadbeef",
+        # Spellings are keyed by repository path, as the attestation records them.
+        spellings={"v 1/Project/Basic.lean": "v 1/Project/basic.lean"},
+        root_prefix="v 1",
+    )
+
+    assert linker.url("Outer.alpha") == (
+        "https://github.com/owner/repo/blob/deadbeef/v%201/Project/basic.lean#L6"
+    )
+
+
 def test_no_link_without_repository_coordinates(tmp_path: Path) -> None:
     linker = SourceLinker(index=_index(tmp_path))
 
@@ -3863,26 +3879,93 @@ def test_snapshot_attestation_accepts_a_clean_checkout_with_eol_conversion(
     ) is None
 
 
-def test_snapshot_attestation_names_why_it_failed(tmp_path: Path) -> None:
+def test_snapshot_attestation_compares_a_subdirectory_s_files_at_their_repository_paths(
+    tmp_path: Path,
+) -> None:
     lean_root = tmp_path / "lean"
     lean_root.mkdir()
     source = lean_root / "A.lean"
     source.write_text("def tracked : Nat := 0\n")
+    notes = tmp_path / "blueprint" / "notes.md"
+    notes.parent.mkdir()
+    notes.write_text("# Notes\n")
     commit = _init_git_repository(tmp_path)
     reasons: list[str] = []
 
+    # A file beside the Lean root counts too: the blueprint may sit next to the Lake project.
     assert verify_repository_snapshot(
-        lean_root, commit, ((source, source.read_bytes()),), reasons=reasons
+        lean_root, commit, ((source, source.read_bytes()), (notes, notes.read_bytes())), reasons=reasons
+    ) == commit
+    assert verify_repository_snapshot(
+        lean_root, commit, ((source, b"def changed : Nat := 0\n"),), reasons=reasons
     ) is None
-    assert reasons == [
-        "the Lean root is the subdirectory lean of its Git repository; "
-        "links need the repository top level"
-    ]
+    assert reasons == [f"lean/A.lean differs from commit {commit[:12]}"]
 
+
+def test_snapshot_attestation_names_why_it_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "A.lean").write_text("def tracked : Nat := 0\n")
+    commit = _init_git_repository(tmp_path)
+    reasons: list[str] = []
     untracked = tmp_path / "Scratch.lean"
     untracked.write_text("def scratch : Nat := 0\n")
-    reasons.clear()
+
     assert verify_repository_snapshot(
         tmp_path, commit, ((untracked, untracked.read_bytes()),), reasons=reasons
     ) is None
     assert reasons == [f"Scratch.lean is not a file in commit {commit[:12]}"]
+
+    monkeypatch.setattr(lean_module, "repository_top_level", lambda root: None)
+    reasons.clear()
+    assert verify_repository_snapshot(
+        tmp_path, commit, ((untracked, untracked.read_bytes()),), reasons=reasons
+    ) is None
+    assert reasons == [
+        "the Lean root is outside its Git repository's working tree, or spelled other than as Git spells it"
+    ]
+
+
+def test_repository_top_level_is_spelled_as_the_root_is(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / "v1" / "Sub").mkdir(parents=True)
+    (repo / "v1" / "Sub" / "A.lean").write_text("def a : Nat := 0\n")
+    _init_git_repository(repo)
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(repo, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    assert repository_top_level(repo) == repo
+    assert repository_top_level(repo / "v1" / "Sub") == repo
+    # Git prints the real path; the top level keeps the spelling it was given.
+    assert repository_top_level(alias / "v1" / "Sub") == alias
+    assert repository_top_level(repo / ".git") is None
+
+
+def test_repository_top_level_compares_git_s_path_with_the_root_s_spelling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # macOS Git prints a decomposed name composed.
+    monkeypatch.setattr(lean_module, "_git", lambda root, *arguments: "true\nTh\u00e9/")
+    assert repository_top_level(tmp_path / "The\u0301") == tmp_path
+    assert repository_top_level(tmp_path / "other") is None
+
+    # U+212B ANGSTROM SIGN, which NFC replaces on both sides.
+    monkeypatch.setattr(lean_module, "_git", lambda root, *arguments: "true\n\u212b/")
+    assert repository_top_level(tmp_path / "\u212b") == tmp_path
+
+    monkeypatch.setattr(lean_module, "_git", lambda root, *arguments: "true\na/b/v1/")
+    assert repository_top_level(Path("/v1")) is None
+
+
+def test_repository_top_level_is_unknown_when_git_prints_a_name_that_is_not_utf_8(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def undecodable(root: Path, *arguments: str) -> str:
+        raise UnicodeDecodeError("utf-8", b"caf\xe9/", 3, 4, "invalid continuation byte")
+
+    monkeypatch.setattr(lean_module, "_git", undecodable)
+
+    assert repository_top_level(tmp_path) is None
+
+

@@ -461,28 +461,29 @@ def viewer_script() -> str:
 # Material sets its root font to 20px, 22px from 1600px and 24px from 2000px,
 # which grew the rail past 400px on a laptop. Beside the 288px rail the 384px
 # drawer and its 12px insets leave a node at least 405px, two cards, from
-# 1101px up; at 1100px and below, where the rail narrows, the drawer opens
-# over it instead, and the covered rail leaves the tab order. Above phone
-# widths Contents then starts 12px right of the drawer's 396px edge, so that
-# no row starts under it. On phones the search box takes the toolbar's first
-# row, so the Status popover opens rightwards from the start of the next. The
-# explorer hides the page's own heading because the hierarchy rail carries
-# it; while phones hide the rail, the heading stays for assistive technology
-# as hidden text. Where the rail shows and draws the trail, the head's
-# breadcrumb is hidden so that the trail appears once. Above 1100px, where
-# the rail always shows, the head is one row of search, controls and the
-# textbook link, which comes last in the DOM so that Tab follows the row; at
-# 1100px and below a grid draws that link at the end of a first row that
-# keeps the breadcrumb's place, so the trail appears there while details
-# cover the rail, and the runtime moves the link before the toolbar, so that
-# Tab reaches it after the trail and before the controls under it. Above
-# phone widths that row collapses while it would be blank, with no link and
-# the trail left to the rail, as on the project page; there it opens with
-# the details, and the runtime shifts the map back by the row's height, so
-# that the map, and the card just clicked, stay where they were. The close
-# button keeps the drawer's top-right corner, which on phones lies in the
-# sheet's handle; the handle names the selection there, so the sheet keeps
-# its own heading only as hidden text.
+# 1101px up; at 1100px and below, where the rail narrows, the drawer opens over
+# it instead, and the covered rail leaves the tab order once the drawer has
+# slid over it, so it never goes blank first; its h1 stays, in place and
+# transparent, so the page keeps a heading for assistive technology. Above
+# phone widths Contents then starts 12px right of the drawer's 396px edge, so
+# that no row starts under it. On phones the search box takes the toolbar's
+# first row, so the Status popover opens rightwards from the start of the next.
+# The explorer hides the page's own heading because the hierarchy rail carries
+# it; while phones hide the rail, the heading stays for assistive technology as
+# hidden text. Where the rail shows and draws the trail, the head's breadcrumb
+# is hidden so that the trail appears once. Above 1100px, where the rail always
+# shows, the head is one row of search, controls and the textbook link, which
+# comes last in the DOM so that Tab follows the row; at 1100px and below a grid
+# draws that link at the end of a first row that keeps the breadcrumb's place,
+# so the trail appears there while details cover the rail, and the runtime
+# moves the link before the toolbar, so that Tab reaches it after the trail and
+# before the controls under it. Above phone widths that row collapses while it
+# would be blank, with no link and the trail left to the rail, as on the
+# project page; there it opens with the details, and the runtime shifts the map
+# back by the row's height, so that the map, and the card just clicked, stay
+# where they were. The close button keeps the drawer's top-right corner, which
+# on phones lies in the sheet's handle; the handle names the selection there,
+# so the sheet keeps its own heading only as hidden text.
 _STYLE = r"""
 .bp-dag-viewer {
   --dag-border: var(--bp-rule, #d8dade); --dag-bg: var(--bp-surface, #fff);
@@ -671,7 +672,8 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
   .bp-dag-toolbar { grid-column: 1 / -1; }
   .bp-dag-inspector { right: auto; left: 12px; transform: translateX(calc(-100% - 24px)); }
   .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-breadcrumb { visibility: visible; }
-  .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-navigation { visibility: hidden; }
+  .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-navigation { visibility: hidden; transition: visibility 0s .2s; }
+  .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-navigation h1 { visibility: visible; opacity: 0; transition: opacity 0s .2s; }
 }
 @media (min-width: 681px) and (max-width: 1100px) {
   .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-inventory { left: calc(408px - var(--dag-navigation-width)); }

@@ -1124,6 +1124,8 @@ class SourceLinker:
     """True when the blueprint's files are in ``ref``'s commit too, so links into it show the published bytes."""
     spellings: Mapping[str, str] = field(default_factory=dict)
     """Committed path of each repository path whose name Git stores under another spelling."""
+    root_prefix: str = ""
+    """The Lean root's path below the repository's top level, or empty at the top level."""
 
     def location(self, name: str) -> Declaration | None:
         return self.index.find(name)
@@ -1135,6 +1137,8 @@ class SourceLinker:
             return None
         encoded_ref = quote_from_bytes(os.fsencode(self.ref), safe="")
         relative = declaration.path.as_posix()
+        if self.root_prefix:
+            relative = f"{self.root_prefix}/{relative}"
         path = "/".join(
             quote_from_bytes(os.fsencode(part), safe="")
             for part in self.spellings.get(relative, relative).split("/")
@@ -1159,6 +1163,9 @@ def verify_repository_snapshot(
     to the repository only. The shared Git runner strips ambient overrides.
     Given *spellings*, a file Git committed under another spelling of its name
     is accepted too, and its committed path recorded there (``_git_tree_oids``).
+
+    *root* may be any directory of the working tree: files are compared at their
+    paths from its top level.
     """
 
     def refuse(reason: str) -> None:
@@ -1170,12 +1177,12 @@ def verify_repository_snapshot(
     algorithm = _git(root, "rev-parse", "--show-object-format")
     if commit is None or algorithm not in {"sha1", "sha256"}:
         return refuse(f"{requested_ref!r} does not name a commit in a local Git repository")
-    prefix = _git(root, "rev-parse", "--show-prefix")
-    if prefix:  # tree paths start at the top level, so nothing below could match
+    top_level = repository_top_level(root)  # where tree paths start
+    if top_level is None:
         return refuse(
-            f"the Lean root is the subdirectory {prefix.rstrip('/')} of its Git repository; "
-            "links need the repository top level"
+            "the Lean root is outside its Git repository's working tree, or spelled other than as Git spells it"
         )
+    root = top_level
     captured: dict[str, bytes] = {}
     try:
         for path, data in files:
@@ -1289,6 +1296,32 @@ def detect_repository_url(root: str | Path) -> str | None:
         return f"{server.rstrip('/')}/{repository}"
     remote = _git(root, "config", "--local", "--get", "remote.origin.url")
     return _normalize_remote(remote) if remote else None
+
+
+def repository_top_level(root: str | Path) -> Path | None:
+    """The top level of *root*'s Git working tree, spelled as *root* is.
+
+    *root*'s last parts must spell Git's path to it, compared in NFC, since
+    macOS Git composes names; otherwise, or outside a working tree, the top
+    level is unknown and this is ``None``. *root* should be resolved, as
+    ``resolve_lean_root`` gives it.
+    """
+    try:
+        output = _git(root, "rev-parse", "--is-inside-work-tree", "--show-prefix")
+    except ValueError:  # Git printed a name that is not UTF-8
+        return None
+    lines = output.splitlines() if output is not None else []
+    if not lines or lines[0] != "true":
+        return None
+    parts = lines[1].rstrip("/").split("/") if len(lines) > 1 else []
+    if not parts:
+        return Path(root)
+    spelled = Path(root).parts[-len(parts) :]
+    if [unicodedata.normalize("NFC", part) for part in spelled] != [
+        unicodedata.normalize("NFC", part) for part in parts
+    ]:
+        return None
+    return Path(root).parents[len(parts) - 1]
 
 
 def detect_ref(root: str | Path) -> str | None:
@@ -1409,6 +1442,7 @@ __all__ = [
     "index_failure_message",
     "index_project",
     "project_source_revision",
+    "repository_top_level",
     "resolve_lean_root",
     "snapshot_project_sources",
     "strip_lean_comments",
