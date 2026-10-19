@@ -27,7 +27,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 _EXAMPLE = _ROOT / "skills/setup/assets/cabannes-thesis-project"
 _BASE = "https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5"
 _BUNDLE = f"{_BASE}/tex-mml-chtml.js"
-_PAGE_PACKAGES = ["base", "ams", "noundefined", "boldsymbol", "mathtools", "configmacros"]
+_PAGE_PACKAGES = ["base", "ams", "noundefined", "boldsymbol", "mathtools", "braket", "mhchem", "amscd", "configmacros"]
 _MACROS = {"RR": "\\mathbb{R}", "norm": ["\\left\\lVert #1 \\right\\rVert", 1]}
 #: What the page's TeX input maps the commands it turns off to.
 _OFF = {name: "\\notallowed" for name in NEUTRALISED}
@@ -101,7 +101,7 @@ def test_render_writes_the_site_mathjax_configuration(tmp_path: Path) -> None:
     assert settings["version"] == "3.2.2"
     assert settings["base"] == _BASE
     assert settings["bundle"] == _BUNDLE
-    assert settings["load"] == ["ui/safe", "[tex]/boldsymbol", "[tex]/mathtools"]
+    assert settings["load"] == ["ui/safe", "[tex]/boldsymbol", "[tex]/mathtools", "[tex]/braket", "[tex]/mhchem", "[tex]/amscd"]
     assert settings["page"]["packages"] == _PAGE_PACKAGES
     assert settings["safe"] == {"allow": {"URLs": "none", "classes": "none", "cssIDs": "none", "styles": "none"}}
 
@@ -299,11 +299,11 @@ def test_the_guarded_paths_are_every_file_render_writes(tmp_path: Path) -> None:
 def test_something_other_than_a_file_where_render_writes_one_stops_render(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], make
 ) -> None:
-    """One rule covers every file render writes, and the macros file it reads:
-    a directory there, captured with what it holds, is named by check's
-    warnings, and render stops before writing rather than half way with an
-    OSError. Capture refuses a symlink or special file anywhere but at a name
-    it keeps out of the site, which it never reads."""
+    """One rule covers every file render writes: a directory there, captured
+    with what it holds, is named by check's warnings, and render stops before
+    writing anything. A directory where the macros file goes only leaves the
+    site without project macros. Capture refuses a symlink or special file
+    anywhere but at a name it keeps out of the site, which it never reads."""
 
     blueprint = _vault(tmp_path)
     # A chapter page render writes over the vault's own is the vault's to keep.
@@ -312,7 +312,7 @@ def test_something_other_than_a_file_where_render_writes_one_stops_render(
         make(blueprint / relative)
     expected = {
         _directory_with_a_file: lambda relative: (
-            "tex-macros.json: is a directory, where autoform reads the project's macros from a file; remove it"
+            "tex-macros.json: is a directory, so the site has no project macros; make it a JSON file"
             if relative == "tex-macros.json"
             else f"{relative}: is a directory, where autoform render writes a file; remove it"
         ),
@@ -442,6 +442,7 @@ def test_what_an_article_may_still_say_is_published_as_written(article: str) -> 
     [
         ("$\\newcommand{\\RR}{\\mathbb{R}} \\RR$ and $x \\label{one}$.", "\\newcommand, \\label", 3),
         ("$$\n\\DeclareMathOperator{\\rank}{rank}\n$$", "\\DeclareMathOperator", 4),
+        ("$\\def\\x{1} \\x$", "\\def", 3),
     ],
 )
 def test_a_formula_that_defines_notation_is_reported_apart(article: str, named: str, line: int) -> None:
@@ -449,7 +450,7 @@ def test_a_formula_that_defines_notation_is_reported_apart(article: str, named: 
     an error in red; the page itself is published as written. Prose that
     names a command, outside a formula, is not reported."""
 
-    _page, errors, notation = publishable_article(f"# Top\n\n{article}\n\nProse names \\def.\n")
+    _page, errors, notation = publishable_article(f"# Top\n\n{article}\n\nProse names \\gdef.\n")
 
     assert errors == ()
     assert notation == (
@@ -710,7 +711,9 @@ def test_a_chapter_cannot_leave_a_fence_open_over_its_statements(
 
 
 @pytest.mark.parametrize("notes", ["> ```\n> quoted\n", "- item\n\n    ```\n    indented\n"])
-def test_a_fence_the_next_margin_line_ends_is_published(tmp_path: Path, notes: str) -> None:
+def test_a_fence_the_next_margin_line_ends_is_published(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], notes: str
+) -> None:
     """An indented or quoted fence ends at the first line at the margin, and
     render's markup starts there, so leaving one open, in a leaf's notes or
     at the end of a page, hides nothing."""
@@ -720,8 +723,11 @@ def test_a_fence_the_next_margin_line_ends_is_published(tmp_path: Path, notes: s
     (blueprint / "notes.md").write_text(f"# Notes\n\n{notes}", encoding="utf-8")
 
     assert main(["check", str(blueprint)]) == 0
-    published = _published(_render(blueprint) / "roadmap/README.md")
+    assert "code fence is not closed" not in capsys.readouterr().out
+    site = _render(blueprint)
+    published = _published(site / "roadmap/README.md")
     assert published.count('<span class="bp-mark"') == 2
+    assert "bp-as-typed" not in published + (site / "notes.md").read_text(encoding="utf-8")
 
 
 def test_a_statement_after_a_paragraph_is_a_box_of_its_own(tmp_path: Path) -> None:
@@ -897,27 +903,41 @@ def test_a_page_that_is_not_an_article_is_held_to_the_same_rules(
     assert f"warning: {relative}: line {lines + 3}: attribute list {{: .bp-mark .bp-thmcontent }}" in out
     published = (_render(blueprint) / relative).read_text(encoding="utf-8")
     assert "<script>" not in published
-    # The landing page keeps only the parts of its text render places around its dashboard.
     if relative != "README.md":
         assert "&lt;script&gt;document.title='X'&lt;/script&gt;" in published
+    else:
+        # The landing page keeps only the title and the lead of the author's
+        # text, around its dashboard, and the hero escapes both once.
+        from mkdocs.utils.meta import get_data
+
+        assert get_data(published)[1]["title"] == "Overview"
+        assert "Text {: .bp-mark .bp-thmcontent }." in published
+        assert "pre&gt;" not in published
 
 
 def test_the_landing_page_is_checked_without_the_dashboard_render_adds(tmp_path: Path) -> None:
     """Render adds HTML of its own around the landing page's text; only the
     author's text is checked, so a plain landing page passes."""
 
+    from autoform_cli.render import publication_issues
+
     blueprint = _vault(tmp_path)
 
-    assert main(["check", str(blueprint)]) == 0
+    assert publication_issues(load_graph(blueprint), blueprint) == []
     assert '<div class="bp-landing"' in (_render(blueprint) / "README.md").read_text(encoding="utf-8")
 
 
 def test_a_page_that_is_not_utf8_is_left_out_by_name(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A link to the page keeps only its text, so the strict build finds nothing missing."""
+
     blueprint = _vault(tmp_path)
     (blueprint / "notes.md").write_bytes(b"# Notes\n\n\xff\n")
+    _with_article(blueprint, "The main result, see [the notes](../notes.md).")
 
     site = _warned(blueprint, capsys, "notes.md: is not UTF-8 text, as a Markdown page must be, so the site leaves it out")
     assert not (site / "notes.md").exists()
+    chapter = (site / "roadmap/README.md").read_text(encoding="utf-8")
+    assert "The main result, see the notes." in chapter and "notes.md" not in chapter
 
 
 def test_the_scaffolded_pages_pass_the_page_check(tmp_path: Path) -> None:
@@ -1078,7 +1098,7 @@ def test_a_title_reaches_the_places_render_writes_it_as_text(tmp_path: Path, hea
     reaches each as text, whatever markup or code it holds."""
 
     blueprint = _vault(tmp_path)
-    for path in (blueprint / "roadmap/top.md", blueprint / "README.md"):
+    for path in (blueprint / "roadmap/top.md", blueprint / "README.md", blueprint / "roadmap/README.md"):
         text = path.read_text(encoding="utf-8")
         path.write_text(re.sub(r"^# .*$", f"# {heading}", text, count=1, flags=re.MULTILINE), encoding="utf-8")
 
@@ -1089,12 +1109,17 @@ def test_a_title_reaches_the_places_render_writes_it_as_text(tmp_path: Path, hea
     graph_heading = next(
         line for line in (site / "dependencies/nodes/top.md").read_text(encoding="utf-8").splitlines() if line.startswith("# ")
     )
+    summary = (site / "SUMMARY.md").read_text(encoding="utf-8")
     published = [
         site_converter().convert(graph_heading),
-        (site / "SUMMARY.md").read_text(encoding="utf-8"),
+        summary,
         get_data((site / "README.md").read_text(encoding="utf-8"))[1]["title"],
+        # A chapter shown as typed keeps its title in its header.
+        get_data((site / "roadmap/README.md").read_text(encoding="utf-8"))[1].get("title", ""),
     ]
     assert not any("<img" in text for text in published), published
+    # The chapter is in the navigation, under its own title.
+    assert re.search(r"^ +- \[Top\b.*\]\(roadmap/README\.md\)$", summary, flags=re.MULTILINE), summary
 
 
 def test_check_reads_past_a_hidden_article_render_never_captures(
@@ -1131,6 +1156,276 @@ def test_a_link_to_a_file_the_site_leaves_out_keeps_only_its_text(
     assert "The main result: a square, the figure, and [it][fig]." in chapter
 
 
+def test_a_flagged_statement_keeps_its_chapter_in_place(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A leaf's part of its chapter is its box: one statement shown as typed
+    leaves the narrative, and every other statement, where the author put them."""
+
+    blueprint = _vault(tmp_path)
+    base = blueprint / "roadmap/base.md"
+    base.write_text(base.read_text(encoding="utf-8").replace("The base object.", "The base <kbd>object</kbd>."), encoding="utf-8")
+
+    site = _warned(blueprint, capsys, "base: the site shows it as typed until these are fixed")
+    published = (site / "roadmap/README.md").read_text(encoding="utf-8")
+    assert "Additional formalization targets" not in published
+    assert published.count('<pre class="bp-as-typed">') == 1
+    definitions, results = published.index("## Definitions"), published.index("## Results")
+    assert definitions < published.index("The base &lt;kbd&gt;object&lt;/kbd&gt;.") < results < published.index("The main result.")
+
+
+@pytest.mark.parametrize("relative", ["notes.md", "roadmap/top.md"], ids=["page", "statement"])
+def test_a_page_nested_deeper_than_the_converter_reads_is_shown_as_typed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], relative: str
+) -> None:
+    """The site's converter recurses once for each level of a nested list, so
+    a page too deep for it is a finding, not a crash of check or render."""
+
+    blueprint = _vault(tmp_path)
+    deep = "".join("    " * depth + "- level\n" for depth in range(400))
+    if relative == "notes.md":
+        (blueprint / relative).write_text(f"---\nkind: note\n---\n\n# Notes <!-- private -->\n\n{deep}", encoding="utf-8")
+    else:
+        _with_article(blueprint, f"The main result.\n\n{deep}")
+    label = "notes.md" if relative == "notes.md" else "top"
+
+    site = _warned(blueprint, capsys, f"{label}: the page nests lists deeper than the site's Markdown converter")
+    published = (site / ("notes.md" if relative == "notes.md" else "roadmap/README.md")).read_text(encoding="utf-8")
+    assert '<pre class="bp-as-typed">' in published
+    # The block holds the page as render publishes it: no frontmatter, no comment.
+    assert "kind: note" not in published and "private" not in published
+
+
+def test_a_page_that_starts_with_a_byte_order_mark_keeps_its_frontmatter_hidden(tmp_path: Path) -> None:
+    """MkDocs strips a byte-order mark only at the start of a file, where
+    render's header now goes, so render drops the mark first."""
+
+    from mkdocs.utils.meta import get_data
+
+    blueprint = _vault(tmp_path)
+    (blueprint / "notes.md").write_text("\ufeff---\nkind: note\n---\n\n# Notes\n\nText.\n", encoding="utf-8")
+
+    published = (_render(blueprint) / "notes.md").read_text(encoding="utf-8")
+    assert get_data(published)[1] == {"title": "Notes"}
+    assert "kind: note" not in published and "\ufeff" not in published
+
+
+@pytest.mark.parametrize(
+    ("text", "title"),
+    [
+        ("# Notes\n\nText.\n", "Notes"),
+        ("Notes\n=====\n\nText.\n", "Notes"),
+        ("# Notes `</title><svg onload=alert(1)>`\n\nText.\n", "Notes &lt;/title&gt;&lt;svg onload=alert(1)&gt;"),
+        ("# \U0001d53d-modules \U0001f600\n\nText.\n", "\U0001d53d-modules \U0001f600"),
+        ("No heading here.\n", "Field notes"),
+        ("Intro first.\n\n# Later heading\n", "Later heading"),
+        ("# Notes <b>today</b>\n\nText.\n", "Notes today"),
+        ("Text <b>today</b>.\n", "Field notes"),
+    ],
+    ids=["h1", "setext", "code-span", "astral", "no-h1", "h1-not-first", "shown-as-typed", "shown-as-typed-no-h1"],
+)
+def test_a_page_is_published_under_its_title_as_text(tmp_path: Path, text: str, title: str) -> None:
+    """The theme prints a page's title as it is, and in <title> reads a
+    reference back as its character, so render names the title in the page's
+    header, escaped: its H1's, the first block's as MkDocs would take it, else
+    the first one below, else the file's name, and a page shown as typed keeps
+    its H1's."""
+
+    from mkdocs.utils.meta import get_data
+
+    blueprint = _vault(tmp_path)
+    (blueprint / "field_notes.md").write_text(text, encoding="utf-8")
+
+    published = (_render(blueprint) / "field_notes.md").read_text(encoding="utf-8")
+    assert get_data(published)[1] == {"title": title}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows cannot name a file with < or >")
+def test_a_page_named_with_markup_is_titled_as_text(tmp_path: Path) -> None:
+    """MkDocs titles a page with no H1 by its file's name, which may hold markup."""
+
+    from mkdocs.utils.meta import get_data
+
+    blueprint = _vault(tmp_path)
+    (blueprint / "<svg onload=alert(1)>.md").write_text("No heading here.\n", encoding="utf-8")
+
+    published = (_render(blueprint) / "<svg onload=alert(1)>.md").read_text(encoding="utf-8")
+    assert get_data(published)[1] == {"title": "&lt;svg onload=alert(1)&gt;"}
+
+
+def test_a_graph_page_is_published_under_its_title_as_text(tmp_path: Path) -> None:
+    """Render writes a statement's title into its graph page's heading, so
+    that page names the title in its header too."""
+
+    from mkdocs.utils.meta import get_data
+
+    blueprint = _vault(tmp_path)
+    top = blueprint / "roadmap/top.md"
+    top.write_text(top.read_text(encoding="utf-8").replace("# Top", "# Top `</title><svg onload=alert(1)>`"), encoding="utf-8")
+
+    site = _render(blueprint)
+
+    meta = get_data((site / "dependencies/nodes/top.md").read_text(encoding="utf-8"))[1]
+    assert meta["title"].startswith("Top &lt;/title&gt;&lt;svg onload=alert(1)&gt;")
+    # A heading render writes in full keeps the title its navigation entry gives.
+    assert "title" not in get_data((site / "dependencies/full.md").read_text(encoding="utf-8"))[1]
+
+
+def test_a_title_holding_a_backslash_escape_is_read_back_as_written(tmp_path: Path) -> None:
+    """The navigation reads a chapter's title back from its header, where a
+    backslash the title holds is doubled, so ``\\U`` and eight digits typed in
+    an H1 stay text."""
+
+    blueprint = _vault(tmp_path)
+    chapter = blueprint / "roadmap/README.md"
+    chapter.write_text(chapter.read_text(encoding="utf-8").replace("# Roadmap", "# Roadmap \\UDEADBEEF"), encoding="utf-8")
+
+    summary = (_render(blueprint) / "SUMMARY.md").read_text(encoding="utf-8")
+    assert "- [Roadmap &#92;UDEADBEEF](roadmap/README.md)" in summary
+
+
+def test_a_page_shown_as_typed_keeps_its_title(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A page shown as typed has no H1 left for MkDocs or the navigation to
+    read, so its header names the title its H1 gave, as text."""
+
+    from mkdocs.utils.meta import get_data
+
+    blueprint = _vault(tmp_path)
+    (blueprint / "notes.md").write_text("# Notes <b>today</b>\n\nText.\n", encoding="utf-8")
+    _with_narrative(blueprint, "## Definitions\n\nThe <b>base</b> object.\n\n- [Base](base.md)")
+
+    site = _warned(blueprint, capsys, "notes.md: the site shows it as typed until these are fixed")
+    assert get_data((site / "notes.md").read_text(encoding="utf-8"))[1]["title"] == "Notes today"
+    assert get_data((site / "roadmap/README.md").read_text(encoding="utf-8"))[1]["title"] == "Roadmap"
+    assert "- [Roadmap](roadmap/README.md)" in (site / "SUMMARY.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows cannot name a folder with a colon")
+@pytest.mark.parametrize("name", ["javascript:alert(1)", "vbscript:x"])
+def test_a_folder_named_like_a_scheme_is_linked_by_a_relative_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], name: str
+) -> None:
+    """Render writes its book navigation and dependency links from folder
+    names. A link whose first folder is named like ``javascript:...`` would
+    read as a script URL, so render starts it with ./ instead, and check has
+    nothing to report."""
+
+    blueprint = tmp_path / "project/blueprint"
+    shutil.copytree(_EXAMPLE / "blueprint", blueprint)
+    encoded = name.replace("(", "%28").replace(")", "%29")
+    (blueprint / "roadmap/full-supervision").rename(blueprint / "roadmap" / name)
+    for page in blueprint.rglob("*.md"):
+        text = page.read_text(encoding="utf-8")
+        page.write_text(
+            text.replace("](full-supervision/", f"](./{encoded}/").replace("/full-supervision/", f"/{encoded}/"),
+            encoding="utf-8",
+        )
+
+    assert main(["check", str(blueprint)]) == 0
+    assert "warning" not in capsys.readouterr().out
+    site = tmp_path / "out"
+    render_site(blueprint, site, lean_root=blueprint.parent)
+
+    scheme = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
+    targets = [
+        found.group(1) or found.group(2)
+        for page in site.rglob("*.md")
+        for found in re.finditer(r'href="([^"]*)"|\]\(<?([^)\s>]+)', page.read_text(encoding="utf-8"))
+    ]
+    assert f"./{name}/index.html" in targets
+    assert [target for target in targets if scheme.match(target) and not target.startswith(("http", "mailto:"))] == []
+
+
+@pytest.mark.parametrize("name", ["dependencies.html", "graph.html", "progress.md"])
+def test_a_directory_named_like_a_view_render_never_writes_is_published(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], name: str
+) -> None:
+    """Render keeps the views earlier renders wrote out of the site but never
+    writes them, so a directory with one of their names is the vault's own."""
+
+    blueprint = _vault(tmp_path)
+    (blueprint / name).mkdir()
+    (blueprint / name / "page.md").write_text("# Page\n\nText.\n", encoding="utf-8")
+
+    assert main(["check", str(blueprint)]) == 0
+    assert "is a directory" not in capsys.readouterr().out
+    assert (_render(blueprint) / name / "page.md").is_file()
+
+
+def test_a_macros_file_that_is_a_directory_leaves_the_site_without_project_macros(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    blueprint = _vault(tmp_path)
+    _directory_with_a_file(blueprint / "tex-macros.json")
+
+    site = _warned(blueprint, capsys, "tex-macros.json: is a directory, so the site has no project macros")
+    assert _settings((site / "javascripts/mathjax.js").read_text(encoding="utf-8"))["page"]["macros"] == _OFF
+
+
+def test_an_obsidian_canvas_stays_in_the_vault_without_a_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A canvas is Obsidian's own file, as .obsidian is: the site leaves it
+    out without a word, and a link to it keeps only its text."""
+
+    blueprint = _vault(tmp_path)
+    (blueprint / "Untitled.canvas").write_text('{"nodes": [], "edges": []}\n', encoding="utf-8")
+    _with_article(blueprint, "The main result, [drawn](../Untitled.canvas).")
+
+    assert main(["check", str(blueprint)]) == 0
+    assert "canvas" not in capsys.readouterr().out
+    site = _render(blueprint)
+    assert not (site / "Untitled.canvas").exists()
+    assert "The main result, drawn." in (site / "roadmap/README.md").read_text(encoding="utf-8")
+
+
+def test_a_landing_page_named_in_lowercase_is_rendered(tmp_path: Path) -> None:
+    """A disk that ignores case serves readme.md as README.md, which render
+    reads back to build the landing page."""
+
+    blueprint = _vault(tmp_path)
+    (blueprint / "README.md").rename(blueprint / "readme.md")
+
+    site = _render(blueprint)
+
+    landing = next(path for path in site.iterdir() if path.name.lower() == "readme.md")
+    if (site / "README.md").is_file():  # the disk ignores case
+        assert '<div class="bp-landing"' in landing.read_text(encoding="utf-8")
+
+
+def test_a_landing_page_that_is_not_utf8_is_left_out(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    blueprint = _vault(tmp_path)
+    (blueprint / "README.md").write_bytes(b"# Overview\n\n\xff\n")
+
+    site = _warned(blueprint, capsys, "README.md: is not UTF-8 text, as a Markdown page must be, so the site leaves it out")
+    assert not (site / "README.md").exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows cannot name a file with < or >")
+def test_no_title_on_the_built_site_is_markup(tmp_path: Path) -> None:
+    """Built with MkDocs and the theme: every title the site shows, in the page
+    header, <title>, and the search index, is text, whatever the file's name
+    or its H1 holds."""
+
+    pytest.importorskip("material")
+    from mkdocs.commands.build import build
+    from mkdocs.config import load_config
+
+    scaffold_project(tmp_path, title="Finite Flat")
+    blueprint = tmp_path / "blueprint"
+    (blueprint / "<svg onload=alert(1)>.md").write_text("No heading here.\n", encoding="utf-8")
+    (blueprint / "code.md").write_text("# Code `</title><svg onload=alert(2)>`\n\nText.\n", encoding="utf-8")
+    (blueprint / "typed.md").write_text("# Typed <b>x</b> `</title><svg onload=alert(3)>`\n", encoding="utf-8")
+
+    render_site(blueprint, tmp_path / "site-src", lean_root=tmp_path)
+    build(load_config(str(tmp_path / "mkdocs.yml")))
+
+    built = tmp_path / "site"
+    pages = [path for path in built.rglob("*.html")]
+    assert len(pages) > 3
+    assert [path.name for path in pages if "<svg onload" in path.read_text(encoding="utf-8")] == []
+    index = json.loads((built / "search/search_index.json").read_text(encoding="utf-8"))
+    assert [doc["title"] for doc in index["docs"] if "<svg" in doc["title"]] == []
+
+
 def test_a_chapter_shown_as_typed_keeps_its_statements_outside_the_block(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1158,6 +1453,27 @@ def test_a_chapter_shown_as_typed_keeps_its_statements_outside_the_block(
 def test_a_comment_is_dropped_only_outside_a_code_span(written: str, published: str) -> None:
     """A code span shows a comment as typed, and may cross a line; a backtick
     a backslash escapes opens none."""
+
+    assert published_page(written).removeprefix("---\n{}\n---\n") == f"{published}\n"
+
+
+@pytest.mark.parametrize(
+    ("written", "published"),
+    [
+        ("Para.\n\n    <!-- alone -->", "Para.\n\n    <!-- alone -->"),
+        ("Para.\n\n    <!-- first -->\n    code", "Para.\n\n    <!-- first -->\n    code"),
+        ("Para.\n\n    code\n    <!-- last -->", "Para.\n\n    code\n    <!-- last -->"),
+        ("Para.\n\n    <!-- opens\n    closes -->", "Para.\n\n    <!-- opens\n    closes -->"),
+        ("- item\n\n    <!-- a list's -->", "- item\n\n    "),
+        ("<!--\n    <!-- private\n    still private -->\n\nAfter.", "\n\nAfter."),
+    ],
+    ids=["alone", "first", "last", "two-lines", "in-a-list", "inside-a-comment"],
+)
+def test_a_comment_that_fills_a_line_of_indented_code_is_kept(written: str, published: str) -> None:
+    """An indented code block shows a comment as typed, even on a line of its
+    own at the start or end of the block; indented under a list item, the
+    line is the item's text, and the comment goes, as does every line inside
+    a comment opened earlier."""
 
     assert published_page(written).removeprefix("---\n{}\n---\n") == f"{published}\n"
 
@@ -1190,7 +1506,6 @@ def test_every_formula_paints_inside_its_own_band(tmp_path: Path) -> None:
     # draws keeps the size TeX set, rather than shrinking to fit or, on a phone,
     # to nothing.
     assert "max-width: none !important" in rules["mjx-container > svg"]
-    # Across, ink stops at the edge of the block an article formula is in; a
-    # card's blocks are left to scroll with it.
+    # Across, ink stops at the edge of the block an article formula is in.
     block = rules[":is(p, h1, h2, h3, h4, h5, h6, ul, ol, td, th):has(mjx-container)"]
     assert "overflow-x: clip" in block and "overflow-y" not in block

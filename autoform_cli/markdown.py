@@ -27,6 +27,7 @@ itself, so the two cannot drift apart unnoticed.
 from __future__ import annotations
 
 import html
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -387,7 +388,14 @@ def title_text(title: str) -> str:
     and the theme prints the last two as they are. A reference reads as its
     character in all three, so a title only ever reads as text."""
 
-    return rendered_visible_text(title).translate(_TITLE_REFERENCES)
+    return name_text(rendered_visible_text(title))
+
+
+def name_text(name: str) -> str:
+    """``name``, such as a file's, with :func:`title_text`'s references and
+    nothing read as Markdown first, so a name that holds a tag shows it."""
+
+    return name.translate(_TITLE_REFERENCES)
 
 
 def rendered_visible_text(value: str) -> str:
@@ -404,6 +412,39 @@ def rendered_visible_text(value: str) -> str:
         # vouch for, so report no visible text rather than guess.
         return ""
     return _collapse("".join(_visible_parts(tree, hidden=False)))
+
+
+def page_title(text: str) -> str | None:
+    """The title MkDocs takes from the page ``text``, as the text a reader
+    sees: its first block's, when that block is an H1, else None, and MkDocs
+    titles the page by its file's name."""
+
+    tree = render_tree(text)
+    body = tree.find("body") if tree is not None else None
+    first = body[0] if body is not None and len(body) else None
+    if first is None or first.tag != "h1":
+        return None
+    return _collapse("".join(_visible_parts(first, hidden=False))) or None
+
+
+def yaml_string(value: str) -> str:
+    """``value`` as a YAML double-quoted string MkDocs reads back as written:
+    JSON's escapes, with a character above U+FFFF as YAML's ``\\U`` escape,
+    since YAML refuses the surrogate pair JSON writes for it."""
+
+    return re.sub(
+        r"\\u(d[89ab][0-9a-f]{2})\\u(d[c-f][0-9a-f]{2})",
+        lambda pair: "\\U%08X" % (0x10000 + ((int(pair[1], 16) - 0xD800) << 10) + (int(pair[2], 16) - 0xDC00)),
+        json.dumps(value),
+    )
+
+
+def header_title(title: str) -> str:
+    """The ``title:`` line of a page's header for ``title``, the text a reader
+    sees: the theme prints a page's metadata as it is, so ``&``, ``<``, ``>``
+    and ``"`` are written as references, in a YAML string."""
+
+    return "title: " + yaml_string(html.escape(title, quote=False).replace('"', "&quot;"))
 
 
 def visible_prose(value: str) -> str:
@@ -745,13 +786,23 @@ def published_page(text: str) -> str:
     warns about.
     """
 
-    lines = text.splitlines()
+    # A byte-order mark would sit after render's header, where MkDocs no longer strips it.
+    lines = text.removeprefix("\ufeff").splitlines()
     start = frontmatter_end(lines)
     if start == len(lines) and (start < 2 or lines[-1].strip() != "---"):
         start = 0  # a first line of --- that nothing closes is no frontmatter
     body = lines[start:]
     code: set[int] = set()
-    _mask_indented_code(_mask_fences_and_comments(body, set(), unclosed_fence_is_text=True, fenced=code), code)
+    continued: set[int] = set()
+    masked = _mask_fences_and_comments(body, set(), unclosed_fence_is_text=True, fenced=code, continued=continued)
+    # A line that opens a comment and holds nothing else is blank once masked,
+    # but indented as code it may open or close a code block, which shows the
+    # comment as typed. A line inside a comment opened earlier stays hidden.
+    for index, line in enumerate(body):
+        if index not in code and index not in continued and not masked[index].strip():
+            if line.lstrip().startswith("<!--") and _indent(line) >= _CODE_INDENT:
+                masked[index] = line
+    _mask_indented_code(masked, code)
     kept: list[str] = []
     for in_code, run in groupby(enumerate(body), key=lambda numbered: numbered[0] in code):
         block = "\n".join(line for _, line in run)
@@ -1032,8 +1083,11 @@ def _mask_fences_and_comments(
     unclosed_fence_is_text: bool = False,
     unclosed_openers: set[int] | None = None,
     fenced: set[int] | None = None,
+    continued: set[int] | None = None,
 ) -> list[str]:
     fenced = set() if fenced is None else fenced
+    # The lines that start inside a comment opened on an earlier line.
+    continued = set() if continued is None else continued
     masked: list[str] = []
     fence: tuple[str, int] | None = None
     in_comment = False
@@ -1054,6 +1108,7 @@ def _mask_fences_and_comments(
             del masked[index:]
             hidden.difference_update(range(index, len(lines)))
             fenced.difference_update(range(index, len(lines)))
+            continued.difference_update(range(index, len(lines)))
             fence = None
             continue
         raw = lines[index]
@@ -1072,6 +1127,8 @@ def _mask_fences_and_comments(
             index += 1
             continue
         opened_in_comment = in_comment
+        if opened_in_comment:
+            continued.add(index)
         line, in_comment = strip_line_comments(raw, in_comment)
         match = FENCE.match(line)
         if match is not None and len(match.group(1)) < unclosed.get(match.group(1)[0], len(line) + 1):
@@ -1155,7 +1212,6 @@ def _is_hidden_path(path: Path, boundary: Path) -> bool:
 
 
 __all__ = [
-    "DEPENDENCY_SECTIONS",
     "EXTERNAL_SCHEMES",
     "FENCE",
     "FENCE_CLOSE",
@@ -1188,7 +1244,6 @@ __all__ = [
     "markdown_links",
     "outside_fences",
     "PAGE_HEADER",
-    "published_lines",
     "published_markdown",
     "published_page",
     "mask_code_and_comments",
@@ -1201,6 +1256,10 @@ __all__ = [
     "site_converter",
     "statement_and_notes",
     "title_text",
+    "name_text",
+    "page_title",
+    "header_title",
+    "yaml_string",
     "strip_line_comments",
     "first_unclosed_fence",
     "visible_prose",

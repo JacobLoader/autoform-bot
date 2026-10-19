@@ -1001,7 +1001,10 @@ with the loose security their links need; a ```` ```mermaid ```` diagram an
 article holds is drawn strictly, its labels as text and with no click. A title
 is shown in a graph as typed, and a link, made from file and folder names, is
 percent-encoded, so a name can neither end Mermaid's string nor make the link
-a `javascript:` URL. Point `mkdocs.yml` at
+a `javascript:` URL. The other links render writes from names, such as the
+book's previous and next links and the links between statements, start with
+`./` when their first segment, a folder's or a file's name, holds a colon,
+for the same reason. Point `mkdocs.yml` at
 `docs_dir: site-src` and enable `md_in_html` plus a `pymdownx.superfences`
 mermaid fence; see the [repository
 example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml).
@@ -1012,7 +1015,8 @@ bundle, as `autoform init` writes both. It expects MathJax 3.2.2, the release
 its TeX settings were checked against, loads it itself when no bundle is
 listed, and leaves formulas as typed under any other release. The articles on
 a page share one TeX input, with the packages base, ams, noundefined,
-boldsymbol, and mathtools, and the project's macros from
+boldsymbol, mathtools, braket, mhchem, and amscd (`CD` diagrams), and the
+project's macros from
 `blueprint/tex-macros.json`, written as MathJax's `tex.macros` is: a name maps
 to a body, `[body, arguments]`, or `[body, arguments, default]`. So that no
 formula changes another or colors a
@@ -1020,7 +1024,12 @@ symbol like the site's status marks, that input turns off `\label`,
 `\mmlToken`, `\DeclareMathOperator`, the paired-delimiter and tag-form
 commands of mathtools, and `\mathtoolsset`: each shows in red and does nothing,
 however a formula or a macro reaches it, as `\newcommand`, `\def`, `\require`,
-and any other command those packages do not define already do. A macro may not
+and any other command those packages do not define already do. The other
+packages MathJax would load on demand stay off: cancel, bbox, and enclose take
+a color, as color does; html sets classes, styles, and links; unicode picks
+fonts; action adds tooltips and toggles; newcommand and extpfeil define
+commands; and verb and bussproofs are not loaded either. So `\cancel`,
+`\bbox`, `\color`, `\href`, `\unicode`, and the rest show in red too. A macro may not
 take one of their names; `check` and `render` warn about a macro they leave
 out. They judge and build the script from
 the copy of `tex-macros.json` that `render` reads once and publishes beside it,
@@ -1047,10 +1056,14 @@ delete it.
 copies the same way, and writes
 `SUMMARY.md`, `structure.md`, `publication.json`, the `dependencies.md` and
 `dependencies/` graph pages, and the chapter pages it consolidates. A
-directory holding a file at any of these paths, at `tex-macros.json`, or at the
-stale `dependencies.html`, `graph.html`, or `progress.md` it keeps out of the
-site, or a file where one of their folders goes, stops `render` with the path
-it is at, before anything is written; `check` warns about it.
+directory holding a file at any of these paths, or a file where one of their
+folders goes, stops `render` with the path it is at, before anything is
+written; `check` warns about it. The stale `dependencies.html`, `graph.html`,
+and `progress.md` at the vault's root are kept out of the site, and a
+directory named `graph.html` or `progress.md` is published as the vault's own
+(one named `dependencies.html` is too, but MkDocs builds that page from
+`dependencies.md`, so the build fails). A `tex-macros.json` directory that
+holds files leaves the site without project macros, with a warning.
 
 Besides its Markdown pages, a vault publishes only files a browser shows or
 offers to save and runs nothing in: images (`.png`, `.jpg`, `.jpeg`, `.gif`,
@@ -1061,7 +1074,8 @@ Render copies them into the site as they are. Any other file under
 would be the site's own markup once a reader followed a link to it, so the
 site leaves it out, and `check` and `render` warn about it by its path: write
 it as Markdown, save it as an image, a PDF, or plain text, or keep it outside
-`blueprint/`. A Markdown page that is not UTF-8 is left out with a warning too.
+`blueprint/`. An Obsidian `.canvas` file is left out without a warning, as
+`.obsidian` is. A Markdown page that is not UTF-8 is left out with a warning too.
 A copy of one of the files render writes, listed above, is not published;
 render's own is.
 
@@ -1107,7 +1121,10 @@ relate two containers in both directions.
 could use to run script or pass for the site's own markup. None of it fails
 `check` or stops `render`: `render` publishes such a page, or such a statement
 in its box, as typed, every character escaped in one preformatted block under
-a note, until the warning is fixed.
+a note, until the warning is fixed. The page keeps the title its H1 gives, in
+its header and in the navigation, and a statement shown as typed stays in its
+section with the chapter's other statements. A flagged landing page shows
+only its title and opening sentence, as text, above the dashboard.
 
 - Raw HTML: a tag, a character reference, an unclosed comment, or anything the
   site's Markdown would pass through as HTML. Write it in Markdown, or in code
@@ -1128,6 +1145,8 @@ a note, until the warning is fixed.
   notes, or a stretch of a chapter ends. The site reads fences over a whole
   page, so it would run on through what `render` puts after it, status marks
   included, to the next fence on the page; close it.
+- A list nested deeper than the site's Markdown converter can read, hundreds
+  of levels down; flatten it.
 
 `check` also warns about a formula that defines a command, such as
 `\newcommand`, `\def`, or `\DeclareMathOperator`, or uses one the site turns
@@ -1138,7 +1157,9 @@ is published as written; put the project's notation in
 `check` reads each page as `render` publishes it: its relative links pointed at
 the pages and anchors they land on, every line break Python reads (a form feed
 or U+2028 among them) as a new line, its frontmatter replaced by a header of
-`render`'s own, since the theme prints a page's metadata unescaped, a statement
+`render`'s own, since the theme prints a page's metadata unescaped (the
+published page's header names its title as text: its H1's, or else its
+file's name, so MkDocs takes no title from the page itself), a statement
 in its box with its indentation kept, and a chapter's narrative in the
 stretches between the statements `render` puts in place of their links. Every
 Markdown page the site publishes is read this way: articles, the landing page

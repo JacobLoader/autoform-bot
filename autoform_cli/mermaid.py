@@ -31,10 +31,11 @@ def node_link(node: Node, output: Path, link_extension: str) -> str:
 def relative_link(target: Path, output: Path, link_extension: str) -> str:
     """Relative link from the page at *output* to *target*, with its suffix swapped."""
     relative = Path(os.path.relpath(target.resolve(), output.resolve().parent))
-    if not relative.name:
-        # The page's own directory is ``.``, which has no name to take a suffix.
-        return relative.as_posix()
-    return relative.with_suffix(link_extension).as_posix()
+    # The page's own directory is ``.``, which has no name to take a suffix.
+    link = relative.as_posix() if not relative.name else relative.with_suffix(link_extension).as_posix()
+    # A first segment that holds a colon, such as a folder named
+    # ``javascript:x``, would read as a URL's scheme.
+    return f"./{link}" if ":" in link.split("/", 1)[0] else link
 
 
 def source_links(graph: Graph, output: Path, link_extension: str) -> dict[str, str]:

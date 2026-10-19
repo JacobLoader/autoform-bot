@@ -24,7 +24,7 @@ from .graph_views import (
     project_view,
     scope_views,
 )
-from .markdown import title_text
+from .markdown import header_title, rendered_visible_text, title_text
 from .status import NodeStatus
 
 
@@ -263,15 +263,12 @@ def _write_page(
     diagram = mermaid.published_graph(
         mermaid.render_view_diagram(view, links=_view_links(view, links), include_classdefs=False)
     )
-    sections = [
-        "---",
-        "kind: graph",
-        f"graph_view: {view.kind}",
-        "---",
-        "",
-        f"# {title_text(heading)}",
-        "",
-    ]
+    sections = ["---", "kind: graph", f"graph_view: {view.kind}"]
+    if title_text(heading) != heading:
+        # MkDocs would take the title from the heading, whose references the
+        # theme reads back as characters in <title>, so it is named here.
+        sections.append(header_title(rendered_visible_text(heading)))
+    sections.extend(["---", "", f"# {title_text(heading)}", ""])
     if navigation:
         sections.extend([navigation, ""])
     # The legend rides on the lead sentence rather than sitting under the

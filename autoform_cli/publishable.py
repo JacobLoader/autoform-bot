@@ -243,7 +243,8 @@ def shown_as_typed(text: str, *, page: bool = True) -> str:
     return (PAGE_HEADER + "\n" + block) if page else block
 
 
-#: The schemes a published link may name; one with none stays on the site.
+#: The schemes a published link may name. One with none is relative, so it
+#: stays on the site, or protocol-relative, which a browser opens over http or https.
 _LINK_SCHEMES = frozenset({"http", "https", "mailto"})
 #: A URL's scheme as a browser reads it, once it has dropped the tabs and
 #: line breaks in the URL and the spaces and control characters around it.
@@ -252,7 +253,8 @@ _URL_SCHEME = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*):")
 
 def _unsafe_scheme(url: str) -> str | None:
     """The scheme of ``url``, lowercased, unless a published link may name
-    it; ``None`` for a URL with none, which leads to the site's own pages.
+    it; ``None`` for a URL with none: a relative link, which stays on the
+    site, or a protocol-relative one, which a browser opens over http or https.
     Any other, ``javascript:`` and ``data:`` among them, could run script
     on the site's origin or show a page it does not serve."""
 
@@ -486,4 +488,4 @@ def entity_name(entity: str) -> str:
     return f"{shown} (U+{ord(character):04X} {unicodedata.name(character, 'unnamed')})"
 
 
-__all__ = ["entity_name", "html_names", "publishable_article", "shown_as_typed"]
+__all__ = ["publishable_article", "shown_as_typed"]

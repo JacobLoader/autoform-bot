@@ -71,10 +71,15 @@ from .markdown import (
     converted_alone,
     directory_path,
     mask_fences_and_comments,
+    header_title,
+    name_text,
+    page_title,
+    published_page,
     rendered_visible_text,
     site_converter,
     statement_and_notes,
     title_text,
+    yaml_string,
 )
 from .markdown import content_lines as _content_lines
 from .markdown import outside_fences as _outside_fences
@@ -120,13 +125,13 @@ _REFUSED_COMMITS = {
 }
 #: How long a render waits for another render committing into the same parent.
 _PUBLICATION_LOCK_WAIT_SECONDS = 30.0
+#: Views earlier renders wrote at the vault's root, which this one keeps out of the site.
+_STALE_VIEWS = frozenset({"dependencies.html", "graph.html", "progress.md"})
 #: Derived views this command rewrites; stale copies must not leak into the site.
 _GENERATED_FILES = frozenset(
     {
         "dependencies.md",
-        "dependencies.html",
-        "graph.html",
-        "progress.md",
+        *_STALE_VIEWS,
         # The vault keeps its own Obsidian-readable copy; the site builds one.
         "structure.md",
         PUBLICATION_MANIFEST,
@@ -297,9 +302,11 @@ def _mermaid_script() -> str:
     return document.body.getAttribute("data-md-color-scheme") === "slate" ? "dark" : "light";
   }}
 
+  // Every pass, a scheme change's too, waits for the one before, since the
+  // security level each diagram is drawn at is Mermaid's global setting.
+  var queue = Promise.resolve();
   function draw() {{
     var mode = scheme();
-    var queue = Promise.resolve();
     blocks.forEach(function (block) {{
       queue = queue.then(function () {{
         mermaid.initialize({{
@@ -481,7 +488,7 @@ def _publication(
         its lines, so each stretch between is read too, as it sits there. Its
         notation goes straight to the warnings."""
 
-        page_text, found, notation = publishable_article(
+        page_text, found, notation = _read_page(
             _rewrite_links(
                 text,
                 source_dir=source.parent,
@@ -508,13 +515,15 @@ def _publication(
                 targets=targets,
             )
             for stretch in _chapter_stretches(narrative, *layout):
-                found += publishable_article(stretch)[1]
+                found += _read_page(stretch)[1]
         found = tuple(dict.fromkeys(found))
         label = node_sources.get(source.resolve()) or source.relative_to(blueprint).as_posix()
         warnings.extend(f"{label}: {issue}" for issue in (*found, *notation))
         if found:
             warnings.append(f"{label}: the site shows it as typed until these are fixed")
-            typed.add(page)
+            # A leaf's part of its chapter is its box; the chapter itself is not typed.
+            if whole:
+                typed.add(page)
         return page_text, found
 
     articles: dict[Path, str] = {}
@@ -561,6 +570,8 @@ def _publication(
             continue
         elif source.suffix.lower() in _STATIC_SUFFIXES:
             files[source] = snapshot[source]
+        elif source.suffix.lower() == ".canvas":
+            continue  # an Obsidian canvas, which the vault keeps for itself
         else:
             warnings.append(
                 f"{relative.as_posix()}: the site leaves out {source.suffix.lower() or 'extensionless'} "
@@ -568,6 +579,8 @@ def _publication(
                 "save it as an image (PNG, JPEG, GIF, WebP), a PDF or plain text, "
                 "or keep it outside blueprint/"
             )
+    if blueprint / TEX_MACROS not in snapshot and any(source.is_relative_to(blueprint / TEX_MACROS) for source in snapshot):
+        warnings.append(f"{TEX_MACROS}: is a directory, so the site has no project macros; make it a JSON file")
     script, script_warnings = mathjax_script(snapshot.get(blueprint / MATHJAX_SCRIPT), snapshot.get(blueprint / TEX_MACROS))
     warnings.extend(script_warnings)
     return _Publication(groups, targets, node_sources, files, statements, script, warnings, frozenset(typed))
@@ -581,6 +594,57 @@ def _is_utf8(data: bytes) -> bool:
     return True
 
 
+def _read_page(text: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """:func:`~autoform_cli.publishable.publishable_article` of ``text``, or,
+    for a page nested deeper than the site's converter can read, a finding
+    that shows it as typed instead of stopping check or render."""
+
+    try:
+        return publishable_article(text)
+    except RecursionError:
+        finding = "the page nests lists deeper than the site's Markdown converter can read; flatten it"
+        return published_page(text), (finding,), ()
+
+
+def _titled(published: str, authored: bytes | None, page: Path) -> str:
+    """``published``, a page an author wrote, under a header that names its
+    title, so MkDocs takes no title from the page itself: the theme prints a
+    title as it is, and in ``<title>`` reads a reference back as the
+    character it names. The title is the text of the page's H1 in
+    ``authored``, as render publishes it when nothing is flagged, so a page
+    shown as typed keeps it: the first block's, when that block is an H1, as
+    MkDocs would take it, else the first H1 below, else the file's name."""
+
+    text = published_page(authored.decode("utf-8")).removeprefix(PAGE_HEADER) if authored else ""
+    later = _first_h1(text)
+    heading = page_title(text) or (rendered_visible_text(later) if later else None)
+    return f"---\n{header_title(heading or _file_title(page))}\n---\n" + published.removeprefix(PAGE_HEADER)
+
+
+def _file_title(source: Path) -> str:
+    """The title MkDocs gives a page with no H1, from its file's name."""
+
+    title = ("index" if source.stem == "README" else source.stem).replace("-", " ").replace("_", " ")
+    return title.capitalize() if title.lower() == title else title
+
+
+def _header_title(text: str) -> str | None:
+    """The title :func:`_titled` wrote into the header of the page ``text``,
+    as the text a reader sees."""
+
+    lines = text.split("\n", 3)
+    if len(lines) < 3 or lines[0] != "---" or not lines[1].startswith("title: ") or lines[2] != "---":
+        return None
+    # JSON writes a character above U+FFFF as a surrogate pair, where the
+    # header has YAML's \U escape; a backslash the title holds is doubled.
+    value = re.sub(
+        r"(?<!\\)((?:\\\\)*)\\U([0-9A-F]{8})",
+        lambda escape: escape[1] + json.dumps(chr(int(escape[2], 16)))[1:-1],
+        lines[1].removeprefix("title: "),
+    )
+    return html.unescape(json.loads(value))
+
+
 def _site_paths(graph: Graph) -> tuple[str, ...]:
     """Every file render writes into the site for ``graph`` other than the
     blueprint's own, relative to the site's root: the derived pages, the
@@ -589,7 +653,7 @@ def _site_paths(graph: Graph) -> tuple[str, ...]:
     return tuple(
         sorted(
             {
-                *_GENERATED_FILES,
+                *(_GENERATED_FILES - _STALE_VIEWS),
                 STRUCTURE_PAGE,
                 "SUMMARY.md",
                 *(_group_page(group).as_posix() for group in _group_nodes(graph)),
@@ -601,15 +665,15 @@ def _site_paths(graph: Graph) -> tuple[str, ...]:
 
 
 def _in_the_way(blueprint: Path, graph: Graph, snapshot: dict[Path, bytes]) -> list[str]:
-    """A captured file below one of :func:`_site_paths`, or the project's
-    macros, or at one of its folders. Render writes these over the captured
-    files it copied, so it would stop the build half written; capture has
-    already refused a symlink or a special file anywhere."""
+    """A captured file below one of :func:`_site_paths`, or at one of its
+    folders. Render writes these over the captured files it copied, so it
+    names the path before writing anything; capture has already refused a
+    symlink or a special file anywhere."""
 
     captured = {source.relative_to(blueprint).as_posix() for source in snapshot}
     folders = {"/".join(parts[:end]) for parts in (path.split("/") for path in captured) for end in range(1, len(parts))}
     blocked: dict[str, str] = {}
-    for relative in (*_site_paths(graph), TEX_MACROS):
+    for relative in _site_paths(graph):
         found = (relative, "a directory") if relative in folders else None
         if found is None:
             parts = relative.split("/")
@@ -620,14 +684,8 @@ def _in_the_way(blueprint: Path, graph: Graph, snapshot: dict[Path, bytes]) -> l
         if found is None or found[0] in blocked:
             continue
         where, kind = found
-        purpose = (
-            "reads the project's macros from a file"
-            if relative == TEX_MACROS
-            else "writes a file"
-            if where == relative
-            else f"needs a folder for {relative}"
-        )
-        blocked[where] = f"{where}: is {kind}, where autoform {'' if relative == TEX_MACROS else 'render '}{purpose}; remove it"
+        purpose = "writes a file" if where == relative else f"needs a folder for {relative}"
+        blocked[where] = f"{where}: is {kind}, where autoform render {purpose}; remove it"
     return list(blocked.values())
 
 
@@ -831,16 +889,23 @@ def _render_pages(
         # but absorbed nodes leaves no empty shell behind.
         target.parent.mkdir(parents=True, exist_ok=True)
         if isinstance(content, str):
-            target.write_text(content, encoding="utf-8")
+            target.write_text(_titled(content, files.get(source), target), encoding="utf-8")
         else:
             target.write_bytes(content)
         report.pages += 1
 
     overview = destination / "README.md"
-    if overview.is_file():
+    # The author's page, as render publishes it when nothing in it is flagged:
+    # the hero escapes its title and lead itself, and a page shown as typed has
+    # neither. A disk that ignores case serves readme.md here too.
+    authored = next(
+        (data for source, data in files.items() if source.parent == blueprint and source.name.lower() == "readme.md"),
+        None,
+    )
+    if overview.is_file() and authored is not None and _is_utf8(authored):
         overview.write_text(
             _render_landing_page(
-                overview.read_text(encoding="utf-8"),
+                published_page(authored.decode("utf-8")),
                 graph=graph,
                 statuses=statuses,
                 coverage=coverage,
@@ -1602,7 +1667,11 @@ def _book_page_order(blueprint: Path, destination: Path, graph: Graph) -> list[P
                 linked_sources.append(candidate)
             return line
 
-        _outside_fences(source.read_text(encoding="utf-8"), collect)
+        try:
+            text = source.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue  # the site leaves out a page that is not UTF-8, as check warns
+        _outside_fences(text, collect)
         pending.extend(reversed(linked_sources))
     return ordered
 
@@ -1611,7 +1680,7 @@ def _append_book_navigation(pages: list[Path]) -> None:
     """Add previous/next links to the bottom of Blueprint pages, never global nav."""
     if len(pages) < 2:
         return
-    titles = [_first_h1(page.read_text(encoding="utf-8")) or page.stem for page in pages]
+    titles = [_page_heading(page.read_text(encoding="utf-8")) or page.stem for page in pages]
     for index, page in enumerate(pages):
         links: list[str] = []
         if index:
@@ -1711,7 +1780,7 @@ def _next_target(
         )
         actions = [f'<a href="{html.escape(graph_href, quote=True)}">Dependencies</a>']
         if chapter_page is not None:
-            chapter_title = _first_h1(chapter_page.read_text(encoding="utf-8")) or "chapter"
+            chapter_title = _page_heading(chapter_page.read_text(encoding="utf-8")) or "chapter"
             href = mermaid.relative_link(chapter_page, page, ".html")
             actions.insert(
                 0, f'<a href="{html.escape(href, quote=True)}">{html.escape(chapter_title)}</a>'
@@ -1875,7 +1944,9 @@ def _render_summary_nav(
     for page in book_pages:
         if page == overview:
             continue
-        title = title_text(_first_h1(page.read_text(encoding="utf-8")) or page.parent.name)
+        text = page.read_text(encoding="utf-8")
+        named = _header_title(text)
+        title = name_text(named) if named else title_text(_first_h1(text) or page.parent.name)
         depth = len(page.relative_to(destination).parts) - 1
         indent = "    " * max(depth, 1)
         lines.append(f"{indent}- [{title}]({page.relative_to(destination).as_posix()})")
@@ -1922,7 +1993,7 @@ def _render_landing_page(
         # The hero sets the H1 itself, so the page title has to be declared
         # rather than discovered from the first Markdown heading. The theme
         # prints it as it is, so it is written as text.
-        f"title: {json.dumps(title_text(heading) or 'Blueprint')}",
+        f"title: {yaml_string(title_text(heading) or 'Blueprint')}",
         # The sidebar lists the open tab's pages, and this tab holds only this
         # page, so on the landing page it is a column of one word. The tabs
         # already carry the reader to Book and Graph, so it goes, and the hero
@@ -2177,6 +2248,13 @@ def _render_overview_summary(
     )
 
 
+def _page_heading(text: str) -> str | None:
+    """The title the page ``text`` is published under, as text: its header's,
+    which a page shown as typed keeps, or else its first H1."""
+
+    return _header_title(text) or _first_h1(text)
+
+
 def _first_h1(text: str) -> str | None:
     for line in mask_fences_and_comments(text.splitlines()):
         heading = _HEADING.match(line)
@@ -2280,9 +2358,10 @@ def _as_published(href: str) -> str:
     Links it parses are rewritten for us, but raw HTML and Mermaid fences never
     reach it, so those have to name the published file themselves.
     """
-    path = Path(href)
-    if path.name.lower() in {"readme.html", "index.html"}:
-        return (path.parent / "index.html").as_posix()
+    # As a string, so a leading ./ that keeps a colon from reading as a scheme stays.
+    head, _slash, name = href.rpartition("/")
+    if name.lower() in {"readme.html", "index.html"}:
+        return f"{head}/index.html" if head else "index.html"
     return href
 
 
@@ -2315,11 +2394,7 @@ def _rewrite_links(
     links = _anchored_links(targets, page, extension=".md")
 
     def moved_target(raw: str) -> str | None:
-        """Where *raw* should point once published, or None to leave it alone.
-
-        The path is resolved decoded and encoded again when written back: a
-        decoded ``)`` or ``<`` would end the link and start markup nobody
-        checked."""
+        """Where *raw* should point once published, or None to leave it alone."""
         bare = raw[1:-1] if raw.startswith("<") and raw.endswith(">") else raw
         # The query and fragment are not part of the file's name: they are
         # kept as written, beside the path render moves.
@@ -2516,7 +2591,7 @@ def _render_chapter(
     )
     if narrative is None:
         title = title_text(graph.nodes[group].title if group in graph.nodes else group.replace("-", " ").capitalize())
-        narrative = "\n".join(["---", f"kind: article\ntitle: {json.dumps(title)}", "---", "", f"# {title}"])
+        narrative = "\n".join(["---", f"kind: article\ntitle: {yaml_string(title)}", "---", "", f"# {title}"])
 
     # A narrative shown as typed has no slots or sections render can see, so
     # the summary and every statement follow it.
@@ -3598,9 +3673,8 @@ a:hover, a:visited:hover {{ color: var(--bp-link-hover); text-decoration: underl
    sets it, laps included, but only inside the block that holds it, and a
    display scrolls in its own; so no article formula can cover a card, a mark,
    a label, another line, or the side columns, whatever the renderer or theme.
-   A card scrolls instead, so nothing in it is cut. Inline formulas become
-   inline blocks to have a box to clip, and the display selector outranks
-   MathJax's own sheets, which are added after this one. */
+   Inline formulas become inline blocks to have a box to clip, and the display
+   selector outranks MathJax's own sheets, which are added after this one. */
 mjx-container {{
   overflow-x: visible !important;
   overflow-y: clip !important;
