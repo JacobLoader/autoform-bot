@@ -423,6 +423,23 @@ def test_explorer_chrome_is_sized_in_px_not_in_materials_growing_rem() -> None:
     assert "left: calc(408px - var(--dag-navigation-width));" in style
 
 
+def test_explorer_elevation_is_two_shadows_and_a_selection_ring_that_keeps_the_card_still() -> None:
+    """A selected card took a 3px border, shifting its text, and blurred panels sat on five shadows."""
+    style = dag_viewer._STYLE
+    assert "backdrop-filter" not in style
+    assert set(re.findall(r"box-shadow: ([^;]+);", style)) <= {
+        "var(--dag-e1)",
+        "var(--dag-e2)",
+        "none",
+        "0 0 0 2px var(--dag-link), var(--dag-e1)",
+        "0 0 0 2px color-mix(in srgb, var(--dag-link) 40%, transparent), var(--dag-e1)",
+        "0 0 0 3px color-mix(in srgb, var(--dag-link) 18%, transparent)",
+        "inset 3px 0 0 var(--dag-link)",
+    }
+    assert ".bp-dag-node[data-selected=true] { box-shadow: 0 0 0 2px var(--dag-link), var(--dag-e1); }" in style
+    assert "border-width" not in style
+
+
 def test_explorer_assets_and_ordinary_payload_stay_within_budgets(tmp_path: Path) -> None:
     nodes = tuple(
         ViewNode(
