@@ -169,6 +169,23 @@ def test_summary_keeps_the_mathematics_and_code_a_tag_would_span(tmp_path: Path)
     )
 
 
+def test_an_escaped_backtick_opens_no_code_span_in_a_summary(tmp_path: Path) -> None:
+    """The page reads \\` as a backtick, so it does not pair with a later code span's backtick.
+
+    Inside a span a backslash is literal, so ``a\\`` still closes there, as on the page.
+    """
+    blueprint = tmp_path / "blueprint"
+    _node(
+        blueprint,
+        "topic.md",
+        "# Ticks\n\nA \\` tick, a <em>ball</em> and **bold**\ntext before `B<r>`, then `a\\` and <b>c</b>.\n",
+    )
+
+    assert load_graph(blueprint).nodes["topic"].summary == (
+        "A \\` tick, a ball and bold text before `B<r>`, then `a\\` and c."
+    )
+
+
 def test_summary_clips_a_long_paragraph_at_a_word(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     words = " ".join(f"word{index}" for index in range(200))

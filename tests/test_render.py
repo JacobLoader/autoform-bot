@@ -30,7 +30,8 @@ from autoform_cli.__main__ import main
 from autoform_cli._tree_snapshot import TreeChangedError
 from autoform_cli.audit import audit_blueprint
 from autoform_cli.coverage import COVERAGE_DISPOSITIONS
-from autoform_cli.graph import GraphValidationError, load_graph
+from autoform_cli.dashboard import publication_bound_live_state
+from autoform_cli.graph import GraphValidationError, atlas_omissions, load_graph
 from autoform_cli.lean import LeanSourceError, _normalize_remote
 from autoform_cli.markdown import site_converter
 from autoform_cli.render import (
@@ -1245,6 +1246,78 @@ def test_render_leaves_an_unpublished_folder_out(tmp_path: Path) -> None:
     assert not (tmp_path / "out" / "roadmap" / "drafts").exists()
     idea.write_text(idea.read_text(encoding="utf-8") + "\nAn edit.\n", encoding="utf-8")
     assert publication_source_revision(project / "blueprint") == revision
+
+
+def test_render_leaves_atlas_json_out_of_the_site(tmp_path: Path) -> None:
+    """atlas.json may name an article in an unpublished folder, and nothing on the site reads it.
+
+    The explorer takes the published articles' areas from its own payload, and
+    the dashboard still accepts the site the graph was read for.
+    """
+    project = _project(tmp_path)
+    blueprint = project / "blueprint"
+    drafts = blueprint / "roadmap" / "drafts"
+    drafts.mkdir()
+    (drafts / "README.md").write_text("---\npublished: false\n---\n\n# Drafts\n", encoding="utf-8")
+    (drafts / "idea.md").write_text("# Secret idea\n\nAn idea.\n", encoding="utf-8")
+    (blueprint / "atlas.json").write_text(
+        json.dumps({"schema": "autoform-atlas/v1", "areas": {"Algebra": ["base", "drafts/idea"]}}),
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+
+    render_site(blueprint, out, lean_root=project)
+
+    assert not [path for path in out.rglob("*") if path.name.casefold() == "atlas.json"]
+    assert not [path for path in out.rglob("*") if path.is_file() and b"drafts/idea" in path.read_bytes()]
+    payload = json.loads((out / "dependencies/chapters/roadmap.json").read_text(encoding="utf-8"))
+    assert {node["id"]: node["area"] for node in payload["nodes"]}["base"] == "Algebra"
+    manifest = json.loads((out / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))
+    assert "atlas.json" not in manifest["files"]
+    assert manifest["source_revision"] == publication_source_revision(blueprint)
+    state = publication_bound_live_state(
+        SimpleNamespace(list=lambda: []), blueprint_dir=blueprint, site_dir=out
+    )()
+    assert state["source_revision"] == manifest["source_revision"]
+    render_site(blueprint, out, lean_root=project)  # the site it wrote may be replaced
+
+
+def test_a_link_to_atlas_json_keeps_only_its_text(tmp_path: Path) -> None:
+    """The site leaves atlas.json out, so a page's link to it would break a strict build."""
+    project = _project(tmp_path)
+    blueprint = project / "blueprint"
+    (blueprint / "atlas.json").write_text(
+        json.dumps({"schema": "autoform-atlas/v1", "areas": {"Algebra": ["base"]}}), encoding="utf-8"
+    )
+    readme = blueprint / "roadmap" / "README.md"
+    readme.write_text(readme.read_text(encoding="utf-8") + "\nSee [the atlas](../atlas.json).\n", encoding="utf-8")
+    out = tmp_path / "out"
+
+    render_site(blueprint, out, lean_root=project)
+
+    published = (out / "roadmap" / "README.md").read_text(encoding="utf-8")
+    assert "See the atlas." in published
+    assert "atlas.json" not in published
+
+
+def test_render_does_not_warn_about_atlas_entries_for_unpublished_articles(tmp_path: Path) -> None:
+    """Check reads the whole vault and accepts these entries; render, which reads less, accepts them too."""
+    project = _project(tmp_path)
+    blueprint = project / "blueprint"
+    drafts = blueprint / "roadmap" / "drafts"
+    drafts.mkdir()
+    (drafts / "README.md").write_text("---\npublished: false\n---\n\n# Drafts\n", encoding="utf-8")
+    (drafts / "idea.md").write_text("# Idea\n\nAn idea.\n", encoding="utf-8")
+    (blueprint / "atlas.json").write_text(
+        json.dumps({"schema": "autoform-atlas/v1", "areas": {"Algebra": ["drafts", "drafts/idea", "missing"]}}),
+        encoding="utf-8",
+    )
+    missing = "atlas.json: 'missing' under 'Algebra' is ignored, since no roadmap node has that id"
+
+    report = render_site(blueprint, tmp_path / "out", lean_root=project)
+
+    assert [warning for warning in report.warnings if warning.startswith("atlas.json")] == [missing]
+    assert [f"atlas.json: {omission}" for omission in atlas_omissions(load_graph(blueprint))] == [missing]
 
 
 def test_malformed_link_targets_are_published_as_written(tmp_path: Path) -> None:
@@ -3989,6 +4062,38 @@ def test_dirty_lean_snapshot_does_not_borrow_the_clean_commit_ref(tmp_path: Path
     ]
 
 
+@pytest.mark.parametrize(
+    "layout", ["beside", "inside", "implicit"], ids=["blueprint-beside-the-lean-root", "blueprint-inside-it", "no-lean-root"]
+)
+def test_a_lean_root_below_the_repository_top_level_gets_links_at_repository_paths(
+    tmp_path: Path, layout: str
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    project = _with_source_notes(repo).rename(repo / "v1")
+    # Beside the Lean root, at a path other than the copy's fallback name, blueprint/.
+    if layout == "beside":
+        (repo / "docs").mkdir()
+        blueprint = (project / "blueprint").rename(repo / "docs" / "blueprint")
+    else:
+        blueprint = project / "blueprint"
+    commit = _commit_project(repo)
+    output = tmp_path / "out"
+
+    # Without --lean-root the Lean root is the vault's parent, here v1/.
+    lean_root = None if layout == "implicit" else project
+    report = render_site(blueprint, output, lean_root=lean_root, repository_url=_REPOSITORY, ref="HEAD")
+
+    chapter = (output / "roadmap/README.md").read_text(encoding="utf-8")
+    assert report.linked == 2
+    assert report.warnings == []
+    assert f"/blob/{commit}/v1/Project/Basic.lean#L5" in chapter
+    vault = "docs/blueprint" if layout == "beside" else "v1/blueprint"
+    assert f"/blob/{commit}/{vault}/roadmap/top.md" in chapter
+    assert f"/blob/{commit}/{vault}/sources/paper.md#lemma-3" in chapter
+    assert json.loads((output / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))["git_ref"] == commit
+
+
 @pytest.mark.parametrize("nested", [False, True], ids=["sibling", "nested-checkout"])
 def test_a_blueprint_outside_the_repository_keeps_its_lean_code_links(tmp_path: Path, nested: bool) -> None:
     project = _project(tmp_path)
@@ -4062,16 +4167,21 @@ def test_markdown_source_permalink_quotes_the_original_repository_path(tmp_path:
 
 
 def _print_composed_names(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make `git ls-tree` print e + U+0301 composed, as macOS Git does; elsewhere Git keeps names as written."""
+    """Make `git ls-tree` and `git rev-parse` print e + U+0301 composed, as macOS Git does.
+
+    Elsewhere Git keeps names as written.
+    """
     run = subprocess.run
 
-    def ls_tree(command, *args, **kwargs):
+    def composed(command, *args, **kwargs):
         completed = run(command, *args, **kwargs)
         if command[:2] == ["git", "ls-tree"]:
             completed.stdout = completed.stdout.replace("e\u0301".encode(), "\u00e9".encode())
+        elif command[:2] == ["git", "rev-parse"] and "--show-prefix" in command:
+            completed.stdout = completed.stdout.replace("e\u0301", "\u00e9")
         return completed
 
-    monkeypatch.setattr(lean_module.subprocess, "run", ls_tree)
+    monkeypatch.setattr(lean_module.subprocess, "run", composed)
 
 
 def test_decomposed_file_names_link_to_the_spelling_git_committed(
@@ -4100,6 +4210,28 @@ def test_decomposed_file_names_link_to_the_spelling_git_committed(
     assert f"/blob/{commit}/Project/{committed}.lean#L5" in chapter
     assert f"/blob/{commit}/blueprint/roadmap/{committed}.md" in chapter
     assert f"/blob/{commit}/blueprint/sources/{committed}.md" in chapter
+    assert report.warnings == []
+
+
+def test_a_decomposed_lean_root_below_the_top_level_links_the_spelling_git_committed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    # Spelled as stored, NFD, as `--lean-root .` gives it after `cd` into a folder Finder named.
+    project = _project(repo).rename(repo / "Poincare\u0301")
+    (project / "Project/Basic.lean").rename(project / "Project/Be\u0301.lean")
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "core.precomposeunicode", "true"], cwd=repo, check=True)
+    commit = _git_commit(repo, "fixture")
+    output = tmp_path / "out"
+    _print_composed_names(monkeypatch)
+
+    report = render_site(project / "blueprint", output, lean_root=project, repository_url=_REPOSITORY, ref=commit)
+
+    chapter = (output / "roadmap/README.md").read_text(encoding="utf-8")
+    assert f"/blob/{commit}/Poincar%C3%A9/Project/B%C3%A9.lean#L5" in chapter
+    assert f"/blob/{commit}/Poincar%C3%A9/blueprint/roadmap/top.md" in chapter
     assert report.warnings == []
 
 

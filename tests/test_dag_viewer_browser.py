@@ -1238,6 +1238,38 @@ def test_the_rail_under_the_open_details_leaves_the_tab_order(desktop_page: obje
     # Closing the details uncovers the rail and brings it back.
     page.get_by_role("button", name="Close details").click()
     playwright.expect(page.locator(".bp-dag-navigation-link").first).to_be_visible()
+    # With motion allowed it hides after the drawer's .2s slide; hiding at once left it blank before the
+    # drawer covered it. Material turns every transition off for reduced motion, as the steps above ran.
+    page.emulate_media(reduced_motion="no-preference")
+    _open_site(page, site_url, "dependencies/chapters/algebra.html#node=algebra%2Fresult")
+    playwright.expect(page.locator(".bp-dag-navigation")).to_be_hidden()
+    timing = "element => [getComputedStyle(element).transitionProperty, getComputedStyle(element).transitionDelay]"
+    assert page.locator(".bp-dag-navigation").evaluate(timing) == ["visibility", "0.2s"]
+    assert page.locator(".bp-dag-navigation h1").evaluate(timing) == ["opacity", "0.2s"]
+
+
+@pytest.mark.parametrize(
+    ("path", "title"),
+    (
+        ("dependencies/chapters/algebra.html#node=algebra%2Fresult", "Algebra dependencies"),
+        ("index.html#node=scope%3Aalgebra", "Explorer fixture"),
+    ),
+)
+def test_the_rail_under_the_open_details_keeps_the_page_heading(
+    desktop_page: object, site_url: str, path: str, title: str
+) -> None:
+    """Up to 1,200px open details hide the rail, which held the page's only h1, so the page had no heading."""
+    page = desktop_page
+    page.set_viewport_size({"width": 1000, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    _open_site(page, site_url, path)
+    playwright.expect(page.locator(".bp-dag-inspector")).to_be_visible()
+    playwright.expect(page.locator(".bp-dag-navigation")).to_be_hidden()
+    headings = page.get_by_role("heading", level=1)
+    playwright.expect(headings).to_have_count(1)
+    playwright.expect(headings).to_have_text(title)
+    # It is kept for assistive technology, not drawn over the drawer's edge.
+    playwright.expect(headings).to_have_css("opacity", "0")
 
 
 def test_contents_start_right_of_the_open_details(desktop_page: object, site_url: str) -> None:

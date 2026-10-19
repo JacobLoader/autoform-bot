@@ -40,8 +40,10 @@ _MARKDOWN_LINK_TEXT = re.compile(r"!?\[((?:[^\[\]]|\[[^\[\]]*\])+)\]\([^)]*\)")
 #: A full, collapsed or shortcut reference link: ``[text][label]``, ``[label][]`` or ``[label]``.
 _REFERENCE_LINK_TEXT = re.compile(r"!?\[((?:[^\[\]]|\[[^\[\]]*\])+)\](?:\[([^\[\]]*)\])?")
 _HTML_TAG = re.compile(r"<[A-Za-z/!][^>]*>")
-# A code span may wrap across the paragraph's lines, as the page reads it.
-_CODE_SPAN = re.compile(INLINE_CODE.pattern, re.DOTALL)
+# A code span may wrap across the paragraph's lines, as the page reads it. An
+# escaped character is matched first, so an escaped backtick opens no span;
+# inside one a backslash is literal, so ``a\`` still closes it.
+_CODE_SPAN = re.compile(r"\\.|" + INLINE_CODE.pattern, re.DOTALL)
 ARTICLE_ID_PATTERN = re.compile(r"af_[0-9a-f]{24}\Z")
 _FRONTMATTER_KEYS = frozenset(
     {
@@ -365,12 +367,31 @@ def unpublished_content(files: tuple[tuple[str, bytes], ...]) -> tuple[tuple[str
     return tuple(folders), frozenset(article_ids)
 
 
-def atlas_omissions(graph: Graph) -> list[str]:
-    """Say what ``blueprint/atlas.json`` asks for that loading ignored, for check, render and audit to warn about."""
-    return _atlas_assignments(graph.blueprint_dir, graph.nodes)[1]
+def unpublished_node_ids(files: tuple[tuple[str, bytes], ...], folders: tuple[str, ...]) -> frozenset[str]:
+    """The node IDs of the articles in *folders*, as ``_article_id`` names them: a folder's README is the folder.
+
+    For render's atlas warnings, since atlas entries name node IDs, not
+    article IDs.
+    """
+    return frozenset(
+        name.removeprefix("roadmap/").removesuffix(".md").removesuffix("/README")
+        for name, _data in files
+        if name.endswith(".md") and any(name.startswith(f"{folder}/") for folder in folders)
+    )
 
 
-def _atlas_assignments(blueprint: Path, nodes: dict[str, Node]) -> tuple[dict[str, str], list[str]]:
+def atlas_omissions(graph: Graph, unpublished: frozenset[str] = frozenset()) -> list[str]:
+    """Say what ``blueprint/atlas.json`` asks for that loading ignored, for check, render and audit to warn about.
+
+    Render's graph lacks the nodes in unpublished folders; *unpublished* names
+    them, so their entries draw no warning there, as they draw none in check.
+    """
+    return _atlas_assignments(graph.blueprint_dir, graph.nodes, unpublished)[1]
+
+
+def _atlas_assignments(
+    blueprint: Path, nodes: dict[str, Node], unpublished: frozenset[str] = frozenset()
+) -> tuple[dict[str, str], list[str]]:
     """Read the optional authored taxonomy: the areas it assigns, and what it leaves out.
 
     The file only assigns areas, so nothing in it stops a command. An article's
@@ -405,6 +426,8 @@ def _atlas_assignments(blueprint: Path, nodes: dict[str, Node]) -> tuple[dict[st
             omissions.append(f"area {area!r} is ignored; it needs a name and an array of roadmap node ids")
             continue
         for node_id in node_ids:
+            if isinstance(node_id, str) and node_id in unpublished:
+                continue
             if not isinstance(node_id, str) or node_id not in nodes:
                 omissions.append(f"{node_id!r} under {area!r} is ignored, since no roadmap node has that id")
             elif node_id in assigned:
@@ -821,8 +844,9 @@ def _strip_markup(text: str) -> str:
     def strip(prose: str) -> str:
         return _HTML_TAG.sub("", prose).replace("**", "").replace("__", "")
 
-    code_masked = _CODE_SPAN.sub(_blank, text)
-    spans = sorted(match.span() for match in (*_CODE_SPAN.finditer(text), *_INLINE_MATH.finditer(code_masked)))
+    code = [match for match in _CODE_SPAN.finditer(text) if match[1]]
+    code_masked = _CODE_SPAN.sub(lambda match: _blank(match) if match[1] else match[0], text)
+    spans = sorted(match.span() for match in (*code, *_INLINE_MATH.finditer(code_masked)))
     parts: list[str] = []
     end = 0
     for start, stop in spans:
@@ -1048,4 +1072,5 @@ __all__ = [
     "catalogs_without_ledger",
     "load_graph",
     "unpublished_content",
+    "unpublished_node_ids",
 ]

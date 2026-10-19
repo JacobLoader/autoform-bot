@@ -121,7 +121,11 @@ lists it, and an `area:` authored on the node wins over the file. The file only
 assigns areas, so it never stops a command: `check` and `render`
 warn about each entry they ignore, or about the whole file when it is not
 readable `autoform-atlas/v1` JSON, and `audit` reports each as an
-`atlas-omission` [warning](#warnings). An older `AUTOFORM_REF` ignores the file.
+`atlas-omission` [warning](#warnings). An older `AUTOFORM_REF` assigns no areas
+from the file but publishes it as a static file, with every id it names.
+Render reads it for the explorer's areas and leaves the file itself out of the
+site, since it may name articles in unpublished folders; a page's link to it
+keeps only its text.
 
 A repository-wide inventory may use a narrative leaf to summarize an existing
 Lean module containing several declarations. Such a leaf sets
@@ -395,7 +399,12 @@ uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform dashboard . --site-dir site
 Drop `--require-declarations` when reviewing work in progress, where a
 statement may name a Lean declaration that does not exist yet. On native
 Windows, run `check` and `render` without `--lean-root`: the site then has no
-code links (see the publication contract below).
+code links (see the publication contract below). A Lake project in a
+subdirectory of the repository, such as `v1/`, is passed as `--lean-root v1`.
+Links name paths from the repository's top level, so its files link under `v1/`,
+and a blueprint beside it, such as `blueprint/`, under `blueprint/`. The
+generated `blueprint-pages.yml` passes `--lean-root .` to both commands; edit it
+to match.
 
 `dashboard` serves the exact built MkDocs site on `127.0.0.1`, choosing an
 available port unless `--port` is supplied, and adds a read-only live overlay
@@ -424,7 +433,8 @@ also warns about each complete declaration in a usable shared library (see
 arXiv paper or DOI that an article's `## Sources` links cite, directly or
 through a blueprint page they link, when no implementation note and no project
 Lean file names it. An article stops counting once it is proved, when audit asks
-for its implementation note to go. Such a declaration usually proves part of the
+for its implementation note to go, and a module catalog, which inventories
+existing Lean, never counts. Such a declaration usually proves part of the
 source being formalized, so reuse it rather than proving it again, or name it in
 the implementation note of the article it concerns to record why not.
 Identifiers match across their usual forms: versions, `abs` and `pdf` URLs, the
@@ -1233,7 +1243,9 @@ What an existing repository meets when it moves to this version:
 
 1. CI at an older `AUTOFORM_REF` rejects `catalog:` and `area:` as unsupported
    frontmatter keys and `INVENTORIED` as an unknown coverage disposition, so
-   move the pin before using them. Older refs ignore `blueprint/atlas.json`.
+   move the pin before using them. Older refs assign no areas from
+   `blueprint/atlas.json` but publish the file, so a project with unpublished
+   folders moves the pin before adding it.
 2. A `DECOMPOSED` link that reaches only prose or leaves marked `not_ready`
    that declare nothing yet is now a `decomposed-without-declaration` audit
    warning, which `render` also prints; neither fails.

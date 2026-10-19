@@ -138,7 +138,9 @@ def _blueprint_sources(graph: Graph) -> dict[str, set[str]]:
     A link to a page under the blueprint counts with what the page cites, since
     Roadmap records source locations in ``blueprint/sources/``. A proved article
     no longer counts: it needs no search, and audit asks for its implementation
-    note, which may have recorded a library declaration, to be deleted.
+    note, which may have recorded a library declaration, to be deleted. Nor
+    does a module catalog: it inventories existing Lean, so it has no proof to
+    search a library for.
     """
 
     citing: dict[str, set[str]] = defaultdict(set)
@@ -146,7 +148,7 @@ def _blueprint_sources(graph: Graph) -> dict[str, set[str]]:
     blueprint = graph.blueprint_dir.resolve()
     derived = status.derive(graph)
     for node in graph.nodes.values():
-        if derived[node.id].proved:
+        if node.catalog is not None or derived[node.id].proved:
             continue
         for target in node.sources:
             page = _linked_page(node.path, target, blueprint)
