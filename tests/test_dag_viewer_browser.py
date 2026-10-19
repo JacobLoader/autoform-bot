@@ -1513,13 +1513,13 @@ def test_the_explorer_draws_its_breadcrumb_once(desktop_page: object, site_url: 
     playwright.expect(page.locator(".bp-dag-navigation")).to_be_hidden()
     playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_visible()
     assert_tab_walks_trail_link_search()
-    # Widening past 1,100px puts the link back after the controls.
+    # Widening past 1,100px puts the link back after the controls, once the media query reports the change.
     page.set_viewport_size({"width": 1280, "height": 900})
+    playwright.expect(page.locator(".bp-dag-toolbar + .bp-dag-book")).to_have_count(1)
     page.get_by_role("button", name="Fit shown nodes").focus()
     page.keyboard.press("Tab")
     playwright.expect(page.locator(".bp-dag-book")).to_be_focused()
     # The landing page's rail holds the hero instead of a trail, so its head keeps the trail on desktop too.
-    page.set_viewport_size({"width": 1280, "height": 900})
     _open_site(page, site_url, "index.html")
     playwright.expect(page.locator(".bp-dag-navigation .bp-dag-intro")).to_be_visible()
     playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_visible()
