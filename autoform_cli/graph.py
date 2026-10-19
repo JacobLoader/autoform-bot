@@ -37,7 +37,7 @@ _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 _MARKDOWN_LINK_TEXT = re.compile(r"!?\[((?:[^\[\]]|\[[^\[\]]*\])+)\]\([^)]*\)")
 #: A full, collapsed or shortcut reference link: ``[text][label]``, ``[label][]`` or ``[label]``.
 _REFERENCE_LINK_TEXT = re.compile(r"!?\[((?:[^\[\]]|\[[^\[\]]*\])+)\](?:\[([^\[\]]*)\])?")
-_HTML_TAG = re.compile(r"<[^>]+>")
+_HTML_TAG = re.compile(r"<[A-Za-z/!][^>]*>")
 ARTICLE_ID_PATTERN = re.compile(r"af_[0-9a-f]{24}\Z")
 _FRONTMATTER_KEYS = frozenset(
     {
@@ -719,12 +719,12 @@ def _extract_summary(body: list[str], references: dict[str, str], *, limit: int 
             continue
         text = _MARKDOWN_LINK_TEXT.sub(r"\1", text)
         text = _REFERENCE_LINK_TEXT.sub(unwrap, text)
-        text = unescape(_strip_markup(text)).strip()
-        if text:
+        if unescape(_strip_markup(text)).strip():
             paragraph.append(text)
-    if not paragraph:
+    # Inline math may wrap across the paragraph's lines, so markup is read in the whole paragraph.
+    summary = " ".join(unescape(_strip_markup("\n".join(paragraph))).split())
+    if not summary:
         return None
-    summary = " ".join(" ".join(paragraph).split())
     if len(summary) <= limit:
         return summary
     clipped = summary[: limit - 1].rsplit(" ", 1)[0]
@@ -734,9 +734,9 @@ def _extract_summary(body: list[str], references: dict[str, str], *, limit: int 
 def _strip_markup(text: str) -> str:
     """Drop inline HTML and strong emphasis from *text*, but not from its code or math.
 
-    A tag runs from ``<`` to ``>``, so stripping across inline math read
-    ``For $0 < a \\le b$ and $r > 0$`` as one tag. Code spans, then inline math,
-    are read first, as the page reads them.
+    A tag runs from ``<`` and a letter, ``/`` or ``!`` to ``>``, so stripping
+    across inline math read ``For $0 <a$ and $r > 0$`` as one tag. Code spans,
+    then inline math, are read first, as the page reads them.
     """
 
     def strip(prose: str) -> str:
