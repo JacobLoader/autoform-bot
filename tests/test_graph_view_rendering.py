@@ -446,9 +446,13 @@ def test_explorer_head_is_one_row_where_the_rail_always_shows() -> None:
     # The landing page's trail stays beside the search, capped so that it cannot push the controls over the link.
     assert ".bp-dag-breadcrumb { flex: 0 1 auto; max-width: 32%; }" in one_row
     script = dag_viewer.viewer_script()
-    assert script.index("head.appendChild(toolbar);") < script.index("head.appendChild(bookLink);")
+    assert script.index("head.appendChild(toolbar);") < script.index("placeBook();")
     assert "context.appendChild(bookLink)" not in script
     # At 1,100px and below a grid draws the link at the end of the first row, under phones on a line of its own.
+    # The runtime moves it before the toolbar there, so that Tab still follows what is drawn.
+    assert 'narrow = matchMedia("(max-width: 1100px)")' in script
+    assert "head.insertBefore(bookLink, narrow.matches ? toolbar : null);" in script
+    assert 'narrow.addEventListener("change", placeBook);' in script
     narrow = style.split("@media (max-width: 1100px) {\n", 1)[1].split("\n}", 1)[0]
     assert ".bp-dag-book { grid-area: 1 / 2;" in narrow and ".bp-dag-toolbar { grid-column: 1 / -1; }" in narrow
     phones = style.split("@media (max-width: 680px) {\n", 1)[1].split("\n}", 1)[0]

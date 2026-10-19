@@ -1466,10 +1466,26 @@ def test_the_explorer_draws_its_breadcrumb_once(desktop_page: object, site_url: 
     assert crumbs is not None and book is not None and search is not None
     assert abs((crumbs["y"] + crumbs["height"] / 2) - (book["y"] + book["height"] / 2)) < 2
     assert book["x"] >= crumbs["x"] + crumbs["width"] and book["y"] + book["height"] <= search["y"]
+
+    def assert_tab_walks_trail_link_search() -> None:
+        # The link sat after the toolbar in the DOM, so Tab reached it after the controls drawn under it.
+        page.locator(".bp-dag-breadcrumb a").last.focus()
+        page.keyboard.press("Tab")
+        playwright.expect(page.locator(".bp-dag-book")).to_be_focused()
+        page.keyboard.press("Tab")
+        playwright.expect(page.locator(".bp-dag-search")).to_be_focused()
+
+    assert_tab_walks_trail_link_search()
     # Phones hide the rail, so there the head draws the trail.
     page.set_viewport_size({"width": 390, "height": 844})
     playwright.expect(page.locator(".bp-dag-navigation")).to_be_hidden()
     playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_visible()
+    assert_tab_walks_trail_link_search()
+    # Widening past 1,100px puts the link back after the controls.
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.get_by_role("button", name="Fit shown nodes").focus()
+    page.keyboard.press("Tab")
+    playwright.expect(page.locator(".bp-dag-book")).to_be_focused()
     # The landing page's rail holds the hero instead of a trail, so its head keeps the trail on desktop too.
     page.set_viewport_size({"width": 1280, "height": 900})
     _open_site(page, site_url, "index.html")
