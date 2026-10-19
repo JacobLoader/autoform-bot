@@ -25,7 +25,7 @@ import time
 import unicodedata
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
@@ -49,7 +49,15 @@ from .coverage import (
     load_coverage,
     validate_coverage_roles,
 )
-from .graph import Graph, GraphValidationError, Node, _implementation_note_issues, atlas_omissions, load_graph
+from .graph import (
+    Graph,
+    GraphValidationError,
+    Node,
+    _implementation_note_issues,
+    atlas_omissions,
+    load_graph,
+    unpublished_content,
+)
 from .graph_views import _containers, _countable, _is_countable, _module_inventories
 from .lean import (
     _REPLACEABLE_SCHEMAS,
@@ -68,7 +76,7 @@ from .lean import (
     snapshot_project_sources,
     verify_repository_snapshot,
 )
-from .markdown import INLINE_CODE, _BRACKET_ESCAPE, _INLINE_MATH, _blank, article_parts, site_converter
+from .markdown import GENERATED_VIEWS, INLINE_CODE, _BRACKET_ESCAPE, _INLINE_MATH, _blank, article_parts, site_converter
 from .markdown import blueprint_root, directory_path, mask_fences_and_comments
 from .status import is_definition
 
@@ -117,18 +125,7 @@ _REFUSED_COMMITS = {
 #: How long a render waits for another render committing into the same parent.
 _PUBLICATION_LOCK_WAIT_SECONDS = 30.0
 #: Derived views this command rewrites; stale copies must not leak into the site.
-_GENERATED_FILES = frozenset(
-    {
-        "dependencies.md",
-        "dependencies.html",
-        graph_pages.PROJECT_PAYLOAD,
-        "graph.html",
-        "progress.md",
-        # The vault keeps its own Obsidian-readable copy; the site builds one.
-        "structure.md",
-        PUBLICATION_MANIFEST,
-    }
-)
+_GENERATED_FILES = GENERATED_VIEWS | {graph_pages.PROJECT_PAYLOAD, PUBLICATION_MANIFEST}
 _LOCAL_ONLY_NAMES = frozenset(
     {
         ".autoform",
@@ -366,7 +363,7 @@ def render_site(
             ["blueprint and output directories must be disjoint; refusing destructive render"]
         )
     recovered = _recover_backup(destination)
-    snapshot = _capture_blueprint(blueprint)
+    snapshot, unpublished_ids = _capture_blueprint(blueprint)
     # The repository root, not the vault's parent. A blueprint nested at
     # <repo>/docs/blueprint would otherwise be described as <repo>/blueprint,
     # and every generated permalink would 404.
@@ -379,7 +376,7 @@ def render_site(
     # the repository path it had when render read the vault.
     relative = blueprint.relative_to(repo_root) if _is_within(blueprint, repo_root) else Path("blueprint")
     with _private_copy(snapshot, relative) as (copy_root, copy):
-        graph = _load_graph(copy, blueprint)
+        graph = _load_graph(copy, blueprint, unpublished_ids)
         coverage, coverage_issues = load_coverage(copy)
         if coverage_issues:
             raise PublicationError(
@@ -688,11 +685,13 @@ def _render_pages(
     return report
 
 
-def _capture_blueprint(blueprint: Path) -> TreeSnapshot:
+def _capture_blueprint(blueprint: Path) -> tuple[TreeSnapshot, frozenset[str]]:
     """Read the blueprint once, refusing what must not be published.
 
     Through descriptors where the host has them; elsewhere (Windows) as two
-    pathname captures that must agree.
+    pathname captures that must agree. Folders whose README says ``published:
+    false`` are left out before anything is refused or published, so no page,
+    hash or check sees them; the article IDs in them come beside the snapshot.
     """
     try:
         selection = _PUBLICATION_SELECTION
@@ -704,6 +703,19 @@ def _capture_blueprint(blueprint: Path) -> TreeSnapshot:
         if isinstance(error, TreeChangedError):
             raise PublicationError(["blueprint changed while it was read; retry"]) from error
         raise PublicationError([f"blueprint could not be captured: {error}"]) from error
+    folders, article_ids = unpublished_content(snapshot.files)
+
+    def kept(name: str) -> bool:
+        return not any(name == folder or name.startswith(f"{folder}/") for folder in folders)
+
+    snapshot = replace(
+        snapshot,
+        directories=tuple(filter(kept, snapshot.directories)),
+        **{
+            field: tuple(entry for entry in getattr(snapshot, field) if kept(entry[0]))
+            for field in ("files", "symlinks", "special", "omitted", "identities")
+        },
+    )
     omitted, symlinks = dict(snapshot.omitted), dict(snapshot.symlinks)
     unsupported = dict(snapshot.unsupported_entries())
     # Published names that differ only in case or Unicode form would merge on a
@@ -735,7 +747,7 @@ def _capture_blueprint(blueprint: Path) -> TreeSnapshot:
             )
     if issues:
         raise PublicationError(issues)
-    return snapshot
+    return snapshot, article_ids
 
 
 def _is_sensitive(relative: PurePosixPath) -> bool:
@@ -778,11 +790,12 @@ def _private_copy(
         yield root, copy
 
 
-def _load_graph(copy: Path, blueprint: Path) -> Graph:
+def _load_graph(copy: Path, blueprint: Path, unpublished_ids: frozenset[str]) -> Graph:
     """Load the copy's graph, then check the vault's implementation notes as ``load_graph`` would.
 
     The notes are hidden, so the copy lacks them. Nothing is published or hashed
-    from them, so reading them in place changes no output.
+    from them, so reading them in place changes no output. A note may belong to
+    an article in an unpublished folder, which the copy lacks too.
     """
     try:
         graph = load_graph(copy)
@@ -790,6 +803,7 @@ def _load_graph(copy: Path, blueprint: Path) -> Graph:
         issues = [issue.replace(str(copy), str(blueprint)) for issue in error.issues]
         raise GraphValidationError(issues) from None
     article_ids = {node.article_id: node.id for node in graph.nodes.values() if node.article_id is not None}
+    article_ids.update(dict.fromkeys(unpublished_ids, ""))
     if issues := _implementation_note_issues(blueprint, article_ids):
         raise GraphValidationError(issues)
     return graph
@@ -798,10 +812,10 @@ def _load_graph(copy: Path, blueprint: Path) -> Graph:
 def load_publication_source(blueprint_dir: str | Path) -> tuple[str, Graph]:
     """Read the blueprint once; return its publication revision and the graph of those bytes."""
     blueprint = blueprint_root(blueprint_dir)
-    snapshot = _capture_blueprint(blueprint)
+    snapshot, unpublished_ids = _capture_blueprint(blueprint)
     # The graph reads the articles and the atlas.
     with _private_copy(snapshot, prefix=("roadmap/", "atlas.json")) as (_root, copy):
-        return _source_revision(snapshot), _load_graph(copy, blueprint)
+        return _source_revision(snapshot), _load_graph(copy, blueprint, unpublished_ids)
 
 
 #: An output render may replace: its identity and its files' digests (none for an empty one).
@@ -1224,7 +1238,7 @@ def _source_revision(snapshot: TreeSnapshot) -> str:
 def publication_source_revision(blueprint_dir: str | Path) -> str:
     """Return the deterministic source hash stored in ``publication.json``."""
 
-    return _source_revision(_capture_blueprint(blueprint_root(blueprint_dir)))
+    return _source_revision(_capture_blueprint(blueprint_root(blueprint_dir))[0])
 
 
 def _write_publication_manifest(

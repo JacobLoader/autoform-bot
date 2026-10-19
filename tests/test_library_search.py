@@ -93,6 +93,14 @@ def test_a_whole_lean_name_matches_as_the_name(tmp_path: Path) -> None:
     assert _matched(library, "IsCompact.exists_isMinOn")["IsCompact.exists_isMinOn"] == ("lean",)
 
 
+def test_a_namespace_inside_quoting_marks_matches_as_a_namespace(tmp_path: Path) -> None:
+    library = _library(tmp_path, declaration("Lib.«weird name».bar", docstring=None))
+
+    # The space belongs to the quoted component, so `Lib.weird` names no declaration.
+    assert _matched(library, "Lib.weird") == {"Lib.«weird name».bar": ("qualified_names",)}
+    assert _matched(library, "bar") == {"Lib.«weird name».bar": ("lean",)}
+
+
 def test_hits_sort_by_field_then_typed_form_then_status_then_name(tmp_path: Path) -> None:
     library = _library(
         tmp_path,
