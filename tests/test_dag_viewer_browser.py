@@ -513,6 +513,28 @@ def test_details_close_from_their_corner_and_space_the_status_from_the_link(
     assert abs(link["x"] - (pill["x"] + pill["width"]) - 16) < 1.5
 
 
+def test_details_read_as_mathematics_not_as_instructions(desktop_page: object, explorer_url: str) -> None:
+    """The drawer explained the map's controls, and its path pivots sat under a "Path spotlight" heading."""
+    page = desktop_page
+    page.set_viewport_size({"width": 1440, "height": 900})
+    page.goto(f"{explorer_url}/index.html#node=chapter%2Fmiddle")
+    inspector = page.locator(".bp-dag-inspector")
+    playwright.expect(inspector.locator("h2")).to_have_text("Middle lemma")
+    playwright.expect(inspector.locator(".bp-dag-kicker")).to_have_text("lemma")
+    playwright.expect(inspector).not_to_contain_text("Path spotlight")
+    pivots = inspector.locator(".bp-dag-pivot")
+    playwright.expect(pivots).to_have_text(["All", "Prerequisites 1", "Dependents 1"])
+    playwright.expect(pivots.first).to_have_attribute("aria-pressed", "true")
+    # One segmented control: the three pivots share a row inside one border.
+    tops = {round(pivots.nth(index).bounding_box()["y"]) for index in range(3)}
+    assert len(tops) == 1
+    page.get_by_role("button", name="Close details").click()
+    page.keyboard.press("Escape")
+    playwright.expect(page.locator(".bp-dag-has-selection")).to_have_count(0)
+    for gone in ("keyboard-accessible", "Dependency explorer"):
+        playwright.expect(inspector).not_to_contain_text(gone)
+
+
 def test_app_layout_fills_the_browser_viewport(desktop_page: object, explorer_url: str) -> None:
     page = desktop_page
     page.set_viewport_size({"width": 1440, "height": 900})
@@ -600,7 +622,8 @@ def test_atlas_hierarchy_keeps_topics_readable_and_details_out_of_the_way(
     assert "Geometry & Topology" in (topic.get_attribute("aria-label") or "")
     topic.click()
     playwright.expect(page.locator(".bp-dag-inspector h2")).to_have_text("Topology")
-    playwright.expect(page.locator(".bp-dag-inspector .bp-dag-kicker")).to_have_text("Scope · Geometry & Topology")
+    # A topic has no declaration, so no kicker names its kind over the title.
+    playwright.expect(page.locator(".bp-dag-inspector .bp-dag-kicker")).to_have_count(0)
     playwright.expect(page.locator(".bp-dag-inspector h3", has_text="in this scope")).to_have_text(
         "80 items in this scope"
     )
@@ -1662,6 +1685,11 @@ def test_published_explorer_controls_keep_their_own_styles_under_material(
         }"""
     )
     assert heading == ["700", True]
+    # The heading opens the overview with no kicker over it, and topics without links between them say so in a line.
+    assert page.locator(".bp-dag-inspector-inner > :first-child").evaluate("element => element.tagName") == "H2"
+    playwright.expect(page.locator(".bp-dag-inspector-inner .bp-dag-overview", has_text="authored between")).to_have_text(
+        "No dependencies are authored between these topics."
+    )
 
 
 def _assert_site_chrome_is_reachable(page: object) -> None:

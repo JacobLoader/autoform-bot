@@ -483,6 +483,31 @@ def test_details_close_in_their_corner_and_space_the_status_from_the_link() -> N
     assert ".bp-dag-viewer:not(.bp-dag-sheet-open) .bp-dag-close { display: none; }" in phone
 
 
+def test_details_drop_instructions_and_label_paths_compactly() -> None:
+    """The drawer explained its own controls, invented a summary for topics without one and titled its pivots."""
+    script, style = dag_viewer.viewer_script(), dag_viewer._STYLE
+
+    for gone in (
+        "keyboard-accessible",
+        "Click a topic",
+        "This topic contains",
+        "Explore it to see",
+        "Card height shows scope",
+        "Path spotlight",
+        "All paths",
+        '"Roadmap item"',
+        '"Dependency explorer"',
+        '"Mathematics knowledge map"',
+    ):
+        assert gone not in script, gone
+    # Human review requires a level without authored edges to say so.
+    assert '"No dependencies are authored between these topics."' in script
+    assert 'if (node.declaration) header.appendChild(element("p", "bp-dag-kicker",' in script
+    assert '[["All", "both", 1], ["Prerequisites " + beforeCount, "prerequisites", beforeCount],' in script
+    pivots = re.search(r"\.bp-dag-pivots \{([^}]*)\}", style)
+    assert pivots is not None and "display: flex;" in pivots.group(1) and "border: 1px solid" in pivots.group(1)
+
+
 def test_explorer_pages_relations_and_clamps_zoom() -> None:
     script = dag_viewer.viewer_script()
 
