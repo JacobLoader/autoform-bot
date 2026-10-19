@@ -38,6 +38,8 @@ _MARKDOWN_LINK_TEXT = re.compile(r"!?\[((?:[^\[\]]|\[[^\[\]]*\])+)\]\([^)]*\)")
 #: A full, collapsed or shortcut reference link: ``[text][label]``, ``[label][]`` or ``[label]``.
 _REFERENCE_LINK_TEXT = re.compile(r"!?\[((?:[^\[\]]|\[[^\[\]]*\])+)\](?:\[([^\[\]]*)\])?")
 _HTML_TAG = re.compile(r"<[A-Za-z/!][^>]*>")
+# A code span may wrap across the paragraph's lines, as the page reads it.
+_CODE_SPAN = re.compile(INLINE_CODE.pattern, re.DOTALL)
 ARTICLE_ID_PATTERN = re.compile(r"af_[0-9a-f]{24}\Z")
 _FRONTMATTER_KEYS = frozenset(
     {
@@ -742,8 +744,8 @@ def _strip_markup(text: str) -> str:
     def strip(prose: str) -> str:
         return _HTML_TAG.sub("", prose).replace("**", "").replace("__", "")
 
-    code_masked = INLINE_CODE.sub(_blank, text)
-    spans = sorted(match.span() for match in (*INLINE_CODE.finditer(text), *_INLINE_MATH.finditer(code_masked)))
+    code_masked = _CODE_SPAN.sub(_blank, text)
+    spans = sorted(match.span() for match in (*_CODE_SPAN.finditer(text), *_INLINE_MATH.finditer(code_masked)))
     parts: list[str] = []
     end = 0
     for start, stop in spans:
