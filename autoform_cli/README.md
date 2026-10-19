@@ -484,6 +484,16 @@ proved. A project that declares one narrow area and disposes of it reports
 `complete` while most of its source remains undeclared. Exhaustiveness is an
 authoring judgement that no local check can make.
 
+The generated `blueprint-pages.yml` deploys only a commit that the generated
+`autoform verify` workflow passed on a push to `main`. It runs when that
+workflow completes, checks that the run is the project's own
+`.github/workflows/autoform-verify.yml` by file, not a workflow that only shares
+its name, checks out the run's exact commit, and renders code links at it with
+`--ref`. A failed verification deploys nothing, so the last verified site stays
+up while `main` is red. Pull requests and manual runs build the site to check
+it and never deploy, and they cannot cancel a deploy waiting in its
+concurrency group.
+
 Publication and audit are deliberately different gates. The generated
 `blueprint-pages.yml` runs `check` and `render`; it does not run `audit`. An
 invalid coverage contract fails `render` before any output is written, but a
