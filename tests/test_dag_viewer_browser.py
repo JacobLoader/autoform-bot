@@ -1244,6 +1244,18 @@ def test_the_published_landing_page_is_one_full_page_explorer_opened_by_its_hero
     playwright.expect(headings).to_have_text("Explorer fixture")
     playwright.expect(page.locator(".bp-dag-navigation-title")).to_have_count(0)
     playwright.expect(intro.get_by_role("link", name="Read the book")).to_have_attribute("href", "roadmap/index.html")
+    # The narrow hero shows two plain figures and one line of counts, keeps coverage to its link, and drops
+    # the kicker, the notes that repeated the labels and the bar; the gradient rule is its one accent.
+    figures = intro.locator(".bp-figure")
+    playwright.expect(figures.filter(visible=True)).to_have_count(2)
+    playwright.expect(figures.filter(visible=True).locator(".bp-figure-label")).to_have_text(["Scoped roadmap", "Ready now"])
+    playwright.expect(intro.locator(".bp-hero-counts")).to_have_text("2 chapters")
+    for hidden in (".bp-hero-kicker", ".bp-figure-note", ".bp-hero-bar", ".bp-hero-coverage-label", ".bp-hero-coverage-counts"):
+        playwright.expect(intro.locator(hidden).filter(visible=True)).to_have_count(0)
+    playwright.expect(intro.get_by_role("link", name="View coverage contract")).to_be_visible()
+    value = intro.locator(".bp-figure-value").first
+    assert value.evaluate("element => getComputedStyle(element).backgroundImage") == "none"
+    assert "gradient" in intro.locator(".bp-hero-rule").evaluate("element => getComputedStyle(element).backgroundImage")
     # The rail lists the project's chapters under the hero.
     playwright.expect(page.locator(".bp-dag-navigation-link", has_text="Algebra")).to_be_visible()
     # Only autoform dashboard serves the live overlay; this local server answers 404, so no panel opens.

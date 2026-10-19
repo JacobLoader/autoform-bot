@@ -71,8 +71,8 @@ dependency recursively and requires proofs for theorems and bodies for definitio
 target marked `mathlib: true` follows the authored status contract; the marker
 is an author assertion, not audit verification that the declaration is in
 Mathlib. Treat the percentage never as whole-source completion. Read the
-adjacent declared source coverage and its linked coverage contract before
-making scope claims. A statement-only theorem remains incomplete whether it is
+declared source coverage in its linked coverage contract before making scope
+claims. A statement-only theorem remains incomplete whether it is
 blocked or ready to prove. In a project that allows open statements, a
 conditionally proved target, whose proof rests on an open statement without a
 recorded Lean proof, is not complete either: it is never fully proved, so it
