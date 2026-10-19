@@ -18,7 +18,14 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .lean import declaration_names
-from .markdown import directory_path, link_definitions, link_targets, mask_code_and_comments, resolved_path
+from .markdown import (
+    _is_hidden_path,
+    directory_path,
+    link_definitions,
+    link_targets,
+    mask_code_and_comments,
+    resolved_path,
+)
 
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
@@ -283,10 +290,20 @@ def _discover_nodes(blueprint: Path) -> tuple[list[_NodeSource], list[str]]:
     def unlistable(exc: OSError) -> None:
         issues.append(f"cannot list roadmap directory {exc.filename}: {exc.strerror}")
 
-    # Unlike a glob, a walk reports each directory it cannot list.
-    entries = sorted(
-        Path(directory, name) for directory, _, files in os.walk(roadmap_root, onerror=unlistable) for name in files
-    )
+    # Unlike a glob, a walk reports each directory it cannot list. Render omits
+    # hidden entries, so they are no part of the roadmap here either.
+    entries: list[Path] = []
+    for directory, directories, files in os.walk(roadmap_root, onerror=unlistable):
+        for name in directories:
+            if name.casefold() == IMPLEMENTATION_NOTES_DIR.casefold():
+                misplaced = (Path(directory) / name).relative_to(roadmap_root.parent).as_posix()
+                issues.append(
+                    f"{misplaced}: implementation notes directory belongs at the blueprint root, "
+                    f"as {IMPLEMENTATION_NOTES_DIR}; nothing reads it here"
+                )
+        directories[:] = [name for name in directories if not name.startswith(".")]
+        entries.extend(Path(directory, name) for name in files if not name.startswith("."))
+    entries.sort()
     issues.sort()  # a walk visits directories in arbitrary order
     for path in entries:
         if path.suffix != ".md" and path.name.casefold() != "readme.md":
@@ -323,7 +340,7 @@ def _discover_nodes(blueprint: Path) -> tuple[list[_NodeSource], list[str]]:
 
 
 def roadmap_symlink_issues(blueprint: Path) -> list[str]:
-    """Report the symbolic links among ``roadmap/`` and every path beneath it.
+    """Report the symbolic links among ``roadmap/`` and the paths beneath it that are not hidden.
 
     Graph loading and runtime projection share this policy, so ``autoform check``
     accepts exactly the roadmaps the runtime does.
@@ -332,7 +349,10 @@ def roadmap_symlink_issues(blueprint: Path) -> list[str]:
     roadmap = blueprint / "roadmap"
     # os.path.islink is False for a path it cannot stat, which discovery then reports; Path.is_symlink raises
     # before 3.14.
-    paths = [roadmap] if roadmap.is_symlink() else [path for path in sorted(roadmap.rglob("*")) if os.path.islink(path)]
+    # Hidden entries, such as an editor's lock symlink, are no part of the roadmap.
+    paths = [roadmap] if roadmap.is_symlink() else [
+        path for path in sorted(roadmap.rglob("*")) if os.path.islink(path) and not _is_hidden_path(path, roadmap)
+    ]
     return [f"roadmap contains a symbolic link: {path.relative_to(blueprint).as_posix()}" for path in paths]
 
 
@@ -364,12 +384,14 @@ def _chapter_issues(roadmap_root: Path) -> list[str]:
     """
 
     try:
-        chapters = sorted(path for path in roadmap_root.iterdir() if path.is_dir())
+        chapters = sorted(path for path in roadmap_root.iterdir() if path.is_dir() and not path.name.startswith("."))
     except OSError:
         return []
     issues = []
     for chapter in chapters:
-        articles = [path for path in chapter.rglob("*.md") if os.path.isfile(path)]
+        articles = [
+            path for path in chapter.rglob("*.md") if os.path.isfile(path) and not _is_hidden_path(path, chapter)
+        ]
         if not articles:
             continue
         if os.path.isfile(chapter / "README.md"):
@@ -684,8 +706,12 @@ def _resolve_target(
         return None, f"{node.id}: dependency target must be a relative .md file: {target!r}"
 
     # A path that leaves the blueprint as spelled escapes it; nothing outside is looked at.
-    if not _is_within(Path(os.path.normpath(node.path.parent / relative)), blueprint):
+    spelled = Path(os.path.normpath(node.path.parent / relative))
+    if not _is_within(spelled, blueprint):
         return None, f"{node.id}: dependency target escapes the blueprint directory: {target!r}"
+    # Render's copy has no hidden folder, so it cannot step through one and back out either.
+    if any(part.startswith(".") and part != ".." for part in relative.parts):
+        return None, f"{node.id}: dependency target names a hidden path, which render omits: {target!r}"
     resolved = resolved_path(node.path.parent / relative)
     if resolved is None:
         # The kernel reaches a file behind a link only `readlink` refuses.

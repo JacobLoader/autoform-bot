@@ -1079,22 +1079,31 @@ example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml).
 ## Validation
 
 `autoform check` rejects cycles between authored articles, missing targets,
-escaping paths, symbolic links anywhere under `roadmap/`, self-dependencies,
+escaping paths, symbolic links under `roadmap/`, self-dependencies,
 missing or multiple H1 titles, unsupported frontmatter keys, assertion values
 it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
-`mathlib: true`. A `## Sources` link to a local path must name a file
+`mathlib: true`. Hidden files and folders under `roadmap/`, those with a part
+starting with `.`, are no part of the roadmap, since render omits them: they
+hold no articles, need no chapter page, and may be symbolic links, such as an
+editor's lock file. A dependency on a hidden page fails, naming the hidden
+path, as does one that steps through a hidden folder and back out, and so does
+an `.implementation-notes` folder under `roadmap/`, which nothing reads there.
+A `## Sources` link to a local path must name a file
 inside the blueprint, as `audit` also requires: a missing file, a directory, an
 invalid path or URL, or a target outside the blueprint fails. The path must open
 as written, so one through a missing folder or a symbolic link loop fails too,
 even where its `..` steps would cancel that part as text (Windows itself applies
 `..` as text). So does a target
 whose path as written, once its `..` steps are applied, has a part below the
-blueprint starting with `.`, unless the article citing it is hidden too,
-because render omits hidden files and directories. Under `sources/`, such a
+blueprint starting with `.`, because render omits hidden files and
+directories. Under `sources/`, such a
 target passes `check` with a warning instead, and `audit` still reports it:
 only a repository link reaches the note, and render writes one when it links
-the other source notes there, so the note must be committed. `audit` alone checks
+the other source notes there, so the note must be committed. A `## Sources`
+link to a view generated at the blueprint root, such as `dependencies.md` or
+`structure.md`, fails as well, because render omits the vault's copy; `audit`
+and render reject coverage evidence that names one. `audit` alone checks
 fragments and fails links with other schemes or a network location. Such a link
 passes `check` with a warning, because work and search leave it out; so does a
 `mathlib_file` that is not a portable relative path, which search reports as

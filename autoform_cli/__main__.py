@@ -585,6 +585,7 @@ def _source_link_issues(graph: Graph) -> tuple[list[str], list[str]]:
         "malformed-source-url": "is not a valid URL",
         "malformed-source-link": "contains an invalid path",
         "hidden-source-target": "names a hidden path, which render omits",
+        "generated-source-target": "names a generated view, which render omits",
     }
     issues, warnings = [], []
     for node in graph.nodes.values():

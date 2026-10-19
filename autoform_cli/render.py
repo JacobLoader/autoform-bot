@@ -61,7 +61,7 @@ from .lean import (
     snapshot_project_sources,
     verify_repository_snapshot,
 )
-from .markdown import article_parts, blueprint_root, directory_path, site_converter
+from .markdown import GENERATED_VIEWS, article_parts, blueprint_root, directory_path, site_converter
 from .markdown import mask_fences_and_comments
 from .status import is_definition
 
@@ -104,17 +104,7 @@ _REFUSED_COMMITS = {
 #: How long a render waits for another render committing into the same parent.
 _PUBLICATION_LOCK_WAIT_SECONDS = 30.0
 #: Derived views this command rewrites; stale copies must not leak into the site.
-_GENERATED_FILES = frozenset(
-    {
-        "dependencies.md",
-        "dependencies.html",
-        "graph.html",
-        "progress.md",
-        # The vault keeps its own Obsidian-readable copy; the site builds one.
-        "structure.md",
-        PUBLICATION_MANIFEST,
-    }
-)
+_GENERATED_FILES = GENERATED_VIEWS | {PUBLICATION_MANIFEST}
 _LOCAL_ONLY_NAMES = frozenset(
     {
         ".autoform",
