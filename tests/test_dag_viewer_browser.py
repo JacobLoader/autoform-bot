@@ -1522,3 +1522,25 @@ def test_the_explorer_typesets_the_math_it_draws_in_its_rail_and_details(desktop
     )
     # Map cards and search results are not typeset.
     assert {entry["name"] for entry in page.evaluate("window.typesetContainers")} == {"bp-dag-inspector"}
+
+    def many_dependents(route: object) -> None:
+        payload = route.fetch().json()
+        key = next(node["status"] for node in payload["nodes"] if node["id"] == "topology/result")
+        payload["nodes"] += [
+            {"id": f"later/{n}", "kind": "node", "status": key, "status_counts": [[key, 1]], "title": f"Later {n}"}
+            for n in range(55)
+        ]
+        payload["edges"] += [{"source": "topology/result", "target": f"later/{n}"} for n in range(55)]
+        route.fulfill(json=payload)
+
+    # Relation rows past the first 50, which Show more appends to the drawer later, stayed raw.
+    page.route("**/topology.json", many_dependents)
+    _open_site(page, site_url, "dependencies/chapters/topology.html#node=topology%2Fresult")
+    more = page.get_by_role("button", name="Show 5 more", exact=True)
+    playwright.expect(more).to_be_visible()
+    page.evaluate("window.typesetContainers = []")
+    more.click()
+    playwright.expect(page.get_by_role("button", name="Later 54", exact=True)).to_be_visible()
+    page.wait_for_function(
+        "window.typesetContainers.some(({name, text}) => name === 'bp-dag-relation-list' && text.includes('Later 54'))"
+    )
