@@ -1390,14 +1390,15 @@ def test_the_explorer_draws_its_breadcrumb_once(desktop_page: object, site_url: 
     playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_hidden()
     # Above 1,100px the head is one row: the search, the controls and, at the row's end, the textbook link.
     playwright.expect(page.locator(".bp-dag-book")).to_be_visible()
-    head, search, book, fit = (
+    head, search, book, zoom = (
         page.locator(selector).bounding_box()
         for selector in (".bp-dag-head", ".bp-dag-search", ".bp-dag-book", ".bp-dag-zoom")
     )
-    assert head is not None and search is not None and book is not None and fit is not None
+    assert head is not None and search is not None and book is not None and zoom is not None
     assert abs((search["y"] + search["height"] / 2) - (book["y"] + book["height"] / 2)) < 2
-    assert book["x"] >= fit["x"] + fit["width"]
-    assert head["height"] <= 54
+    assert book["x"] >= zoom["x"] + zoom["width"]
+    # One row of 36px controls, about 54px with its padding and rule; two rows were 89px.
+    assert head["height"] < 70
     # Up to 1,100px open details cover the rail, so the head draws the trail again.
     page.set_viewport_size({"width": 1000, "height": 800})
     _open_site(page, site_url, "dependencies/chapters/algebra.html#node=algebra%2Fresult")
