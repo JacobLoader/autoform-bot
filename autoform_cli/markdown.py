@@ -41,19 +41,6 @@ from markdown.inlinepatterns import ReferenceInlineProcessor
 from pymdownx.arithmatex import RE_BRACKET_INLINE, RE_SMART_DOLLAR_INLINE
 from pymdownx.superfences import fence_div_format
 
-#: Views generated at the blueprint root. Render omits the vault's copies: it
-#: writes the current views itself and drops stale copies of the retired ones.
-GENERATED_VIEWS = frozenset(
-    {
-        "dependencies.md",
-        "dependencies.html",
-        "graph.html",
-        "progress.md",
-        # The vault keeps its own Obsidian-readable copy; the site builds one.
-        "structure.md",
-    }
-)
-
 #: The Markdown extensions the generated `mkdocs.yml` enables, and their
 #: settings. Anchor prediction builds a real converter from these, so the site's
 #: configuration and the checker's idea of it cannot be two different things.
@@ -721,6 +708,20 @@ def _anchors_from_body(body: str) -> frozenset[str]:
         # promise, so report none rather than guess at them.
         return frozenset()
     return frozenset(html.unescape(found) for found in _HEADING_ID.findall(rendered))
+
+
+#: Views generated at the blueprint root. Render omits the vault's copies: it
+#: writes the current views itself and drops stale copies of the retired ones.
+GENERATED_VIEWS = frozenset(
+    {
+        "dependencies.md",
+        "dependencies.html",
+        "graph.html",
+        "progress.md",
+        # The vault keeps its own Obsidian-readable copy; the site builds one.
+        "structure.md",
+    }
+)
 
 
 def resolved_path(path: Path) -> Path | None:
