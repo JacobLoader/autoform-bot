@@ -394,6 +394,15 @@ def test_explorer_host_is_escaped_responsive_and_accessible() -> None:
     assert "Exact Lean name" not in script and "bp-dag-result-reason" not in script
 
 
+def test_explorer_counts_agree_with_their_nouns() -> None:
+    """The rail read "1 items · 1 dependencies"."""
+    script = dag_viewer.viewer_script()
+
+    assert 'return count.toLocaleString() + " " + (count === 1 ? one : many);' in script
+    assert 'plural(data.edge_count || data.edges.length, "dependency", "dependencies")' in script
+    assert '.toLocaleString() + " dependencies"' not in script
+
+
 def test_explorer_shows_statuses_and_areas_but_never_internal_ids() -> None:
     """Cards, the details, Contents and search all printed ids such as "algebra/base" beside the titles."""
     script = dag_viewer.viewer_script()

@@ -616,6 +616,16 @@ def test_a_roadmap_without_articles_says_so(desktop_page: object, explorer_url: 
     playwright.expect(empty).to_have_text("This roadmap has no articles yet.")
 
 
+@pytest.mark.parametrize(("name", "counts"), (("mixed", "4 items · 1 dependency"), ("flat", "1,000 items · 0 dependencies")))
+def test_the_rail_counts_in_words_that_agree_with_their_numbers(
+    desktop_page: object, explorer_url: str, name: str, counts: str
+) -> None:
+    """The rail read "1 dependencies" and printed a count without its plural."""
+    page = desktop_page
+    page.goto(f"{explorer_url}/{name}.html")
+    playwright.expect(page.locator(".bp-dag-navigation-counts")).to_have_text(counts)
+
+
 def test_a_click_on_empty_map_space_keeps_the_readers_zoom(desktop_page: object, explorer_url: str) -> None:
     """Every click on empty space re-fitted the camera, with or without a selection to clear."""
     page = desktop_page
