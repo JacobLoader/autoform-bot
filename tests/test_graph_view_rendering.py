@@ -555,6 +555,20 @@ def test_dark_explorer_cards_read_against_the_page_toned_map() -> None:
     assert _contrast("#FF7B72", surface) >= 4.5 and "--dag-error: #ff7b72;" in style
 
 
+def test_status_ring_greys_stay_apart_in_both_schemes() -> None:
+    """Planned's dark stroke rose to #737578, 1.39:1 from inventory pending's #8A8D91, so their arcs ran together."""
+    planned = next(state for state in status.STATES if state.key == "planned")
+    greys = (planned, *status.INVENTORY_STATES)
+    # A ring runs planned, checked and pending inventory and closes, so each pair of the three can meet.
+    # 1.5:1 keeps neighbouring 3px arcs a visible step apart; the old dark pair was 1.39:1.
+    for first, second in ((0, 1), (1, 2), (0, 2)):
+        for stroke in ("stroke", "dark_stroke"):
+            ratio = _contrast(getattr(greys[first], stroke), getattr(greys[second], stroke))
+            assert ratio >= 1.5, (greys[first].key, greys[second].key, stroke, ratio)
+    for state in greys:
+        assert min(_contrast(state.dark_stroke, state.dark_fill), _contrast(state.dark_stroke, "#18191A")) >= 3, state.key
+
+
 def test_explorer_assets_and_ordinary_payload_stay_within_budgets(tmp_path: Path) -> None:
     nodes = tuple(
         ViewNode(

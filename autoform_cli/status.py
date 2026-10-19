@@ -103,17 +103,19 @@ _BY_KEY = {state.key: state for state in STATES}
 #: Neutral statuses for module catalogs, which record inspection of existing
 #: Lean rather than formalization targets: checked once fully proved, pending
 #: until then. Each takes a grey stroke of its own, apart from planned's, so
-#: planned targets and both kinds of inventory stay apart in a status ring.
+#: planned targets and both kinds of inventory stay apart in a status ring:
+#: in each scheme any two of the three greys keep 1.5:1 between them, and
+#: on dark each keeps 3:1 against its fill and the page.
 INVENTORY_STATES: tuple[State, ...] = (
     replace(
         _BY_KEY["planned"],
         key="inventory_checked",
         label="inventory checked",
         stroke="#65676B",
-        dark_stroke="#B0B3B8",
+        dark_stroke="#C8CACE",
     ),
     State("inventory_pending", "inventory pending", "#F0F2F5", "#8A8D91", "#65676B",
-          "#242526", "#8A8D91", "#B0B3B8"),
+          "#242526", "#9EA1A6", "#B0B3B8"),
 )
 
 #: What each state means, for the legends and the explorer's swatches.
