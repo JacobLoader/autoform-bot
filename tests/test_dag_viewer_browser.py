@@ -1189,7 +1189,7 @@ def test_on_a_phone_the_status_filter_and_search_results_open_in_view(mobile_pag
     assert lowest == [True, True]
 
 
-@pytest.mark.parametrize("width", (800, 1100, 1440))
+@pytest.mark.parametrize("width", (800, 1100, 1101, 1440))
 def test_a_node_chosen_on_a_wider_screen_lands_beside_the_open_details(
     desktop_page: object, site_url: str, width: int
 ) -> None:
@@ -1224,7 +1224,7 @@ def test_a_node_chosen_on_a_wider_screen_lands_beside_the_open_details(
 
 
 def test_the_rail_under_the_open_details_leaves_the_tab_order(desktop_page: object, site_url: str) -> None:
-    """Up to 1,200px open details cover the rail, and Tab still walked its links under the drawer."""
+    """Up to 1,100px open details cover the rail, and Tab still walked its links under the drawer."""
     page = desktop_page
     page.set_viewport_size({"width": 1000, "height": 900})
     page.emulate_media(reduced_motion="reduce")
@@ -1241,7 +1241,7 @@ def test_the_rail_under_the_open_details_leaves_the_tab_order(desktop_page: obje
 
 
 def test_contents_start_right_of_the_open_details(desktop_page: object, site_url: str) -> None:
-    """Up to 1,200px open details covered the start of every Contents row, its heading and the selected marker."""
+    """Up to 1,100px open details covered the start of every Contents row, its heading and the selected marker."""
     page = desktop_page
     page.set_viewport_size({"width": 1000, "height": 900})
     page.emulate_media(reduced_motion="reduce")
@@ -1266,20 +1266,21 @@ def test_contents_start_right_of_the_open_details(desktop_page: object, site_url
 def _paints_over_the_details(page: object, items: str, container: str) -> bool | None:
     """Whether the first of *items* shown in *container* over the open details is what a click there would hit.
 
+    The click lands in the middle of the part of the item that lies over the details and inside *container*;
     None means that no such item lies over the details.
     """
     return page.evaluate(
         """([items, container]) => {
           const drawer = document.querySelector(".bp-dag-inspector").getBoundingClientRect();
           const shown = document.querySelector(container).getBoundingClientRect();
-          const inside = (box, [x, y]) => box.left < x && x < box.right && box.top < y && y < box.bottom;
-          const centre = item => {
+          const overlap = item => {
             const box = item.getBoundingClientRect();
-            return [box.x + box.width / 2, box.y + box.height / 2];
+            const left = Math.max(box.left, drawer.left, shown.left), right = Math.min(box.right, drawer.right, shown.right);
+            const top = Math.max(box.top, drawer.top, shown.top), bottom = Math.min(box.bottom, drawer.bottom, shown.bottom);
+            return right - left > 2 && bottom - top > 2 ? [(left + right) / 2, (top + bottom) / 2] : null;
           };
-          const item = Array.from(document.querySelectorAll(items))
-            .find(item => inside(drawer, centre(item)) && inside(shown, centre(item)));
-          return item ? item.contains(document.elementFromPoint(...centre(item))) : null;
+          const item = Array.from(document.querySelectorAll(items)).find(overlap);
+          return item ? item.contains(document.elementFromPoint(...overlap(item))) : null;
         }""",
         [items, container],
     )
@@ -1357,7 +1358,7 @@ def test_the_explorer_draws_its_breadcrumb_once(desktop_page: object, site_url: 
     playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_hidden()
     # The textbook link shares the head's row and stays.
     playwright.expect(page.locator(".bp-dag-book")).to_be_visible()
-    # Up to 1,200px open details cover the rail, so the head draws the trail again.
+    # Up to 1,100px open details cover the rail, so the head draws the trail again.
     page.set_viewport_size({"width": 1000, "height": 800})
     _open_site(page, site_url, "dependencies/chapters/algebra.html#node=algebra%2Fresult")
     playwright.expect(page.locator(".bp-dag-inspector")).to_be_visible()

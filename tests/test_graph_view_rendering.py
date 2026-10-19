@@ -412,6 +412,17 @@ def test_explorer_styles_keep_one_family_one_type_scale_and_one_micro_label() ->
     ]
 
 
+def test_explorer_chrome_is_sized_in_px_not_in_materials_growing_rem() -> None:
+    """Material's root font is 20px, 22px from 1600px, so a rem rail was 407px wide at 1600 by 900."""
+    style = dag_viewer._STYLE
+    assert not re.findall(r"\d+(?:\.\d+)?rem\b", style)
+    assert "--dag-navigation-width: 288px;" in style
+    # Beside the 288px rail the 12px-inset 384px drawer leaves 405px from 1101px; below, it covers the rail.
+    assert "width: min(384px, calc(100% - 24px));" in style
+    assert "@media (max-width: 1100px) {\n  .bp-dag-viewer { --dag-navigation-width: 248px; }" in style
+    assert "left: calc(408px - var(--dag-navigation-width));" in style
+
+
 def test_explorer_assets_and_ordinary_payload_stay_within_budgets(tmp_path: Path) -> None:
     nodes = tuple(
         ViewNode(

@@ -2992,10 +2992,11 @@ a:hover, a:visited:hover {{ color: var(--bp-link-hover); text-decoration: underl
 }}
 
 /* On the landing page the hero opens the explorer's hierarchy rail, or its
-   details sheet on phones, so it is set to the rail's width. Material's
-   typeset rules reach the hero's heading, paragraph and links there, so these
-   rules carry a doubled class; the explorer's own rules stay in its script. */
-.bp-landing-intro.bp-landing-intro {{ margin: 0 .35rem 1.1rem; }}
+   details sheet on phones, so it is set to the rail's width and, like the
+   rail, in px rather than Material's growing rem. Material's typeset rules
+   reach the hero's heading, paragraph and links there, so these rules carry
+   a doubled class; the explorer's own rules stay in its script. */
+.bp-landing-intro.bp-landing-intro {{ margin: 0 6px 18px; font-size: 13px; }}
 .bp-landing-intro.bp-landing-intro .bp-hero {{ margin: 0; }}
 .bp-landing-intro.bp-landing-intro .bp-hero-rule {{ width: 56px; height: 3px; }}
 .bp-landing-intro.bp-landing-intro :is(.bp-hero-kicker, .bp-next-kicker) {{
@@ -3004,9 +3005,9 @@ a:hover, a:visited:hover {{ color: var(--bp-link-hover); text-decoration: underl
   letter-spacing: normal;
   text-transform: none;
 }}
-.bp-landing-intro.bp-landing-intro .bp-hero-kicker {{ margin-top: 0.8rem; }}
+.bp-landing-intro.bp-landing-intro .bp-hero-kicker {{ margin-top: 12px; }}
 .bp-landing-intro.bp-landing-intro .bp-hero-title {{
-  margin: 0.3rem 0 0;
+  margin: 4px 0 0;
   color: var(--bp-fg);
   font-size: 22px;
   font-weight: 700;
@@ -3015,36 +3016,36 @@ a:hover, a:visited:hover {{ color: var(--bp-link-hover); text-decoration: underl
 }}
 .bp-landing-intro.bp-landing-intro .bp-hero-lead {{
   max-width: none;
-  margin: 0.6rem 0 0;
+  margin: 10px 0 0;
   font-size: 13px;
   line-height: 1.5;
 }}
 .bp-landing-intro.bp-landing-intro .bp-hero-figures {{
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin-top: 0.9rem;
+  margin-top: 14px;
 }}
-.bp-landing-intro.bp-landing-intro .bp-figure {{ padding: 0.55rem 0.6rem; }}
+.bp-landing-intro.bp-landing-intro .bp-figure {{ padding: 9px 10px; }}
 .bp-landing-intro.bp-landing-intro .bp-figure:last-child:nth-child(odd) {{ grid-column: 1 / -1; }}
 .bp-landing-intro.bp-landing-intro .bp-figure-value {{ font-size: 17px; font-weight: 700; }}
-.bp-landing-intro.bp-landing-intro .bp-figure-label {{ margin-top: 0.3rem; font-size: 12px; font-weight: 600; }}
+.bp-landing-intro.bp-landing-intro .bp-figure-label {{ margin-top: 5px; font-size: 12px; font-weight: 600; }}
 .bp-landing-intro.bp-landing-intro .bp-figure-note {{ font-size: 12px; }}
-.bp-landing-intro.bp-landing-intro .bp-hero-bar {{ margin-top: 0.7rem; }}
-.bp-landing-intro.bp-landing-intro .bp-hero-coverage {{ margin-top: 0.6rem; font-size: 12px; }}
+.bp-landing-intro.bp-landing-intro .bp-hero-bar {{ margin-top: 12px; }}
+.bp-landing-intro.bp-landing-intro .bp-hero-coverage {{ margin-top: 10px; font-size: 12px; }}
 .bp-landing-intro.bp-landing-intro .bp-intro-book {{
   display: inline-block;
-  margin-top: 0.85rem;
+  margin-top: 14px;
   color: var(--bp-link);
   font-size: 12px;
   font-weight: 600;
   text-decoration: none;
 }}
 .bp-intro-book::after {{ content: " →"; }}
-.bp-landing-intro.bp-landing-intro .bp-next-target {{ margin: 0.9rem 0 0; padding: 0.6rem 0.7rem; }}
+.bp-landing-intro.bp-landing-intro .bp-next-target {{ margin: 14px 0 0; padding: 10px 12px; }}
 .bp-landing-intro.bp-landing-intro .bp-next-title {{ font-size: 14px; font-weight: 600; }}
 .bp-landing-intro.bp-landing-intro .bp-next-why,
 .bp-landing-intro.bp-landing-intro .bp-next-rests,
 .bp-landing-intro.bp-landing-intro .bp-next-actions {{ font-size: 12px; }}
-.bp-landing-intro.bp-landing-intro .bp-live-activity {{ margin: 0.9rem 0 0; padding: 0.6rem 0.7rem; }}
+.bp-landing-intro.bp-landing-intro .bp-live-activity {{ margin: 14px 0 0; padding: 10px 12px; }}
 .bp-landing-intro.bp-landing-intro .bp-live-row {{ font-size: 12px; }}
 
 /* One grid for the whole legend. The cells are emitted in reading order with
