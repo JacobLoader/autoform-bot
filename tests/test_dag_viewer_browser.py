@@ -1399,7 +1399,7 @@ def test_published_explorer_controls_keep_their_own_styles_under_material(
         assert rail_list.evaluate("element => getComputedStyle(element).display") == "grid"
         assert rail_list.locator("li").first.evaluate("element => getComputedStyle(element).marginLeft") == "0px"
     title = page.locator(".bp-dag-navigation-title")
-    assert title.evaluate("element => getComputedStyle(element).fontWeight") == "650"
+    assert title.evaluate("element => getComputedStyle(element).fontWeight") == "700"
     # The head draws the breadcrumb only where phones hide the rail.
     page.set_viewport_size({"width": 390, "height": 844})
     crumbs = page.locator(".bp-dag-breadcrumb li")

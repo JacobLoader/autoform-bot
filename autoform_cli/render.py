@@ -2998,19 +2998,25 @@ a:hover, a:visited:hover {{ color: var(--bp-link-hover); text-decoration: underl
 .bp-landing-intro.bp-landing-intro {{ margin: 0 .35rem 1.1rem; }}
 .bp-landing-intro.bp-landing-intro .bp-hero {{ margin: 0; }}
 .bp-landing-intro.bp-landing-intro .bp-hero-rule {{ width: 56px; height: 3px; }}
-.bp-landing-intro.bp-landing-intro .bp-hero-kicker {{ margin-top: 0.8rem; font-size: 0.6rem; }}
+.bp-landing-intro.bp-landing-intro :is(.bp-hero-kicker, .bp-next-kicker) {{
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+}}
+.bp-landing-intro.bp-landing-intro .bp-hero-kicker {{ margin-top: 0.8rem; }}
 .bp-landing-intro.bp-landing-intro .bp-hero-title {{
   margin: 0.3rem 0 0;
   color: var(--bp-fg);
-  font-size: 1.5rem;
-  font-weight: 800;
-  letter-spacing: -0.025em;
-  line-height: 1.12;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
 }}
 .bp-landing-intro.bp-landing-intro .bp-hero-lead {{
   max-width: none;
   margin: 0.6rem 0 0;
-  font-size: 0.8rem;
+  font-size: 13px;
   line-height: 1.5;
 }}
 .bp-landing-intro.bp-landing-intro .bp-hero-figures {{
@@ -3019,27 +3025,27 @@ a:hover, a:visited:hover {{ color: var(--bp-link-hover); text-decoration: underl
 }}
 .bp-landing-intro.bp-landing-intro .bp-figure {{ padding: 0.55rem 0.6rem; }}
 .bp-landing-intro.bp-landing-intro .bp-figure:last-child:nth-child(odd) {{ grid-column: 1 / -1; }}
-.bp-landing-intro.bp-landing-intro .bp-figure-value {{ font-size: 1.35rem; }}
-.bp-landing-intro.bp-landing-intro .bp-figure-label {{ margin-top: 0.3rem; font-size: 0.66rem; }}
-.bp-landing-intro.bp-landing-intro .bp-figure-note {{ font-size: 0.6rem; }}
+.bp-landing-intro.bp-landing-intro .bp-figure-value {{ font-size: 17px; font-weight: 700; }}
+.bp-landing-intro.bp-landing-intro .bp-figure-label {{ margin-top: 0.3rem; font-size: 12px; font-weight: 600; }}
+.bp-landing-intro.bp-landing-intro .bp-figure-note {{ font-size: 12px; }}
 .bp-landing-intro.bp-landing-intro .bp-hero-bar {{ margin-top: 0.7rem; }}
-.bp-landing-intro.bp-landing-intro .bp-hero-coverage {{ margin-top: 0.6rem; font-size: 0.64rem; }}
+.bp-landing-intro.bp-landing-intro .bp-hero-coverage {{ margin-top: 0.6rem; font-size: 12px; }}
 .bp-landing-intro.bp-landing-intro .bp-intro-book {{
   display: inline-block;
   margin-top: 0.85rem;
   color: var(--bp-link);
-  font-size: 0.72rem;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
   text-decoration: none;
 }}
 .bp-intro-book::after {{ content: " →"; }}
 .bp-landing-intro.bp-landing-intro .bp-next-target {{ margin: 0.9rem 0 0; padding: 0.6rem 0.7rem; }}
-.bp-landing-intro.bp-landing-intro .bp-next-title {{ font-size: 0.95rem; }}
+.bp-landing-intro.bp-landing-intro .bp-next-title {{ font-size: 14px; font-weight: 600; }}
 .bp-landing-intro.bp-landing-intro .bp-next-why,
 .bp-landing-intro.bp-landing-intro .bp-next-rests,
-.bp-landing-intro.bp-landing-intro .bp-next-actions {{ font-size: 0.7rem; }}
+.bp-landing-intro.bp-landing-intro .bp-next-actions {{ font-size: 12px; }}
 .bp-landing-intro.bp-landing-intro .bp-live-activity {{ margin: 0.9rem 0 0; padding: 0.6rem 0.7rem; }}
-.bp-landing-intro.bp-landing-intro .bp-live-row {{ font-size: 0.7rem; }}
+.bp-landing-intro.bp-landing-intro .bp-live-row {{ font-size: 12px; }}
 
 /* One grid for the whole legend. The cells are emitted in reading order with
    no row wrapper, so every swatch, label and count sits on the same axis

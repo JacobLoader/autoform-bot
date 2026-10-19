@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -396,6 +397,19 @@ def test_explorer_pages_relations_and_clamps_zoom() -> None:
     assert "Math.min(visible + RELATION_PAGE, ids.length)" in script
     assert "ids.slice(visible, next)" in script
     assert "clamp(old * factor, MIN_SCALE, 4)" in script
+
+
+def test_explorer_styles_keep_one_family_one_type_scale_and_one_micro_label() -> None:
+    """The rail and drawer headings were set in Georgia, among twenty rem sizes and unloaded weights."""
+    style = dag_viewer._STYLE
+    assert "serif" not in style.replace("sans-serif", "")
+    assert set(re.findall(r"font-size: ([^;]+);", style)) <= {"11px", "12px", "13px", "14px", "17px", "22px"}
+    assert set(re.findall(r"font-weight: ([^;]+);", style)) <= {"400", "500", "600", "700"}
+    uppercase = [rule.split("{")[0].strip() for rule in style.splitlines() if "text-transform: uppercase" in rule]
+    assert uppercase == [
+        ".bp-dag-view-kind::first-letter",
+        ".bp-dag-filter-popover legend, .bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-group h2",
+    ]
 
 
 def test_explorer_assets_and_ordinary_payload_stay_within_budgets(tmp_path: Path) -> None:
