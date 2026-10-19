@@ -18,7 +18,14 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .lean import declaration_names
-from .markdown import _is_hidden_path, directory_path, link_definitions, link_targets, mask_code_and_comments, resolved_path
+from .markdown import (
+    _is_hidden_path,
+    directory_path,
+    link_definitions,
+    link_targets,
+    mask_code_and_comments,
+    resolved_path,
+)
 
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
@@ -372,7 +379,7 @@ def _discover_nodes(blueprint: Path) -> tuple[list[_NodeSource], list[str]]:
 
 
 def roadmap_symlink_issues(blueprint: Path) -> list[str]:
-    """Report the symbolic links among ``roadmap/`` and every path beneath it.
+    """Report the symbolic links among ``roadmap/`` and the paths beneath it that are not hidden.
 
     Graph loading and runtime projection share this policy, so ``autoform check``
     accepts exactly the roadmaps the runtime does.
@@ -421,7 +428,9 @@ def _chapter_issues(roadmap_root: Path) -> list[str]:
         return []
     issues = []
     for chapter in chapters:
-        articles = [path for path in chapter.rglob("*.md") if os.path.isfile(path) and not _is_hidden_path(path, chapter)]
+        articles = [
+            path for path in chapter.rglob("*.md") if os.path.isfile(path) and not _is_hidden_path(path, chapter)
+        ]
         if not articles:
             continue
         if os.path.isfile(chapter / "README.md"):
@@ -739,7 +748,8 @@ def _resolve_target(
     spelled = Path(os.path.normpath(node.path.parent / relative))
     if not _is_within(spelled, blueprint):
         return None, f"{node.id}: dependency target escapes the blueprint directory: {target!r}"
-    if _is_hidden_path(spelled, blueprint):
+    # Render's copy has no hidden folder, so it cannot step through one and back out either.
+    if any(part.startswith(".") and part != ".." for part in relative.parts):
         return None, f"{node.id}: dependency target names a hidden path, which render omits: {target!r}"
     resolved = resolved_path(node.path.parent / relative)
     if resolved is None:

@@ -41,6 +41,19 @@ from markdown.inlinepatterns import ReferenceInlineProcessor
 from pymdownx.arithmatex import RE_BRACKET_INLINE, RE_SMART_DOLLAR_INLINE
 from pymdownx.superfences import fence_div_format
 
+#: Views generated at the blueprint root. Render omits the vault's copies: it
+#: writes the current views itself and drops stale copies of the retired ones.
+GENERATED_VIEWS = frozenset(
+    {
+        "dependencies.md",
+        "dependencies.html",
+        "graph.html",
+        "progress.md",
+        # The vault keeps its own Obsidian-readable copy; the site builds one.
+        "structure.md",
+    }
+)
+
 #: The Markdown extensions the generated `mkdocs.yml` enables, and their
 #: settings. Anchor prediction builds a real converter from these, so the site's
 #: configuration and the checker's idea of it cannot be two different things.
@@ -710,20 +723,6 @@ def _anchors_from_body(body: str) -> frozenset[str]:
     return frozenset(html.unescape(found) for found in _HEADING_ID.findall(rendered))
 
 
-#: Views render writes at the blueprint root from the graph. Its input omits
-#: any copy in the vault, so a link to one cannot be checked against it.
-GENERATED_VIEWS = frozenset(
-    {
-        "dependencies.md",
-        "dependencies.html",
-        "graph.html",
-        "progress.md",
-        # The vault keeps its own Obsidian-readable copy; the site builds one.
-        "structure.md",
-    }
-)
-
-
 def resolved_path(path: Path) -> Path | None:
     """``path`` with its symbolic links resolved, or None when the system cannot open it.
 
@@ -822,7 +821,7 @@ def local_target_issue(
     # Render reads no link on a page it leaves out, so only published pages are held to what it omits.
     published = not any(_is_within(source_path.resolve(), folder) for folder in unpublished)
     if published and spelled.parent == boundary and spelled.name in GENERATED_VIEWS:
-        return f"generated-{label}-target", f"{label} link names a view render generates instead of reading: {target!r}"
+        return f"generated-{label}-target", f"{label} link names a generated view, which render omits: {target!r}"
     if published and any(_is_within(spelled, folder) for folder in unpublished):
         return f"unpublished-{label}-target", f"{label} link names an unpublished folder, which render omits: {target!r}"
     candidate = resolved_path(source_path.parent / raw_path if raw_path else source_path)

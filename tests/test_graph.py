@@ -759,6 +759,8 @@ def test_check_ignores_hidden_roadmap_entries_as_render_does(tmp_path: Path) -> 
     _node(blueprint, ".helper.md", "# Helper\n")
     # A hidden folder needs no chapter page, since nothing in it is published.
     _roadmap_page(blueprint, ".drafts/draft.md", _node_text("# Draft\n"))
+    # Nor does a folder whose only page is hidden.
+    _roadmap_page(blueprint, "drafts/.wip.md", _node_text("# Work in progress\n"))
     try:
         # Emacs leaves this lock symlink beside a page with unsaved edits.
         (blueprint / "roadmap" / ".#base.md").symlink_to("user@host.1234:1700000000")
@@ -771,12 +773,18 @@ def test_check_ignores_hidden_roadmap_entries_as_render_does(tmp_path: Path) -> 
 def test_a_dependency_on_a_hidden_page_names_the_hidden_path(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint"
     _node(blueprint, ".draft.md", "# Draft\n")
-    _node(blueprint, "base.md", "# Base\n## Depends on\n[Draft](.draft.md)\n")
+    _node(blueprint, "cited.md", "# Cited\n")
+    # Render's copy has no .x to step through, though the vault has one.
+    (blueprint / "roadmap" / ".x").mkdir()
+    _node(blueprint, "base.md", "# Base\n## Depends on\n[Draft](.draft.md)\n[Cited](.x/../cited.md)\n")
 
     with pytest.raises(GraphValidationError) as caught:
         load_graph(blueprint)
 
-    assert caught.value.issues == ("base: dependency target names a hidden path, which render omits: '.draft.md'",)
+    assert caught.value.issues == (
+        "base: dependency target names a hidden path, which render omits: '.draft.md'",
+        "base: dependency target names a hidden path, which render omits: '.x/../cited.md'",
+    )
 
 
 def test_an_unpublished_folder_is_checked_and_named(tmp_path: Path) -> None:
@@ -834,17 +842,17 @@ def test_check_rejects_a_sources_link_into_an_unpublished_folder(
     )
 
 
-def test_check_rejects_a_sources_link_to_a_view_render_generates(
+def test_check_rejects_a_sources_link_to_a_generated_view(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Render rebuilds dependencies.md and omits the vault's copy, so the link cannot be checked against it.
+    # Render writes its own dependencies.md and omits the vault's copy, so the link cannot be checked against it.
     blueprint = tmp_path / "blueprint"
     _node(blueprint, "result.md", "# Result\n\n## Sources\n\n- [Graph](../dependencies.md)\n")
     (blueprint / "dependencies.md").write_text("# Dependencies\n", encoding="utf-8")
 
     assert main(["check", str(blueprint)]) == 1
     assert capsys.readouterr().out == (
-        "error: result: source target names a view render generates instead of reading: '../dependencies.md'\n"
+        "error: result: source target names a generated view, which render omits: '../dependencies.md'\n"
     )
 
 

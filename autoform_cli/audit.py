@@ -701,7 +701,7 @@ def _stable_validation_reason(blueprint: Path, issue: str) -> str:
 def _validation_article_path(blueprint: Path, issue: str) -> str:
     # The notes directory, or one misplaced under roadmap/, as the issue names it.
     subject = issue.split(":", 1)[0].split("/")
-    if IMPLEMENTATION_NOTES_DIR.casefold() in {part.casefold() for part in subject[:2]}:
+    if IMPLEMENTATION_NOTES_DIR.casefold() in {part.casefold() for part in subject}:
         for marker in _IMPLEMENTATION_NOTE_ISSUE_MARKERS:
             boundary = issue.rfind(marker)
             if boundary >= 0:
