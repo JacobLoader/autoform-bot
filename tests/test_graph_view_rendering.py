@@ -522,6 +522,15 @@ def test_explorer_elevation_is_two_shadows_and_a_selection_ring_that_keeps_the_c
     assert "border-width" not in style
 
 
+def test_explorer_canvas_paints_its_labels_in_the_site_family_at_11px_or_more() -> None:
+    """Region and edge-count labels were painted in the generic sans-serif, the edge counts down to 9px."""
+    script = dag_viewer.viewer_script()
+    assert "px sans-serif" not in script
+    assert 'family = getComputedStyle(host).fontFamily; refs.ctx.font = "11px " + family;' in script
+    fonts = re.findall(r"ctx\.font = ([^;]+);", script)
+    assert fonts == ['"11px " + family', '"700 13px " + family', 'Math.max(11, 10 * state.transform.scale) + "px " + family']
+
+
 def _contrast(first: str, second: str) -> float:
     def luminance(colour: str) -> float:
         channels = [int(colour.lstrip("#")[index : index + 2], 16) / 255 for index in (0, 2, 4)]

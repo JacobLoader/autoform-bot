@@ -1470,6 +1470,16 @@ def test_the_explorer_draws_its_breadcrumb_once(desktop_page: object, site_url: 
     playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_visible()
 
 
+def test_the_canvas_paints_its_labels_in_the_sites_family(desktop_page: object, site_url: str) -> None:
+    """Region and edge-count labels were painted in the generic sans-serif beside Plus Jakarta Sans cards."""
+    page = _open_site(desktop_page, site_url, "dependencies.html")
+    font, family = page.locator(".bp-dag-viewer").evaluate(
+        "host => [host.querySelector('.bp-dag-canvas').getContext('2d').font, getComputedStyle(host).fontFamily]"
+    )
+    assert "Plus Jakarta Sans" in family
+    assert "11px" in font and "Plus Jakarta Sans" in font
+
+
 def test_the_published_atlas_hides_the_isolate_toggle(desktop_page: object, site_url: str) -> None:
     page = _open_site(desktop_page, site_url, "dependencies.html")
     page.locator(".bp-dag-filter-summary").click()
