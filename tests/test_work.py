@@ -913,6 +913,23 @@ def test_work_assumptions_never_opens_a_pending_catalog(repo_root: Path, tmp_pat
     }
 
 
+def test_work_assumptions_under_the_strict_policy_lists_each_catalog_whole(tmp_path: Path, capsys) -> None:
+    """Nothing is open under the strict policy, so a pending catalog keeps a name a proved article lists too."""
+    project = _policy_project(tmp_path, "forbidden")
+    _article(
+        project,
+        "catalog.md",
+        title="Module",
+        metadata=["catalog: module", "statement: formalized", "lean: Project.reduction Project.listed"],
+    )
+
+    assert cli.main(["work", "assumptions", str(project), "--json"]) == 0
+    articles = {article["id"]: article for article in json.loads(capsys.readouterr().out)["articles"]}
+    assert articles["chapter/catalog"] == _contract_article(
+        "chapter/catalog", None, "can_prove", ["Project.reduction", "Project.listed"]
+    )
+
+
 def test_work_assumptions_leaves_a_name_a_pending_catalog_shares_open_through_its_owner(
     repo_root: Path, tmp_path: Path, capsys
 ) -> None:
