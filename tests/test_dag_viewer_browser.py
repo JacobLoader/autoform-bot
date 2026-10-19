@@ -531,8 +531,9 @@ def test_details_read_as_mathematics_not_as_instructions(desktop_page: object, e
     page.get_by_role("button", name="Close details").click()
     page.keyboard.press("Escape")
     playwright.expect(page.locator(".bp-dag-has-selection")).to_have_count(0)
-    for gone in ("keyboard-accessible", "Dependency explorer"):
-        playwright.expect(inspector).not_to_contain_text(gone)
+    # The overview opens with the view's title, with no kicker over it and no closing instructions.
+    playwright.expect(inspector.locator(".bp-dag-kicker")).to_have_count(0)
+    playwright.expect(inspector).not_to_contain_text("keyboard-accessible")
 
 
 def test_app_layout_fills_the_browser_viewport(desktop_page: object, explorer_url: str) -> None:
