@@ -459,8 +459,9 @@ def viewer_script() -> str:
 # admonition. The head stacks above the details drawer and the bottom sheet so
 # that neither of its popovers paints under them. At 1200px and below the
 # drawer opens over the hierarchy rail, so that a node centred beside it still
-# has room, and the covered rail leaves the tab order. Its h1 stays, in place
-# and transparent, so the page keeps a heading for assistive technology.
+# has room, and the covered rail leaves the tab order once the drawer has
+# slid over it, so it never goes blank first. Its h1 stays, in place and
+# transparent, so the page keeps a heading for assistive technology.
 # Above phone widths Contents then starts .8rem right of the drawer's 24.8rem
 # edge, so that no row starts under it. On phones the search box takes the
 # toolbar's first row, so the Status popover opens rightwards from the start
@@ -644,8 +645,8 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 @media (max-width: 1200px) {
   .bp-dag-inspector { right: auto; left: .8rem; transform: translateX(calc(-100% - 1.4rem)); }
   .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-breadcrumb { visibility: visible; }
-  .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-navigation { visibility: hidden; }
-  .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-navigation h1 { visibility: visible; opacity: 0; }
+  .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-navigation { visibility: hidden; transition: visibility 0s .2s; }
+  .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-navigation h1 { visibility: visible; opacity: 0; transition: opacity 0s .2s; }
 }
 @media (min-width: 681px) and (max-width: 1200px) {
   .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-inventory { left: calc(25.6rem - var(--dag-navigation-width)); }
