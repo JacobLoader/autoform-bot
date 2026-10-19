@@ -912,9 +912,9 @@ or allowed, so CI checks that its names exist and reach no open statement. A
 module catalog is never open; under the open policy, one that is not proved
 keeps only the names no non-catalog article's `lean:` lists, and is left out
 when none remain: that article's state decides whether such a name is open.
-Under the strict policy
-every such article is listed with `open` false and nothing allowed, and CI
-checks that its names exist. It reads Markdown only and needs no Lean build.
+Under the strict policy every such article is listed with `open` false and
+nothing allowed, and CI checks that its names exist. It reads Markdown only
+and needs no Lean build.
 
 Ask what revising an article's Lean declarations would affect before editing
 them:
