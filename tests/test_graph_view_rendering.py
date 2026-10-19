@@ -441,6 +441,15 @@ def test_card_meta_counts_items_in_a_readable_colour() -> None:
     assert below == {"fully_proved"}
 
 
+def test_rail_rows_show_a_status_swatch_and_a_lone_group_no_heading() -> None:
+    """Leaf rows ended in status phrases of every length, and a rail of one group still named it."""
+    script = dag_viewer.viewer_script()
+
+    assert 'if (groups.size > 1) section.appendChild(element("h2", "", label));' in script
+    assert 'mark.title = statusLabel(node.status); mark.setAttribute("role", "img"); mark.setAttribute("aria-label", mark.title);' in script
+    assert '(node.member_count || 0).toLocaleString() : statusLabel(node.status)' not in script
+
+
 def test_explorer_shows_statuses_and_areas_but_never_internal_ids() -> None:
     """Cards, the details, Contents and search all printed ids such as "algebra/base" beside the titles."""
     script = dag_viewer.viewer_script()

@@ -626,6 +626,25 @@ def test_the_rail_counts_in_words_that_agree_with_their_numbers(
     playwright.expect(page.locator(".bp-dag-navigation-counts")).to_have_text(counts)
 
 
+def test_rail_rows_end_in_a_status_swatch_and_a_lone_group_goes_unnamed(
+    desktop_page: object, explorer_url: str
+) -> None:
+    """Each leaf row ended in a status phrase of its own length, and a lone "Inside this scope" headed the rail."""
+    page = desktop_page
+    _open_ready(page, explorer_url)
+    navigation = page.locator(".bp-dag-navigation")
+    row = navigation.locator('[data-navigation-node-id="chapter/middle"]')
+    playwright.expect(row).to_have_text("Middle lemma")
+    swatch = row.get_by_role("img", name="ready to prove")
+    playwright.expect(swatch).to_have_attribute("title", "ready to prove")
+    playwright.expect(navigation.locator(".bp-dag-navigation-group h2")).to_have_count(0)
+    # Topics keep their item counts, and several areas keep their headings.
+    page.goto(f"{explorer_url}/atlas.html")
+    topology = navigation.locator('[data-navigation-node-id="atlas/topology"]')
+    playwright.expect(topology.locator(".bp-dag-navigation-meta")).to_have_text("80")
+    playwright.expect(navigation.locator(".bp-dag-navigation-group h2").first).to_be_visible()
+
+
 def test_a_click_on_empty_map_space_keeps_the_readers_zoom(desktop_page: object, explorer_url: str) -> None:
     """Every click on empty space re-fitted the camera, with or without a selection to clear."""
     page = desktop_page
