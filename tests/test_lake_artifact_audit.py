@@ -770,9 +770,9 @@ def test_contract_lists_each_article_declaration(helper: ModuleType, tmp_path: P
 
     entries = helper.load_assumption_contract(contract)
 
-    assert [(entry.name, entry.article, entry.is_open, entry.allowed) for entry in entries] == [
-        ("Fixture.open_stmt", "open", True, ("Fixture.open_stmt",)),
-        ("Fixture.uses", "uses", False, ("Fixture.open_stmt",)),
+    assert [(entry.name, entry.article, entry.is_open, entry.allowed, entry.state) for entry in entries] == [
+        ("Fixture.open_stmt", "open", True, ("Fixture.open_stmt",), "stated"),
+        ("Fixture.uses", "uses", False, ("Fixture.open_stmt",), "proved"),
     ]
 
 
@@ -882,9 +882,10 @@ def test_strict_probe_embeds_its_targets_and_imports_the_build_itself(helper: Mo
 
     table = next(line for line in probe.splitlines() if "ReadTargets " in line and " with" in line)
     literal = table.split("ReadTargets ", 1)[1].rsplit(" with", 1)[0]
+    # Each target carries its article's state and whether a wanted placeholder cannot back it.
     assert json.loads(json.loads(literal)) == [
-        [["Fixture", "a.b c"], 'odd "id"'],
-        [["Fixture", "x", 1], 'odd "id"'],
+        [["Fixture", "a.b c"], 'odd "id"', "proved", True],
+        [["Fixture", "x", 1], 'odd "id"', "proved", True],
     ]
     assert "is not a declaration of the Lean build" in probe
     old_form = helper.render_probe(("Fixture",))
@@ -916,8 +917,8 @@ def test_open_probe_spells_names_as_components(helper: ModuleType, tmp_path: Pat
     table = next(line for line in probe.splitlines() if "ReadArticles " in line and " with" in line)
     literal = table.split("ReadArticles ", 1)[1].rsplit(" with", 1)[0]
     assert json.loads(json.loads(literal)) == [
-        [["Fixture", "a.b c"], "open", True, [["Fixture", "a.b c"]]],
-        [["Fixture", "x", 1], 'odd "id" \\', False, [["Fixture", "a.b c"]]],
+        [["Fixture", "a.b c"], "open", True, [["Fixture", "a.b c"]], "stated", False],
+        [["Fixture", "x", 1], 'odd "id" \\', False, [["Fixture", "a.b c"]], "proved", True],
     ]
     assert probe.startswith("import Lean.Elab.Command\n")
     assert "import Fixture" not in probe
@@ -1104,6 +1105,54 @@ theorem Fixture.after_exit : False := sorry
 
 _UNIMPORTED_LEAN = "theorem Fixture.unimported : False := sorry\n"
 
+# Batteries' wanted commands elaborate to a private def whose type ends in one of
+# these root-level wrappers (Batteries/Util/ProofWanted.lean). The fixture
+# declares them itself, so the build needs no Batteries.
+_WANTED_WRAPPERS_LEAN = """universe u
+
+structure ProofWanted (α : Sort u) : Type where
+  mk ::
+
+structure DefWanted (α : Sort u) : Type where
+  mk ::
+
+structure DerivedWanted (α : Sort u) : Sort (max 1 u) where
+  ofVal ::
+  val : α
+"""
+
+# A placeholder named like one in the root module, which is private there too.
+_WANTED_TWIN_LEAN = """import Fixture.Wrappers
+
+namespace Fixture
+
+private def twin : ProofWanted True := ⟨⟩
+
+end Fixture
+"""
+
+# What `theorem_wanted wish (n : Nat) : n + 0 = n`, `def_wanted shape : Nat` and
+# `def_wanted derived : Nat := 3` elaborate to, a second `twin`, and a private
+# theorem, which no wanted command made.
+_WANTED_LEAN = """import Fixture.Twin
+
+namespace Fixture
+
+private def wish (n : Nat) : ProofWanted (n + 0 = n) := ⟨⟩
+
+private def shape : DefWanted Nat := ⟨⟩
+
+@[reducible] private noncomputable def derived : DerivedWanted Nat := ⟨3⟩
+
+private def twin : ProofWanted True := ⟨⟩
+
+private theorem hidden : True := trivial
+
+theorem clean : True := trivial
+
+end Fixture
+"""
+
 # A declaration the kernel never checked. Neither the axiom walk nor the safety
 # scan can tell; the workflow's lexical bypass check is not part of the probe.
 _UNCHECKED_LEAN = """import Lean.Elab.Command
@@ -1226,6 +1275,7 @@ def open_projects(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tuple[P
         ("recursive", _RECURSIVE_LEAN),
         ("partial", _PARTIAL_LEAN),
         ("copy", _COPY_LEAN),
+        ("wanted", _WANTED_LEAN),
     ):
         project = root / name
         _write(project / "lean-toolchain", _TOOLCHAIN)
@@ -1237,6 +1287,9 @@ def open_projects(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tuple[P
         )
         _write(project / "Fixture.lean", source)
         _write(project / "Fixture/Unimported.lean", _UNIMPORTED_LEAN)
+        if name == "wanted":
+            _write(project / "Fixture/Wrappers.lean", _WANTED_WRAPPERS_LEAN)
+            _write(project / "Fixture/Twin.lean", _WANTED_TWIN_LEAN)
         built = _run(project, "lake", "build")
         assert built.returncode == 0, built.stdout + built.stderr
         archive = project / "root.tgz"
@@ -1532,6 +1585,102 @@ def test_strict_probe_requires_every_target_and_checks_non_root_ones(
     assert _ends_with_the_success_line(passed.stdout), passed.stdout
 
 
+_NOT_IN_BUILD = "is not a declaration of the Lean build; fix the article's lean: name or build the module that declares it"
+
+
+def _wanted_refusal(name: str, article: str, wrapper: str, state: str) -> str:
+    return (
+        f"{name} [{article}] is a wanted placeholder ({wrapper}), which defers its proof or construction, "
+        f"so it cannot back an article recorded as {state}"
+    )
+
+
+def test_strict_probe_resolves_wanted_targets_to_their_placeholders(
+    helper: ModuleType, open_projects: dict[str, tuple[Path, Path]]
+) -> None:
+    # Batteries declares a wanted command's placeholder private, so env.find? on
+    # the written name misses it, and every wanted target once failed CI.
+    passed = _strict_audit(
+        helper,
+        open_projects["wanted"],
+        [
+            _article("wish", ["Fixture.wish"], state="stated"),
+            _article("derived", ["Fixture.derived"], state="can_prove"),
+            _article("clean", ["Fixture.clean"]),
+        ],
+    )
+
+    output = passed.stdout + passed.stderr
+    assert passed.returncode == 0, output
+    assert "wanted (stated, not yet proved): Fixture.wish [wish]" in output
+    assert "wanted (stated, not yet proved): Fixture.derived [derived]" in output
+    assert _ends_with_the_success_line(passed.stdout), passed.stdout
+
+    refused = _strict_audit(
+        helper,
+        open_projects["wanted"],
+        [
+            _article("proved", ["Fixture.wish"]),
+            _article("defined", ["Fixture.shape"], state="defined"),
+            _article("twin", ["Fixture.twin"], state="stated"),
+            _article("hidden", ["Fixture.hidden"], state="stated"),
+            _article("typo", ["Fixture.wishes"], state="stated"),
+        ],
+    )
+
+    output = refused.stdout + refused.stderr
+    assert refused.returncode != 0, output
+    for message in (
+        _wanted_refusal("Fixture.wish", "proved", "ProofWanted", "proved"),
+        _wanted_refusal("Fixture.shape", "defined", "DefWanted", "defined"),
+        "Fixture.twin [twin] names a wanted placeholder in each of 2 modules; give them different names",
+        f"Fixture.hidden [hidden] {_NOT_IN_BUILD}",
+        f"Fixture.wishes [typo] {_NOT_IN_BUILD}",
+    ):
+        assert message in output
+    assert "wanted (stated, not yet proved)" not in output
+    assert "kernel trust clean" not in output
+
+
+def test_open_probe_resolves_wanted_targets_to_their_placeholders(
+    helper: ModuleType, open_projects: dict[str, tuple[Path, Path]]
+) -> None:
+    passed = _audit(
+        helper,
+        open_projects["wanted"],
+        _contract(
+            _article("wish", ["Fixture.wish"], is_open=True, allowed=["Fixture.wish"]),
+            _article("clean", ["Fixture.clean"]),
+        ),
+    )
+
+    output = passed.stdout + passed.stderr
+    assert passed.returncode == 0, output
+    assert "wanted (stated, not yet proved): Fixture.wish [wish]" in output
+    assert "sorry-free: Fixture.clean [clean]" in output
+    assert _ends_with_the_success_line(passed.stdout), passed.stdout
+
+    refused = _audit(
+        helper,
+        open_projects["wanted"],
+        _contract(
+            _article("proved", ["Fixture.wish"]),
+            _article("defined", ["Fixture.derived"], state="defined"),
+            _article("twin", ["Fixture.twin"], is_open=True, allowed=["Fixture.twin"]),
+        ),
+    )
+
+    output = refused.stdout + refused.stderr
+    assert refused.returncode != 0, output
+    for message in (
+        _wanted_refusal("Fixture.wish", "proved", "ProofWanted", "proved"),
+        _wanted_refusal("Fixture.derived", "defined", "DerivedWanted", "defined"),
+        "Fixture.twin [twin] names a wanted placeholder in each of 2 modules; give them different names",
+    ):
+        assert message in output
+    assert "kernel trust clean" not in output
+
+
 def test_strict_probe_audits_a_build_that_declares_its_helper_names(
     helper: ModuleType, open_projects: dict[str, tuple[Path, Path]]
 ) -> None:
@@ -1552,6 +1701,7 @@ def test_both_probes_refuse_a_target_that_names_one_of_their_own_helpers(
     # A lean: name that matched one once passed as a clean declaration outside
     # the root package.
     walk_helpers = [
+        "autoformAuditWantedHead",
         "autoformAuditBlockOf",
         "autoformAuditEdges",
         "autoformAuditAxioms",

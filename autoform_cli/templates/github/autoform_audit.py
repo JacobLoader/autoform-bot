@@ -14,6 +14,10 @@ from typing import NamedTuple
 _MAX_ILEAN_BYTES = 16 * 1024 * 1024
 _TOP_LEVEL_NAME = re.compile(r'^name\s*=\s*("(?:[^"\\]|\\.)*")\s*(?:#.*)?$')
 _ASSUMPTIONS_SCHEMA = "autoform-assumptions/v1"
+#: The contract states of an article whose proof, or whose definition, is
+#: formalized. A Batteries wanted command defers exactly that, so its
+#: placeholder cannot back one, as `autoform audit`'s lean-target-wanted says.
+_PROVED_STATES = frozenset({"conditional", "defined", "fully_proved", "proved"})
 _DECLARATION_NAME_PART = r"«([^»]+)»|([^.\s«»]+)"
 _DECLARATION_NAME = re.compile(
     rf"(?:{_DECLARATION_NAME_PART})(?:\.(?:{_DECLARATION_NAME_PART}))*"
@@ -271,7 +275,10 @@ def render_probe(
     Each of *targets*, the ``lean:`` names of the strict policy's assumption
     contract, must be a declaration of the build. The root scan covers those in
     the root package; any other gets the same safety and axiom checks. A target
-    that names one of Lean's compiled ``_unsafe_rec`` copies is refused.
+    that names one of Lean's compiled ``_unsafe_rec`` copies is refused. Batteries
+    declares a wanted command's placeholder ``private``, so a target that names
+    one is found among the root package's placeholders: it passes as wanted,
+    unless its article's state is one the placeholder cannot back.
     """
 
     if not modules:
@@ -279,7 +286,10 @@ def render_probe(
     target_modules = _json_modules(modules)
     # The open probe's technique: one string literal, not a Lean term.
     table = json.dumps(
-        [[_json_declaration_name(entry.name), entry.article] for entry in targets],
+        [
+            [_json_declaration_name(entry.name), entry.article, entry.state, entry.state in _PROVED_STATES]
+            for entry in targets
+        ],
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -303,12 +313,15 @@ def autoformAuditNameOf (json : Json) : Except String Name := do
     | _ => name := Name.num name (← part.getNat?)
   return name
 
-/-- Per `lean:` target: its name and its article. -/
-def autoformAuditReadTargets (text : String) : Except String (Array (Name × String)) := do
+/-- Per `lean:` target: its name, its article, the article's state, and whether
+a wanted placeholder cannot back that state. -/
+def autoformAuditReadTargets (text : String) : Except String (Array (Name × String × String × Bool)) := do
   (← (← _root_.Lean.Json.parse text).getArr?).mapM fun entry => do
     let declName ← autoformAuditNameOf (← entry.getArrVal? 0)
     let article ← (← entry.getArrVal? 1).getStr?
-    return (declName, article)
+    let state ← (← entry.getArrVal? 2).getStr?
+    let proved ← (← entry.getArrVal? 3).getBool?
+    return (declName, article, state, proved)
 
 /-- The root package's modules, each spelled as its components. -/
 def autoformAuditReadModules (text : String) : Except String (List Name) := do
@@ -333,6 +346,7 @@ run_cmd do
   let mut checked : Nat := 0
   let mut badSafety : Array Name := #[]
   let mut badAxioms : Array (Name × Name) := #[]
+  let mut wanted : Std.HashMap Name (Array (Name × Name)) := {{}}
   for (declName, info) in env.constants do
     if isRoot declName && !autoformAuditCompiledCopy declName info then
       checked := checked + 1
@@ -341,10 +355,24 @@ run_cmd do
       for usedAxiom in (← axiomsOf declName) do
         unless allowed.contains usedAxiom do
           badAxioms := badAxioms.push (declName, usedAxiom)
-  for (declName, article) in targets do
+      if isPrivateName declName then
+        if let some head := autoformAuditWantedHead info.type then
+          let user := privateToUserName declName
+          wanted := wanted.insert user ((wanted.getD user #[]).push (declName, head))
+  let mut wantedLines : Array MessageData := #[]
+  for (declName, article, state, proved) in targets do
     match env.find? declName with
     | none =>
-      errors := errors.push m!"{{declName}} [{{article}}] is not a declaration of the Lean build; fix the article's lean: name or build the module that declares it"
+      match (wanted.getD declName #[]).toList with
+      | [(placeholder, head)] =>
+        if proved then
+          errors := errors.push m!"{{declName}} [{{article}}] is a wanted placeholder ({{head}}), which defers its proof or construction, so it cannot back an article recorded as {{state}}"
+        else unless badSafety.contains placeholder || badAxioms.any (·.1 == placeholder) do
+          wantedLines := wantedLines.push m!"wanted (stated, not yet proved): {{declName}} [{{article}}]"
+      | [] =>
+        errors := errors.push m!"{{declName}} [{{article}}] is not a declaration of the Lean build; fix the article's lean: name or build the module that declares it"
+      | found =>
+        errors := errors.push m!"{{declName}} [{{article}}] names a wanted placeholder in each of {{found.length}} modules; give them different names"
     | some info =>
       -- No article states a compiled copy, and the root scan skips them, so a target that names one,
       -- in or outside the root package, is refused here and checked no further.
@@ -359,6 +387,8 @@ run_cmd do
             errors := errors.push m!"{{declName}} [{{article}}] is outside the root package and depends on {{usedAxiom}}, which no module of the build declares"
           else unless allowed.contains usedAxiom do
             errors := errors.push m!"{{declName}} [{{article}}] is outside the root package and depends on unexpected axiom {{usedAxiom}}"
+  for line in wantedLines do
+    logInfo line
   for declName in badSafety do
     logError m!"unsafe or partial declaration: {{declName}}"
   for (declName, usedAxiom) in badAxioms do
@@ -381,6 +411,17 @@ run_cmd do
 
 # Both probes define these helpers after their own.
 _AXIOM_WALK = """
+/-- The wrapper at the end of a Batteries wanted placeholder's type. Batteries
+elaborates `theorem_wanted` and `proof_wanted` to a private `def` of type
+`ProofWanted T`, `def_wanted` and `instance_wanted` to one of type `DefWanted T`,
+and a `def_wanted` with a body to one of type `DerivedWanted T`. -/
+partial def autoformAuditWantedHead : Expr → Option Name
+  | .forallE _ _ body _ => autoformAuditWantedHead body
+  | .mdata _ e => autoformAuditWantedHead e
+  | e => match e.getAppFn.constName? with
+    | some head => if head == `ProofWanted || head == `DefWanted || head == `DerivedWanted then some head else none
+    | none => none
+
 /-- The types and constructors of one mutual inductive block refer to each
 other. Nothing else in a safe environment does, so the walk treats a block as
 one node and needs no cycle handling. -/
@@ -562,6 +603,7 @@ class ArticleDeclaration(NamedTuple):
     article: str
     is_open: bool
     allowed: tuple[str, ...]
+    state: str
 
 
 def load_assumption_contract(path: Path) -> tuple[ArticleDeclaration, ...]:
@@ -653,7 +695,7 @@ def _read_assumption_contract(path: Path, *, open_statements: bool) -> tuple[Art
             owners.setdefault(name, article_id)
         allowed_names = tuple(dict.fromkeys(allowed))
         for name in dict.fromkeys(declarations):
-            entries.append(ArticleDeclaration(name, article_id, is_open, allowed_names))
+            entries.append(ArticleDeclaration(name, article_id, is_open, allowed_names, article["state"]))
     for name, owner in open_owners.items():
         if name in proved_owners:
             raise AuditInputError(
@@ -722,6 +764,8 @@ def render_open_probe(
                 entry.article,
                 entry.is_open,
                 [_json_declaration_name(name) for name in entry.allowed],
+                entry.state,
+                entry.state in _PROVED_STATES,
             ]
             for entry in declarations
         ],
@@ -749,14 +793,18 @@ def autoformOpenAuditNameOf (json : Json) : Except String Name := do
   return name
 
 /-- Per article declaration: its name, its article, whether the article is an
-open statement, and the open statements the declaration may rest on. -/
-def autoformOpenAuditReadArticles (text : String) : Except String (Array (Name × String × Bool × Array Name)) := do
+open statement, the open statements the declaration may rest on, the article's
+state, and whether a wanted placeholder cannot back that state. -/
+def autoformOpenAuditReadArticles (text : String) :
+    Except String (Array (Name × String × Bool × Array Name × String × Bool)) := do
   (← (← _root_.Lean.Json.parse text).getArr?).mapM fun entry => do
     let declName ← autoformOpenAuditNameOf (← entry.getArrVal? 0)
     let article ← (← entry.getArrVal? 1).getStr?
     let isOpen ← (← entry.getArrVal? 2).getBool?
     let allowedOpen ← (← (← entry.getArrVal? 3).getArr?).mapM autoformOpenAuditNameOf
-    return (declName, article, isOpen, allowedOpen)
+    let state ← (← entry.getArrVal? 4).getStr?
+    let proved ← (← entry.getArrVal? 5).getBool?
+    return (declName, article, isOpen, allowedOpen, state, proved)
 
 /-- The root package's modules, each spelled as its components. -/
 def autoformOpenAuditReadModules (text : String) : Except String (List Name) := do
@@ -832,9 +880,14 @@ run_cmd do
       if let some (.thmInfo _) := env.find? declName then
         openSet := openSet.insert declName
   let mut roots : Array Name := #[]
+  let mut wanted : Std.HashMap Name (Array (Name × Name)) := {{}}
   for (declName, info) in env.constants do
     if isRoot declName && !autoformAuditCompiledCopy declName info then
       roots := roots.push declName
+      if isPrivateName declName then
+        if let some head := autoformAuditWantedHead info.type then
+          let user := privateToUserName declName
+          wanted := wanted.insert user ((wanted.getD user #[]).push (declName, head))
   roots := roots.qsort Name.lt
   let mut hitCache : Std.HashMap Name (Array Name) := {{}}
   -- Declarations with an error, and those resting on one, get no info line that
@@ -881,11 +934,25 @@ run_cmd do
   let mut openCount : Nat := 0
   let mut conditionalCount : Nat := 0
   let mut statusLines : Array MessageData := #[]
-  for (declName, article, isOpen, allowedOpen) in articles do
+  for (declName, article, isOpen, allowedOpen, state, proved) in articles do
     let reported := errors.size
     match env.find? declName with
     | none =>
-      errors := errors.push m!"{{declName}} [{{article}}] is not a declaration of the Lean build; fix the article's lean: name or build the module that declares it"
+      -- As in the strict probe, a private wanted placeholder is found under its written name.
+      match (wanted.getD declName #[]).toList with
+      | [(placeholder, head)] =>
+        if proved then
+          errors := errors.push m!"{{declName}} [{{article}}] is a wanted placeholder ({{head}}), which defers its proof or construction, so it cannot back an article recorded as {{state}}"
+        else
+          let (reachesFailed, cache) := Id.run ((autoformOpenAuditReachesFailed env isRoot openSet failed
+            (autoformAuditBlockOf env placeholder)).run brokenCache)
+          brokenCache := cache
+          unless failed.contains placeholder || reachesFailed do
+            statusLines := statusLines.push m!"wanted (stated, not yet proved): {{declName}} [{{article}}]"
+      | [] =>
+        errors := errors.push m!"{{declName}} [{{article}}] is not a declaration of the Lean build; fix the article's lean: name or build the module that declares it"
+      | found =>
+        errors := errors.push m!"{{declName}} [{{article}}] names a wanted placeholder in each of {{found.length}} modules; give them different names"
     | some info =>
       -- As in the strict probe, a target that names a compiled copy is refused and checked no further.
       if autoformAuditCompiledCopy declName info then
