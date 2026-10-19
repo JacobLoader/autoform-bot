@@ -1224,6 +1224,23 @@ def test_a_node_chosen_on_a_wider_screen_lands_beside_the_open_details(
     assert_beside_the_details(base)
 
 
+def test_the_rail_under_the_open_details_leaves_the_tab_order(desktop_page: object, site_url: str) -> None:
+    """Up to 1,200px open details cover the rail, and Tab still walked its links under the drawer."""
+    page = desktop_page
+    page.set_viewport_size({"width": 1000, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    _open_site(page, site_url, "dependencies/chapters/algebra.html#node=algebra%2Fresult")
+    result = page.locator('[data-autoform-node-id="algebra/result"]')
+    playwright.expect(result).to_have_attribute("data-selected", "true")
+    playwright.expect(page.locator(".bp-dag-navigation")).to_be_hidden()
+    page.get_by_role("button", name="Fit shown nodes").focus()
+    page.keyboard.press("Tab")
+    playwright.expect(result).to_be_focused()
+    # Closing the details uncovers the rail and brings it back.
+    page.get_by_role("button", name="Close details").click()
+    playwright.expect(page.locator(".bp-dag-navigation-link").first).to_be_visible()
+
+
 def _paints_over_the_details(page: object, items: str, container: str) -> bool | None:
     """Whether the first of *items* shown in *container* over the open details is what a click there would hit.
 
