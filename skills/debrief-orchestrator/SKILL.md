@@ -31,10 +31,12 @@ passing it with `--answer FILE` or on standard input. If `record` rejects the
 answer, correct it and resubmit.
 
 When the answer reports friction with AutoformBot, `record` writes a draft issue
-for `facebookresearch/autoform-bot` outside the working tree and prints a link
-that opens it pre-filled. The user does not see command output, so copy the
-draft's path and the full link verbatim into your final report, and say that
-nothing has been sent. Never submit the issue
+for `facebookresearch/autoform-bot` outside the working tree and prints its
+path. The draft ends with a link that opens it as a pre-filled issue. The user
+does not see command output, so put the draft's path in your final report, say
+that nothing has been sent, and that the link to open it is at the bottom of
+the draft. Do not paste the link itself: it holds the whole draft and runs to
+thousands of characters. Never submit the issue
 yourself, with `gh` or otherwise: the user reviews it, edits it, and sends it.
 Local paths are replaced by placeholders, but the draft is only as private as
 your answer, so leave project-specific content out of it.

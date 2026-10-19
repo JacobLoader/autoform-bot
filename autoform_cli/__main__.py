@@ -1328,9 +1328,7 @@ def _debrief_orchestrator(args: argparse.Namespace) -> int:
         print("no AutoformBot friction reported; no issue drafted")
         return 0
     print(_human_text(f"drafted an issue for {debrief_orchestrator.ISSUE_REPOSITORY} at {issue.path}"))
-    if not issue.url_has_body:
-        print("the draft is too long for a link; paste its body into the issue form")
-    print(f"nothing has been sent; to review, edit and submit it, open: {issue.url}")
+    print("nothing has been sent; the draft ends with a link that opens it as a pre-filled issue")
     return 0
 
 
