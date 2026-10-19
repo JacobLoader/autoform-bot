@@ -150,7 +150,10 @@ a theorem, the complete proof, which is why `work list` offers the phase only
 once the proof prerequisites are proved. Under `open_statements: allowed`, the
 statement phase of a theorem writes the faithful statement with a proof body of
 exactly `sorry` and records `statement: formalized`, or writes the full proof
-and, on acceptance, records both assertions. That `sorry` is the declaration's
+and, on acceptance, records both assertions. Write such a statement as a
+`theorem` with a `sorry` proof, not with Batteries' `theorem_wanted`: a
+dependent's proof can cite the theorem, but not the private placeholder a
+wanted command declares. That `sorry` is the declaration's
 whole body: never part of its type, a helper, a definition, or a `where` clause,
 and never one case of a recursive proof, which Lean can compile into
 auxiliaries such as `_f` that CI rejects. A definition is never left open: its
