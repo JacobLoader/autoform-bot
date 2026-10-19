@@ -436,6 +436,16 @@ def test_orchestrator_record_drafts_an_issue_without_local_paths(monkeypatch, tm
     assert f"# {query['title'][0]}\n\n{query['body'][0]}" == issue
 
 
+def test_orchestrator_record_prints_the_drafts_absolute_path(monkeypatch, tmp_path: Path) -> None:
+    project = _repo(tmp_path)
+    monkeypatch.chdir(project)
+    answer = json.dumps({"autoform_friction": [{"what": "x"}]})
+    code, out, _ = _cli(["debrief", "orchestrator", "record", ".", "--skill", "formalize"], monkeypatch, answer)
+    assert code == 0
+    [printed] = re.findall(r"drafted an issue for \S+ at (\S+)", out)
+    assert Path(printed).is_absolute() and Path(printed).is_file()
+
+
 def test_orchestrator_issue_redacts_the_project_path_as_given_and_resolved(monkeypatch, tmp_path: Path) -> None:
     real = _repo(tmp_path)
     alias = tmp_path / "alias"
