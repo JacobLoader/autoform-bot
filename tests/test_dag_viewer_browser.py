@@ -737,7 +737,8 @@ def test_mobile_isolates_do_not_overlap_the_connected_dag(mobile_page: object, e
     a, b = connected.bounding_box(), isolated.bounding_box()
     assert a is not None and b is not None
     assert a["y"] + a["height"] <= b["y"] or b["y"] + b["height"] <= a["y"]
-    playwright.expect(page.locator(".bp-dag-isolated")).to_be_visible()
+    page.locator(".bp-dag-filter-summary").tap()
+    playwright.expect(page.get_by_role("checkbox", name="Include items without edges")).to_be_visible()
 
 
 def test_a_plain_wheel_pans_the_full_page_explorer(desktop_page: object, explorer_url: str) -> None:
@@ -969,28 +970,37 @@ def test_a_late_search_index_keeps_focus_and_leaves_a_closed_panel_closed(
     playwright.expect(results).to_be_hidden()
 
 
-def test_direct_list_view_has_current_shown_and_hidden_counts(
+def test_the_toolbar_counts_only_what_it_hides_and_shows_it_on_request(
     desktop_page: object, explorer_url: str
 ) -> None:
+    """The toolbar always said "N of M shown", hiding nothing or not."""
     page = desktop_page
     page.goto(f"{explorer_url}/index.html#view=list&status=fully_proved")
     page.locator(".bp-dag-inventory").wait_for()
-    playwright.expect(page.locator(".bp-dag-stats")).to_contain_text("1 of 63 shown")
-    playwright.expect(page.locator(".bp-dag-hidden-button")).to_have_text("+62 hidden")
+    reveal = page.locator(".bp-dag-hidden-button")
+    playwright.expect(reveal).to_have_text("Show 62 hidden")
+    reveal.click()
+    playwright.expect(reveal).to_be_hidden()
+    playwright.expect(page.locator(".bp-dag-inventory-summary")).to_contain_text("of 63 listed")
 
 
 def test_hidden_items_without_edges_stay_hidden_after_a_reload(desktop_page: object, explorer_url: str) -> None:
     """The location records only that they are hidden, so a reload has to read that back."""
     page = desktop_page
     _open_ready(page, explorer_url)
-    isolates = page.get_by_role("checkbox", name="Show items without edges")
+    # The toggle is the Status popover's second group.
+    page.locator(".bp-dag-filter-summary").click()
+    isolates = page.locator(".bp-dag-filter-popover fieldset + fieldset").get_by_role(
+        "checkbox", name="Include items without edges"
+    )
     isolates.uncheck()
     page.wait_for_function("location.hash === '#isolates=0'")
 
     page.reload()
     page.locator("[data-autoform-node-id]").first.wait_for()
+    playwright.expect(page.locator(".bp-dag-hidden-button")).to_have_text("Show 60 hidden")
+    page.locator(".bp-dag-filter-summary").click()
     playwright.expect(isolates).not_to_be_checked()
-    playwright.expect(page.locator(".bp-dag-hidden-button")).to_have_text("+60 hidden")
 
 
 def test_reselect_does_not_duplicate_history_and_back_restores_selection(
@@ -1301,7 +1311,9 @@ def _paints_over_the_details(page: object, items: str, container: str) -> bool |
 def test_the_toolbars_popovers_paint_over_the_open_details(desktop_page: object, site_url: str) -> None:
     """The head stacked under the details drawer, which covered the Status popover and the search results."""
     page = desktop_page
-    page.set_viewport_size({"width": 1000, "height": 900})
+    # At 800px the Status popover, right-aligned to its button after the search box, reaches over the
+    # drawer's 12-396px; at 1000px the search box grows and the popover opens clear of the drawer.
+    page.set_viewport_size({"width": 800, "height": 900})
     page.emulate_media(reduced_motion="reduce")
 
     def every_status(route: object) -> None:
@@ -1404,6 +1416,8 @@ def test_the_explorer_draws_its_breadcrumb_once(desktop_page: object, site_url: 
 
 def test_the_published_atlas_hides_the_isolate_toggle(desktop_page: object, site_url: str) -> None:
     page = _open_site(desktop_page, site_url, "dependencies.html")
+    page.locator(".bp-dag-filter-summary").click()
+    playwright.expect(page.locator(".bp-dag-filter-popover")).to_be_visible()
     playwright.expect(page.locator(".bp-dag-isolated")).to_be_hidden()
 
 
@@ -1513,7 +1527,8 @@ def test_slash_inside_the_explorer_opens_its_search_but_an_input_keeps_its_keys(
     page.locator("[data-autoform-node-id]").first.focus()
     page.keyboard.press("/")
     playwright.expect(page.locator(".bp-dag-search")).to_be_focused()
-    isolates = page.get_by_role("checkbox", name="Show items without edges")
+    page.locator(".bp-dag-filter-summary").click()
+    isolates = page.get_by_role("checkbox", name="Include items without edges")
     isolates.focus()
     page.keyboard.press("Control+K")
     playwright.expect(isolates).to_be_focused()

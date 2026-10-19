@@ -462,6 +462,21 @@ def test_explorer_drops_the_map_guide_and_keeps_a_plain_note_for_real_crops() ->
     assert not any(word in density for word in ("border", "shadow", "background", "blur"))
 
 
+def test_explorer_toolbar_counts_only_hidden_items_and_files_the_edge_toggle_under_status() -> None:
+    """The toolbar always counted what it showed, and the toggle for items without edges sat in it."""
+    script, style = dag_viewer.viewer_script(), dag_viewer._STYLE
+    assert "bp-dag-stats" not in script and "bp-dag-stats" not in style and '" shown"' not in script
+    assert 'refs.hiddenButton.textContent = "Show " + hidden + " hidden"; refs.hiddenButton.hidden = !hidden;' in script
+    assert '"Include items without edges"' in script and "Show items without edges" not in script
+    assert "refs.filterPopover.appendChild(fieldset); refs.filterPopover.appendChild(edges);" in script
+    # Map | Contents and the zoom buttons are borderless ghost buttons inside one 1px group each.
+    assert (
+        ".bp-dag-zoom, .bp-dag-modes { display: inline-flex; flex: none; gap: 2px; padding: 2px; "
+        "border: 1px solid var(--dag-border);"
+    ) in style
+    assert ".bp-dag-zoom .bp-dag-button, .bp-dag-modes .bp-dag-mode-button { min-height: 30px; padding: 4px 10px; border: 0;" in style
+
+
 def test_explorer_elevation_is_two_shadows_and_a_selection_ring_that_keeps_the_card_still() -> None:
     """A selected card took a 3px border, shifting its text, and blurred panels sat on five shadows."""
     style = dag_viewer._STYLE
