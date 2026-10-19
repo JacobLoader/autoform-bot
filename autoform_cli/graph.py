@@ -336,12 +336,14 @@ def _unpublished_link_issues(sources: list[_NodeSource], unpublished: tuple[Path
     return issues
 
 
-def unpublished_content(files: tuple[tuple[str, bytes], ...]) -> tuple[tuple[str, ...], frozenset[str]]:
-    """The folders captured *files* mark ``published: false``, and the article IDs inside them.
+def unpublished_content(
+    files: tuple[tuple[str, bytes], ...],
+) -> tuple[tuple[str, ...], frozenset[str], frozenset[str]]:
+    """The folders captured *files* mark ``published: false``, and the article and node IDs inside them.
 
     For render, which leaves those folders out before it loads the graph but
-    still knows their articles' implementation notes. A README that cannot be
-    read here fails ``load_graph`` too.
+    still knows their articles' implementation notes and atlas entries. A
+    README that cannot be read here fails ``load_graph`` too.
     """
     folders = []
     for name, data in files:
@@ -353,24 +355,32 @@ def unpublished_content(files: tuple[tuple[str, bytes], ...]) -> tuple[tuple[str
                 continue
             if metadata.get("published") in _FALSE:
                 folders.append(name.removesuffix("/README.md"))
-    article_ids = set()
+    article_ids, node_ids = set(), set()
     for name, data in files:
         if name.endswith(".md") and any(name.startswith(f"{folder}/") for folder in folders):
+            # As _article_id names them: a folder's README is the folder's node.
+            node_ids.add(name.removeprefix("roadmap/").removesuffix(".md").removesuffix("/README"))
             try:
                 article_id = _parse_frontmatter(name, data.decode("utf-8").splitlines())[0].get("article_id")
             except UnicodeError:
                 continue
             if article_id is not None:
                 article_ids.add(article_id)
-    return tuple(folders), frozenset(article_ids)
+    return tuple(folders), frozenset(article_ids), frozenset(node_ids)
 
 
-def atlas_omissions(graph: Graph) -> list[str]:
-    """Say what ``blueprint/atlas.json`` asks for that loading ignored, for check, render and audit to warn about."""
-    return _atlas_assignments(graph.blueprint_dir, graph.nodes)[1]
+def atlas_omissions(graph: Graph, unpublished: frozenset[str] = frozenset()) -> list[str]:
+    """Say what ``blueprint/atlas.json`` asks for that loading ignored, for check, render and audit to warn about.
+
+    Render's graph lacks the nodes in unpublished folders; *unpublished* names
+    them, so their entries draw no warning there, as they draw none in check.
+    """
+    return _atlas_assignments(graph.blueprint_dir, graph.nodes, unpublished)[1]
 
 
-def _atlas_assignments(blueprint: Path, nodes: dict[str, Node]) -> tuple[dict[str, str], list[str]]:
+def _atlas_assignments(
+    blueprint: Path, nodes: dict[str, Node], unpublished: frozenset[str] = frozenset()
+) -> tuple[dict[str, str], list[str]]:
     """Read the optional authored taxonomy: the areas it assigns, and what it leaves out.
 
     The file only assigns areas, so nothing in it stops a command. An article's
@@ -405,6 +415,8 @@ def _atlas_assignments(blueprint: Path, nodes: dict[str, Node]) -> tuple[dict[st
             omissions.append(f"area {area!r} is ignored; it needs a name and an array of roadmap node ids")
             continue
         for node_id in node_ids:
+            if isinstance(node_id, str) and node_id in unpublished:
+                continue
             if not isinstance(node_id, str) or node_id not in nodes:
                 omissions.append(f"{node_id!r} under {area!r} is ignored, since no roadmap node has that id")
             elif node_id in assigned:

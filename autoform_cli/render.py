@@ -363,7 +363,7 @@ def render_site(
             ["blueprint and output directories must be disjoint; refusing destructive render"]
         )
     recovered = _recover_backup(destination)
-    snapshot, unpublished_ids = _capture_blueprint(blueprint)
+    snapshot, unpublished_ids, unpublished_nodes = _capture_blueprint(blueprint)
     # The repository root, not the vault's parent. A blueprint nested at
     # <repo>/docs/blueprint would otherwise be described as <repo>/blueprint,
     # and every generated permalink would 404.
@@ -460,6 +460,7 @@ def render_site(
                 sources=sources,
                 source_revision=source_revision,
                 lean_source_revision=lean.revision,
+                unpublished_nodes=unpublished_nodes,
             ),
         )
     report.warnings[:0] = recovered
@@ -493,19 +494,21 @@ def _render_pages(
     sources: bool,
     source_revision: str,
     lean_source_revision: str,
+    unpublished_nodes: frozenset[str],
 ) -> RenderReport:
     """Write the site into *destination* from the private copy at *blueprint*."""
     # Audit reports coverage-role issues and the atlas.json entries the loader
     # ignored. A valid contract still publishes with them, as it does with
     # MAPPED rows. An issue without a line already names the contract in its
-    # reason, so it gets no prefix.
+    # reason, so it gets no prefix. Check accepts an entry naming an article
+    # in an unpublished folder, so render does not warn about it either.
     coverage_warnings = [
         f"coverage contract line {issue.line}: {issue.reason}"
         if issue.line
         else issue.reason
         for issue in validate_coverage_roles(graph, coverage)
     ]
-    coverage_warnings += (f"atlas.json: {omission}" for omission in atlas_omissions(graph))
+    coverage_warnings += (f"atlas.json: {omission}" for omission in atlas_omissions(graph, unpublished_nodes))
     statuses = status.derive(graph)
     numbers = _number_nodes(graph)
     used_by = _reverse_edges(graph)
@@ -689,13 +692,13 @@ def _render_pages(
     return report
 
 
-def _capture_blueprint(blueprint: Path) -> tuple[TreeSnapshot, frozenset[str]]:
+def _capture_blueprint(blueprint: Path) -> tuple[TreeSnapshot, frozenset[str], frozenset[str]]:
     """Read the blueprint once, refusing what must not be published.
 
     Through descriptors where the host has them; elsewhere (Windows) as two
     pathname captures that must agree. Folders whose README says ``published:
     false`` are left out before anything is refused or published, so no page,
-    hash or check sees them; the article IDs in them come beside the snapshot.
+    hash or check sees them; the article and node IDs in them come beside the snapshot.
     """
     try:
         selection = _PUBLICATION_SELECTION
@@ -707,7 +710,7 @@ def _capture_blueprint(blueprint: Path) -> tuple[TreeSnapshot, frozenset[str]]:
         if isinstance(error, TreeChangedError):
             raise PublicationError(["blueprint changed while it was read; retry"]) from error
         raise PublicationError([f"blueprint could not be captured: {error}"]) from error
-    folders, article_ids = unpublished_content(snapshot.files)
+    folders, article_ids, node_ids = unpublished_content(snapshot.files)
 
     def kept(name: str) -> bool:
         return not any(name == folder or name.startswith(f"{folder}/") for folder in folders)
@@ -751,7 +754,7 @@ def _capture_blueprint(blueprint: Path) -> tuple[TreeSnapshot, frozenset[str]]:
             )
     if issues:
         raise PublicationError(issues)
-    return snapshot, article_ids
+    return snapshot, article_ids, node_ids
 
 
 def _is_sensitive(relative: PurePosixPath) -> bool:
@@ -816,7 +819,7 @@ def _load_graph(copy: Path, blueprint: Path, unpublished_ids: frozenset[str]) ->
 def load_publication_source(blueprint_dir: str | Path) -> tuple[str, Graph]:
     """Read the blueprint once; return its publication revision and the graph of those bytes."""
     blueprint = blueprint_root(blueprint_dir)
-    snapshot, unpublished_ids = _capture_blueprint(blueprint)
+    snapshot, unpublished_ids, _nodes = _capture_blueprint(blueprint)
     # The graph reads the articles and the atlas.
     with _private_copy(snapshot, prefix=("roadmap/", "atlas.json")) as (_root, copy):
         return _source_revision(snapshot), _load_graph(copy, blueprint, unpublished_ids)

@@ -31,7 +31,7 @@ from autoform_cli._tree_snapshot import TreeChangedError
 from autoform_cli.audit import audit_blueprint
 from autoform_cli.coverage import COVERAGE_DISPOSITIONS
 from autoform_cli.dashboard import publication_bound_live_state
-from autoform_cli.graph import GraphValidationError, load_graph
+from autoform_cli.graph import GraphValidationError, atlas_omissions, load_graph
 from autoform_cli.lean import LeanSourceError, _normalize_remote
 from autoform_cli.markdown import site_converter
 from autoform_cli.render import (
@@ -1281,6 +1281,26 @@ def test_render_leaves_atlas_json_out_of_the_site(tmp_path: Path) -> None:
     )()
     assert state["source_revision"] == manifest["source_revision"]
     render_site(blueprint, out, lean_root=project)  # the site it wrote may be replaced
+
+
+def test_render_does_not_warn_about_atlas_entries_for_unpublished_articles(tmp_path: Path) -> None:
+    """Check reads the whole vault and accepts these entries; render, which reads less, accepts them too."""
+    project = _project(tmp_path)
+    blueprint = project / "blueprint"
+    drafts = blueprint / "roadmap" / "drafts"
+    drafts.mkdir()
+    (drafts / "README.md").write_text("---\npublished: false\n---\n\n# Drafts\n", encoding="utf-8")
+    (drafts / "idea.md").write_text("# Idea\n\nAn idea.\n", encoding="utf-8")
+    (blueprint / "atlas.json").write_text(
+        json.dumps({"schema": "autoform-atlas/v1", "areas": {"Algebra": ["drafts", "drafts/idea", "missing"]}}),
+        encoding="utf-8",
+    )
+    missing = "atlas.json: 'missing' under 'Algebra' is ignored, since no roadmap node has that id"
+
+    report = render_site(blueprint, tmp_path / "out", lean_root=project)
+
+    assert [warning for warning in report.warnings if warning.startswith("atlas.json")] == [missing]
+    assert [f"atlas.json: {omission}" for omission in atlas_omissions(load_graph(blueprint))] == [missing]
 
 
 def test_malformed_link_targets_are_published_as_written(tmp_path: Path) -> None:
