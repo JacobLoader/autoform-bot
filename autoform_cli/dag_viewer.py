@@ -504,17 +504,15 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-head { z-index: 13; border-bottom: 1px solid var(--dag-border); background: var(--dag-bg); }
 .bp-dag-context { display: flex; align-items: center; gap: 12px; min-height: 36px; padding: 8px 16px 0; }
 .bp-dag-breadcrumb { min-width: 0; flex: 1; color: var(--dag-muted); font-size: 12px; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-breadcrumb ol { display: flex; align-items: center; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-breadcrumb li { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bp-dag-breadcrumb li + li::before { content: "/"; margin-right: 6px; color: var(--dag-border); }
-.bp-dag-breadcrumb li:not(:first-child, [aria-current]) { flex-shrink: 4; }
+.bp-dag-viewer.bp-dag-viewer :is(.bp-dag-breadcrumb ol, .bp-dag-navigation-path) { display: flex; align-items: center; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.bp-dag-viewer.bp-dag-viewer :is(.bp-dag-breadcrumb, .bp-dag-navigation-path) li { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(.bp-dag-breadcrumb, .bp-dag-navigation-path) li + li::before { content: "/"; margin-right: 6px; color: var(--dag-border); }
+:is(.bp-dag-breadcrumb, .bp-dag-navigation-path) li:not(:first-child, [aria-current]) { flex-shrink: 4; }
 .bp-dag-breadcrumb [aria-current=page] { color: var(--dag-fg); font-weight: 600; }
 @media (min-width: 681px) { .bp-dag-viewer:has(.bp-dag-navigation-path) .bp-dag-breadcrumb { visibility: hidden; } }
 .bp-dag-book { flex: none; color: var(--dag-link); font-size: 12px; font-weight: 600; text-decoration: none; }
 .bp-dag-swatch { flex: none; width: 11px; height: 11px; border: 2px solid var(--dag-swatch-light-stroke); border-radius: 50%; background: var(--dag-swatch-light-fill); }
 [data-md-color-scheme=slate] .bp-dag-swatch { border-color: var(--dag-swatch-dark-stroke); background: var(--dag-swatch-dark-fill); }
-.bp-dag-view-kind { flex: none; color: var(--dag-muted); font-size: 12px; }
-.bp-dag-view-kind::first-letter { text-transform: uppercase; }
 .bp-dag-toolbar { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 4px 16px 12px; font-size: 13px; }
 .bp-dag-search-wrap { position: relative; flex: 1 1 384px; min-width: 160px; max-width: 672px; }
 .bp-dag-search { width: 100%; min-height: 36px; margin: 0; padding: 7px 12px 7px 32px; border: 1px solid var(--dag-border); border-radius: var(--dag-radius-control); outline: 0; background: var(--dag-panel); color: var(--dag-fg); font: inherit; }
@@ -554,17 +552,11 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-body { position: relative; display: grid; grid-template-columns: var(--dag-navigation-width) minmax(0, 1fr); min-height: 0; }
 .bp-dag-navigation { z-index: 6; min-width: 0; min-height: 0; overflow: auto; border-right: 1px solid var(--dag-border); background: var(--dag-bg); }
 .bp-dag-navigation-inner { display: grid; align-content: start; min-height: 100%; padding: 16px 12px 24px; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-home { display: inline-flex; align-items: center; gap: 7px; margin: 0 6px 14px; color: var(--dag-link); font-size: 12px; font-weight: 600; text-decoration: none !important; }
-.bp-dag-navigation-home::before { content: "←"; }
-.bp-dag-navigation-kicker { margin: 0 6px 6px; color: var(--dag-muted); font-size: 12px; font-weight: 500; }
 .bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-title { margin: 0 6px; color: var(--dag-fg); font-size: 22px; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
 .bp-dag-navigation-summary { display: -webkit-box; margin: 9px 6px 15px; overflow: hidden; color: var(--dag-muted); font-size: 13px; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-path { display: grid; gap: 3px; margin: 10px 6px 14px; padding: 0; list-style: none; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-path li { position: relative; min-width: 0; margin: 0; padding-left: 14px; color: var(--dag-muted); font-size: 12px; line-height: 1.35; }
-.bp-dag-navigation-path li::before { content: ""; position: absolute; top: 7px; left: 2px; width: 5px; height: 5px; border: 1.5px solid var(--dag-border); border-radius: 50%; background: var(--dag-bg); }
-.bp-dag-navigation-path li:not(:last-child)::after { content: ""; position: absolute; top: 12px; bottom: -6px; left: 4px; border-left: 1px solid var(--dag-border); }
+.bp-dag-viewer.bp-dag-viewer ol.bp-dag-navigation-path { margin: 0 6px 6px; color: var(--dag-muted); font-size: 12px; line-height: 1.4; }
 .bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-path a { color: inherit; text-decoration: none; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-path [aria-current=page] { color: var(--dag-fg); font-weight: 600; }
+.bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-path a:hover { color: var(--dag-link); }
 .bp-dag-navigation-counts { margin: 0 6px 16px; color: var(--dag-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .bp-dag-navigation-group { margin-top: 12px; }
 .bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-group h2 { margin: 0 6px 5px; }
@@ -801,6 +793,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
     };
     if (!mapAllowed) state.mode = "list";
     var refs = {}, overlays = new Map(), scheduled = false, firstResize = true;
+    var trail = Array.isArray(view.breadcrumbs) ? view.breadcrumbs : [];
 
     buildShell(); markIntro();
     bindEvents();
@@ -813,20 +806,10 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       var context = element("div", "bp-dag-context");
       var crumbs = element("nav", "bp-dag-breadcrumb");
       crumbs.setAttribute("aria-label", "Explorer context");
-      var crumbList = element("ol");
-      var trail = Array.isArray(view.breadcrumbs) && view.breadcrumbs.length ? view.breadcrumbs : [
-        {label: data.title || "Dependencies", url: null}
-      ];
-      trail.forEach(function (entry, index) {
-        var item = element("li"), href = safeHref(entry.url);
-        if (href) { var link = element("a", "", entry.label); link.href = href; item.appendChild(link); }
-        else { item.textContent = entry.label; if (index === trail.length - 1) item.setAttribute("aria-current", "page"); }
-        crumbList.appendChild(item);
-      });
-      crumbs.appendChild(crumbList); context.appendChild(crumbs);
+      crumbs.appendChild(trailList(trail.length ? trail : [{label: data.title || "Dependencies"}])); context.appendChild(crumbs);
       var book = safeHref(view.book);
       if (book) { var bookLink = element("a", "bp-dag-book", "Open the textbook page"); bookLink.href = book; context.appendChild(bookLink); }
-      context.appendChild(element("span", "bp-dag-view-kind", atlas ? "knowledge atlas" : view.kind || "graph")); head.appendChild(context);
+      head.appendChild(context);
 
       var toolbar = element("div", "bp-dag-toolbar");
       toolbar.setAttribute("role", "group"); toolbar.setAttribute("aria-label", "Dependency explorer controls");
@@ -916,6 +899,16 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       refs.ctx = refs.canvas.getContext("2d");
     }
 
+    function trailList(entries, className) {
+      var list = element("ol", className);
+      entries.forEach(function (entry, index) {
+        var item = element("li"), href = safeHref(entry.url);
+        if (href) { var link = element("a", "", entry.label); link.href = href; item.appendChild(link); }
+        else { item.textContent = entry.label; if (!className && index === entries.length - 1) item.setAttribute("aria-current", "page"); }
+        list.appendChild(item);
+      });
+      return list;
+    }
     // MathJax typesets authored TeX after the calling render, forgetting the old math first.
     function typeset(container) {
       var M = window.MathJax;
@@ -927,25 +920,9 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       if (!refs.navigationInner) return;
       typeset(refs.navigationInner); refs.navigationInner.textContent = ""; refs.navigationNodes = new Map();
       if (intro) { if (!state.introInSheet) refs.navigationInner.appendChild(intro); } else {
-        var trail = Array.isArray(view.breadcrumbs) && view.breadcrumbs.length ? view.breadcrumbs : [];
-        var home = trail.map(function (entry) { return {label: entry.label, href: safeHref(entry.url)}; })
-          .find(function (entry) { return entry.href; });
-        if (home) {
-          var homeLink = element("a", "bp-dag-navigation-home", home.label || "Back to book");
-          homeLink.href = home.href; refs.navigationInner.appendChild(homeLink);
-      }
-      refs.navigationInner.appendChild(element("p", "bp-dag-navigation-kicker", atlas ? "Library atlas" : "Current scope"));
+      // The h1 names the current scope, so the rail's trail lists only its ancestors.
+      if (trail.length > 1) refs.navigationInner.appendChild(trailList(trail.slice(0, -1), "bp-dag-navigation-path"));
       refs.navigationInner.appendChild(element("h1", "bp-dag-navigation-title", data.title || "Mathematics"));
-      if (trail.length) {
-        var path = element("ol", "bp-dag-navigation-path");
-        trail.forEach(function (entry, index) {
-          var item = element("li"), href = safeHref(entry.url);
-          if (href) { var link = element("a", "", entry.label); link.href = href; item.appendChild(link); }
-          else { item.textContent = entry.label; if (index === trail.length - 1) item.setAttribute("aria-current", "page"); }
-          path.appendChild(item);
-        });
-        refs.navigationInner.appendChild(path);
-      }
       if (view.summary) refs.navigationInner.appendChild(element("p", "bp-dag-navigation-summary", view.summary));
       refs.navigationInner.appendChild(element("p", "bp-dag-navigation-counts",
         data.nodes.length.toLocaleString() + (atlas ? " topics" : " items") + " · " +

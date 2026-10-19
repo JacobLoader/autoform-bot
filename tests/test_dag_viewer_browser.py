@@ -1353,8 +1353,16 @@ def test_a_phones_chapter_explorer_gives_its_breadcrumb_a_line_of_its_own(mobile
 def test_the_explorer_draws_its_breadcrumb_once(desktop_page: object, site_url: str) -> None:
     """On desktop the head and the hierarchy rail both drew the trail."""
     page = _open_site(desktop_page, site_url, "dependencies/chapters/algebra.html")
-    playwright.expect(page.locator(".bp-dag-navigation-path li")).to_have_count(3)
-    playwright.expect(page.locator(".bp-dag-navigation-path")).to_be_visible()
+    # The rail's trail names the ancestors on one line above the h1, which names the chapter.
+    ancestors = page.locator(".bp-dag-navigation-path li")
+    playwright.expect(ancestors).to_have_count(2)
+    playwright.expect(ancestors.first).to_have_text("Book")
+    playwright.expect(page.locator(".bp-dag-navigation-path [aria-current]")).to_have_count(0)
+    assert len({round(ancestors.nth(index).bounding_box()["y"]) for index in range(2)}) == 1
+    title = page.locator(".bp-dag-navigation-title").bounding_box()
+    assert title is not None and ancestors.first.bounding_box()["y"] < title["y"]
+    for retired in (".bp-dag-view-kind", ".bp-dag-navigation-kicker", ".bp-dag-navigation-home"):
+        playwright.expect(page.locator(retired)).to_have_count(0)
     playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_hidden()
     # The textbook link shares the head's row and stays.
     playwright.expect(page.locator(".bp-dag-book")).to_be_visible()
@@ -1395,9 +1403,12 @@ def test_published_explorer_controls_keep_their_own_styles_under_material(
     assert results.evaluate("element => getComputedStyle(element).listStyleType") == "none"
     assert results.locator("li").first.evaluate("element => getComputedStyle(element).marginLeft") == "0px"
     # The hierarchy rail's lists took Material's bullets, indents and block flow, and its title Material's light h1.
-    for rail_list in (page.locator(".bp-dag-navigation-path"), page.locator(".bp-dag-navigation-list").first):
+    for rail_list, display in (
+        (page.locator(".bp-dag-navigation-path"), "flex"),
+        (page.locator(".bp-dag-navigation-list").first, "grid"),
+    ):
         assert rail_list.evaluate("element => getComputedStyle(element).listStyleType") == "none"
-        assert rail_list.evaluate("element => getComputedStyle(element).display") == "grid"
+        assert rail_list.evaluate("element => getComputedStyle(element).display") == display
         assert rail_list.locator("li").first.evaluate("element => getComputedStyle(element).marginLeft") == "0px"
     title = page.locator(".bp-dag-navigation-title")
     assert title.evaluate("element => getComputedStyle(element).fontWeight") == "700"

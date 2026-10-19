@@ -407,9 +407,21 @@ def test_explorer_styles_keep_one_family_one_type_scale_and_one_micro_label() ->
     assert set(re.findall(r"font-weight: ([^;]+);", style)) <= {"400", "500", "600", "700"}
     uppercase = [rule.split("{")[0].strip() for rule in style.splitlines() if "text-transform: uppercase" in rule]
     assert uppercase == [
-        ".bp-dag-view-kind::first-letter",
         ".bp-dag-filter-popover legend, .bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-group h2",
     ]
+
+
+def test_explorer_names_its_scope_once_and_lists_only_its_ancestors_above_it() -> None:
+    """A kind pill, a rail kicker, the h1, the trail's last crumb and a home link all named the scope or the book."""
+    script, style = dag_viewer.viewer_script(), dag_viewer._STYLE
+    for retired in ("bp-dag-view-kind", "bp-dag-navigation-kicker", "bp-dag-navigation-home"):
+        assert retired not in script and retired not in style
+    assert "Current scope" not in script and "Library atlas" not in script
+    # The rail's one-line trail drops the current crumb, which the h1 right under it names.
+    rail = 'trailList(trail.slice(0, -1), "bp-dag-navigation-path")'
+    assert rail in script
+    assert script.index(rail) < script.index('element("h1", "bp-dag-navigation-title"')
+    assert ":is(.bp-dag-breadcrumb, .bp-dag-navigation-path) li + li::before { content: \"/\";" in style
 
 
 def test_explorer_chrome_is_sized_in_px_not_in_materials_growing_rem() -> None:
