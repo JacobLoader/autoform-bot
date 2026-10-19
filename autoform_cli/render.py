@@ -57,6 +57,7 @@ from .lean import (
     detect_ref,
     detect_repository_url,
     index_failure_message,
+    repository_top_level,
     resolve_lean_root,
     snapshot_project_sources,
     verify_repository_snapshot,
@@ -345,10 +346,14 @@ def render_site(
         repo_root = resolve_lean_root(lean_root) if lean_root is not None else blueprint.parent
     except LeanSourceError as error:
         raise PublicationError([index_failure_message(error)]) from error
+    # Links name paths from the Git top level, which may hold the Lean root, or without one the vault's
+    # parent, in a subdirectory.
+    top_level = repository_top_level(repo_root) or repo_root
+    root_prefix = "/".join(repo_root.relative_to(top_level).parts)
     # Everything below reads a private copy of the captured bytes. The copy keeps
     # the blueprint's place in the repository, so a path below the copy's root is
     # the repository path it had when render read the vault.
-    relative = blueprint.relative_to(repo_root) if _is_within(blueprint, repo_root) else Path("blueprint")
+    relative = blueprint.relative_to(top_level) if _is_within(blueprint, top_level) else Path("blueprint")
     with _private_copy(snapshot, relative) as (copy_root, copy):
         graph = _load_graph(copy, blueprint, unpublished_ids)
         coverage, coverage_issues = load_coverage(copy)
@@ -397,7 +402,7 @@ def render_site(
             )
         # A code link depends only on the Lean bytes. A link into the blueprint also needs the blueprint's
         # bytes in that commit, which a blueprint outside the repository's working tree never has.
-        if commit is not None and _in_working_tree(blueprint, repo_root):
+        if commit is not None and _in_working_tree(blueprint, top_level):
             links_blueprint = (
                 verify_repository_snapshot(
                     repo_root,
@@ -419,6 +424,7 @@ def render_site(
             indexed=indexed,
             links_blueprint=links_blueprint,
             spellings=spellings,
+            root_prefix=root_prefix,
         )
         source_revision = _source_revision(snapshot)
         report = _publish(
