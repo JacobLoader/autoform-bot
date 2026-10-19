@@ -334,7 +334,12 @@ uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform dashboard . --site-dir site
 Drop `--require-declarations` when reviewing work in progress, where a
 statement may name a Lean declaration that does not exist yet. On native
 Windows, run `check` and `render` without `--lean-root`: the site then has no
-code links (see the publication contract below).
+code links (see the publication contract below). A Lake project in a
+subdirectory of the repository, such as `v1/`, is passed as `--lean-root v1`.
+Links name paths from the repository's top level, so its files link under `v1/`,
+and a blueprint beside it, such as `blueprint/`, under `blueprint/`. The
+generated `blueprint-pages.yml` passes `--lean-root .` to both commands; edit it
+to match.
 
 `dashboard` serves the exact built MkDocs site on `127.0.0.1`, choosing an
 available port unless `--port` is supplied, and adds a read-only live overlay
