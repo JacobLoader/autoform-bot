@@ -164,10 +164,7 @@ def search_blueprint(
     if not words:
         raise SearchError("search query has no terms")
     terms = tuple(dict.fromkeys(_stem(word) for word in words))
-    # A term has lost the prime, ``?`` or ``!`` that can end a Lean name; the
-    # words as typed keep it, so they can tell ``foo'`` from ``foo``. A filler
-    # word the terms dropped names nothing here either.
-    typed = frozenset(_unquoted(_as_typed(word)) for word in _normalize(query).split() if _bare(word) in words)
+    typed = _typed_words(query, words)
     if limit < 1:
         raise SearchError("search limit must be a positive integer")
     wanted_states = tuple(sorted(set(states)))
@@ -317,6 +314,17 @@ def _unquoted(name: str) -> str:
     """Return a Lean name without ``_root_.`` and its quoting marks, its ending kept."""
 
     return name.removeprefix("_root_.").replace("\u00ab", "").replace("\u00bb", "")
+
+
+def _typed_words(query: str, words: tuple[str, ...]) -> frozenset[str]:
+    """Return the words of ``query`` as typed, for the exact-name key.
+
+    A term has lost the prime, ``?`` or ``!`` that can end a Lean name; the
+    words as typed keep it, so they can tell ``foo'`` from ``foo``. A filler
+    word the terms dropped, one not in ``words``, names nothing here either.
+    """
+
+    return frozenset(_unquoted(_as_typed(word)) for word in _normalize(query).split() if _bare(word) in words)
 
 
 def _as_typed(word: str) -> str:
