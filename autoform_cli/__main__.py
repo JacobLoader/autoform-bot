@@ -282,7 +282,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="keep articles whose frontmatter declaration is KIND: theorem, lemma, def, ... (repeatable)",
     )
     search.add_argument(
-        "--limit", type=int, default=20, metavar="N", help="show at most N articles (default 20)"
+        "--limit",
+        type=int,
+        default=20,
+        metavar="N",
+        help="show at most N hits from the blueprint and from each --library (default 20)",
     )
     search.add_argument(
         "--library",
