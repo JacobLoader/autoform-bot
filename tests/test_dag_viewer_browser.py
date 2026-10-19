@@ -677,9 +677,8 @@ def test_oversized_flat_scope_defaults_to_contents(desktop_page: object, explore
     inventory.wait_for()
     playwright.expect(inventory).to_be_visible()
     playwright.expect(page.locator(".bp-dag-mode-button").first).to_be_disabled()
-    playwright.expect(page.locator(".bp-dag-inventory-summary")).to_contain_text(
-        "map unavailable above 120 items"
-    )
+    # The first page of a list too long to draw.
+    playwright.expect(page.locator(".bp-dag-inventory-summary")).to_have_text("100 of 1,000")
     playwright.expect(page.locator(".bp-dag-node")).to_have_count(0)
 
 
@@ -745,7 +744,7 @@ def test_mobile_contents_pagination_stays_above_the_collapsed_sheet(
     assert box is not None and handle_box is not None
     assert box["y"] + box["height"] <= handle_box["y"]
     more.tap()
-    playwright.expect(page.locator(".bp-dag-inventory-summary")).to_contain_text("200 of 1000 listed")
+    playwright.expect(page.locator(".bp-dag-inventory-summary")).to_have_text("200 of 1,000")
 
 
 def test_mobile_isolates_do_not_overlap_the_connected_dag(mobile_page: object, explorer_url: str) -> None:
@@ -876,7 +875,7 @@ def test_a_result_neither_drawn_here_nor_safely_linked_selects_nothing(
 
 
 def test_a_contents_query_lists_only_this_scope(desktop_page: object, explorer_url: str) -> None:
-    """Whole-roadmap matches belong to the search dropdown, not under "Contents of this scope".
+    """Whole-roadmap matches belong to the search dropdown, not under "Contents".
 
     The dropdown opened on every keystroke and covered the list being filtered,
     so in Contents it opens only when asked: by Down from the search box, or the
@@ -888,6 +887,7 @@ def test_a_contents_query_lists_only_this_scope(desktop_page: object, explorer_u
     page.get_by_role("button", name="Contents").click()
     search.fill("theorem")
     playwright.expect(page.locator(".bp-dag-inventory-title")).to_have_text(["Target theorem"])
+    playwright.expect(page.locator(".bp-dag-inventory-summary")).to_have_text("1 of 63 · search the whole roadmap")
     results = page.locator(".bp-dag-search-results")
     playwright.expect(results).to_be_hidden()
     search.press("ArrowDown")
@@ -1002,11 +1002,12 @@ def test_the_toolbar_counts_only_what_it_hides_and_shows_it_on_request(
     page = desktop_page
     page.goto(f"{explorer_url}/index.html#view=list&status=fully_proved")
     page.locator(".bp-dag-inventory").wait_for()
-    reveal = page.locator(".bp-dag-hidden-button")
+    reveal, summary = page.locator(".bp-dag-hidden-button"), page.locator(".bp-dag-inventory-summary")
     playwright.expect(reveal).to_have_text("Show 62 hidden")
+    playwright.expect(summary).to_have_text("1 of 63")
     reveal.click()
     playwright.expect(reveal).to_be_hidden()
-    playwright.expect(page.locator(".bp-dag-inventory-summary")).to_contain_text("of 63 listed")
+    playwright.expect(summary).to_have_text("63 items")
 
 
 def test_hidden_items_without_edges_stay_hidden_after_a_reload(desktop_page: object, explorer_url: str) -> None:

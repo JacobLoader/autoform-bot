@@ -331,7 +331,9 @@ def test_explorer_marks_isolates_but_keeps_them_in_the_complete_inventory(tmp_pa
     assert {node["id"] for node in payload["nodes"] if node["isolated"]} == {"isolated"}
     script = dag_viewer.viewer_script()
     assert "inventoryNodes" in script
-    assert '" · items without edges included"' in script
+    # Contents counts what it lists, and names no internals such as the map's size limit.
+    assert 'element("h2", "", "Contents")' in script
+    assert "items without edges included" not in script and "map unavailable" not in script
 
 
 def test_explorer_host_is_escaped_responsive_and_accessible() -> None:
