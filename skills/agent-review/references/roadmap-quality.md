@@ -7,8 +7,9 @@ scope against the sources, then inspect the fine DAG and its coarse roadmap.
 
 1. Read the coverage contract and the cited source passages; summaries are not
    substitutes for the source.
-2. Run `autoform check` and inspect the project, chapter, and node-neighborhood
-   graphs.
+2. Run `autoform check` with `--lean-root` and inspect the project, chapter, and
+   node-neighborhood graphs. Report each warning that a shared library declares a
+   result citing one of the blueprint's sources as a possibly missed reuse.
 3. Inspect every milestone and every node in the requested review scope, with
    its hidden `blueprint/.implementation-notes/<article_id>.md` when present.
 4. Distinguish statement prerequisites from proof-only prerequisites.

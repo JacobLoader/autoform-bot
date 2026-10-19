@@ -1184,7 +1184,7 @@ def test_roadmap_skill_commits_the_final_checked_pass(repo_root: Path) -> None:
 
     for required in (
         "After the final edit",
-        "`autoform check`",
+        "`autoform check` with `--lean-root .`",
         "`autoform audit`",
         "Fix the other `warning:` lines inside the adopted boundary as you would a finding",
         "Commit the vault and refreshed graph only after this final validation",
