@@ -710,13 +710,15 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
         (blueprint / note).parent.mkdir(exist_ok=True)
         (blueprint / note).write_text("# Notes\n", encoding="utf-8")
     hidden = "- [Draft](../.drafts/notes.md)\n- [Stepped](../.drafts/../sources/paper.md)\n"
-    hidden += "- [Private](../sources/.private/paper.md)\n"
+    hidden += "- [Private](../sources/.private/paper.md)\n- [Through](../.drafts/../sources/.private/paper.md)\n"
     _node(blueprint, "result.md", sources + hidden + "- [Lost](../sources/.private/lost.md)\n")
 
     assert main(["check", str(blueprint)]) == 1
     assert capsys.readouterr().out == (
         "error: result: source target names a hidden path, which render omits: '../.drafts/notes.md'\n"
         "error: result: source target names a hidden path, which render omits: '../.drafts/../sources/paper.md'\n"
+        "error: result: source target names a hidden path, which render omits: "
+        "'../.drafts/../sources/.private/paper.md'\n"
         "error: result: source target does not resolve to a file: '../sources/.private/lost.md'\n"
     )
 
