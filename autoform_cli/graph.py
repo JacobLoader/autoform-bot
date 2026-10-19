@@ -23,6 +23,7 @@ from .markdown import (
     directory_path,
     link_definitions,
     link_targets,
+    markdown_links,
     mask_code_and_comments,
     resolved_path,
 )
@@ -211,7 +212,9 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
                 else:
                     open_statements = policy == "allowed"
             if "published" in node.metadata and (canonical.name != "README.md" or canonical == policy_page):
-                issues.append(f"{node.id}: published is a folder setting; set it in a folder's README.md below roadmap/")
+                issues.append(
+                    f"{node.id}: published is a folder setting; set it in a folder's README.md below roadmap/"
+                )
             parsed.append(node)
 
     if not issues:
@@ -224,7 +227,7 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
     if issues:
         raise GraphValidationError(issues)
     unpublished = tuple(sorted(node.path.parent for node in parsed if node.metadata.get("published") in _FALSE))
-    unpublished_ids = {node.id for node in parsed if any(_is_within(node.path, folder) for folder in unpublished)}
+    issues.extend(_unpublished_link_issues(sources, unpublished))
     nodes: dict[str, Node] = {}
     for parsed_node in parsed:
 
@@ -236,8 +239,6 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
                     issues.append(issue)
                 elif dependency == node.id:
                     issues.append(f"{node.id}: dependency on itself")
-                elif dependency in unpublished_ids and node.id not in unpublished_ids:
-                    issues.append(f"{node.id}: depends on {dependency}, which is in an unpublished folder render omits")
                 elif dependency not in resolved:
                     resolved.append(dependency)
             return resolved
@@ -280,6 +281,27 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
     if issues:
         raise GraphValidationError(issues)
     return Graph(blueprint_dir=blueprint, nodes=nodes, open_statements=open_statements, unpublished=unpublished)
+
+
+def _unpublished_link_issues(sources: list[_NodeSource], unpublished: tuple[Path, ...]) -> list[str]:
+    """Name each link from a published page into an unpublished folder, which the site lacks.
+
+    Render rewrites a page's links as text, applying their ``..`` steps, so they
+    are read that way here: a dependency, a source and a prose link alike.
+    """
+    issues = []
+    for source in sources:
+        if any(_is_within(source.path, folder) for folder in unpublished):
+            continue
+        for _, target in markdown_links(source.text):
+            try:
+                split = urlsplit(target)
+            except ValueError:
+                continue  # never a path into the folder; other checks report it
+            spelled = Path(os.path.normpath(source.path.parent / unquote(split.path)))
+            if not (split.scheme or split.netloc) and any(_is_within(spelled, folder) for folder in unpublished):
+                issues.append(f"{source.id}: links to {target!r}, in an unpublished folder render omits")
+    return issues
 
 
 def unpublished_content(files: tuple[tuple[str, bytes], ...]) -> tuple[tuple[str, ...], frozenset[str]]:

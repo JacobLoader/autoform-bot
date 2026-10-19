@@ -373,7 +373,7 @@ def _statement_finding(statement: str) -> tuple[str, str] | None:
 def _source_findings(graph: Graph, node: Node, article_path: str) -> list[AuditFinding]:
     findings: list[AuditFinding] = []
     for target in node.sources:
-        issue = _local_target_issue(node.path, target, graph.blueprint_dir, label="source", unpublished=graph.unpublished)
+        issue = _local_target_issue(node.path, target, graph.blueprint_dir, label="source")
         if issue is not None:
             code, reason = issue
             findings.append(AuditFinding(article_path, code, reason))
@@ -381,7 +381,7 @@ def _source_findings(graph: Graph, node: Node, article_path: str) -> list[AuditF
 
 
 def _coverage_findings(
-    blueprint: Path, unpublished: tuple[Path, ...] = ()
+    blueprint: Path, unpublished: tuple[Path, ...]
 ) -> tuple[CoverageSummary | None, list[AuditFinding]]:
     coverage_root = blueprint / "coverage"
     contract = coverage_root / "README.md"

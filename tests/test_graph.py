@@ -813,32 +813,27 @@ def test_published_is_a_folder_setting(tmp_path: Path) -> None:
     )
 
 
-def test_a_published_article_may_not_depend_on_an_unpublished_one(tmp_path: Path) -> None:
+def test_a_published_page_may_not_link_into_an_unpublished_folder(tmp_path: Path) -> None:
+    """The site lacks the folder, so a strict MkDocs build fails on any link into it."""
     blueprint = tmp_path / "blueprint"
     _node(blueprint, "drafts/README.md", "# Drafts\n", published="false")
     _node(blueprint, "drafts/idea.md", "# Idea\n")
-    _node(blueprint, "base.md", "# Base\n## Depends on\n[Idea](drafts/idea.md)\n")
+    # Unpublished pages may link to each other, across folders too.
+    _node(blueprint, "notes/README.md", "# Notes\n", published="false")
+    _node(blueprint, "notes/aside.md", "# Aside\n## Depends on\n[Idea](../drafts/idea.md)\n")
+    _node(
+        blueprint,
+        "base.md",
+        "# Base\n\nSee [the drafts](drafts/README.md).\n\n## Depends on\n[Idea](drafts/idea.md)\n\n"
+        "## Sources\n\n- [Idea][idea]\n\n[idea]: <drafts/idea.md#idea>\n\n`[Not a link](drafts/)`\n",
+    )
 
     with pytest.raises(GraphValidationError) as caught:
         load_graph(blueprint)
 
-    assert caught.value.issues == ("base: depends on drafts/idea, which is in an unpublished folder render omits",)
-
-
-def test_check_rejects_a_sources_link_into_an_unpublished_folder(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    blueprint = tmp_path / "blueprint"
-    (blueprint / "sources").mkdir(parents=True)
-    (blueprint / "sources" / ".notes.md").write_text("# Notes\n", encoding="utf-8")
-    _node(blueprint, "drafts/README.md", "# Drafts\n", published="false")
-    # Render reads none of an unpublished page's links, so it may cite a hidden note.
-    _node(blueprint, "drafts/idea.md", "# Idea\n\n## Sources\n\n- [Notes](../../sources/.notes.md)\n")
-    _node(blueprint, "result.md", "# Result\n\n## Sources\n\n- [Idea](drafts/idea.md)\n")
-
-    assert main(["check", str(blueprint)]) == 1
-    assert capsys.readouterr().out == (
-        "error: result: source target names an unpublished folder, which render omits: 'drafts/idea.md'\n"
+    assert caught.value.issues == tuple(
+        f"base: links to {target!r}, in an unpublished folder render omits"
+        for target in ("drafts/README.md", "drafts/idea.md", "drafts/idea.md#idea")
     )
 
 

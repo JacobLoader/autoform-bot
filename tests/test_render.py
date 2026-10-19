@@ -675,6 +675,8 @@ def test_render_leaves_an_unpublished_folder_out(tmp_path: Path) -> None:
     # Its implementation note still belongs to an article, though render reads none of the folder.
     (project / "blueprint" / ".implementation-notes").mkdir()
     (project / "blueprint" / ".implementation-notes" / f"{article_id}.md").write_text("route\n", encoding="utf-8")
+    # Nor is anything in it refused, since none of it is published.
+    (drafts / "scratch.log").write_text("local\n", encoding="utf-8")
     revision = publication_source_revision(project / "blueprint")
 
     render_site(project / "blueprint", tmp_path / "out", lean_root=project)

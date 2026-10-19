@@ -818,12 +818,11 @@ def local_target_issue(
     spelled = Path(os.path.normpath(source_path.parent.resolve() / raw_path))
     if Path(raw_path).is_absolute() or not _is_within(spelled, boundary):
         return f"{label}-escapes-blueprint", f"{label} link escapes the blueprint: {target!r}"
-    # Render reads no link on a page it leaves out, so only published pages are held to what it omits.
-    published = not any(_is_within(source_path.resolve(), folder) for folder in unpublished)
-    if published and spelled.parent == boundary and spelled.name in GENERATED_VIEWS:
+    if spelled.parent == boundary and spelled.name in GENERATED_VIEWS:
         return f"generated-{label}-target", f"{label} link names a generated view, which render omits: {target!r}"
-    if published and any(_is_within(spelled, folder) for folder in unpublished):
-        return f"unpublished-{label}-target", f"{label} link names an unpublished folder, which render omits: {target!r}"
+    if any(_is_within(spelled, folder) for folder in unpublished):
+        reason = f"{label} link names an unpublished folder, which render omits: {target!r}"
+        return f"unpublished-{label}-target", reason
     candidate = resolved_path(source_path.parent / raw_path if raw_path else source_path)
     if candidate is None:
         return f"{label}-not-found", f"{label} link does not resolve to a file: {target!r}"
@@ -835,7 +834,7 @@ def local_target_issue(
     # repository link reaches a hidden note under `sources/`, and render writes one
     # when it links the other source notes there; that link resolves only once the
     # note is committed, so it is reported too, and `check` only warns about it.
-    if published and _is_hidden_path(spelled, boundary):
+    if _is_hidden_path(spelled, boundary):
         return f"hidden-{label}-target", f"{label} link names a hidden path, which render omits: {target!r}"
     # Before Python 3.14, `Path.is_file` raises under an unreadable directory.
     if not os.path.isfile(candidate):

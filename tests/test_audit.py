@@ -404,7 +404,9 @@ def test_coverage_may_not_link_into_an_unpublished_folder(tmp_path: Path) -> Non
     blueprint = tmp_path / "blueprint"
     _article(blueprint, "drafts/README.md", published="false")
     _article(blueprint, "drafts/idea.md", declaration="theorem")
-    _coverage(blueprint, "| Area | Coverage | Evidence |\n| --- | --- | --- |\n| Ideas | DECOMPOSED | [Idea](../roadmap/drafts/idea.md) |")
+    _coverage(
+        blueprint, "| Area | Coverage | Evidence |\n| --- | --- | --- |\n| Ideas | DECOMPOSED | [Idea](../roadmap/drafts/idea.md) |"
+    )
 
     assert ("unpublished-coverage-target", "coverage link names an unpublished folder, which render omits: "
             "'../roadmap/drafts/idea.md' (line 5)") in {

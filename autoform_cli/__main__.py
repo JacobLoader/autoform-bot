@@ -585,13 +585,12 @@ def _source_link_issues(graph: Graph) -> tuple[list[str], list[str]]:
         "malformed-source-link": "contains an invalid path",
         "hidden-source-target": "names a hidden path, which render omits",
         "generated-source-target": "names a generated view, which render omits",
-        "unpublished-source-target": "names an unpublished folder, which render omits",
     }
     issues, warnings = [], []
     for node in graph.nodes.values():
         for target in node.sources:
             located = target.partition("#")[0]
-            issue = local_target_issue(node.path, located, graph.blueprint_dir, label="source", unpublished=graph.unpublished)
+            issue = local_target_issue(node.path, located, graph.blueprint_dir, label="source")
             if issue is None or issue[0] not in rejected:
                 continue
             code = issue[0]
