@@ -830,12 +830,13 @@ def local_target_issue(
     if not _is_within(candidate, boundary):
         return f"{label}-escapes-blueprint", f"{label} link escapes the blueprint: {target!r}"
     # Render resolves links in a copy of the vault that has no hidden paths and no
-    # symbolic links, so a link on a page it publishes breaks when the path it spells
-    # is hidden. `.x/../paper.md`, with `.x` a folder, still passes. Only a
-    # repository link reaches a hidden note under `sources/`, and render writes one
-    # when it links the other source notes there; that link resolves only once the
-    # note is committed, so it is reported too, and `check` only warns about it.
-    if _is_hidden_path(spelled, boundary):
+    # symbolic links, so a link on a page it publishes breaks when it names a hidden
+    # part, even one its `..` steps leave again, as `.x/../paper.md` does: the copy
+    # has no `.x` to step through, and nothing needs one. Only a repository link
+    # reaches a hidden note under `sources/`, and render writes one when it links
+    # the other source notes there; that link resolves only once the note is
+    # committed, so it is reported too, and `check` only warns about it.
+    if any(part.startswith(".") and part != ".." for part in Path(raw_path).parts):
         return f"hidden-{label}-target", f"{label} link names a hidden path, which render omits: {target!r}"
     # Before Python 3.14, `Path.is_file` raises under an unreadable directory.
     if not os.path.isfile(candidate):

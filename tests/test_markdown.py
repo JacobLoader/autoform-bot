@@ -443,7 +443,8 @@ def test_local_targets_are_resolved_against_the_boundary(tmp_path: Path) -> None
 
     assert issue("../roadmap/node.md") is None
     assert issue("../roadmap/node.md#results") is None
-    assert issue("../.drafts/../roadmap/node.md") is None
+    # Nothing needs to step through a hidden folder, and render's copy has none.
+    assert issue("../.drafts/../roadmap/node.md") == "hidden-coverage-target"
     # Render omits the vault's copies of the root views, whether or not one exists.
     (tmp_path / "structure.md").write_text("# Structure\n", encoding="utf-8")
     assert issue("../structure.md") == issue("../dependencies.md") == "generated-coverage-target"

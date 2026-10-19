@@ -692,9 +692,7 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
 
     (blueprint / "sources").mkdir()
     (blueprint / "sources" / "paper.md").write_text("# Paper\n", encoding="utf-8")
-    (blueprint / ".x").mkdir()
     sources += "- [Book](https://example.org/book)\n- [Author](mailto:author@example.org)\n"
-    sources += "- [Same paper](../.x/../sources/paper.md)\n"
     _node(blueprint, "result.md", sources)
 
     assert main(["check", str(blueprint)]) == 0
@@ -706,16 +704,19 @@ def test_check_rejects_sources_links_that_name_no_file_in_the_blueprint(
 
     # Issue #304: render omits hidden files, so a link that names one fails
     # although the file exists. Only a repository link reaches a hidden note
-    # under sources/, so check only warns about one that exists.
+    # under sources/, so check only warns about one that exists. Nothing needs
+    # to step through a hidden folder, so that fails too.
     for note in (".drafts/notes.md", "sources/.private/paper.md"):
         (blueprint / note).parent.mkdir(exist_ok=True)
         (blueprint / note).write_text("# Notes\n", encoding="utf-8")
-    hidden = "- [Draft](../.drafts/notes.md)\n- [Private](../sources/.private/paper.md)\n"
+    hidden = "- [Draft](../.drafts/notes.md)\n- [Stepped](../.drafts/../sources/paper.md)\n"
+    hidden += "- [Private](../sources/.private/paper.md)\n"
     _node(blueprint, "result.md", sources + hidden + "- [Lost](../sources/.private/lost.md)\n")
 
     assert main(["check", str(blueprint)]) == 1
     assert capsys.readouterr().out == (
         "error: result: source target names a hidden path, which render omits: '../.drafts/notes.md'\n"
+        "error: result: source target names a hidden path, which render omits: '../.drafts/../sources/paper.md'\n"
         "error: result: source target does not resolve to a file: '../sources/.private/lost.md'\n"
     )
 

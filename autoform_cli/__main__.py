@@ -600,9 +600,12 @@ def _source_link_issues(graph: Graph) -> tuple[list[str], list[str]]:
                 continue
             code = issue[0]
             if code == "hidden-source-target":
-                # The path local_target_issue found hidden: as written, with its `..` steps applied.
+                # The path as written, with its `..` steps applied: a hidden note itself, or a
+                # path that only steps through a hidden folder, which no repository link mends.
                 spelled = Path(os.path.normpath(node.path.parent.resolve() / unquote(urlsplit(located).path)))
-                if spelled.relative_to(graph.blueprint_dir).parts[:1] == (SOURCES_DIR,):
+                if spelled.relative_to(graph.blueprint_dir).parts[:1] == (SOURCES_DIR,) and any(
+                    part.startswith(".") for part in spelled.relative_to(graph.blueprint_dir).parts
+                ):
                     if os.path.isfile(spelled):
                         warnings.append(
                             f"{node.id}: source target names a hidden path, which only a repository link reaches, "
