@@ -1241,6 +1241,29 @@ def test_the_rail_under_the_open_details_leaves_the_tab_order(desktop_page: obje
     playwright.expect(page.locator(".bp-dag-navigation-link").first).to_be_visible()
 
 
+def test_contents_start_right_of_the_open_details(desktop_page: object, site_url: str) -> None:
+    """Up to 1,200px open details covered the start of every Contents row, its heading and the selected marker."""
+    page = desktop_page
+    page.set_viewport_size({"width": 1000, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    # The list view never draws a map node, so the list itself is what to wait for.
+    _offline(page, site_url)
+    page.goto(f"{site_url}/dependencies/chapters/algebra.html#node=algebra%2Fresult&view=list")
+    playwright.expect(page.locator(".bp-dag-inventory")).to_be_visible()
+    playwright.expect(page.locator('.bp-dag-inventory-row[aria-current="true"]')).to_contain_text("Result")
+    drawer = page.locator(".bp-dag-inspector").bounding_box()
+    assert drawer is not None
+    edge = drawer["x"] + drawer["width"]
+    for item in (".bp-dag-inventory-head h2", ".bp-dag-inventory-row", ".bp-dag-inventory-title"):
+        box = page.locator(item).first.bounding_box()
+        assert box is not None and box["x"] >= edge, item
+    # Closed details give the list the whole stage again.
+    page.get_by_role("button", name="Close details").click()
+    main = page.locator(".bp-dag-main").bounding_box()
+    inventory = page.locator(".bp-dag-inventory").bounding_box()
+    assert main is not None and inventory is not None and abs(inventory["x"] - main["x"]) < 1
+
+
 def _paints_over_the_details(page: object, items: str, container: str) -> bool | None:
     """Whether the first of *items* shown in *container* over the open details is what a click there would hit.
 
