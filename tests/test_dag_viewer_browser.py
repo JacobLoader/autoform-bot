@@ -1349,6 +1349,38 @@ def test_a_node_chosen_on_a_wider_screen_lands_beside_the_open_details(
     assert_beside_the_details(base)
 
 
+def test_a_click_that_opens_details_over_its_card_pans_it_clear(desktop_page: object, site_url: str) -> None:
+    """Keyboard, hash and search choices land beside the details, but a click opened them over its own card."""
+    page = desktop_page
+    page.set_viewport_size({"width": 1440, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    settled = "() => new Promise(done => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(done))))"
+    _open_site(page, site_url, "dependencies/chapters/algebra.html")
+    page.evaluate(settled)
+    cards = page.locator(".bp-dag-node")
+    rightmost = max(range(cards.count()), key=lambda index: cards.nth(index).bounding_box()["x"])
+    card = page.locator(f'[data-autoform-node-id="{cards.nth(rightmost).get_attribute("data-autoform-node-id")}"]')
+    before = card.bounding_box()
+    assert before is not None
+    card.click()
+    playwright.expect(card).to_have_attribute("data-selected", "true")
+    page.evaluate(settled)
+    box, drawer = card.bounding_box(), page.locator(".bp-dag-inspector").bounding_box()
+    assert box is not None and drawer is not None
+    # The details would have covered the card, which now ends left of them, at the same height.
+    assert before["x"] + before["width"] > drawer["x"]
+    assert box["x"] + box["width"] <= drawer["x"]
+    assert abs(box["y"] - before["y"]) < 1
+    # A card already clear of the open details stays where it is.
+    other = page.locator(".bp-dag-node[data-selected=false]").first
+    clear = other.bounding_box()
+    assert clear is not None and clear["x"] + clear["width"] <= drawer["x"]
+    other.click()
+    playwright.expect(other).to_have_attribute("data-selected", "true")
+    page.evaluate(settled)
+    assert other.bounding_box() == clear
+
+
 @pytest.mark.parametrize("width", (800, 1000))
 def test_a_head_without_a_textbook_link_has_no_blank_row(desktop_page: object, site_url: str, width: int) -> None:
     """From 681px to 1,100px the project page's head kept a blank first row for a trail it hid and a link it lacked."""

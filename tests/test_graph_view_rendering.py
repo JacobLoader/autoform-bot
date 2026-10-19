@@ -508,6 +508,18 @@ def test_details_drop_instructions_and_label_paths_compactly() -> None:
     assert pivots is not None and "display: flex;" in pivots.group(1) and "border: 1px solid" in pivots.group(1)
 
 
+def test_a_click_pans_its_node_clear_of_the_details_it_opens() -> None:
+    """Every other way of choosing a node placed it beside the drawer; a click left it under the drawer."""
+    script = dag_viewer.viewer_script()
+
+    assert "if (moveCamera) center(node, .82); else reveal(node);" in script
+    # Centring and revealing share the drawer's geometry, on either side and as the phone sheet.
+    reveal = script.split("function reveal(node) {", 1)[1].split("\n}", 1)[0]
+    assert "free = freeArea()" in reveal and "free = freeArea()" in script.split("function center(", 1)[1]
+    # Only a node that the details cover moves.
+    assert "box.x + box.w > free.right" in reveal and "box.x < free.left" in reveal and "box.y + box.h > free.band" in reveal
+
+
 def test_explorer_pages_relations_and_clamps_zoom() -> None:
     script = dag_viewer.viewer_script()
 
