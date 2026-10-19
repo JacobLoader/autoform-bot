@@ -1232,16 +1232,20 @@ def test_the_rail_under_the_open_details_leaves_the_tab_order(desktop_page: obje
     result = page.locator('[data-autoform-node-id="algebra/result"]')
     playwright.expect(result).to_have_attribute("data-selected", "true")
     playwright.expect(page.locator(".bp-dag-navigation")).to_be_hidden()
-    # It hides after the drawer's .2s slide; hiding at once left it blank before the drawer covered it.
-    timing = "element => [getComputedStyle(element).transitionProperty, getComputedStyle(element).transitionDelay]"
-    assert page.locator(".bp-dag-navigation").evaluate(timing) == ["visibility", "0.2s"]
-    assert page.locator(".bp-dag-navigation h1").evaluate(timing) == ["opacity", "0.2s"]
     page.get_by_role("button", name="Fit shown nodes").focus()
     page.keyboard.press("Tab")
     playwright.expect(result).to_be_focused()
     # Closing the details uncovers the rail and brings it back.
     page.get_by_role("button", name="Close details").click()
     playwright.expect(page.locator(".bp-dag-navigation-link").first).to_be_visible()
+    # With motion allowed it hides after the drawer's .2s slide; hiding at once left it blank before the
+    # drawer covered it. Material turns every transition off for reduced motion, as the steps above ran.
+    page.emulate_media(reduced_motion="no-preference")
+    _open_site(page, site_url, "dependencies/chapters/algebra.html#node=algebra%2Fresult")
+    playwright.expect(page.locator(".bp-dag-navigation")).to_be_hidden()
+    timing = "element => [getComputedStyle(element).transitionProperty, getComputedStyle(element).transitionDelay]"
+    assert page.locator(".bp-dag-navigation").evaluate(timing) == ["visibility", "0.2s"]
+    assert page.locator(".bp-dag-navigation h1").evaluate(timing) == ["opacity", "0.2s"]
 
 
 @pytest.mark.parametrize(
