@@ -212,7 +212,6 @@ def explorer_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         encoding="utf-8",
     )
     (tmp_path / "other.html").write_text("<!doctype html><title>Remote scope</title>", encoding="utf-8")
-    (tmp_path / "app.html").write_text(page_shell.replace("{explorer}", explorer), encoding="utf-8")
     dense_nodes = tuple(
         ViewNode(
             id=f"dense/chapter-{index}",
@@ -478,7 +477,7 @@ def test_mobile_node_interaction_and_selected_sheet_collapse(mobile_page: object
 def test_app_layout_fills_the_browser_viewport(desktop_page: object, explorer_url: str) -> None:
     page = desktop_page
     page.set_viewport_size({"width": 1440, "height": 900})
-    page.goto(f"{explorer_url}/app.html")
+    page.goto(f"{explorer_url}/index.html")
     page.locator(".bp-dag-stage").wait_for()
     viewer = page.locator(".bp-dag-viewer")
     box = viewer.bounding_box()
@@ -732,7 +731,7 @@ def test_mobile_isolates_do_not_overlap_the_connected_dag(mobile_page: object, e
 def test_a_plain_wheel_pans_the_full_page_explorer(desktop_page: object, explorer_url: str) -> None:
     """The full-page explorer leaves nothing else to scroll, and a plain wheel or trackpad scroll did nothing there."""
     page = desktop_page
-    page.goto(f"{explorer_url}/app.html")
+    page.goto(f"{explorer_url}/index.html")
     node = page.locator('[data-autoform-node-id="chapter/middle"]')
     node.wait_for()
     frames = "() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))"
@@ -882,18 +881,18 @@ def test_global_search_jumps_to_the_smallest_context(desktop_page: object, explo
 
 def test_legacy_node_hash_resolves_through_the_global_index(desktop_page: object, explorer_url: str) -> None:
     page = desktop_page
-    page.goto(f"{explorer_url}/app.html#node=remote%2Fdeep-theorem")
+    page.goto(f"{explorer_url}/index.html#node=remote%2Fdeep-theorem")
     page.wait_for_url("**/other.html#node=remote%2Fdeep-theorem")
 
     navigations: list[str] = []
     page.on("request", lambda request: navigations.append(request.url) if request.is_navigation_request() else None)
     with page.expect_response("**/search.json"):
-        page.goto(f"{explorer_url}/app.html#node=unknown%2Fitem")
+        page.goto(f"{explorer_url}/index.html#node=unknown%2Fitem")
     # The placeholder changes in the same promise chain, just before the redirect decision.
     playwright.expect(page.locator(".bp-dag-search")).to_have_attribute("placeholder", "Search 64 roadmap entries")
     # One more task lets a redirect that decision started reach the network.
     page.evaluate("() => new Promise(done => setTimeout(done))")
-    assert page.url.endswith("app.html#node=unknown%2Fitem")
+    assert page.url.endswith("index.html#node=unknown%2Fitem")
     assert len(navigations) == 1
 
 
