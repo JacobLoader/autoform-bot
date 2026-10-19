@@ -475,7 +475,9 @@ def viewer_script() -> str:
 # 1100px and below a grid draws that link at the end of a first row that
 # keeps the breadcrumb's place, so the trail appears there while details
 # cover the rail without moving the map, and Tab reaches the link after the
-# controls under it.
+# controls under it. Above phone widths that row collapses while it would be
+# blank, with no link and the trail left to the rail, as on the project page;
+# there it opens with the details, and the map moves down by its height.
 _STYLE = r"""
 .bp-dag-viewer {
   --dag-border: var(--bp-rule, #d8dade); --dag-bg: var(--bp-surface, #fff);
@@ -669,6 +671,7 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 }
 @media (min-width: 681px) and (max-width: 1100px) {
   .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-inventory { left: calc(408px - var(--dag-navigation-width)); }
+  .bp-dag-viewer:has(.bp-dag-navigation-path):not(.bp-dag-has-selection.bp-dag-sheet-open) .bp-dag-head:not(:has(.bp-dag-book)) .bp-dag-context { display: none; }
 }
 @media (max-width: 900px) {
   .bp-dag-viewer { --dag-navigation-width: 216px; }

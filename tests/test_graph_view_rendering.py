@@ -457,6 +457,11 @@ def test_explorer_head_is_one_row_where_the_rail_always_shows() -> None:
         ".bp-dag-viewer:has(.bp-dag-navigation-path) .bp-dag-breadcrumb { visibility: hidden; } }"
     ) in style
     assert ".bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-breadcrumb { visibility: visible; }" in style
+    # A head without a textbook link has nothing for that row while the rail keeps the trail, so it collapses.
+    assert (
+        ".bp-dag-viewer:has(.bp-dag-navigation-path):not(.bp-dag-has-selection.bp-dag-sheet-open) "
+        ".bp-dag-head:not(:has(.bp-dag-book)) .bp-dag-context { display: none; }"
+    ) in style.split("@media (min-width: 681px) and (max-width: 1100px) {\n", 1)[1].split("\n}", 1)[0]
 
 
 def test_explorer_drops_the_map_guide_and_keeps_a_plain_note_for_real_crops() -> None:

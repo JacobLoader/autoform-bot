@@ -1245,6 +1245,38 @@ def test_a_node_chosen_on_a_wider_screen_lands_beside_the_open_details(
     assert_beside_the_details(base)
 
 
+@pytest.mark.parametrize("width", (800, 1000))
+def test_a_head_without_a_textbook_link_has_no_blank_row(desktop_page: object, site_url: str, width: int) -> None:
+    """From 681px to 1,100px the project page's head kept a blank first row for a trail it hid and a link it lacked."""
+    page = desktop_page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    settled = "() => new Promise(done => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(done))))"
+    for path in ("dependencies.html", "dependencies/full.html"):
+        _open_site(page, site_url, path)
+        playwright.expect(page.locator(".bp-dag-book")).to_have_count(0)
+        playwright.expect(page.locator(".bp-dag-context")).to_be_hidden()
+        closed, toolbar = (page.locator(selector).bounding_box() for selector in (".bp-dag-head", ".bp-dag-toolbar"))
+        assert closed is not None and toolbar is not None and toolbar["y"] - closed["y"] <= 9
+        # Details cover the rail, so the row opens with them to draw the trail, and the chosen topic
+        # still lands beside the details inside the stage that the taller head leaves.
+        _open_site(page, site_url, f"{path}#node=scope%3Aalgebra")
+        node = page.locator('[data-autoform-node-id="scope:algebra"]')
+        playwright.expect(node).to_have_attribute("data-selected", "true")
+        playwright.expect(page.locator(".bp-dag-breadcrumb")).to_be_visible()
+        page.evaluate(settled)
+        head, box, drawer, stage = (
+            page.locator(selector).bounding_box()
+            for selector in (".bp-dag-head", '[data-autoform-node-id="scope:algebra"]', ".bp-dag-inspector", ".bp-dag-stage")
+        )
+        assert head is not None and box is not None and drawer is not None and stage is not None
+        assert head["height"] >= closed["height"] + 20
+        assert box["x"] >= drawer["x"] + drawer["width"]
+        assert stage["x"] <= box["x"] and box["x"] + box["width"] <= stage["x"] + stage["width"]
+        assert stage["y"] <= box["y"] and box["y"] + box["height"] <= stage["y"] + stage["height"]
+        assert stage["y"] >= head["y"] + head["height"] - 1
+
+
 def test_the_rail_under_the_open_details_leaves_the_tab_order(desktop_page: object, site_url: str) -> None:
     """Up to 1,100px open details cover the rail, and Tab still walked its links under the drawer."""
     page = desktop_page
