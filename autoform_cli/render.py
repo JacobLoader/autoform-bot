@@ -567,6 +567,10 @@ def _render_pages(
         # the repository, so the book has one reference surface rather than two.
         if sources_base is not None and relative.parts[:1] == (SOURCES_DIR,):
             continue
+        # The graph has read atlas.json, and nothing on the site reads it. It may
+        # name articles in unpublished folders, so it stays out of the site.
+        if relative.as_posix().casefold() == "atlas.json":
+            continue
         target = destination / relative
         # Directories are created on demand below, so a directory holding
         # nothing but absorbed nodes leaves no empty shell behind.

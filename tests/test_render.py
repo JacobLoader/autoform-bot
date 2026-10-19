@@ -30,6 +30,7 @@ from autoform_cli.__main__ import main
 from autoform_cli._tree_snapshot import TreeChangedError
 from autoform_cli.audit import audit_blueprint
 from autoform_cli.coverage import COVERAGE_DISPOSITIONS
+from autoform_cli.dashboard import publication_bound_live_state
 from autoform_cli.graph import GraphValidationError, load_graph
 from autoform_cli.lean import LeanSourceError, _normalize_remote
 from autoform_cli.markdown import site_converter
@@ -1246,6 +1247,40 @@ def test_render_leaves_an_unpublished_folder_out(tmp_path: Path) -> None:
     assert not (tmp_path / "out" / "roadmap" / "drafts").exists()
     idea.write_text(idea.read_text(encoding="utf-8") + "\nAn edit.\n", encoding="utf-8")
     assert publication_source_revision(project / "blueprint") == revision
+
+
+def test_render_leaves_atlas_json_out_of_the_site(tmp_path: Path) -> None:
+    """atlas.json may name an article in an unpublished folder, and nothing on the site reads it.
+
+    The explorer takes the published articles' areas from its own payload, and
+    the dashboard still accepts the site the graph was read for.
+    """
+    project = _project(tmp_path)
+    blueprint = project / "blueprint"
+    drafts = blueprint / "roadmap" / "drafts"
+    drafts.mkdir()
+    (drafts / "README.md").write_text("---\npublished: false\n---\n\n# Drafts\n", encoding="utf-8")
+    (drafts / "idea.md").write_text("# Secret idea\n\nAn idea.\n", encoding="utf-8")
+    (blueprint / "atlas.json").write_text(
+        json.dumps({"schema": "autoform-atlas/v1", "areas": {"Algebra": ["base", "drafts/idea"]}}),
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+
+    render_site(blueprint, out, lean_root=project)
+
+    assert not [path for path in out.rglob("*") if path.name.casefold() == "atlas.json"]
+    assert not [path for path in out.rglob("*") if path.is_file() and b"drafts/idea" in path.read_bytes()]
+    payload = json.loads((out / "dependencies/chapters/roadmap.json").read_text(encoding="utf-8"))
+    assert {node["id"]: node["area"] for node in payload["nodes"]}["base"] == "Algebra"
+    manifest = json.loads((out / PUBLICATION_MANIFEST).read_text(encoding="utf-8"))
+    assert "atlas.json" not in manifest["files"]
+    assert manifest["source_revision"] == publication_source_revision(blueprint)
+    state = publication_bound_live_state(
+        SimpleNamespace(list=lambda: []), blueprint_dir=blueprint, site_dir=out
+    )()
+    assert state["source_revision"] == manifest["source_revision"]
+    render_site(blueprint, out, lean_root=project)  # the site it wrote may be replaced
 
 
 def test_malformed_link_targets_are_published_as_written(tmp_path: Path) -> None:

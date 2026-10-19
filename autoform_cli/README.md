@@ -122,6 +122,8 @@ assigns areas, so it never stops a command: `check` and `render`
 warn about each entry they ignore, or about the whole file when it is not
 readable `autoform-atlas/v1` JSON, and `audit` reports each as an
 `atlas-omission` [warning](#warnings). An older `AUTOFORM_REF` ignores the file.
+Render reads it for the explorer's areas and leaves the file itself out of the
+site, since it may name articles in unpublished folders.
 
 A repository-wide inventory may use a narrative leaf to summarize an existing
 Lean module containing several declarations. Such a leaf sets
