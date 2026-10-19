@@ -121,9 +121,11 @@ lists it, and an `area:` authored on the node wins over the file. The file only
 assigns areas, so it never stops a command: `check` and `render`
 warn about each entry they ignore, or about the whole file when it is not
 readable `autoform-atlas/v1` JSON, and `audit` reports each as an
-`atlas-omission` [warning](#warnings). An older `AUTOFORM_REF` ignores the file.
+`atlas-omission` [warning](#warnings). An older `AUTOFORM_REF` assigns no areas
+from the file but publishes it as a static file, with every id it names.
 Render reads it for the explorer's areas and leaves the file itself out of the
-site, since it may name articles in unpublished folders.
+site, since it may name articles in unpublished folders; a page's link to it
+keeps only its text.
 
 A repository-wide inventory may use a narrative leaf to summarize an existing
 Lean module containing several declarations. Such a leaf sets
@@ -1218,7 +1220,9 @@ What an existing repository meets when it moves to this version:
 
 1. CI at an older `AUTOFORM_REF` rejects `catalog:` and `area:` as unsupported
    frontmatter keys and `INVENTORIED` as an unknown coverage disposition, so
-   move the pin before using them. Older refs ignore `blueprint/atlas.json`.
+   move the pin before using them. Older refs assign no areas from
+   `blueprint/atlas.json` but publish the file, so a project with unpublished
+   folders moves the pin before adding it.
 2. A `DECOMPOSED` link that reaches only prose or leaves marked `not_ready`
    that declare nothing yet is now a `decomposed-without-declaration` audit
    warning, which `render` also prints; neither fails.

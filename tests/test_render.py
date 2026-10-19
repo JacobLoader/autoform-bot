@@ -1283,6 +1283,24 @@ def test_render_leaves_atlas_json_out_of_the_site(tmp_path: Path) -> None:
     render_site(blueprint, out, lean_root=project)  # the site it wrote may be replaced
 
 
+def test_a_link_to_atlas_json_keeps_only_its_text(tmp_path: Path) -> None:
+    """The site leaves atlas.json out, so a page's link to it would break a strict build."""
+    project = _project(tmp_path)
+    blueprint = project / "blueprint"
+    (blueprint / "atlas.json").write_text(
+        json.dumps({"schema": "autoform-atlas/v1", "areas": {"Algebra": ["base"]}}), encoding="utf-8"
+    )
+    readme = blueprint / "roadmap" / "README.md"
+    readme.write_text(readme.read_text(encoding="utf-8") + "\nSee [the atlas](../atlas.json).\n", encoding="utf-8")
+    out = tmp_path / "out"
+
+    render_site(blueprint, out, lean_root=project)
+
+    published = (out / "roadmap" / "README.md").read_text(encoding="utf-8")
+    assert "See the atlas." in published
+    assert "atlas.json" not in published
+
+
 def test_render_does_not_warn_about_atlas_entries_for_unpublished_articles(tmp_path: Path) -> None:
     """Check reads the whole vault and accepts these entries; render, which reads less, accepts them too."""
     project = _project(tmp_path)

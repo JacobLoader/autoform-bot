@@ -2063,6 +2063,9 @@ def _rewrite_links(
             # Nothing outside the blueprint is published: "" keeps only the text.
             return ""
         relative = candidate.relative_to(blueprint)
+        # atlas.json stays off the site, so a link to it keeps only its text.
+        if relative.as_posix().casefold() == "atlas.json":
+            return ""
         # A repository link to a note the captured blueprint lacks would 404, so
         # it stays site-relative, where a strict build reports the page missing.
         # The capture skips hidden files, so a hidden note keeps its repository
