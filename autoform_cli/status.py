@@ -71,7 +71,10 @@ class State:
 #: so that it cannot be mistaken for a sorry-free proof.
 #:
 #: Dark is not light dimmed: on #18191A a saturated fill closes up, so dark
-#: states are near-black panels with a bright stroke and brighter label.
+#: states are near-black panels with a bright stroke and brighter label. The
+#: outlined states take the #242526 surface, not the page's #18191A, so that
+#: on the page and on the explorer's map they still read as cards, and
+#: planned's grey stroke keeps 3:1 against both.
 STATES: tuple[State, ...] = (
     State("mathlib", "in mathlib", "#1C5C33", "#134426", "#FFFFFF",
           "#10281A", "#42B72A", "#8BE78B"),
@@ -86,13 +89,13 @@ STATES: tuple[State, ...] = (
     State("can_prove", "ready to prove", "#FFFFFF", "#0064E0", "#0064E0",
           "#101F33", "#2D88FF", "#7FB8FF"),
     State("stated", "statement formalized", "#FFFFFF", "#31A24C", "#22773A",
-          "#18191A", "#31A24C", "#E4E6EB"),
+          "#242526", "#31A24C", "#E4E6EB"),
     State("can_state", "ready to state", "#FFFFFF", "#0082FB", "#0B4EA2",
-          "#18191A", "#2D88FF", "#E4E6EB"),
+          "#242526", "#2D88FF", "#E4E6EB"),
     State("not_ready", "not ready", "#FFF3D6", "#B77900", "#5C3D00",
           "#2E2205", "#F7B928", "#FFD772"),
     State("planned", "planned", "#FFFFFF", "#CED0D4", "#65676B",
-          "#18191A", "#4E4F50", "#B0B3B8"),
+          "#242526", "#737578", "#B0B3B8"),
 )
 
 _BY_KEY = {state.key: state for state in STATES}

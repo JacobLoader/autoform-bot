@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from autoform_cli import dag_viewer, graph_pages
+from autoform_cli import dag_viewer, graph_pages, status
 from autoform_cli.graph_views import GraphView, ViewEdge, ViewNode
 
 
@@ -438,6 +438,30 @@ def test_explorer_elevation_is_two_shadows_and_a_selection_ring_that_keeps_the_c
     }
     assert ".bp-dag-node[data-selected=true] { box-shadow: 0 0 0 2px var(--dag-link), var(--dag-e1); }" in style
     assert "border-width" not in style
+
+
+def _contrast(first: str, second: str) -> float:
+    def luminance(colour: str) -> float:
+        channels = [int(colour.lstrip("#")[index : index + 2], 16) / 255 for index in (0, 2, 4)]
+        linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    high, low = sorted((luminance(first), luminance(second)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def test_dark_explorer_cards_read_against_the_page_toned_map() -> None:
+    """Outlined cards were filled with the dark map's own #18191A, and planned's stroke had 2.1:1 against it."""
+    style = dag_viewer._STYLE
+    page, surface = "#18191A", "#242526"
+    assert "--dag-map: #18191a;" in style and ".bp-dag-main {" in style and "background: var(--dag-map); }" in style
+    assert all(state.dark_fill.upper() != page for state in (*status.STATES, *status.INVENTORY_STATES))
+    planned = next(state for state in status.STATES if state.key == "planned")
+    assert min(_contrast(planned.dark_stroke, page), _contrast(planned.dark_stroke, surface)) >= 3
+    # White on the dark link blue, #2D88FF, is 3.5:1; the Open button takes Meta blue there.
+    assert "[data-md-color-scheme=slate] .bp-dag-open { background: #0064e0; }" in style
+    assert _contrast("#FFFFFF", "#0064E0") >= 4.5
+    assert _contrast("#FF7B72", surface) >= 4.5 and "--dag-error: #ff7b72;" in style
 
 
 def test_explorer_assets_and_ordinary_payload_stay_within_budgets(tmp_path: Path) -> None:
