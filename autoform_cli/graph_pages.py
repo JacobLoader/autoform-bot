@@ -253,6 +253,8 @@ def write_graph_pages(
             search_href=_search_index_link(search_index, full_page),
             # It repeats the project page's title, so site search would list both.
             searchable=False,
+            # The rail lists the ancestors above the h1, so it shows the root's title over the same
+            # heading; that crumb stays because it is the rail's only link back to the project map.
             breadcrumbs=(
                 ("Book", _published_link(book_root, full_page)),
                 (root_title, _published_link(project_page, full_page)),

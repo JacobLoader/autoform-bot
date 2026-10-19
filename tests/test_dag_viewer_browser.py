@@ -514,6 +514,13 @@ def test_connected_project_maps_open_at_readable_scale(
     assert note is not None and stage is not None
     assert abs(note["x"] - stage["x"] - 16) < 1
     assert abs(stage["y"] + stage["height"] - 12 - (note["y"] + note["height"])) < 1
+    # On a phone it sat flush on the collapsed sheet's peek; it keeps 8px above it.
+    page.emulate_media(reduced_motion="reduce")
+    page.set_viewport_size({"width": 390, "height": 844})
+    playwright.expect(density).to_contain_text("Readable window")
+    note, sheet = density.bounding_box(), page.locator(".bp-dag-inspector").bounding_box()
+    assert note is not None and sheet is not None
+    assert abs(sheet["y"] - 8 - (note["y"] + note["height"])) < 1
 
 
 def test_atlas_hierarchy_keeps_topics_readable_and_details_out_of_the_way(

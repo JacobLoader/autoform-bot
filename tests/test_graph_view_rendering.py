@@ -443,6 +443,8 @@ def test_explorer_head_is_one_row_where_the_rail_always_shows() -> None:
     assert ".bp-dag-viewer:has(.bp-dag-navigation-path) .bp-dag-breadcrumb { display: none; }" in one_row
     # The textbook link ends the row in the DOM too, so Tab follows the row instead of starting at its end.
     assert "order:" not in one_row
+    # The landing page's trail stays beside the search, capped so that it cannot push the controls over the link.
+    assert ".bp-dag-breadcrumb { flex: 0 1 auto; max-width: 32%; }" in one_row
     script = dag_viewer.viewer_script()
     assert script.index("head.appendChild(toolbar);") < script.index("head.appendChild(bookLink);")
     assert "context.appendChild(bookLink)" not in script
@@ -473,6 +475,9 @@ def test_explorer_drops_the_map_guide_and_keeps_a_plain_note_for_real_crops() ->
     assert '"Readable window · pan or Contents to see all "' in script and '"Zoom in to reveal "' in script
     density = next(rule for rule in style.splitlines() if rule.startswith(".bp-dag-density {"))
     assert "left: 16px; bottom: 12px;" in density and "pointer-events: none;" in density
+    # On phones it clears the collapsed sheet's 52px peek and 8px inset by 8px.
+    phones = style.split("@media (max-width: 680px) {\n", 1)[1].split("\n}", 1)[0]
+    assert ".bp-dag-density { bottom: 68px; }" in phones
     assert not any(word in density for word in ("border", "shadow", "background", "blur"))
 
 
@@ -500,7 +505,9 @@ def test_explorer_search_draws_its_magnifier_and_shortcut_hint_in_css() -> None:
     assert "background: currentColor; color: var(--dag-muted);" in style
     assert "-webkit-mask: var(--dag-magnifier) center / 14px no-repeat; mask: var(--dag-magnifier)" in style
     assert '.bp-dag-search-wrap::after { content: "/";' in style
-    assert ".bp-dag-search-wrap:focus-within::after" in style
+    # Apart from the :has() rule, so a browser without :has() still hides the hint on focus.
+    assert ".bp-dag-search-wrap:focus-within::after { display: none; }\n" in style
+    assert "\n.bp-dag-search-wrap:has(.bp-dag-search:not(:placeholder-shown))::after { display: none; }" in style
     phones = style.split("@media (max-width: 680px) {", 1)[1]
     assert ".bp-dag-search-wrap::after { display: none; }" in phones
 
