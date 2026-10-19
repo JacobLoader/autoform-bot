@@ -1524,9 +1524,16 @@ def test_slash_inside_the_explorer_opens_its_search_but_an_input_keeps_its_keys(
     """Focus inside the explorer lets "/" open its search, but no shortcut takes a key from an input."""
     page = desktop_page
     _open_ready(page, explorer_url)
+    search, wrap = page.locator(".bp-dag-search"), page.locator(".bp-dag-search-wrap")
+    playwright.expect(search).to_have_attribute("placeholder", "Search the roadmap")
+    # The box draws a masked magnifier and a "/" key hint, which focus hides.
+    assert "svg" in wrap.evaluate("element => getComputedStyle(element, '::before').webkitMaskImage")
+    hint = "element => [getComputedStyle(element, '::after').content, getComputedStyle(element, '::after').display]"
+    assert wrap.evaluate(hint) == ['"/"', "block"]
     page.locator("[data-autoform-node-id]").first.focus()
     page.keyboard.press("/")
-    playwright.expect(page.locator(".bp-dag-search")).to_be_focused()
+    playwright.expect(search).to_be_focused()
+    assert wrap.evaluate(hint)[1] == "none"
     page.locator(".bp-dag-filter-summary").click()
     isolates = page.get_by_role("checkbox", name="Include items without edges")
     isolates.focus()
