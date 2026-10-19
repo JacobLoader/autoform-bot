@@ -450,6 +450,18 @@ def test_explorer_head_is_one_row_where_the_rail_always_shows() -> None:
     assert ".bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-breadcrumb { visibility: visible; }" in style
 
 
+def test_explorer_drops_the_map_guide_and_keeps_a_plain_note_for_real_crops() -> None:
+    """A pill over the map said to select a topic, or restated the selection the drawer and the dimming show."""
+    script, style = dag_viewer.viewer_script(), dag_viewer._STYLE
+    assert "bp-dag-guide" not in script and "bp-dag-guide" not in style
+    assert "dependency neighborhood" not in script
+    # The density note stays, only for a readable crop or for labels hidden by zoom, as plain text.
+    assert '"Readable window · pan or Contents to see all "' in script and '"Zoom in to reveal "' in script
+    density = next(rule for rule in style.splitlines() if rule.startswith(".bp-dag-density {"))
+    assert "left: 16px; bottom: 12px;" in density and "pointer-events: none;" in density
+    assert not any(word in density for word in ("border", "shadow", "background", "blur"))
+
+
 def test_explorer_elevation_is_two_shadows_and_a_selection_ring_that_keeps_the_card_still() -> None:
     """A selected card took a 3px border, shifting its text, and blurred panels sat on five shadows."""
     style = dag_viewer._STYLE

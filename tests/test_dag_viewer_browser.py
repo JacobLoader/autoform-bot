@@ -503,7 +503,17 @@ def test_connected_project_maps_open_at_readable_scale(
     box = node.bounding_box()
     assert box is not None
     assert box["height"] >= 44
-    playwright.expect(page.locator(".bp-dag-density")).to_contain_text("Readable window")
+    density = page.locator(".bp-dag-density")
+    playwright.expect(density).to_contain_text("Readable window")
+    # The note is plain text at the map's bottom-left, not a bubble over the map.
+    style = density.evaluate(
+        "element => ['borderTopStyle', 'boxShadow', 'pointerEvents'].map(name => getComputedStyle(element)[name])"
+    )
+    assert style == ["none", "none", "none"]
+    note, stage = density.bounding_box(), page.locator(".bp-dag-stage").bounding_box()
+    assert note is not None and stage is not None
+    assert abs(note["x"] - stage["x"] - 16) < 1
+    assert abs(stage["y"] + stage["height"] - 12 - (note["y"] + note["height"])) < 1
 
 
 def test_atlas_hierarchy_keeps_topics_readable_and_details_out_of_the_way(
@@ -520,6 +530,8 @@ def test_atlas_hierarchy_keeps_topics_readable_and_details_out_of_the_way(
     navigation = page.locator(".bp-dag-navigation")
     playwright.expect(navigation).to_be_visible()
     playwright.expect(navigation).to_contain_text("Knowledge atlas")
+    # No guide pill over the map: the drawer and the dimming show a selection.
+    playwright.expect(page.locator(".bp-dag-guide")).to_have_count(0)
     playwright.expect(navigation).to_contain_text("Geometry & Topology")
     playwright.expect(page.locator(".bp-dag-inspector")).to_be_hidden()
     # The closed drawer still holds the overview. Topics count once, by their least-complete item,
