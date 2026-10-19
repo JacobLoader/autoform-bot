@@ -1641,7 +1641,8 @@ def test_a_published_chapter_explorer_links_its_textbook_chapter_and_keeps_its_h
     playwright.expect(page.locator(".bp-dag-book")).to_be_visible()
     # A section's explorer carries the same link to its own page, so it names no chapter.
     playwright.expect(page.locator(".bp-dag-book")).to_have_text("Open the textbook page")
-    playwright.expect(page.get_by_role("heading", level=1)).to_have_text("Algebra dependencies")
+    # The rail's h1 names the scope alone; the hidden Markdown heading adds "dependencies" for the tab.
+    playwright.expect(page.get_by_role("heading", level=1)).to_have_text("Algebra")
 
 
 def test_slash_on_the_published_landing_page_opens_the_explorer_search(desktop_page: object, site_url: str) -> None:

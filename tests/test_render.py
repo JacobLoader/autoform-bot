@@ -167,7 +167,9 @@ def test_render_writes_a_derived_tree_and_leaves_the_vault_alone(tmp_path: Path)
     chapter_payload = json.loads(
         (out / "dependencies/chapters/roadmap.json").read_text(encoding="utf-8")
     )
-    assert chapter_payload["title"] == "Top level dependencies"
+    # The explorer names the scope; the page's own H1 adds what it draws, for the tab and site search.
+    assert chapter_payload["title"] == "Top level"
+    assert "\n# Top level dependencies\n" in (out / "dependencies/chapters/roadmap.md").read_text(encoding="utf-8")
     assert chapter_payload["view"]["breadcrumbs"][-1] == {"label": "Top level", "url": None}
     full_page = (out / "dependencies/full.md").read_text(encoding="utf-8")
     assert 'data-graph-src="full.json"' in full_page
@@ -201,7 +203,7 @@ def test_the_root_explorer_takes_the_roadmap_root_title(tmp_path: Path) -> None:
     chapter_payload = json.loads((out / "dependencies/chapters/roadmap.json").read_text(encoding="utf-8"))
     assert project_payload["title"] == "Learning theory"
     assert [node["title"] for node in project_payload["nodes"]] == ["Top level"]
-    assert chapter_payload["title"] == "Top level dependencies"
+    assert chapter_payload["title"] == "Top level"
     crumbs = [crumb["label"] for crumb in chapter_payload["view"]["breadcrumbs"]]
     assert crumbs == ["Book", "Learning theory", "Top level"]
 

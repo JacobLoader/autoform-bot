@@ -161,6 +161,7 @@ def write_graph_pages(
             if group == "roadmap" and group in scope_maps
             else chapter_item_counts[f"scope:{group or 'roadmap'}"]
         )
+        subject = ROOT_GROUP_TITLE if group in {"", "roadmap"} else _dependency_subject(view)
         written.append(
             _write_page(
                 chapter_page,
@@ -169,7 +170,8 @@ def write_graph_pages(
                 book=_published_link(book_page, chapter_page),
                 statuses=_selected_statuses(graph, statuses, view, containers),
                 links=links,
-                heading=_dependency_heading(view, ROOT_GROUP_TITLE if group in {"", "roadmap"} else None),
+                title=subject,
+                heading=_dependency_heading(view, subject),
                 lead=(
                     f"This map covers {item_count} item{'s' if item_count != 1 else ''} in this chapter. "
                     "Collapsed chapter nodes stand for external prerequisites or dependents."
@@ -210,6 +212,7 @@ def write_graph_pages(
                 book=_published_link(destination / "roadmap" / scope / "README.md", scope_page),
                 statuses=_selected_statuses(graph, statuses, view, containers),
                 links=links,
+                title=_dependency_subject(view),
                 heading=_dependency_heading(view),
                 lead=(
                     "This view shows the container's direct articles. Nested containers "
@@ -302,6 +305,7 @@ def _write_page(
     heading: str,
     lead: str,
     site_root: Path,
+    title: str | None = None,
     search_href: str,
     breadcrumbs: tuple[tuple[str, str | None], ...],
     navigation: str = "",
@@ -309,11 +313,14 @@ def _write_page(
     searchable: bool = True,
 ) -> Path:
     # Every projection is one payload and one explorer host, so readers get one
-    # interaction model and no second renderer can drift from it.
+    # interaction model and no second renderer can drift from it. The explorer
+    # names the page by its bare *title*, defaulting to *heading*; the suffixed
+    # heading stays in the Markdown, where it tells the browser tab and site
+    # search apart from the book page of the same name.
     payload = page.with_suffix(".json")
     dag_viewer.write_payload(
         payload,
-        replace(view, title=heading),
+        replace(view, title=title or heading),
         links=links,
         breadcrumbs=breadcrumbs,
         book=book,
@@ -385,12 +392,14 @@ def _view_inventories(view: GraphView) -> dict[str, int]:
     return counts
 
 
-def _dependency_heading(view: GraphView, subject: str | None = None) -> str:
-    """Name an explorer page for *subject*, by default the view's scope, and for what it draws.
+def _dependency_subject(view: GraphView) -> str:
+    """Name the view's scope: the views keep their Mermaid-era "<scope> dependency map" titles."""
+    return view.title.removesuffix(" dependency map")
 
-    The views keep their Mermaid-era "<scope> dependency map" titles, so that suffix goes.
-    """
-    subject = subject or view.title.removesuffix(" dependency map")
+
+def _dependency_heading(view: GraphView, subject: str | None = None) -> str:
+    """Name an explorer page for *subject*, by default the view's scope, and for what it draws."""
+    subject = subject or _dependency_subject(view)
     return f"{subject} {'knowledge map' if dag_viewer.uses_atlas(view) else 'dependencies'}"
 
 
