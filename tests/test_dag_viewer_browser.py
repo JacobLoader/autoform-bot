@@ -462,6 +462,18 @@ def test_mobile_node_interaction_and_selected_sheet_collapse(mobile_page: object
     assert inspector_inner.get_attribute("aria-hidden") is None
     assert inspector_inner.get_attribute("inert") is None
     assert "node=chapter%2Fmiddle" in page.url
+    # The handle names the selection, so the sheet's heading is hidden text, and the close button
+    # sits in the handle's top-right corner, clear of its title.
+    page.evaluate("() => new Promise(done => setTimeout(done, 300))")
+    heading, close, handle_box = (
+        page.locator(selector).bounding_box() for selector in (".bp-dag-inspector h2", ".bp-dag-close", ".bp-dag-sheet-handle")
+    )
+    assert heading is not None and close is not None and handle_box is not None
+    assert heading["width"] <= 1 and heading["height"] <= 1
+    assert (close["width"], close["height"]) == (32, 32)
+    assert handle_box["y"] <= close["y"] and close["y"] + close["height"] <= handle_box["y"] + handle_box["height"]
+    assert abs(handle_box["x"] + handle_box["width"] - 10 - (close["x"] + close["width"])) < 2
+    assert handle.evaluate("element => getComputedStyle(element).paddingRight") == "48px"
 
     handle.tap()
     playwright.expect(handle).to_have_attribute("aria-expanded", "false")
@@ -475,6 +487,30 @@ def test_mobile_node_interaction_and_selected_sheet_collapse(mobile_page: object
     assert not page.evaluate(
         "document.querySelector('.bp-dag-inspector-inner').contains(document.activeElement)"
     )
+
+
+def test_details_close_from_their_corner_and_space_the_status_from_the_link(
+    desktop_page: object, explorer_url: str
+) -> None:
+    """The close button floated beside the kicker, and the status text touched the Open article button."""
+    page = desktop_page
+    page.set_viewport_size({"width": 1440, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    page.goto(f"{explorer_url}/index.html#node=chapter%2Fmiddle")
+    playwright.expect(page.locator(".bp-dag-inspector h2")).to_have_text("Middle lemma")
+    drawer, close, heading, pill, link = (
+        page.locator(selector).bounding_box()
+        for selector in (".bp-dag-inspector", ".bp-dag-close", ".bp-dag-inspector h2", ".bp-dag-status-pill", ".bp-dag-open")
+    )
+    assert drawer is not None and close is not None and heading is not None and pill is not None and link is not None
+    assert (close["width"], close["height"]) == (32, 32)
+    # 10px inside the drawer's 1px border, at its top-right corner, with the title stopping short of it.
+    assert abs(drawer["x"] + drawer["width"] - 11 - (close["x"] + close["width"])) < 1.5
+    assert abs(close["y"] - drawer["y"] - 11) < 1.5
+    assert heading["x"] + heading["width"] <= close["x"]
+    # The status and the button share a line, 16px apart.
+    assert abs(pill["y"] + pill["height"] / 2 - (link["y"] + link["height"] / 2)) < 1.5
+    assert abs(link["x"] - (pill["x"] + pill["width"]) - 16) < 1.5
 
 
 def test_app_layout_fills_the_browser_viewport(desktop_page: object, explorer_url: str) -> None:

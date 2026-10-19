@@ -462,6 +462,27 @@ def test_explorer_shows_statuses_and_areas_but_never_internal_ids() -> None:
         assert gone not in script and gone not in style
 
 
+def test_details_close_in_their_corner_and_space_the_status_from_the_link() -> None:
+    """The close button floated beside the kicker, the status touched Open article, and the sheet named the title twice."""
+    script, style = dag_viewer.viewer_script(), dag_viewer._STYLE
+
+    close = re.search(r"\.bp-dag-close \{([^}]*)\}", style)
+    assert close is not None
+    for declaration in ("position: absolute;", "top: 10px;", "right: 10px;", "width: 32px;", "height: 32px;"):
+        assert declaration in close.group(1)
+    # The header text stops short of the 32px button 10px from the edge.
+    assert ".bp-dag-inspector-header { padding-right: 32px; }" in style
+    assert "titleWrap" not in script
+    actions = re.search(r"\.bp-dag-actions \{([^}]*)\}", style)
+    assert actions is not None and "flex-wrap: wrap;" in actions.group(1) and "gap: 8px 16px;" in actions.group(1)
+    assert "actions.appendChild(pill);" in script and "actions.appendChild(open);" in script
+    phone = style.split("@media (max-width: 680px) {\n", 1)[1].split("\n}", 1)[0]
+    # The handle repeats the selection's title, so the sheet hides its heading but keeps it for assistive technology.
+    assert ".bp-dag-viewer.bp-dag-viewer .bp-dag-inspector-header h2 { position: absolute; width: 1px;" in phone
+    assert "padding: 10px 48px 8px 12px;" in phone
+    assert ".bp-dag-viewer:not(.bp-dag-sheet-open) .bp-dag-close { display: none; }" in phone
+
+
 def test_explorer_pages_relations_and_clamps_zoom() -> None:
     script = dag_viewer.viewer_script()
 

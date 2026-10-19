@@ -479,7 +479,10 @@ def viewer_script() -> str:
 # phone widths that row collapses while it would be blank, with no link and
 # the trail left to the rail, as on the project page; there it opens with
 # the details, and the runtime shifts the map back by the row's height, so
-# that the map, and the card just clicked, stay where they were.
+# that the map, and the card just clicked, stay where they were. The close
+# button keeps the drawer's top-right corner, which on phones lies in the
+# sheet's handle; the handle names the selection there, so the sheet keeps
+# its own heading only as hidden text.
 _STYLE = r"""
 .bp-dag-viewer {
   --dag-border: var(--bp-rule, #d8dade); --dag-bg: var(--bp-surface, #fff);
@@ -628,12 +631,14 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-inspector { visibility: visible; opacity: 1; transform: translateX(0); transition-delay: 0s; }
 .bp-dag-inspector-inner { padding: 16px; }
 .bp-dag-sheet-handle { display: none; }
-.bp-dag-inspector-header { display: flex; align-items: flex-start; gap: 8px; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-inspector-header h2 { flex: 1; margin: 0; font-size: 17px; font-weight: 700; letter-spacing: normal; line-height: 1.25; }
+.bp-dag-inspector-header { padding-right: 32px; }
+.bp-dag-viewer.bp-dag-viewer .bp-dag-inspector-header h2 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: normal; line-height: 1.25; }
 .bp-dag-viewer.bp-dag-viewer .bp-dag-inspector-inner > h2 { margin: 0 0 8px; font-size: 17px; font-weight: 700; letter-spacing: normal; line-height: 1.25; }
-.bp-dag-close { min-width: 32px; min-height: 32px; padding: 3px; border: 0; background: transparent; color: var(--dag-muted); cursor: pointer; }
+.bp-dag-close { position: absolute; z-index: 3; top: 10px; right: 10px; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--dag-radius-control); background: transparent; color: var(--dag-muted); font-size: 22px; line-height: 1; cursor: pointer; }
+.bp-dag-close:hover { background: var(--dag-panel); color: var(--dag-fg); }
 .bp-dag-kicker { margin: 0 0 6px; color: var(--dag-muted); font-size: 12px; font-weight: 500; }
-.bp-dag-status-pill { display: inline-flex; align-items: center; gap: 6px; margin: 5px 0 10px; color: var(--dag-muted); font-size: 12px; }
+.bp-dag-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 10px 0 12px; }
+.bp-dag-status-pill { display: inline-flex; align-items: center; gap: 6px; color: var(--dag-muted); font-size: 12px; }
 .bp-dag-status-pill::before { content: ""; width: 9px; height: 9px; border: 2px solid var(--dag-pill-stroke); border-radius: 50%; background: var(--dag-pill-fill); }
 .bp-dag-open { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 6px 12px; border-radius: var(--dag-radius-control); background: var(--dag-link); color: #fff !important; font-size: 13px; font-weight: 600; text-decoration: none !important; }
 [data-md-color-scheme=slate] .bp-dag-open { background: #0064e0; }
@@ -695,9 +700,12 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
   .bp-dag-inventory { padding-bottom: 60px; }
   .bp-dag-inspector { position: absolute; z-index: 12; top: auto; right: 8px; bottom: 8px; left: 8px; width: auto; max-height: min(58%, 480px); overflow: auto; border: 1px solid var(--dag-overlay-border); border-radius: var(--dag-radius-panel); box-shadow: var(--dag-e2); visibility: visible; opacity: 1; transform: translateY(calc(100% - 52px)); transition: transform .2s ease; }
   .bp-dag-viewer.bp-dag-sheet-open .bp-dag-inspector { transform: translateY(0); }
-  .bp-dag-sheet-handle { display: block; position: sticky; z-index: 2; top: 0; width: 100%; min-height: 50px; padding: 10px 36px 8px 12px; overflow: hidden; border: 0; border-bottom: 1px solid var(--dag-border); background: var(--dag-bg); color: var(--dag-fg); font: inherit; font-size: 13px; font-weight: 600; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  .bp-dag-sheet-handle { display: block; position: sticky; z-index: 2; top: 0; width: 100%; min-height: 50px; padding: 10px 48px 8px 12px; overflow: hidden; border: 0; border-bottom: 1px solid var(--dag-border); background: var(--dag-bg); color: var(--dag-fg); font: inherit; font-size: 13px; font-weight: 600; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
   .bp-dag-sheet-handle::before { content: ""; position: absolute; top: 6px; left: 50%; width: 32px; height: 3px; border-radius: 2px; background: var(--dag-border); transform: translateX(-50%); }
   .bp-dag-inspector-inner { padding: 12px; }
+  .bp-dag-viewer:not(.bp-dag-sheet-open) .bp-dag-close { display: none; }
+  .bp-dag-inspector-header { padding-right: 0; }
+  .bp-dag-viewer.bp-dag-viewer .bp-dag-inspector-header h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
   .bp-dag-density { bottom: 68px; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -1670,10 +1678,10 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
           atlas ? "Click a topic to read it; click it again or use Explore topic to dive in. Contents exposes the same map as a complete accessible list." :
           "The map carries dependency topology; Map and Contents expose the same nodes as keyboard-accessible controls.")); return;
       }
-      var node = state.selected, header = element("div", "bp-dag-inspector-header"), titleWrap = element("div");
-      titleWrap.appendChild(element("p", "bp-dag-kicker", (node.kind === "scope" ? "Scope" :
+      var node = state.selected, header = element("div", "bp-dag-inspector-header");
+      header.appendChild(element("p", "bp-dag-kicker", (node.kind === "scope" ? "Scope" :
         node.kind === "boundary" ? "External scope" : node.declaration || "Roadmap item") + (node.area ? " · " + node.area : "")));
-      titleWrap.appendChild(element("h2", "", node.title)); header.appendChild(titleWrap);
+      header.appendChild(element("h2", "", node.title));
       var close = button("bp-dag-close", "×", "Close details"); close.addEventListener("click", function () {
         // Hiding the details takes focus out of them; it returns to the selection, not to the page.
         setSheet(false);
@@ -1684,13 +1692,13 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       var inventoryOnly = node.kind === "scope" && (node.status_counts || []).length > 0 && node.status_counts.every(function (entry) {
         return palette[entry[0]] && palette[entry[0]].neutral;
       });
-      var pill = element("span", "bp-dag-status-pill", inventoryOnly ? "inventory only" : statusLabel(node.status)), color = colors(node);
+      var actions = element("div", "bp-dag-actions"), pill = element("span", "bp-dag-status-pill", inventoryOnly ? "inventory only" : statusLabel(node.status)), color = colors(node);
       pill.style.setProperty("--dag-pill-fill", color.fill); pill.style.setProperty("--dag-pill-stroke", color.stroke);
-      refs.inspectorInner.appendChild(pill);
+      actions.appendChild(pill); refs.inspectorInner.appendChild(actions);
       var href = safeHref(node.url);
       if (href) {
         var open = element("a", "bp-dag-open", node.kind === "scope" || node.kind === "boundary" ? "Explore topic" : "Open article");
-        open.href = href; refs.inspectorInner.appendChild(open);
+        open.href = href; actions.appendChild(open);
       }
       if (node.lean) refs.inspectorInner.appendChild(element("p", "bp-dag-lean",
         "Lean: " + node.lean + (node.lean_more ? " and " + node.lean_more + " more" : "")));
