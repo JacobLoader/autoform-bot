@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import html
 import os
+import urllib.parse
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -30,10 +31,11 @@ def node_link(node: Node, output: Path, link_extension: str) -> str:
 def relative_link(target: Path, output: Path, link_extension: str) -> str:
     """Relative link from the page at *output* to *target*, with its suffix swapped."""
     relative = Path(os.path.relpath(target.resolve(), output.resolve().parent))
-    if not relative.name:
-        # The page's own directory is ``.``, which has no name to take a suffix.
-        return relative.as_posix()
-    return relative.with_suffix(link_extension).as_posix()
+    # The page's own directory is ``.``, which has no name to take a suffix.
+    link = relative.as_posix() if not relative.name else relative.with_suffix(link_extension).as_posix()
+    # A first segment that holds a colon, such as a folder named
+    # ``javascript:x``, would read as a URL's scheme.
+    return f"./{link}" if ":" in link.split("/", 1)[0] else link
 
 
 def source_links(graph: Graph, output: Path, link_extension: str) -> dict[str, str]:
@@ -44,9 +46,40 @@ def source_links(graph: Graph, output: Path, link_extension: str) -> dict[str, s
     }
 
 
+#: The class render gives each graph it publishes on the site, which it
+#: writes as raw HTML, as no article may: the site's diagram script draws these
+#: with the loose security their links need, and every other diagram strictly.
+GRAPH_CLASS = "bp-graph"
+
+
+def published_graph(diagram: str) -> str:
+    """The ```mermaid fenced block *diagram* as the element the site's
+    diagram script draws as render's own: its source, escaped as superfences
+    escapes a fence's, in a div of class ``mermaid`` and :data:`GRAPH_CLASS`."""
+    source = diagram.removeprefix("```mermaid\n").removesuffix("\n```")
+    return f'<div class="mermaid {GRAPH_CLASS}">{html.escape(source, quote=False)}</div>'
+
+
 def _escape(text: str) -> str:
-    """Make *text* safe inside a quoted Mermaid label."""
-    return text.replace('"', "#quot;").replace("`", "#96;")
+    """Make *text* safe inside a quoted Mermaid label.
+
+    Mermaid draws a label as HTML, so the markup characters are written as
+    its entity codes, which it shows as typed.
+    """
+    for character, code in (('"', "#quot;"), ("`", "#96;"), ("&", "#amp;"), ("<", "#lt;"), (">", "#gt;")):
+        text = text.replace(character, code)
+    return text
+
+
+def _href(link: str) -> str:
+    """Write *link* as the URL a click opens.
+
+    A link is made from file and folder names, which may hold a quote that
+    would end Mermaid's string and start a click's call, or a colon that
+    would make the path a ``javascript:`` URL; percent-encoded, it is one
+    string and a relative path to the same page.
+    """
+    return urllib.parse.quote(link, safe="/#")
 
 
 def render_diagram(
@@ -102,7 +135,7 @@ def render_diagram(
     for node in ordered:
         state = _view_summary(boxes[node.id]) if node.id in boxes else statuses[node.id].label
         tooltip = _escape(f"{node.title} — {state}")
-        lines.append(f'  click {handles[node.id]} "{links[node.id]}" "{tooltip}"')
+        lines.append(f'  click {handles[node.id]} "{_href(links[node.id])}" "{tooltip}"')
 
     if include_classdefs:
         lines.extend(f"  {line}" for line in classdef_lines())
@@ -144,7 +177,7 @@ def render_view_diagram(
         href = links.get(node.id)
         if href is not None:
             tooltip = _escape(f"{node.title} — {_view_summary(node)}")
-            lines.append(f'  click {handle} "{href}" "{tooltip}"')
+            lines.append(f'  click {handle} "{_href(href)}" "{tooltip}"')
 
     if include_classdefs:
         lines.extend(f"  {line}" for line in classdef_lines())
@@ -338,12 +371,14 @@ def render_page(
 
 
 __all__ = [
+    "GRAPH_CLASS",
     "node_link",
     "relative_link",
     "render_diagram",
     "render_legend",
     "render_legend_tip",
     "render_page",
+    "published_graph",
     "render_view_diagram",
     "source_links",
 ]

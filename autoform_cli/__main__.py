@@ -39,7 +39,7 @@ from .library.locate import LibraryError, WorkspaceError
 from .library.search import LibraryResult, library_argument, search_with_libraries
 from .markdown import local_target_issue
 from .project import ProjectCatalogError, ProjectCreateError, create_project, inspect_project, load_release_catalog
-from .render import SOURCES_DIR, PublicationError, render_site
+from .render import SOURCES_DIR, PublicationError, publication_issues, render_site
 from .runtime import RuntimeProjectionError, projection_omissions, resolve_runtime_paths
 from .scaffold import ScaffoldError, scaffold_project
 from .search import SearchError, search_blueprint, statement_preview
@@ -692,6 +692,10 @@ def _check(args: argparse.Namespace) -> int:
     for omission in projection_omissions(graph):
         print(f"warning: {omission}")
     for warning in _byte_order_mark_warnings(graph) + _formalizable_container_warnings(graph) + source_warnings:
+        print(f"warning: {warning}")
+    # What the site would leave out or show as typed, and what would stop
+    # render; none of it fails check.
+    for warning in publication_issues(graph, Path(args.blueprint_dir)):
         print(f"warning: {warning}")
     return 0
 
