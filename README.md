@@ -53,6 +53,26 @@ Setup changes local files by default. Creating or pushing a remote repository,
 enabling GitHub Pages, and publishing blueprint content require an explicit
 request; content published through Pages is public.
 
+## Run several sessions
+
+To put more agents on a large project than one session allows, run several
+sessions on it at once. They coordinate through claims: temporary leases on
+roadmap articles, stored as Git refs on the project's `origin`, so a leaf one
+session holds is skipped by the others.
+
+1. Give each session its own clone or Git worktree of the project, with the same
+   `origin` and the same branch.
+2. Tell each session that other sessions share the project, and allow it to
+   push claims and verified results to `origin`. For example, invoke `formalize`
+   and ask:
+
+   > Formalize the ready frontier. Four other sessions are working on this
+   > project; use claims, and push claims and verified results to `origin`.
+
+Say so even when the sessions start together: each one sees an empty claim
+board and would otherwise work without claims. Sessions on one machine share its
+memory, so start no more than it can build Lean for.
+
 ## Blueprint model
 
 Autoform keeps the roadmap and dependency graph as Markdown under

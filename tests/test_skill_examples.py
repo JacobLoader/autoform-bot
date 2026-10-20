@@ -248,6 +248,22 @@ def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
         assert "lake-build" not in read(relative), relative
 
 
+def test_readme_tells_users_how_to_run_several_sessions(repo_root: Path) -> None:
+    """A session's agent limit is not the project's: several sessions share one claim board (#419).
+
+    Sessions started together each see an empty board and would choose no claims,
+    so only the user's request can tell a session that others share the project.
+    """
+    readme = " ".join((repo_root / "README.md").read_text(encoding="utf-8").split())
+    assert "## Run several sessions" in readme
+    assert "own clone or Git worktree of the project, with the same `origin` and the same branch" in readme
+    assert "Tell each session that other sessions share the project" in readme
+    assert "push claims and verified results to `origin`" in readme
+    assert "each one sees an empty claim board and would otherwise work without claims" in readme
+    formalize = " ".join((repo_root / "skills/formalize/SKILL.md").read_text(encoding="utf-8").split())
+    assert "Use claims only when other people or sessions may work on the same project at the same time" in formalize
+
+
 def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path) -> None:
     """Notes written into articles crept into published books as Lean commentary.
 
