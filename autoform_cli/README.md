@@ -1102,10 +1102,10 @@ invalid path or URL, or a target outside the blueprint fails. The path must open
 as written, so one through a missing folder or a symbolic link loop fails too,
 even where its `..` steps would cancel that part as text (Windows itself applies
 `..` as text). So does a target
-whose path as written, once its `..` steps are applied, has a part below the
-blueprint starting with `.`, because render omits hidden files and
-directories. Under `sources/`, such a
-target passes `check` with a warning instead, and `audit` still reports it:
+whose path names a part starting with `.`, even one its `..` steps leave
+again, because render omits hidden files and directories. Under `sources/`,
+a hidden note
+passes `check` with a warning instead, and `audit` still reports it:
 only a repository link reaches the note, and render writes one when it links
 the other source notes there, so the note must be committed. A `## Sources`
 link to a view generated at the blueprint root, such as `dependencies.md` or
