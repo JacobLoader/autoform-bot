@@ -249,7 +249,7 @@ def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
 
 
 def test_readme_tells_users_how_to_run_several_sessions(repo_root: Path) -> None:
-    """A session's agent limit is not the project's: several sessions share one claim board (#419).
+    """A session's agent limit is not the project's: several sessions share one claim board (#421).
 
     Sessions started together each see an empty board and would choose no claims,
     so only the user's request can tell a session that others share the project.
@@ -260,6 +260,8 @@ def test_readme_tells_users_how_to_run_several_sessions(repo_root: Path) -> None
     assert "Tell each session that other sessions share the project" in readme
     assert "push claims and verified results to `origin`" in readme
     assert "each one sees an empty claim board and would otherwise work without claims" in readme
+    assert "raise `max_threads` under `[agents]` in `~/.codex/config.toml`" in readme
+    assert "They also share one Lean runtime" in readme
     formalize = " ".join((repo_root / "skills/formalize/SKILL.md").read_text(encoding="utf-8").split())
     assert "Use claims only when other people or sessions may work on the same project at the same time" in formalize
 
