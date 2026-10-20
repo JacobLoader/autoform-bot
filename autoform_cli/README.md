@@ -1632,8 +1632,9 @@ A declaration matches when every term occurs in its last name component
 `_root_.` and `«»`) or module (`qualified_names`), the constants in its type
 (`mentions`), or its keyword
 (`kind`), ranked in that order. Hits sort by best field, then the words as
-typed before a stem, then worst field, then `complete` before `wanted`, then
-name. `--state` and `--declaration` apply to articles only; `--limit` applies
+typed before a stem, then worst field, then a declaration whose name a query
+word spells, by the rule for articles above, then `complete` before `wanted`,
+then name. `--state` and `--declaration` apply to articles only; `--limit` applies
 to each list.
 
 With `--library` the JSON schema is `autoform-search/v2`: every

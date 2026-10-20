@@ -164,10 +164,7 @@ def search_blueprint(
     if not words:
         raise SearchError("search query has no terms")
     terms = tuple(dict.fromkeys(_stem(word) for word in words))
-    # A term has lost the prime, ``?`` or ``!`` that can end a Lean name; the
-    # words as typed keep it, so they can tell ``foo'`` from ``foo``. A filler
-    # word the terms dropped names nothing here either.
-    typed = frozenset(_unquoted(_as_typed(word)) for word in _normalize(query).split() if _bare(word) in words)
+    typed = _typed_words(query, words)
     if limit < 1:
         raise SearchError("search limit must be a positive integer")
     wanted_states = tuple(sorted(set(states)))
@@ -236,8 +233,7 @@ def search_blueprint(
             matched_fields=tuple(_FIELDS[rank] for rank in sorted(set(ranks))),
             shared_title=title_count[_normalize(node.title)] > 1,
         )
-        named = _spells_a_name(typed, _names(node))
-        matches.append((min(ranks), _ranks(words, fields) is None, max(ranks), not named, hit))
+        matches.append((*_rank_key(ranks, words, fields, _FIELDS, typed, _names(node)), hit))
 
     # The best field first, and within it the articles holding the words as
     # typed. Among equals, the article whose worst-placed term sits in a
@@ -303,6 +299,24 @@ def _ranks(terms: tuple[str, ...], fields: dict[str, str], order: tuple[str, ...
     return ranks
 
 
+def _rank_key(
+    ranks: list[int],
+    words: tuple[str, ...],
+    fields: dict[str, str],
+    order: tuple[str, ...],
+    typed: frozenset[str],
+    names: Sequence[str],
+) -> tuple[int, bool, int, bool]:
+    """Return the keys a hit sorts by first, the same for articles and library declarations.
+
+    The best field a term matched, then whether every word occurs as typed,
+    then the worst field a term needed, then whether a query word names one
+    of ``names`` exactly.
+    """
+
+    return min(ranks), _ranks(words, fields, order) is None, max(ranks), not _spells_a_name(typed, names)
+
+
 def _lean_name(name: str) -> str:
     """Return a folded Lean name as a query term spells it.
 
@@ -317,6 +331,17 @@ def _unquoted(name: str) -> str:
     """Return a Lean name without ``_root_.`` and its quoting marks, its ending kept."""
 
     return name.removeprefix("_root_.").replace("\u00ab", "").replace("\u00bb", "")
+
+
+def _typed_words(query: str, words: tuple[str, ...]) -> frozenset[str]:
+    """Return the words of ``query`` as typed, for the exact-name key.
+
+    A term has lost the prime, ``?`` or ``!`` that can end a Lean name; the
+    words as typed keep it, so they can tell ``foo'`` from ``foo``. A filler
+    word the terms dropped, one not in ``words``, names nothing here either.
+    """
+
+    return frozenset(_unquoted(_as_typed(word)) for word in _normalize(query).split() if _bare(word) in words)
 
 
 def _as_typed(word: str) -> str:
