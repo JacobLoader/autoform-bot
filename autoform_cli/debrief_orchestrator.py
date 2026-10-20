@@ -19,7 +19,8 @@ Configuration (environment):
 Store layout::
 
     runs/<run_id>.json      one RunRecord per run, schema_version 1
-    issues/<run_id>.md      draft issue, written only when there is AutoformBot friction
+    issues/<run_id>.md      draft issue, written only when there is AutoformBot friction;
+                            it ends with a link that opens it as a pre-filled issue
 """
 
 from __future__ import annotations
@@ -321,6 +322,22 @@ def _issue_body(entry: RunRecord, redactions: list[tuple[str, str]]) -> str:
     return "\n".join(lines)
 
 
+def _draft_text(title: str, body: str, url: str, url_has_body: bool) -> str:
+    """The draft as stored: the issue, then a footer with the link that is not part of it.
+
+    The link holds the whole draft, thousands of characters, so it lives here
+    rather than in the agent's report.
+    """
+    if url_has_body:
+        link = f"[Open this draft as a pre-filled AutoformBot issue]({url})"
+    else:
+        link = (
+            f"[Open the AutoformBot issue form]({url}) with the title filled in; the draft is "
+            "too long for a link, so paste the text above this footer as the body."
+        )
+    return f"# {title}\n\n{body}\n---\n\nNot part of the issue; nothing has been sent. {link}\n"
+
+
 def issue_url(title: str, body: str) -> tuple[str, bool]:
     """A new-issue link pre-filled with the draft, or with the title alone when the body is too long."""
     base = f"https://github.com/{ISSUE_REPOSITORY}/issues/new?"
@@ -365,7 +382,8 @@ def record(
             title, body = _issue_title(entry, redactions), _issue_body(entry, redactions)
             url, url_has_body = issue_url(title, body)
             with store.open_subdir(root_fd, ISSUES) as issues:
-                store.create_exclusive(issues, f"{name}.md", f"# {title}\n\n{body}".encode("utf-8"))
+                draft = _draft_text(title, body, url, url_has_body)
+                store.create_exclusive(issues, f"{name}.md", draft.encode("utf-8"))
             issue = DraftIssue(title, body, root / ISSUES / f"{name}.md", url, url_has_body)
     return entry, root / RUNS / f"{name}.json", issue
 

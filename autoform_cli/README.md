@@ -1013,8 +1013,9 @@ record under `runs/` in the debrief store described below, together with the
 installed AutoformBot version. A directory without a roadmap, as during Setup,
 is accepted as the project. When `autoform_friction` is not empty, `record` also
 writes a draft issue for `facebookresearch/autoform-bot` to `issues/` in the
-store and prints a GitHub link that opens a new issue pre-filled with it (the
-title alone, when the draft is too long for a link). The draft holds only the
+store and prints its absolute path. The draft ends, below a `---` footer that is not
+part of the issue, with a GitHub link that opens a new issue pre-filled with it
+(the title alone, when the draft is too long for a link). The draft holds only the
 AutoformBot friction and the environment, with the project path replaced by
 `$PROJECT` and home directories by `~`. Nothing is sent: the user reviews,
 edits, and submits the issue. With `--json`, `record` prints one object,
