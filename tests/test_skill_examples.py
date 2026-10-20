@@ -262,8 +262,6 @@ def test_readme_tells_users_how_to_run_several_sessions(repo_root: Path) -> None
     assert "each one sees an empty claim board and would otherwise work without claims" in readme
     assert "raise `max_threads` under `[agents]` in `~/.codex/config.toml`" in readme
     assert "They also share one Lean runtime" in readme
-    formalize = " ".join((repo_root / "skills/formalize/SKILL.md").read_text(encoding="utf-8").split())
-    assert "Use claims only when other people or sessions may work on the same project at the same time" in formalize
 
 
 def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path) -> None:

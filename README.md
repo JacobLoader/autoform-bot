@@ -60,8 +60,8 @@ under `[agents]` in `~/.codex/config.toml` before reaching for more sessions.
 
 To put more agents on a large project than one session allows, run several
 sessions on it at once. They coordinate through claims: temporary leases on
-roadmap articles, stored as Git refs on the project's `origin`, so a leaf one
-session holds is skipped by the others.
+roadmap articles, stored as Git refs on the project's `origin`, so no session
+can take a leaf another one holds.
 
 1. Give each session its own clone or Git worktree of the project, with the same
    `origin` and the same branch.
