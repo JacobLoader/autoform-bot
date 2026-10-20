@@ -256,7 +256,7 @@ def test_readme_tells_users_how_to_run_several_sessions(repo_root: Path) -> None
     """
     readme = " ".join((repo_root / "README.md").read_text(encoding="utf-8").split())
     assert "## Run several sessions" in readme
-    assert "own clone or Git worktree of the project, with the same `origin` and the same branch" in readme
+    assert "own clone of the project, with the same `origin` and the same branch" in readme
     assert "Tell each session that other sessions share the project" in readme
     assert "push claims and verified results to `origin`" in readme
     assert "each one sees an empty claim board and would otherwise work without claims" in readme

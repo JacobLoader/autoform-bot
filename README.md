@@ -63,8 +63,8 @@ sessions on it at once. They coordinate through claims: temporary leases on
 roadmap articles, stored as Git refs on the project's `origin`, so no session
 can take a leaf another one holds.
 
-1. Give each session its own clone or Git worktree of the project, with the same
-   `origin` and the same branch.
+1. Give each session its own clone of the project, with the same `origin` and
+   the same branch. Git checks out a branch in only one worktree at a time.
 2. Tell each session that other sessions share the project, and allow it to
    push claims and verified results to `origin`. For example, invoke `formalize`
    and ask:
