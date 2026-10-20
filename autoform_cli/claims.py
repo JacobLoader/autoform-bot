@@ -15,7 +15,6 @@ import os
 import re
 import socket
 import subprocess
-import threading
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -25,7 +24,6 @@ from typing import Any, Mapping, Sequence
 CLAIM_REF_PREFIX = "refs/autoform-claims/"
 CLAIM_SCHEMA = "autoform-claim/v1"
 CLAIM_TTL_S = 1500
-CLAIM_HEARTBEAT_S = 300
 CLAIM_KEY_RE = re.compile(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$")
 _SCP_REPOSITORY_RE = re.compile(r"^(?:[^/@:]+@)?(?:\[[^\]]+\]|[^/:]+):.+$")
 _WINDOWS_DRIVE_PREFIX_RE = re.compile(r"^[A-Za-z]:")
@@ -588,16 +586,16 @@ class ClaimBoard:
             raise ValueError("claim expiry comparison clock must be finite")
         return expires_at <= comparison_time
 
-    def acquire(self, key: str, ttl: int | float = CLAIM_TTL_S, steal: bool = False, note: str = "") -> bool:
-        """CAS-acquire a free, expired, owned, or explicitly stolen lease.
+    def acquire(self, key: str, ttl: int | float = CLAIM_TTL_S, note: str = "") -> bool:
+        """CAS-acquire a free, expired, or owned lease.
 
-        A malformed lease raises ``MalformedLeaseError``, even with ``steal``.
+        A malformed lease raises ``MalformedLeaseError``.
         """
         key = _validate_key(key)
         _validate_ttl(ttl)
         self._ensure_scratch()
         old = self._remote_oid(key)
-        if self._held_by_peer(key, old) and not steal:
+        if self._held_by_peer(key, old):
             return False
         new = self._make_lease_commit(key, ttl, note)
         return self._cas_push(key, old, new)
@@ -697,16 +695,6 @@ class ClaimBoard:
             return ClaimBatchResult(True)
         return self._cas_push_refs([(key, olds[key], "") for key in present], atomic=True)
 
-    def holds(self, key: str) -> bool:
-        """Return whether this worker verifiably owns the current live lease."""
-        lease = self.read(key)
-        return bool(
-            lease is not None
-            and self._lease_is_valid(lease, key)
-            and lease.get("owner") == self.worker_id
-            and not self.expired(lease)
-        )
-
     def list(self) -> list[dict[str, Any]]:
         """Return all claim refs, including malformed and expired entries.
 
@@ -794,78 +782,8 @@ class ClaimBoard:
                     break
         return removed
 
-    def heartbeat(
-        self,
-        key: str,
-        *,
-        interval: float = CLAIM_HEARTBEAT_S,
-        ttl: int | float = CLAIM_TTL_S,
-    ) -> Heartbeat:
-        """Create a fail-closed heartbeat for an already acquired lease."""
-        return Heartbeat(self, key, interval=interval, ttl=ttl)
-
-
-class Heartbeat:
-    """Renew a lease in a daemon thread and permanently record any uncertainty."""
-
-    def __init__(
-        self,
-        board: ClaimBoard,
-        key: str,
-        interval: float = CLAIM_HEARTBEAT_S,
-        ttl: int | float = CLAIM_TTL_S,
-    ) -> None:
-        if not _is_finite_number(interval) or interval <= 0:
-            raise ValueError("heartbeat interval must be a finite positive number")
-        _validate_key(key)
-        _validate_ttl(ttl)
-        if interval >= ttl:
-            raise ValueError("heartbeat interval must be shorter than the claim TTL")
-        self.board = board
-        self.key = key
-        self.interval = interval
-        self.ttl = ttl
-        self.lost = threading.Event()
-        self.error: Exception | None = None
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-
-    def __enter__(self) -> Heartbeat:
-        if self._thread is not None:
-            raise RuntimeError("heartbeat cannot be started more than once")
-        try:
-            renewed = self.board.renew(self.key, ttl=self.ttl)
-        except Exception as exc:
-            self.error = exc
-            self.lost.set()
-            raise ClaimTransportError("claim ownership could not be verified before heartbeat entry") from exc
-        if not renewed:
-            self.lost.set()
-            raise ClaimTransportError("claim ownership was lost before heartbeat entry")
-        self._thread = threading.Thread(target=self._run, daemon=True, name=f"claim-heartbeat-{self.key}")
-        self._thread.start()
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-
-    def _run(self) -> None:
-        while not self._stop.wait(self.interval):
-            try:
-                renewed = self.board.renew(self.key, ttl=self.ttl)
-            except Exception as exc:
-                self.error = exc
-                self.lost.set()
-                return
-            if not renewed:
-                self.lost.set()
-                return
-
 
 __all__ = [
-    "CLAIM_HEARTBEAT_S",
     "CLAIM_KEY_RE",
     "CLAIM_REF_PREFIX",
     "CLAIM_SCHEMA",
@@ -875,7 +793,6 @@ __all__ = [
     "ClaimRefLock",
     "ClaimRefLockedError",
     "ClaimTransportError",
-    "Heartbeat",
     "MalformedLeaseError",
     "author_claim_key",
 ]

@@ -1999,8 +1999,7 @@ Claims use canonical `autoform-claim/v1` JSON in orphan commit messages and
 exact observed object IDs as update preconditions. Absent and verifiably expired
 leases may be acquired; live peer leases are refused. Malformed or unreadable
 refs are unverifiable and may not be acquired, renewed, released, or removed by
-cleanup. A heartbeat verifies ownership on entry and permanently records any
-later refusal or transport uncertainty as lost ownership.
+cleanup.
 
 A claim key is a slug and digest of any string, not a validated node id, so a
 shared resource is locked the same way a node is, as is a Lean helper no

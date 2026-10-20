@@ -201,12 +201,6 @@ class DeclarationSkeleton(TrustedDeclaration):
     statement_comments: tuple[tuple[int, int], ...] = ()
 
     @property
-    def defines(self) -> bool:
-        """Whether the root is a definition rather than a proposition."""
-
-        return self.kind not in {"theorem", "axiom"}
-
-    @property
     def declaration_lines(self) -> int:
         """Source lines of the root declaration itself, proof included."""
         if self.start_line is None or self.end_line is None:

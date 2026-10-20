@@ -2867,13 +2867,9 @@ def test_report_round_trips_through_json_deterministically(tmp_path: Path) -> No
 def test_public_skeleton_compatibility_helpers(tmp_path: Path) -> None:
     report = _fake_report(tmp_path)
     node = report.nodes[0]
-    declaration = node.declarations[0]
 
     assert report.declarations(node.node_id) == node.declarations
     assert report.declarations("missing") == ()
-    assert not declaration.defines
-    assert replace(declaration, kind="def").defines
-    assert not replace(declaration, kind="axiom").defines
 
 
 def test_report_states_shared_material_once(tmp_path: Path) -> None:

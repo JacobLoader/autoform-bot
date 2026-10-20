@@ -180,6 +180,12 @@ def _plant_lease(repo: Path, key: str, **changes: object) -> str:
     return _plant_message(repo, key, json.dumps(lease))
 
 
+def _holds(board: claims.ClaimBoard, key: str) -> bool:
+    """Whether *board*'s worker owns the live lease at *key*."""
+    lease = board.read(key)
+    return lease is not None and lease["owner"] == board.worker_id and not board.expired(lease)
+
+
 def test_acquire_read_list_and_release_round_trip(tmp_path: Path, board_repo: Path) -> None:
     board = _board(tmp_path, board_repo, "worker-a")
 
@@ -190,7 +196,7 @@ def test_acquire_read_list_and_release_round_trip(tmp_path: Path, board_repo: Pa
     assert lease["owner"] == "worker-a"
     assert lease["resource"] == "author/node"
     assert lease["note"] == "proof"
-    assert board.holds("author/node")
+    assert _holds(board, "author/node")
 
     listed = board.list()
     assert [(item["_key"], item["_expired"]) for item in listed] == [("author/node", False)]
@@ -243,7 +249,7 @@ def test_expired_lease_can_be_taken_over(tmp_path: Path, board_repo: Path, monke
 
     assert first.acquire("expired", ttl=10)
     monkeypatch.setattr(claims.time, "time", lambda: now + 11)
-    assert not first.holds("expired")
+    assert not _holds(first, "expired")
     assert second.acquire("expired", ttl=60)
     assert second.read("expired")["owner"] == "worker-b"
 
@@ -257,7 +263,6 @@ def test_malformed_lease_is_unverifiable_and_not_takeover_eligible(tmp_path: Pat
         lambda: board.renew("malformed"),
         lambda: board.release("malformed"),
         lambda: board.acquire("malformed", ttl=600),
-        lambda: board.acquire("malformed", ttl=600, steal=True),
     ):
         with pytest.raises(claims.MalformedLeaseError):
             operation()
@@ -321,10 +326,10 @@ def test_single_key_operations_read_only_the_exact_claim_ref(tmp_path: Path, boa
 
     assert board.read("k") is None
     assert board.acquire("k", ttl=600)
-    assert board.holds("k")
+    assert _holds(board, "k")
     assert board.renew("k", ttl=600)
     assert board.release("k")
-    assert peer.holds("a/refs/autoform-claims/k")
+    assert _holds(peer, "a/refs/autoform-claims/k")
 
 
 @pytest.mark.parametrize("now", [float("nan"), float("inf"), float("-inf")])
@@ -419,82 +424,6 @@ def test_transport_failure_raises_without_local_fallback(tmp_path: Path) -> None
     assert not (board.scratch / claims.CLAIM_REF_PREFIX / "key").exists()
 
 
-def test_heartbeat_verifies_ownership_immediately_on_entry() -> None:
-    class LostBoard:
-        def renew(self, key: str, ttl: int | float) -> bool:
-            return False
-
-    heartbeat = claims.Heartbeat(LostBoard(), "key", interval=1, ttl=30)  # type: ignore[arg-type]
-    with pytest.raises(claims.ClaimTransportError, match="lost before"):
-        with heartbeat:
-            pytest.fail("unowned work must not enter the protected context")
-
-    assert heartbeat.lost.is_set()
-    assert heartbeat._thread is None
-
-
-def test_heartbeat_rejects_interval_that_can_outlive_lease() -> None:
-    with pytest.raises(ValueError, match="shorter than"):
-        claims.Heartbeat(object(), "key", interval=30, ttl=30)  # type: ignore[arg-type]
-
-
-@pytest.mark.parametrize(
-    ("interval", "ttl", "message"),
-    [
-        (float("nan"), 30, "heartbeat interval must be a finite positive number"),
-        (float("inf"), 30, "heartbeat interval must be a finite positive number"),
-        (1, float("nan"), "claim TTL must be a finite positive number"),
-        (1, float("inf"), "claim TTL must be a finite positive number"),
-        (1, float("-inf"), "claim TTL must be a finite positive number"),
-    ],
-)
-def test_heartbeat_rejects_nonfinite_timing(interval: float, ttl: float, message: str) -> None:
-    with pytest.raises(ValueError, match=message):
-        claims.Heartbeat(object(), "key", interval=interval, ttl=ttl)  # type: ignore[arg-type]
-
-
-def test_heartbeat_marks_ownership_lost_on_transport_failure() -> None:
-    attempted = threading.Event()
-
-    class FailingBoard:
-        calls = 0
-
-        def renew(self, key: str, ttl: int | float) -> bool:
-            self.calls += 1
-            if self.calls == 1:
-                return True
-            attempted.set()
-            raise claims.ClaimTransportError("board unavailable")
-
-    heartbeat = claims.Heartbeat(FailingBoard(), "key", interval=0.01, ttl=30)  # type: ignore[arg-type]
-    with heartbeat:
-        assert attempted.wait(timeout=2)
-        assert heartbeat.lost.wait(timeout=2)
-
-    assert isinstance(heartbeat.error, claims.ClaimTransportError)
-
-
-def test_heartbeat_marks_ownership_lost_when_renew_is_refused() -> None:
-    attempted = threading.Event()
-
-    class LostBoard:
-        calls = 0
-
-        def renew(self, key: str, ttl: int | float) -> bool:
-            self.calls += 1
-            if self.calls == 1:
-                return True
-            attempted.set()
-            return False
-
-    heartbeat = claims.Heartbeat(LostBoard(), "key", interval=0.01, ttl=30)  # type: ignore[arg-type]
-    with heartbeat:
-        assert attempted.wait(timeout=2)
-        assert heartbeat.lost.wait(timeout=2)
-
-    assert heartbeat.error is None
-
-
 @pytest.mark.parametrize(
     "changes",
     [
@@ -519,7 +448,7 @@ def test_schema_resource_or_required_field_mismatch_is_malformed(
     board = _board(tmp_path, board_repo, "worker-a")
 
     with pytest.raises(claims.MalformedLeaseError):
-        board.holds("wrong")
+        board.read("wrong")
     with pytest.raises(claims.MalformedLeaseError):
         board.renew("wrong")
     with pytest.raises(claims.MalformedLeaseError):
@@ -725,7 +654,7 @@ def test_acquire_many_takes_over_an_expired_key(tmp_path: Path, board_repo: Path
         lease = board.read(key)
         assert lease["owner"] == "worker-a"
         assert lease["note"] == "revision"
-        assert board.holds(key)
+        assert _holds(board, key)
 
 
 def test_acquire_many_changes_no_ref_when_one_lease_goes_stale_before_the_push(
@@ -750,7 +679,7 @@ def test_acquire_many_changes_no_ref_when_one_lease_goes_stale_before_the_push(
     assert result == claims.ClaimBatchResult(False, ("contested",), "changed concurrently")
     assert _refs(board_repo) == observed["refs"]
     assert claims.CLAIM_REF_PREFIX + "free" not in observed["refs"]
-    assert peer.holds("contested")
+    assert _holds(peer, "contested")
 
 
 def test_acquire_many_changes_no_ref_when_the_remote_aborts_the_transaction(
@@ -872,13 +801,12 @@ def test_release_many_deletes_no_ref_when_one_lease_goes_stale_before_the_push(
     tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     board = _board(tmp_path, board_repo, "worker-a")
-    peer = _board(tmp_path, board_repo, "worker-b")
     assert board.acquire_many(["kept", "stolen"], ttl=600)
     push = board._cas_push_refs
     observed: dict[str, dict[str, str]] = {}
 
     def peer_steals_first(updates: Sequence[tuple[str, str | None, str]], *, atomic: bool = False):
-        assert peer.acquire("stolen", ttl=600, steal=True)
+        _plant_lease(board_repo, "stolen")
         observed["refs"] = _refs(board_repo)
         return push(updates, atomic=atomic)
 
@@ -887,7 +815,7 @@ def test_release_many_deletes_no_ref_when_one_lease_goes_stale_before_the_push(
 
     assert result == claims.ClaimBatchResult(False, ("stolen",), "changed concurrently")
     assert _refs(board_repo) == observed["refs"]
-    assert board.holds("kept")
+    assert _holds(board, "kept")
 
 
 @pytest.mark.parametrize("method", ["acquire_many", "renew_many", "release_many"])
@@ -1068,7 +996,7 @@ def test_once_the_operator_deletes_a_stale_ref_lock_the_claim_proceeds(
     lock.unlink()
 
     assert board.acquire("node", ttl=600)
-    assert board.holds("node")
+    assert _holds(board, "node")
 
 
 @pytest.mark.parametrize("change", ["create", "update", "delete", "delete-packed", "batch"])
@@ -1237,8 +1165,6 @@ def test_a_stale_ref_lock_never_lets_a_takeover_replace_a_lease(
     assert not board.acquire("live", ttl=600)
     with pytest.raises(claims.ClaimRefLockedError):
         board.acquire("expired", ttl=600)
-    with pytest.raises(claims.ClaimRefLockedError):
-        board.acquire("live", ttl=600, steal=True)
 
     assert _refs(board_repo) == before
 
