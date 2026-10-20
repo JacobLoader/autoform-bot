@@ -122,7 +122,8 @@ add deterministic IDs.
 Articles hold only frontmatter and informal mathematics; put Lean-side findings
 such as Mathlib gaps, prior art, and declaration names in
 `blueprint/.implementation-notes/<article_id>.md`, never a transcript, a secret,
-or a machine-local path. The hidden per-article file
+or a machine-local path; Finish records a shared library declaration that does
+not apply on the source's page instead. The hidden per-article file
 stays out of the mathematical wiki and remains valid when the article moves.
 Never link it from an article. Delete it when the article is proved or marked
 `mathlib: true`; delete a container's note when every formalizable descendant,
@@ -182,10 +183,16 @@ blueprint's sources usually means a library search was skipped. Reuse the
 declaration as the library search rules say, and name it in the implementation
 note of each article that uses it. If it does not apply, or no article concerns
 it, name it on the source's page under `blueprint/sources/` with the reason;
-that record outlasts the notes audit deletes. Report unrelated pre-existing
-findings instead of silently widening scope. Commit the vault and refreshed
-graph only after this final validation; pushing is outward-facing and requires a
-user request.
+that record outlasts the implementation notes, which audit asks to delete once
+their article is proved. It covers every article that reaches the source,
+including ones added later, so give a reason that holds for each, and revisit it
+when the adopted boundary changes. A warning about a module's docstring is a
+library hit for each declaration it counts: naming the module on the source's
+page records them all, and importing the module, or naming one of them, silences
+the rest, so review the module when its warning first appears. Report unrelated
+pre-existing findings instead of silently widening scope. Commit the vault and
+refreshed graph only after this final validation; pushing is outward-facing and
+requires a user request.
 
 Finish only when the adopted boundary has no `MAPPED` rows, every `DECOMPOSED`
 area links to a source-grounded fine DAG, affected pages and the graph agree,

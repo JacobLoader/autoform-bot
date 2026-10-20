@@ -10,7 +10,9 @@ scope against the sources, then inspect the fine DAG and its coarse roadmap.
 2. Run `autoform check` with `--lean-root` and inspect the project, chapter, and
    node-neighborhood graphs. Treat each warning that a shared library
    declaration's docstring cites one of the blueprint's sources as a library hit
-   for item 5.
+   for item 5, and a warning about a module's docstring as a hit for each
+   declaration it counts; search the module's name with `--library` to list
+   them all.
 3. Inspect every milestone and every node in the requested review scope, with
    its hidden `blueprint/.implementation-notes/<article_id>.md` when present.
 4. Distinguish statement prerequisites from proof-only prerequisites.
@@ -28,8 +30,11 @@ scope against the sources, then inspect the fine DAG and its coarse roadmap.
    intermediate results each proof proves or cites too: a `complete` library
    hit for one of them, or for a result in scope, is a missed reuse unless the
    article that states or uses it is proved, its implementation note names the
-   declaration, or the source's page records why it does not apply. List any
-   library refused.
+   declaration, or the source's page records why it, or its module, does not
+   apply. Read each
+   library declaration a source page names: one named without a reason, or with
+   a reason that does not hold for an article reaching that source, is a missed
+   reuse. List any library refused.
 
 ## Source fidelity and coverage — 40%
 

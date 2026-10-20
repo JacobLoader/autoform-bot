@@ -1,9 +1,10 @@
 """Warn about library declarations whose docstrings cite the blueprint's sources and that nothing names.
 
-A declaration whose docstring cites the paper a project formalizes almost always
-proves part of it. ``autoform check --lean-root`` names each one that no
-implementation note, source page or project Lean file names, so a skipped
-library search shows up. The warnings never change the exit status.
+A declaration whose docstring cites the paper a project formalizes usually
+proves part of it. ``autoform check --lean-root`` names each such declaration,
+or its module, that no implementation note, source page or project Lean file
+names, so a skipped library search shows up. The warnings never change the exit
+status.
 """
 
 from __future__ import annotations
@@ -18,8 +19,9 @@ from urllib.parse import unquote, urlsplit
 
 from .. import status
 from ..graph import IMPLEMENTATION_NOTES_DIR, Graph
-from ..lean import _CONTINUATION_IDENTIFIER, index_failure_message, resolve_lean_root, snapshot_project_sources
+from ..lean import _CONTINUATION_IDENTIFIER, resolve_lean_root, snapshot_project_sources
 from ..markdown import resolved_path
+from ..render import SOURCES_DIR
 from .index import INDEX_FILE, LibraryIndex, LibraryIndexError, parse_index
 from .listing import indexed_packages
 from .locate import LibraryError, WorkspaceError, checkout_paths, find_package, read_workspace
@@ -33,14 +35,17 @@ _ARXIV = re.compile(
     r"(?:(?P<new>\d{4}\.\d{4,5})|(?P<archive>[a-z][a-z-]{0,15})(?:\.[a-z]{2})?/(?P<number>\d{7}))(?!\d)",
     re.IGNORECASE,
 )
-#: A DOI after a doi.org URL or a "DOI" label. A URL may percent-encode the slash after the
-#: registrant, and a DOI ends at a URL's query or fragment and at the `]` of link text.
+#: A DOI after a doi.org URL or a "DOI" label, which Markdown emphasis, a backtick or a table cell may
+#: separate from it. A URL may percent-encode the slash after the registrant, and a DOI ends at a URL's
+#: query or fragment, at a closing backtick and at the `]` of link text.
 _DOI = re.compile(
-    r"(?:doi\.org/|(?<![a-z0-9])doi[\s:*_|]*)(?P<doi>10\.\d{4,9}(?:/|%2F)[^\s\"'<>`\]?#]+)", re.IGNORECASE
+    r"(?:doi\.org/|(?<![a-z0-9])doi[\s:*_|`]*)(?P<doi>10\.\d{4,9}(?:/|%2F)[^\s\"'<>`\]?#]+)", re.IGNORECASE
 )
 _ARXIV_DOI = "10.48550/arxiv."
 #: Larger linked files are not pages Roadmap writes about a source.
 _PAGE_LIMIT = 4 * 1024 * 1024
+#: A «quoted» name component.
+_QUOTED = re.compile(r"«([^«»]*)»")
 
 
 def cited_sources(text: str | None) -> frozenset[str]:
@@ -53,9 +58,10 @@ def cited_sources(text: str | None) -> frozenset[str]:
         found.add(f"arXiv {_paper(match)}")
     for match in _DOI.finditer(text):
         doi = unquote(match["doi"])
-        # A DOI may hold parentheses, so only an unmatched closing one is the sentence's.
+        # A DOI may hold parentheses, so only an unmatched closing one is the sentence's. Emphasis or a
+        # table cell can close right after it.
         end, unmatched = len(doi), doi.count(")") - doi.count("(")
-        while doi[end - 1] in ".,;:}*" or (doi[end - 1] == ")" and unmatched > 0):
+        while doi[end - 1] in ".,;:}*_|" or (doi[end - 1] == ")" and unmatched > 0):
             unmatched -= doi[end - 1] == ")"
             end -= 1
         doi = doi[:end]
@@ -84,80 +90,99 @@ class _Hit:
 def library_citation_warnings(graph: Graph, lean_root: str | Path) -> list[str]:
     """Warn about usable libraries' complete declarations whose docstrings cite a source the blueprint cites.
 
-    A declaration counts as named when an implementation note or a page the articles' ``## Sources``
-    link names it in full, or a project Lean file names its last component. A hit only in a module's
-    docstring is reported once for the module, which naming the module or any of its hits silences.
+    A declaration counts as named when an implementation note, a Markdown page under
+    ``blueprint/sources/`` or one an article's ``## Sources`` links, or a project Lean file names it in
+    full. A project Lean file may also name, by its last component, a declaration whose own docstring
+    cites a source, since ``open`` shortens names. A hit only in a module's docstring is reported once
+    for the module, which naming the module, or in full one of its declarations citing that source,
+    silences.
     """
 
-    citing, pages = _blueprint_sources(graph)
+    citing, pages, containers = _blueprint_sources(graph)
     if not citing:
         return []
     try:
         workspace = read_workspace(lean_root)
         packages = indexed_packages(lean_root)
     except WorkspaceError as error:
-        if not os.path.isfile(os.path.join(os.path.expanduser(os.fspath(lean_root)), "lake-manifest.json")):
+        if not os.path.lexists(os.path.join(os.path.expanduser(os.fspath(lean_root)), "lake-manifest.json")):
             return []  # a Lean root without a Lake manifest locks no shared library
         return [
-            f"the Lake manifest cannot be read, so no shared library was compared with the blueprint's sources: {error}"
+            f"the project's Lake files cannot be used, so no shared library was compared with the blueprint's sources: "
+            f"{error}"
         ]
     except (OSError, RuntimeError, ValueError):
-        return []  # build_linker reports a Lean root it cannot use
+        return []  # no Lake workspace to compare, or a Lean root check reports itself
 
     warnings, hits = [], []
     for package in packages:
         try:
             # Matching is cheap and hashing a library's sources is not, so only a library with a hit is verified.
-            if not _hits(_unverified_index(workspace, package), citing, package):
+            index = _unverified_index(workspace, package)
+            found = _hits(index, citing, package)
+            if not found:
                 continue
-            library = load_library(workspace, package)
+            load_library(workspace, package, index=index)
         except LibraryError as error:
             warnings.append(
                 f"library {package}: its index cannot be used, so its declarations were not compared "
                 f"with the blueprint's sources: {error.reason}"
             )
             continue
-        hits.extend(_hits(library.index, citing, library.name))
+        hits.extend(found)
     if not hits:
         return warnings
 
-    prose = _prose_names([*_note_texts(graph.blueprint_dir), *pages])
+    prose = _prose_names([*_note_texts(graph.blueprint_dir), *{**pages, **_source_pages(graph.blueprint_dir)}.values()])
     lean_names: set[str] = set()
+    lean_prefixes: set[str] = set()
     lean_components: set[str] = set()
     if any(hit.name not in prose for hit in hits):
         try:
             snapshot = snapshot_project_sources(resolve_lean_root(lean_root))
-        except OSError as error:
-            unknown = sum(hit.name not in prose for hit in hits)
-            warnings.append(
-                f"{unknown} library declaration(s) cite the blueprint's sources, but whether the project's "
-                f"Lean files name them is unknown: {index_failure_message(error)}"
-            )
-            return warnings
-        lean_names, lean_components = _lean_names(data.decode("utf-8", "replace") for _, data in snapshot.source_files)
+        except OSError:
+            return warnings  # check's own index build reads the same files, reports why, and fails
+        lean_names, lean_prefixes, lean_components = _lean_names(
+            data.decode("utf-8", "replace") for _, data in snapshot.source_files
+        )
 
-    def named(name: str) -> bool:
-        return name in prose or name.rpartition(".")[2] in lean_components
+    def in_full(name: str) -> bool:
+        # A field after a declaration's name, as in `Lib.foo.symm`, still writes the name in full.
+        return name in prose or name in lean_prefixes
 
     modules: dict[tuple[str, str], list[_Hit]] = defaultdict(list)
+    citers: dict[tuple[str, str], list[_Hit]] = defaultdict(list)
     for hit in sorted(hits, key=lambda hit: (hit.library, hit.name)):
+        citers[hit.library, hit.module].append(hit)
         if not hit.own:
             modules[hit.library, hit.module].append(hit)
-        elif not named(hit.name):
+        elif not in_full(hit.name) and hit.name.rpartition(".")[2] not in lean_components:
             warnings.append(
-                f"library {hit.library}: {hit.name}'s docstring cites {_reach(hit.sources, citing)}; no implementation "
-                "note, source page or project Lean file names it, so reuse it or record why it does not apply"
+                f"library {hit.library}: {hit.name}'s docstring cites {_reach(hit.sources, citing, containers)}; no "
+                "implementation note, source page or project Lean file names it, so reuse it or record why it does "
+                "not apply"
             )
     for (library, module), group in sorted(modules.items()):
-        if module in prose or module in lean_names or any(named(hit.name) for hit in group):
+        # Only the module's exact name, or the full name of one of its declarations citing that source,
+        # counts: one generic last component, such as `symm` in any Lean file, would otherwise silence
+        # every declaration the module's docstring covers.
+        cited = set(group[0].sources)
+        if module in prose or module in lean_names or any(
+            in_full(hit.name) for hit in citers[library, module] if cited & set(hit.sources)
+        ):
             continue
-        one = len(group) == 1
-        members = f"its declaration {group[0].name}" if one else (
-            f"any of its {len(group)} declarations, such as {_some(hit.name for hit in group)}"
-        )
+        names = [hit.name for hit in group]
+        one = len(names) == 1
+        if one:
+            members = f"its declaration {names[0]} cites it only there"
+        elif len(names) <= 3:
+            members = f"its declarations {_joined(names)} cite it only there"
+        else:
+            members = f"{len(names)} of its declarations cite it only there, such as {_joined(names[:3])}"
         warnings.append(
-            f"library {library}: module {module}'s docstring cites {_reach(group[0].sources, citing)}; no "
-            f"implementation note, source page or project Lean file names the module or {members}, so reuse "
+            f"library {library}: module {module}'s docstring cites {_reach(group[0].sources, citing, containers)}; "
+            f"{members}, and no implementation note, source page or project Lean file names the module or "
+            f"{'that declaration' if one else 'one of its declarations citing it'}, so reuse "
             f"{'it' if one else 'them'} or record why {'it does' if one else 'they do'} not apply"
         )
     return warnings
@@ -189,43 +214,65 @@ def _hits(index: LibraryIndex, citing: dict[str, set[str]], library: str) -> lis
     return hits
 
 
-def _reach(sources: tuple[str, ...], citing: dict[str, set[str]]) -> str:
+def _reach(sources: tuple[str, ...], citing: dict[str, set[str]], containers: frozenset[str]) -> str:
     articles = set().union(*(citing[source] for source in sources))
     more = len(sources) - 1
     cited = sources[0] + (f" and {more} more source{'s' if more > 1 else ''} the blueprint cites" if more else "")
-    reach = "1 unproved article reaches" if len(articles) == 1 else f"{len(articles)} unproved articles reach"
-    return f"{cited}, which {reach}, including {min(articles)}"
+    # The article to name reaches the source named, and is one a declaration would be used in: a leaf
+    # before a container.
+    example = min(citing[sources[0]], key=lambda article: (article in containers, article))
+    if len(articles) == 1:
+        return f"{cited}, which unproved article {example} reaches"
+    return f"{cited}, which {len(articles)} unproved articles reach, including {example}"
 
 
-def _some(names: Iterable[str]) -> str:
-    first = list(names)[:3]
-    return first[0] if len(first) == 1 else f"{', '.join(first[:-1])} and {first[-1]}"
+def _joined(names: list[str]) -> str:
+    return f"{', '.join(names[:-1])} and {names[-1]}"
 
 
-def _blueprint_sources(graph: Graph) -> tuple[dict[str, set[str]], list[str]]:
-    """The sources unproved articles reach, each with those articles, and the text of every linked page.
+def _blueprint_sources(graph: Graph) -> tuple[dict[str, set[str]], dict[Path, str], frozenset[str]]:
+    """The sources unproved articles reach, each with those articles; the linked pages' text; the containers.
 
     An article reaches what its ``## Sources`` links cite, and what a Markdown page under the blueprint
     that a link names cites, since Roadmap records source locations in ``blueprint/sources/``. A proved
-    article reaches nothing: it needs no search. Every linked page is also a place that can name a
-    declaration, where a record that it does not apply outlives the implementation notes audit deletes.
+    article reaches nothing: it needs no search. Nor does a container once its implementation note may
+    be deleted, as audit decides: every formalizable article in its scope, and every leaf marked
+    ``not_ready`` beneath it, is proved, and there is at least one.
     """
+
+    contained: dict[str, list[str]] = defaultdict(list)
+    for node in graph.nodes.values():
+        if node.parent is not None:
+            contained[node.parent].append(node.id)
+    derived = status.derive(graph)
+    # As audit decides a container's scope is implemented: a leaf marked not ready is a target too.
+    has_target: dict[str, bool] = {}
+    implemented: dict[str, bool] = {}
+    for node_id in sorted(graph.nodes, key=lambda candidate: graph.nodes[candidate].depth, reverse=True):
+        has_target[node_id], implemented[node_id] = False, True
+        for child_id in contained.get(node_id, ()):
+            child = graph.nodes[child_id]
+            if child.formalizable or (child.not_ready and child_id not in contained):
+                has_target[node_id] = True
+                implemented[node_id] = implemented[node_id] and derived[child_id].proved
+            if has_target[child_id]:
+                has_target[node_id] = True
+                implemented[node_id] = implemented[node_id] and implemented[child_id]
 
     citing: dict[str, set[str]] = defaultdict(set)
     pages: dict[Path, tuple[str, frozenset[str]]] = {}  # many articles link one source page
     blueprint = graph.blueprint_dir.resolve()
-    derived = status.derive(graph)
     for node in graph.nodes.values():
         for target in node.sources:
             page = _linked_page(node.path, target, blueprint)
             if page is not None and page not in pages:
                 text = _page_text(page)
                 pages[page] = (text, cited_sources(text))
-            if derived[node.id].proved:
+            if derived[node.id].proved or (has_target[node.id] and implemented[node.id]):
                 continue
             for source in cited_sources(target) | (pages[page][1] if page is not None else frozenset()):
                 citing[source].add(node.id)
-    return citing, [text for text, _sources in pages.values()]
+    return citing, {page: text for page, (text, _sources) in pages.items()}, frozenset(contained)
 
 
 def _linked_page(article: Path, target: str, blueprint: Path) -> Path | None:
@@ -241,6 +288,30 @@ def _linked_page(article: Path, target: str, blueprint: Path) -> Path | None:
     if page is None or not page.is_relative_to(blueprint) or page.suffix.lower() != ".md":
         return None
     return page if os.path.isfile(page) else None
+
+
+def _source_pages(blueprint: Path) -> dict[Path, str]:
+    """The text of every Markdown page under ``blueprint/sources/``, linked or not, since any may name a declaration.
+
+    A record there that a declaration does not apply outlives the implementation notes, which audit asks
+    to delete once their article is proved. Links, hidden entries and anything but a regular file are
+    skipped, with checks that never raise: a folder that cannot be searched hides its entries.
+    """
+
+    root = blueprint / SOURCES_DIR
+    if os.path.islink(root):
+        return {}
+    pages = {}
+    for directory, folders, files in os.walk(root):  # never follows a link to a folder
+        folders[:] = [folder for folder in folders if not folder.startswith(".")]
+        for name in files:
+            path = os.path.join(directory, name)
+            if name.startswith(".") or not name.lower().endswith(".md"):
+                continue
+            if os.path.islink(path) or not os.path.isfile(path):
+                continue
+            pages[Path(path).resolve()] = _page_text(Path(path))
+    return pages
 
 
 def _page_text(path: Path) -> str:
@@ -271,29 +342,52 @@ def _note_texts(blueprint: Path) -> list[str]:
 
 
 def _prose_names(texts: Iterable[str]) -> set[str]:
-    """The full Lean names ``texts`` write, which prose may follow with ``'s``, ``?`` or ``!``."""
+    """The full Lean names ``texts`` write.
+
+    Prose may follow a name with ``'s``, ``?`` or ``!``, put it in ``_emphasis_``, or quote it, as in
+    ``'Nat.foo'``.
+    """
 
     names = set()
     for text in texts:
-        for token in _CONTINUATION_IDENTIFIER.findall(text):
+        for match in _CONTINUATION_IDENTIFIER.finditer(text):
+            token = match.group()
             names.update((token, token.rstrip("!?"), token.removesuffix("'s")))
+            if len(token) > 2 and token[0] == token[-1] == "_":
+                names.add(token.strip("_"))
+            if match.start() and text[match.start() - 1] == "'" and token.endswith("'"):
+                names.add(token[:-1])
     return names
 
 
-def _lean_names(texts: Iterable[str]) -> tuple[set[str], set[str]]:
-    """The names Lean ``texts`` write, and their components: after ``open Nat`` a file names ``Nat.foo`` as ``foo``.
+def _lean_names(texts: Iterable[str]) -> tuple[set[str], set[str], set[str]]:
+    """The names Lean ``texts`` write, their dotted prefixes, and their components.
 
-    Taking any ``foo`` for ``Nat.foo`` can leave a declaration unreported, but it never reports one
-    that a Lean file names.
+    After ``open Nat`` a file names ``Nat.foo`` as ``foo``, and ``Nat.foo.symm`` names ``Nat.foo`` with a
+    field after it. A plain component may be quoted, so ``Nat.«foo»`` names ``Nat.foo`` too.
     """
 
     names: set[str] = set()
+    prefixes: set[str] = set()
     components: set[str] = set()
     for text in texts:
         for token in _CONTINUATION_IDENTIFIER.findall(text):
-            names.add(token)
-            components.update(token.split("."))
-    return names, components
+            plain = _unquoted(token)
+            names.update((token, plain))
+            parts = plain.split(".")
+            prefixes.update(".".join(parts[: end + 1]) for end in range(len(parts)))
+            components.update(parts)
+    return names, prefixes, components
+
+
+def _unquoted(name: str) -> str:
+    """``name`` with each ``«x»`` that needs no quotes written as ``x``."""
+
+    def plain(part: re.Match[str]) -> str:
+        inner = part[1]
+        return inner if "." not in inner and _CONTINUATION_IDENTIFIER.fullmatch(inner) else part[0]
+
+    return _QUOTED.sub(plain, name) if "«" in name else name
 
 
 __all__ = ["cited_sources", "library_citation_warnings"]
