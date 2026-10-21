@@ -1369,6 +1369,7 @@ What an existing repository meets when it moves to this version:
     `module` for a module catalog, while the schema stays
     `autoform-search/v1`: `autoform-search/v2` already names the `--library`
     output. A consumer that rejects unknown keys must accept the new one.
+
 ## Validation
 
 `autoform check` rejects cycles between authored articles, missing targets,
