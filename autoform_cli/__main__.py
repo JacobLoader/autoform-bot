@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.metadata
 import json
 import os
 import shlex
@@ -55,13 +54,14 @@ from .skeleton import (
 from .work import WORK_SCHEMA, WorkError, assumption_contract, list_ready_work, work_context
 
 
-def _installed_version() -> str:
-    """The installed release's version, which pyproject.toml sets; "unknown" from a bare checkout."""
+class _Version(argparse.Action):
+    """Print the version only when asked, since reading a plugin checkout's commit runs git."""
 
-    try:
-        return importlib.metadata.version("autoform")
-    except importlib.metadata.PackageNotFoundError:
-        return "unknown"
+    def __call__(
+        self, parser: argparse.ArgumentParser, namespace: object, values: object, option: str | None = None
+    ) -> None:
+        print(f"{parser.prog} {debrief_orchestrator.autoform_version()}")
+        parser.exit()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -71,7 +71,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # waits for its own children.
         signal.signal(signal.SIGCHLD, signal.SIG_DFL)
     parser = argparse.ArgumentParser(prog="autoform")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {_installed_version()}")
+    parser.add_argument(
+        "--version", action=_Version, nargs=0, default=argparse.SUPPRESS, help="show the version and exit"
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init = subparsers.add_parser("init", help="write the blueprint vault, site config, and CI")

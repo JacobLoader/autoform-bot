@@ -1,14 +1,16 @@
-"""The release version: one number that every manifest and the lock carry."""
+"""The release version: one number that every manifest, the lock and the changelog carry."""
 
 from __future__ import annotations
 
 import importlib.metadata
 import json
+import re
 from pathlib import Path
 
 import pytest
 import tomli
 
+from autoform_cli import debrief_orchestrator
 from autoform_cli.__main__ import main
 
 
@@ -36,14 +38,54 @@ def test_every_manifest_and_the_lock_name_the_project_version(repo_root: Path) -
     assert manifests == dict.fromkeys(manifests, version)
 
 
-def test_version_names_the_installed_release(repo_root: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_the_changelog_names_the_project_version_as_its_newest_release(repo_root: Path) -> None:
+    """A release moves Unreleased under a heading naming the new version, so a
+    bump that leaves its changes under Unreleased fails here."""
+
+    changelog = (repo_root / "CHANGELOG.md").read_text(encoding="utf-8")
+    releases = re.findall(r"^## (?!Unreleased$)(\S+)", changelog, re.MULTILINE)
+
+    assert releases[:1] == [_project_version(repo_root)[1]]
+
+
+@pytest.mark.parametrize(
+    ("installed", "commit", "printed"),
+    [
+        ("0.6.0", "745a88599469", "autoform 0.6.0 (745a88599469)"),
+        ("0.6.0", None, "autoform 0.6.0"),
+        (None, None, "autoform unknown"),
+    ],
+)
+def test_version_names_the_installed_release_and_the_checkout_commit(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    installed: str | None,
+    commit: str | None,
+    printed: str,
+) -> None:
+    """`--version` prints what a debrief records: the installed version, or
+    "unknown" outside an installed release, and a plugin checkout's commit."""
+
+    def version(name: str) -> str:
+        if installed is None:
+            raise importlib.metadata.PackageNotFoundError(name)
+        return installed
+
+    monkeypatch.setattr(importlib.metadata, "version", version)
+    monkeypatch.setattr(debrief_orchestrator, "_git", lambda root, *arguments: commit)
     with pytest.raises(SystemExit) as exited:
         main(["--version"])
 
     assert exited.value.code == 0
-    try:
-        installed = importlib.metadata.version("autoform")
-    except importlib.metadata.PackageNotFoundError:
-        pytest.skip("autoform is not installed in this environment")
-    assert capsys.readouterr().out == f"autoform {installed}\n"
-    assert installed == _project_version(repo_root)[1]
+    assert capsys.readouterr().out == printed + "\n"
+
+
+def test_the_version_is_read_only_for_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    def unread() -> str:
+        raise AssertionError("reading the version runs git, so only --version may read it")
+
+    monkeypatch.setattr(debrief_orchestrator, "autoform_version", unread)
+    with pytest.raises(SystemExit) as exited:
+        main(["--help"])
+
+    assert exited.value.code == 0

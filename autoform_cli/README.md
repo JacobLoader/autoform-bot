@@ -183,6 +183,10 @@ running from the project root:
 uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform check blueprint --lean-root .
 ```
 
+`autoform --version` prints the installed version, followed by the plugin
+checkout's commit when it runs from one, as in `autoform 0.5.0 (745a88599469)`;
+a debrief records the same string.
+
 Create a new project's vault, site configuration, and CI. The layout is fixed,
 so it is written rather than described; existing files are left alone, which
 makes the same command the repair path:
