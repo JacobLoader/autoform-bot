@@ -11,6 +11,7 @@ from typing import Sequence
 from . import graph_views, mermaid, status
 from .graph import GraphValidationError, load_graph
 from .markdown import blueprint_root
+from .readback import READBACKS_DIR
 
 
 GENERATED_STRUCTURE_MARKER = "---\nkind: structure\nautoform_generated: true\n---"
@@ -113,6 +114,8 @@ def export_structure(blueprint_dir: Path, output: Path | None = None) -> Path:
         for path in sorted(blueprint_dir.rglob("*.md"))
         if not any(part.startswith(".") for part in path.relative_to(blueprint_dir).parts)
         and path.name not in {"dependencies.md", destination.name}
+        # A read-back card is not a page, and may be for an article the site leaves out.
+        and path.relative_to(blueprint_dir).parts[:1] != (READBACKS_DIR,)
     ]
     directories: set[Path] = set()
     for path in files:
