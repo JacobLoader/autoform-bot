@@ -1393,10 +1393,11 @@ def _load_impact_evidence(
                 raise
             # The probe imports every root library's modules, which can be thousands; the libraries say the same.
             names = shlex.join(sorted({library.name for library in libraries}))
+            checked = f"{len(imports)} module{'' if len(imports) == 1 else 's'}"
             raise SkeletonError(
                 [
-                    f"{skeleton.STALE_BUILD}{names}` before running the impact probe"
-                    + (f" (Lake: {said})" if said else "")
+                    f"{skeleton.STALE_BUILD}{names}` before running the impact probe "
+                    f"({checked}" + (f"; Lake: {said})" if said else ")")
                 ]
             ) from None
         latest = load_runtime_graph(project_or_blueprint)

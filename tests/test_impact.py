@@ -2196,7 +2196,7 @@ def test_cli_names_the_libraries_to_build_for_a_stale_build_instead_of_every_mod
     assert code == 2
     assert output.err.splitlines() == [
         "error: Lean build artifacts are stale; run `lake build Demo` before running the impact probe "
-        "(Lake: ✖ [3/9] Building Demo.M7)"
+        "(1 module; Lake: ✖ [3/9] Building Demo.M7)"
     ]
 
 

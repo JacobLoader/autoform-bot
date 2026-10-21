@@ -450,6 +450,24 @@ def test_a_failed_freshness_check_keeps_only_the_start_of_lake_output(
     assert len(lines) == 22
 
 
+def test_a_failed_freshness_check_keeps_the_reason_lake_prints_on_stdout(
+    tmp_path: Path, monkeypatch, probe: str
+) -> None:
+    # Lake prints each target's error on stdout and only its summary on stderr.
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command, 1, stdout="error: Skel/Main.olean.hash: permission denied\n", stderr="error: build failed\n"
+        )
+
+    monkeypatch.setattr("autoform_cli.skeleton._run_bounded_command", fake_run)
+
+    with pytest.raises(SkeletonError) as refused:
+        run_probe(probe, tmp_path)
+
+    [message] = refused.value.issues
+    assert message.splitlines()[1:] == ["error: Skel/Main.olean.hash: permission denied", "error: build failed"]
+
+
 def test_probe_semantic_schema_matches_the_python_reader() -> None:
     helper = _render_probe_helper()
 

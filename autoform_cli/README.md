@@ -895,11 +895,7 @@ refuses any content or source-identity change. JSON uses `autoform-impact/v1`
 and binds its answer to the Markdown `source_revision`, the repository
 `lean_source_revision`, and a `build_revision` hash of the normalized Lean
 records. The probe imports project modules, so run it only in a trusted checkout
-or sandbox. It imports every root library, so a missing or stale build exits 2
-with the `lake build` command for those libraries and the first module Lake
-found unbuilt, as `work import-impact` does. Freshness is Lake's rehash of this
-checkout's `.lake` against this checkout's sources, so a build in another clone
-or worktree does not make this one fresh.
+or sandbox. A missing or stale build is reported as for `work import-impact`.
 It compares elaborated types and values; changes to notation,
 attributes, instance priority, or unreported generated declarations still
 require human review.
@@ -912,7 +908,12 @@ autoform work import-impact SELECTOR MODULE [TARGET] --lean-root PATH [--json] [
 ```
 
 `import-impact` is advisory and does not edit authored roadmap or Lean source;
-its Lake freshness check may refresh build hash sidecars. `SELECTOR` identifies
+its Lake freshness check may refresh build hash sidecars. The probe imports
+every module of the root libraries, so each must be built: a missing or stale
+build exits 2 with the `lake build` command for those libraries, how many
+modules were checked, and the first module Lake found unbuilt. Freshness is
+Lake's rehash of this checkout's `.lake` against this checkout's sources, so a
+build in another clone or worktree does not make this one fresh. `SELECTOR` identifies
 the working article and `MODULE` the module whose effective header would change.
 Lean supplies the loaded module graph; Autoform binds every node to its captured
 root source and configured root-package artifact so dependencies cannot shadow
