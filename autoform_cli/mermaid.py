@@ -1,25 +1,27 @@
 """Render a blueprint DAG as Mermaid inside a Markdown page.
 
 Mermaid was chosen over a bespoke SVG because the same fenced block renders in
-Obsidian, on GitHub, and on the published site. Colours follow
-:mod:`autoform_cli.status`: fill tracks proof progress, stroke tracks statement
-progress, exactly as ``leanblueprint`` draws its dependency graph.
+Obsidian and on GitHub; the published site draws the dependency explorer
+instead. Colours follow :mod:`autoform_cli.status`: fill tracks proof progress,
+stroke tracks statement progress, exactly as ``leanblueprint`` draws its
+dependency graph.
 """
 
 from __future__ import annotations
 
 import html
 import os
-import urllib.parse
+from collections.abc import Mapping
 from pathlib import Path
+from urllib.parse import quote
 from typing import TYPE_CHECKING
 
-from .graph_views import container_nodes
-from .status import STATES, State, is_definition
+from .graph_views import container_nodes, display_state, display_status_key, inventory_counts
+from .status import INVENTORY_STATES, MEANINGS, STATES, State, is_definition
 
 if TYPE_CHECKING:
     from .graph import Graph, Node
-    from .graph_views import GraphView, ViewEdge, ViewNode
+    from .graph_views import ViewNode
     from .status import NodeStatus
 
 
@@ -31,11 +33,10 @@ def node_link(node: Node, output: Path, link_extension: str) -> str:
 def relative_link(target: Path, output: Path, link_extension: str) -> str:
     """Relative link from the page at *output* to *target*, with its suffix swapped."""
     relative = Path(os.path.relpath(target.resolve(), output.resolve().parent))
-    # The page's own directory is ``.``, which has no name to take a suffix.
-    link = relative.as_posix() if not relative.name else relative.with_suffix(link_extension).as_posix()
-    # A first segment that holds a colon, such as a folder named
-    # ``javascript:x``, would read as a URL's scheme.
-    return f"./{link}" if ":" in link.split("/", 1)[0] else link
+    if not relative.name:
+        # The page's own directory is ``.``, which has no name to take a suffix.
+        return quote(relative.as_posix(), safe="/")
+    return quote(relative.with_suffix(link_extension).as_posix(), safe="/")
 
 
 def source_links(graph: Graph, output: Path, link_extension: str) -> dict[str, str]:
@@ -46,18 +47,12 @@ def source_links(graph: Graph, output: Path, link_extension: str) -> dict[str, s
     }
 
 
-#: The class render gives each graph it publishes on the site, which it
-#: writes as raw HTML, as no article may: the site's diagram script draws these
-#: with the loose security their links need, and every other diagram strictly.
+#: The class of a graph render would publish on the site as raw HTML, which
+#: no article may hold: the site's diagram script draws an element of this
+#: class with the loose security its links need, and every other diagram
+#: strictly. The dependency explorer replaced render's Mermaid maps, so no
+#: page render writes holds one now, and every diagram is drawn strictly.
 GRAPH_CLASS = "bp-graph"
-
-
-def published_graph(diagram: str) -> str:
-    """The ```mermaid fenced block *diagram* as the element the site's
-    diagram script draws as render's own: its source, escaped as superfences
-    escapes a fence's, in a div of class ``mermaid`` and :data:`GRAPH_CLASS`."""
-    source = diagram.removeprefix("```mermaid\n").removesuffix("\n```")
-    return f'<div class="mermaid {GRAPH_CLASS}">{html.escape(source, quote=False)}</div>'
 
 
 def _escape(text: str) -> str:
@@ -77,9 +72,11 @@ def _href(link: str) -> str:
     A link is made from file and folder names, which may hold a quote that
     would end Mermaid's string and start a click's call, or a colon that
     would make the path a ``javascript:`` URL; percent-encoded, it is one
-    string and a relative path to the same page.
+    string and a relative path to the same page. A link :func:`relative_link`
+    wrote is percent-encoded already, so its ``%`` escapes are kept as they
+    are rather than encoded a second time.
     """
-    return urllib.parse.quote(link, safe="/#")
+    return quote(link, safe="/#%")
 
 
 def render_diagram(
@@ -122,7 +119,7 @@ def render_diagram(
             continue
         # Rectangles introduce data, rounded boxes assert something.
         shape = f'["{label}"]' if is_definition(node) else f'("{label}")'
-        lines.append(f"  {handle}{shape}:::{statuses[node.id].key}")
+        lines.append(f"  {handle}{shape}:::{display_status_key(node, statuses[node.id])}")
 
     for node in ordered:
         for dependency in node.statement_dependencies:
@@ -133,8 +130,11 @@ def render_diagram(
                 lines.append(f"  {handles[dependency]} -.-> {handles[node.id]}")
 
     for node in ordered:
-        state = _view_summary(boxes[node.id]) if node.id in boxes else statuses[node.id].label
-        tooltip = _escape(f"{node.title} — {state}")
+        if node.id in boxes:
+            state_label = _view_summary(boxes[node.id])
+        else:
+            state_label = display_state(node, statuses[node.id]).label
+        tooltip = _escape(f"{node.title} — {state_label}")
         lines.append(f'  click {handles[node.id]} "{_href(links[node.id])}" "{tooltip}"')
 
     if include_classdefs:
@@ -143,54 +143,8 @@ def render_diagram(
     return "\n".join(lines)
 
 
-def render_view_diagram(
-    view: GraphView,
-    *,
-    links: dict[str, str] | None = None,
-    include_classdefs: bool = True,
-) -> str:
-    """Return a Mermaid diagram for a project, chapter, focus, or full view."""
-    if not view.nodes:
-        return '```mermaid\ngraph LR\n  empty["No nodes in this view"]\n```'
-    links = links or {}
-    handles = {node.id: f"n{index}" for index, node in enumerate(view.nodes)}
-    lines = ["```mermaid", "graph LR"]
-
-    for node in view.nodes:
-        handle = handles[node.id]
-        label = _view_label(node)
-        if node.kind == "node":
-            shape = f'["{label}"]' if is_definition(node) else f'("{label}")'
-            class_name = node.status_key or "planned"
-        else:
-            shape = f'["{label}"]'
-            class_name = _scope_class(node.complete) if node.kind == "scope" else "boundary"
-        lines.append(f"  {handle}{shape}:::{class_name}")
-
-    for edge in view.edges:
-        lines.extend(_view_edge_lines(edge, handles))
-
-    for node in view.nodes:
-        handle = handles[node.id]
-        if node.focus:
-            lines.append(f"  class {handle} focus")
-        href = links.get(node.id)
-        if href is not None:
-            tooltip = _escape(f"{node.title} — {_view_summary(node)}")
-            lines.append(f'  click {handle} "{_href(href)}" "{tooltip}"')
-
-    if include_classdefs:
-        lines.extend(f"  {line}" for line in classdef_lines())
-    lines.append("```")
-    return "\n".join(lines)
-
-
 def _view_label(node: ViewNode) -> str:
-    title = _escape(node.title)
-    if node.kind == "node":
-        return title
-    prefix = "External chapter: " if node.kind == "boundary" else ""
-    return f"{prefix}{title}<br/><small>{_escape(_view_summary(node))}</small>"
+    return f"{_escape(node.title)}<br/><small>{_escape(_view_summary(node))}</small>"
 
 
 def _view_summary(node: ViewNode) -> str:
@@ -200,21 +154,6 @@ def _view_summary(node: ViewNode) -> str:
         for key, count in node.status_counts
     )
     return f"{node.item_count} {item}" + (f" · {counts}" if counts else "")
-
-
-def _view_edge_lines(edge: ViewEdge, handles: dict[str, str]) -> list[str]:
-    source = handles[edge.source]
-    target = handles[edge.target]
-    lines = []
-    if edge.statement_count:
-        label = f"|{edge.statement_count}|" if edge.statement_count > 1 else ""
-        lines.append(f"  {source} -->{label} {target}")
-    if edge.proof_count:
-        if edge.proof_count > 1:
-            lines.append(f"  {source} -. {edge.proof_count} .-> {target}")
-        else:
-            lines.append(f"  {source} -.-> {target}")
-    return lines
 
 
 def _scope_class(complete: bool) -> str:
@@ -231,10 +170,12 @@ def classdef_lines(*, dark: bool = False) -> list[str]:
         )
 
     states = [classdef(state.key, state) for state in STATES]
-    # Chapter and boundary boxes are the project map, which is the first thing
-    # on the landing page, so they take the same greys and blues as the rest of
-    # the site rather than the GitHub palette the states used to sit in. A
-    # finished scope takes the fully proved green, so completion reads at a glance.
+    # Scope boxes are the vault map's containers. They take the same greys and
+    # blues as the rest of the site rather than the GitHub palette the states
+    # used to sit in, and a finished scope takes the fully proved green, so
+    # completion reads at a glance. No generated map draws boundary or focus
+    # boxes any more; those classes stay until authored diagrams on the site
+    # get a rule of their own.
     complete = classdef("scope_complete", next(state for state in STATES if state.key == "fully_proved"))
     if dark:
         views = [
@@ -253,7 +194,10 @@ def classdef_lines(*, dark: bool = False) -> list[str]:
     return [*states, *views]
 
 
-def render_legend(statuses: dict[str, NodeStatus]) -> str:
+def render_legend(
+    statuses: dict[str, NodeStatus],
+    inventories: Mapping[str, int] | None = None,
+) -> str:
     """Return a legend covering the states actually in use.
 
     A Markdown table put this in a bordered box with a blank first heading over
@@ -261,14 +205,20 @@ def render_legend(statuses: dict[str, NodeStatus]) -> str:
     cell, so the swatch, the label and the count landed in a different place in
     every row. This is one grid instead: the cells are emitted in reading order
     and the columns line up because the grid, not the content, sets them.
+
+    *inventories* counts module catalogs by inventory status. A legend beside
+    counts that include catalogs lists those statuses after the states.
     """
+    inventories = inventories or {}
     used = {status.key for status in statuses.values()}
     rows = [state for state in STATES if state.key in used]
+    rows.extend(state for state in INVENTORY_STATES if inventories.get(state.key))
     if not rows:
         return ""
     counts = {state.key: 0 for state in STATES}
     for status in statuses.values():
         counts[status.key] += 1
+    counts.update(inventories)
     cells = []
     for state in rows:
         # Colour comes from the stylesheet, so the legend follows the theme.
@@ -276,12 +226,15 @@ def render_legend(statuses: dict[str, NodeStatus]) -> str:
             f'<span class="bp-swatch bp-swatch-{state.key}"></span>'
             f'<span class="bp-legend-label">{html.escape(state.label)}</span>'
             f'<span class="bp-legend-count">{counts[state.key]}</span>'
-            f'<span class="bp-legend-meaning">{html.escape(_MEANINGS[state.key])}</span>'
+            f'<span class="bp-legend-meaning">{html.escape(MEANINGS[state.key])}</span>'
         )
     return f'<div class="bp-legend-grid">{"".join(cells)}</div>'
 
 
-def render_legend_tip(statuses: dict[str, NodeStatus]) -> str:
+def render_legend_tip(
+    statuses: dict[str, NodeStatus],
+    inventories: Mapping[str, int] | None = None,
+) -> str:
     """The legend behind a hover icon, for pages that only occasionally need it.
 
     A graph page carried the legend in a disclosure captioned "What the colours
@@ -294,7 +247,7 @@ def render_legend_tip(statuses: dict[str, NodeStatus]) -> str:
     used in the vault copy, which is read in Obsidian where this stylesheet
     does not exist and the note would simply never be reachable.
     """
-    legend = render_legend(statuses)
+    legend = render_legend(statuses, inventories)
     if not legend:
         return ""
     icon = (
@@ -313,20 +266,7 @@ def render_legend_tip(statuses: dict[str, NodeStatus]) -> str:
     )
 
 
-_MEANINGS = {
-    "mathlib": "Upstreamed into Mathlib.",
-    "fully_proved": "Proved, and every prerequisite is fully proved too.",
-    "proved": "Proof compiles, but something it rests on is not finished.",
-    "defined": "Definition is written in Lean.",
-    "conditional": "Proof compiles, but rests on an open statement without a recorded Lean proof.",
-    "can_prove": "Statement is in Lean and nothing it needs is blocked, so the proof can start.",
-    "stated": "Statement is in Lean; the proof is not.",
-    "can_state": "Nothing it needs is blocked, so the statement can be written in Lean.",
-    "not_ready": "Needs more blueprint work before it can be attempted.",
-    "planned": "Described in the blueprint only.",
-}
-
-_STATE_LABELS = {state.key: state.label for state in STATES}
+_STATE_LABELS = {state.key: state.label for state in (*STATES, *INVENTORY_STATES)}
 
 
 def render_page(
@@ -349,9 +289,17 @@ def render_page(
         links=links,
         include_classdefs=include_classdefs,
     )
-    # Containers are drawn as scope boxes, so they have no row in the legend.
+    # Containers are drawn as scope boxes, so they have no row in the legend,
+    # and a catalog counts apart as an inventory.
     boxes = container_nodes(graph, statuses)
-    legend = render_legend({node_id: state for node_id, state in statuses.items() if node_id not in boxes})
+    legend = render_legend(
+        {
+            node_id: state
+            for node_id, state in statuses.items()
+            if node_id not in boxes and graph.nodes[node_id].catalog is None
+        },
+        inventory_counts(graph, statuses),
+    )
     sections = [
         "---",
         "kind: graph",
@@ -378,7 +326,5 @@ __all__ = [
     "render_legend",
     "render_legend_tip",
     "render_page",
-    "published_graph",
-    "render_view_diagram",
     "source_links",
 ]

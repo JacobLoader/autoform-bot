@@ -21,7 +21,7 @@ except ModuleNotFoundError:  # Python 3.10
 from autoform_cli.audit import audit_blueprint
 from autoform_cli.graph import load_graph
 from autoform_cli.graph import _FRONTMATTER_KEYS
-from autoform_cli.lean import build_linker, declaration_names
+from autoform_cli.lean import declaration_names, index_project
 from autoform_cli.markdown import markdown_anchors, markdown_links
 from autoform_cli.project.create import _MINIMUM_LEAN
 from autoform_cli.render import render_site
@@ -50,6 +50,42 @@ def test_root_readme_uses_the_canonical_repository(repo_root: Path) -> None:
     assert "git clone https://github.com/facebookresearch/autoform-bot.git" in readme
     assert "`execution` branch" not in readme
     assert "VivienCabannes/autoform-bot" not in readme
+
+
+def test_generated_site_docs_describe_one_multiscale_explorer(repo_root: Path) -> None:
+    cli, review = (
+        " ".join((repo_root / relative).read_text(encoding="utf-8").split())
+        for relative in ("autoform_cli/README.md", "skills/human-review/SKILL.md")
+    )
+
+    assert "Every generated site projection uses the same" in cli
+    assert "Authored Mermaid remains supported in the vault and book" in cli
+    assert (
+        "That index, `dependencies/index.json`, the project payload `dependencies.json`, and every other payload "
+        "under `dependencies/` are internal to the bundled viewer, and their schemas may change"
+    ) in cli
+    assert "Every generated site route uses the same" in review
+
+
+def test_the_example_uses_nothing_newer_than_its_autoform_pin(repo_root: Path) -> None:
+    """The example's CI runs its pinned AUTOFORM_REF, 0288506b, which predates catalogs.
+
+    That check rejects `catalog:` and `area:` and that render rejects
+    INVENTORIED, while it ignores atlas.json, and its render draws Mermaid maps.
+    Move the pin, here and in the workflow equivalence test, before relaxing this.
+    """
+    example = repo_root / _EXAMPLE
+    for page in (example / "blueprint/roadmap").rglob("*.md"):
+        text = page.read_text(encoding="utf-8")
+        frontmatter = text[4:].split("\n---", 1)[0] if text.startswith("---\n") else ""
+        assert not re.search(r"^(?:area|catalog):", frontmatter, re.MULTILINE), page
+    assert "INVENTORIED" not in (example / "blueprint/coverage/README.md").read_text(encoding="utf-8")
+    assert "dependency maps of the project and each chapter" in " ".join(
+        (example / "README.md").read_text(encoding="utf-8").split()
+    )
+    assert "derived statuses, dependency maps," in (example / ".github/workflows/blueprint-pages.yml").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_readme_tells_users_how_to_run_several_sessions(repo_root: Path) -> None:
@@ -154,10 +190,10 @@ def test_setup_asset_is_a_repo_shaped_thesis_vault(repo_root: Path) -> None:
     )
 
     # Every declaration a node claims must exist in the project's Lean sources.
-    linker = build_linker(example)
+    index = index_project(example)
     for node in graph.nodes.values():
         for name in declaration_names(node.lean or ""):
-            assert linker.location(name) is not None, f"{node.id}: {name}"
+            assert index.find(name) is not None, f"{node.id}: {name}"
 
     assert (blueprint / "roadmap" / "README.md").is_file()
     assert (blueprint / "roadmap" / "full-supervision" / "README.md").is_file()
@@ -203,7 +239,7 @@ def test_setup_asset_static_site_contract(repo_root: Path, tmp_path: Path) -> No
 
     assert report.unresolved == []
     manifest = json.loads((site / "publication.json").read_text(encoding="utf-8"))
-    assert manifest["schema"] == "autoform-publication/v2"
+    assert manifest["schema"] == "autoform-publication/v3"
     assert manifest["nodes"] == 10
     assert manifest["dependencies"] == 9
     assert manifest["git_ref"] == ref
@@ -211,6 +247,7 @@ def test_setup_asset_static_site_contract(repo_root: Path, tmp_path: Path) -> No
     assert manifest["coverage"]["counts"] == {
         "DECOMPOSED": 1,
         "DEFERRED": 0,
+        "INVENTORIED": 0,
         "MAPPED": 5,
         "OUT": 1,
     }
@@ -236,7 +273,7 @@ def test_setup_asset_static_site_contract(repo_root: Path, tmp_path: Path) -> No
     assert '<a class="bp-code-link"' in chapter
     assert '<svg class="bp-code-icon"' in chapter
     assert '<a class="bp-context-link"' in chapter
-    assert "dependencies/nodes/infimum-loss/theorems/supervision-recovery.html" in chapter
+    assert "dependencies/chapters/infimum-loss.html#node=infimum-loss%2Ftheorems%2Fsupervision-recovery" in chapter
     assert '<details class="bp-dependencies"><summary>Dependencies</summary>' in chapter
     assert '<nav class="bp-book-nav" aria-label="Blueprint chapters">' in chapter
     assert (
@@ -274,10 +311,21 @@ def test_setup_asset_static_site_contract(repo_root: Path, tmp_path: Path) -> No
         assert linked.is_file(), href
 
     graph_page = (site / "dependencies.md").read_text(encoding="utf-8")
-    assert '<div class="mermaid bp-graph">' in graph_page
+    assert "```mermaid" not in graph_page
+    assert 'class="bp-dag-viewer"' in graph_page
+    assert 'data-graph-src="dependencies.json"' in graph_page
     assert "graph_view: project" in graph_page
-    assert '"dependencies/chapters/infimum-loss.html"' in graph_page
-    assert '"dependencies/chapters/full-supervision.html"' in graph_page
+    project_payload = json.loads((site / "dependencies.json").read_text(encoding="utf-8"))
+    assert project_payload["view"]["presentation"] == "atlas"
+    assert {region["label"] for region in project_payload["regions"]} == {
+        "Foundations",
+        "Learning Theory",
+    }
+    assert all(node["summary"] for node in project_payload["nodes"])
+    assert {node["url"] for node in project_payload["nodes"]} == {
+        "dependencies/chapters/full-supervision.html",
+        "dependencies/chapters/infimum-loss.html",
+    }
 
     chapter_graph = (site / "dependencies/chapters/infimum-loss.md").read_text(
         encoding="utf-8"
@@ -287,30 +335,40 @@ def test_setup_asset_static_site_contract(repo_root: Path, tmp_path: Path) -> No
     )
     assert "graph_view: chapter" in chapter_graph
     assert "graph_view: chapter" in support_graph
+    chapter_payloads = {
+        group: json.loads((site / f"dependencies/chapters/{group}.json").read_text(encoding="utf-8"))
+        for group in ("infimum-loss", "full-supervision")
+    }
     for node_id in formalizable:
         anchor = node_id.split("/", 1)[1].replace("/", "-")
         group = node_id.split("/", 1)[0]
-        target_graph = chapter_graph if group == "infimum-loss" else support_graph
-        assert f'"../../roadmap/{group}/index.html#{anchor}"' in target_graph
-        assert (site / "dependencies/nodes" / f"{node_id}.md").is_file()
+        urls = {node["id"]: node["url"] for node in chapter_payloads[group]["nodes"]}
+        assert urls[node_id] == f"../../roadmap/{group}/index.html#{anchor}"
+    assert not (site / "dependencies/nodes").exists()
+
+    generated_graph_pages = [site / "dependencies.md", *(site / "dependencies").rglob("*.md")]
+    for generated_page in generated_graph_pages:
+        document = generated_page.read_text(encoding="utf-8")
+        assert "```mermaid" not in document
+        assert 'class="bp-dag-viewer"' in document
+        assert document.count("blueprint-dag.js") == 1
 
     full_graph = (site / "dependencies/full.md").read_text(encoding="utf-8")
-    assert "graph_view: full" in full_graph
-    focus_graph = (
-        site / "dependencies/nodes/infimum-loss/theorems/supervision-recovery.md"
-    ).read_text(encoding="utf-8")
-    assert "graph_view: focus" in focus_graph
-    assert re.search(r"class n\d+ focus", focus_graph)
-    assert "one dependency hop" in focus_graph
-    assert (
-        "[Open textbook statement](../../../../roadmap/infimum-loss/README.md#"
-        "theorems-supervision-recovery)"
-    ) in focus_graph
+    assert "graph_view: project" in full_graph
+    assert 'class="bp-dag-viewer"' in full_graph
+    assert "```mermaid" not in full_graph
+    payload = json.loads((site / "dependencies/full.json").read_text(encoding="utf-8"))
+    assert len(payload["nodes"]) < len(graph.nodes)
+    search_index = json.loads((site / "dependencies/index.json").read_text(encoding="utf-8"))
+    assert {node["id"] for node in search_index["nodes"]} == set(graph.nodes)
+    statement_page = (site / "roadmap/infimum-loss/README.md").read_text(encoding="utf-8")
+    assert "dependencies/chapters/infimum-loss.html#node=infimum-loss%2Ftheorems%2Fsupervision-recovery" in statement_page
 
     # Progress folded into the Book landing and the Graph; no separate page.
     assert not (site / "progress.md").exists()
     assert not (site / "book.md").exists()
     overview = (site / "README.md").read_text(encoding="utf-8")
+    assert 'data-graph-src="dependencies.json"' in overview
     # The landing page states progress as figures; the chapters keep the strip.
     assert "Scoped roadmap" in overview
     assert "5 of 7 targets complete" in overview
@@ -333,8 +391,10 @@ def test_setup_asset_static_site_contract(repo_root: Path, tmp_path: Path) -> No
     # own repository. Pointing it at AutoformBot sends readers to the plugin.
     assert "repo_url: https://github.com/VivienCabannes/cabannes-thesis" in mkdocs
     assert "repo_url: https://github.com/facebookresearch/autoform-bot" not in mkdocs
+    assert "javascripts/blueprint-dag.js" not in mkdocs
     summary = (site / "SUMMARY.md").read_text(encoding="utf-8")
-    assert summary.startswith("- [Home](README.md)")
+    assert summary.startswith("---\nsearch:\n  exclude: true\n---\n")
+    assert "- [Home](README.md)" in summary
     assert "- Book" in summary
     assert "- Graph" in summary
     assert "[Infimum Loss milestone](roadmap/infimum-loss/README.md)" in summary
@@ -531,6 +591,66 @@ def test_skill_links_into_the_cli_reference_land_on_a_section(repo_root: Path) -
                 assert fragment in sections, f"{where} links to a missing section: #{fragment}"
                 cited += 1
     assert cited
+
+
+def test_agent_review_judges_a_catalog_as_an_inventory(repo_root: Path) -> None:
+    """A catalog lists peer declarations by design, which the rubric scored as a defect."""
+    rubric = " ".join(
+        (repo_root / "skills/agent-review/references/roadmap-quality.md").read_text(encoding="utf-8").split()
+    )
+
+    assert "`DECOMPOSED`, `INVENTORIED`, `DEFERRED`, and `OUT`" in rubric
+    assert "not a duplicate of the article that expounds it" in rubric
+    assert "The pull-request-unit and unique-main-result rules do not apply to it" in rubric
+
+
+def test_roadmap_repository_scope_inventories_existing_lean(repo_root: Path) -> None:
+    """A global blueprint is an inventory, not merely a future-work backlog.
+
+    A consumer asked for one wiki covering all mathematics in an established
+    Lean repository. The old workflow treated local implementations as prior
+    art, produced only prospective roadmaps, and therefore rendered 0% despite
+    extensive existing code.
+    """
+
+    roadmap_path = repo_root / "skills" / "roadmap" / "SKILL.md"
+    roadmap = roadmap_path.read_text(encoding="utf-8")
+    normalized = " ".join(roadmap.split())
+    metadata = (
+        repo_root / "skills" / "roadmap" / "agents" / "openai.yaml"
+    ).read_text(encoding="utf-8")
+    example = (
+        repo_root / "skills" / "roadmap" / "references" / "cabannes-thesis-roadmap.md"
+    ).read_text(encoding="utf-8")
+
+    for required in (
+        "repository-wide library, global wiki, or other existing codebase",
+        "project-owned Lean is a primary mathematical source",
+        "inventory every in-scope tracked module and public mathematical declaration",
+        "future-work slice cannot stand in for a repository-wide inventory",
+        # A docstring describes code; a paper-based pass still works from its source.
+        "Work from exact source passages. When the boundary includes existing Lean",
+        "never replace the adopted source",
+        "a repository inventory also needs every in-scope declaration reconciled",
+        "`DECOMPOSED` means represented by declaration articles, not unfinished",
+        "record exact compiled names in `lean`",
+        "`proof: formalized` for a theorem or lemma only after checking that its proof is complete",
+        "An axiom or wanted placeholder does not justify a formalized proof",
+        "a definition of a conjecture proposition formalizes its statement representation",
+        "`mathlib: true` only for an exact verified upstream result",
+    ):
+        assert required in normalized
+
+    assert "inventorying existing formalized Lean when the boundary is an existing repository or library" in metadata
+    assert "Existing and planned mathematics coexist in one book" in example
+
+
+def test_roadmap_and_formalize_leave_code_an_audit_warns_about_to_the_user(repo_root: Path) -> None:
+    """A catalog's limit warning describes code that builds today; a guessed limit can break it."""
+    for skill in ("roadmap", "formalize"):
+        text = " ".join((repo_root / f"skills/{skill}/SKILL.md").read_text(encoding="utf-8").split())
+        assert "`catalog-unscoped-limit` warning describes existing Lean code and never fails the audit" in text, skill
+        assert "change that code only when the user asks" in text, skill
 
 
 def test_example_workflows_match_the_scaffold_templates(repo_root: Path) -> None:

@@ -36,8 +36,23 @@ judgment. For vault review, point the user to `blueprint/README.md`, coverage,
 chapter pages, and `blueprint/dependencies.md` in Obsidian. For browser review,
 run `autoform dashboard <PROJECT> --site-dir site` so the same site deployed to
 GitHub Pages is served on loopback with local-only live claim badges. Provide
-the overview, including its progress summary, plus the project graph, relevant
-chapter graph, and node-neighborhood links.
+the overview, including its progress summary, plus the relevant project,
+chapter, nested-scope, and statement-context links. Every generated site route
+uses the same Canvas plus semantic-DOM viewer. Open its full-page route and move
+from the project's topics to a chapter, a nested scope, then a searched
+statement and its immediate dependencies. Keep the hierarchy rail visible while
+drilling, in a window wider than 1,200 px, where open details do not cover it;
+at project scale, select one topic to reveal its direct dependency neighborhood
+instead of displaying every cross-topic edge at once. Global search enters the
+statement's smallest useful scope, while breadcrumbs and Back return to the
+project overview.
+
+Judge the explorer as a mathematical knowledge map, not navigation chrome.
+Authored mathematical regions and prose should control the atlas and reading
+panel. Regions come only from authored `area:` or `blueprint/atlas.json`;
+folders that only file or paginate pages never become regions. Areas show as
+regions, containment as topics you open, and dependency as arrows; a level with
+no authored dependency edges says so instead of fabricating relations.
 
 Guide the review from coarse to fine: declared scope and exclusions, milestone
 book, landing-page progress summary, cross-chapter graph, chapter graph, then
@@ -50,8 +65,9 @@ under the [revision contract](../../autoform_cli/README.md#revision-contract),
 and autonomous rubric scoring to Agent Review.
 
 Treat the landing page's `Scoped roadmap` percentage as completion among
-formalizable leaf targets that are fully proved, including every dependency
-recursively. This requires proofs for theorems and bodies for definitions. A
+formalizable leaf targets only. Module catalogs are non-dispatchable source
+inventories reported by a separate neutral metric. Completion includes every
+dependency recursively and requires proofs for theorems and bodies for definitions. A
 target marked `mathlib: true` follows the authored status contract; the marker
 is an author assertion, not audit verification that the declaration is in
 Mathlib. Treat the percentage never as whole-source completion. Read the

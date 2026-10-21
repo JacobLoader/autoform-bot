@@ -540,6 +540,23 @@ def test_a_module_docstring_citing_a_paper_no_article_reaches_gives_no_warning(
     assert _check(project, capsys) == (0, [])
 
 
+def test_a_module_catalog_asks_for_no_search(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A pending catalog is not proved, but it inventories existing Lean rather than awaiting a proof."""
+    project = _consumer(tmp_path, articles=0)
+    ledger = project / "blueprint/sources/ledger.md"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text("# Ledger\n\nAfter https://arxiv.org/abs/2307.05244.\n", encoding="utf-8")
+    _article(
+        project,
+        "catalog.md",
+        title="Existing module",
+        body="The module's declarations.\n\n## Sources\n\n- [Declaration ledger](../sources/ledger.md)",
+        metadata=("catalog: module",),
+    )
+
+    assert _check(project, capsys) == (0, [])
+
+
 def test_a_declaration_whose_docstring_and_module_docstring_both_cite_warns_once(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -662,6 +679,26 @@ def test_a_leaf_marked_not_ready_keeps_its_container_asking(
 
     assert status == 0 and len(warnings) == 1
     assert "which unproved article " in warnings[0] and "including" not in warnings[0]
+
+
+def test_a_catalog_marked_not_ready_leaves_its_proved_container_quiet(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Audit leaves catalogs out of a container's targets, so one marked not ready keeps no container asking."""
+    project = _consumer(tmp_path, proved=True)
+    _cite_from_the_root(project)
+    ledger = project / "blueprint/sources/ledger.md"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text("# Ledger\n\nThe module's declarations.\n", encoding="utf-8")
+    _article(
+        project,
+        "catalog.md",
+        title="Existing module",
+        body="The module's declarations.\n\n## Sources\n\n- [Declaration ledger](../sources/ledger.md)",
+        metadata=("catalog: module", "not_ready: true"),
+    )
+
+    assert _check(project, capsys) == (0, [])
 
 
 def test_the_warning_names_a_leaf_before_its_container(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

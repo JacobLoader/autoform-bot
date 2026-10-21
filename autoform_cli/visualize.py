@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Sequence
 
-from . import mermaid, status
+from . import graph_views, mermaid, status
 from .graph import GraphValidationError, load_graph
 from .markdown import blueprint_root
 
@@ -130,9 +130,10 @@ def export_structure(blueprint_dir: Path, output: Path | None = None) -> Path:
         if node is None:
             lines.append(f"{indent}- [{entry.name}]({entry.as_posix()}) · prose")
             continue
-        kind = node.declaration or node.kind
+        state = graph_views.display_state(node, statuses[node.id])
+        kind = graph_views.kind_label(node)
         lines.append(
-            f"{indent}- [{node.title}]({entry.as_posix()}) · {kind} · {statuses[node.id].label}"
+            f"{indent}- [{node.title}]({entry.as_posix()}) · {kind} · {state.label}"
         )
 
     depths = {len(p.relative_to(blueprint_dir).parts) - 1 for p in by_path}
