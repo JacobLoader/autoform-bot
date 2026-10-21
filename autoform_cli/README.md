@@ -645,6 +645,30 @@ result, and `inventory pending` until then, whatever its derived state. Neither
 status changes a scope's rolled-up status or completion, though a target that
 depends on a catalog waits for it like any prerequisite.
 
+The generated `blueprint-pages.yml` deploys only a commit that the generated
+`autoform verify` workflow passed on a push to `main`. It runs when that
+workflow completes, checks that the run is the project's own
+`.github/workflows/autoform-verify.yml` by file, not a workflow that only shares
+its name, checks out the run's exact commit, and renders code links at it with
+`--ref`. A failed verification deploys nothing, so the last verified site stays
+up while `main` is red. Pull requests and manual runs build the site to check
+it and never deploy, and they cannot cancel a deploy waiting in its
+concurrency group.
+
+Projects scaffolded before this rule keep a workflow that deploys every push to
+`main`, since `init` leaves existing files alone and `--force` also rewrites
+`README.md`, `mkdocs.yml` and the blueprint READMEs. To switch, delete
+`.github/workflows/blueprint-pages.yml` and run `autoform init` again, which
+writes only missing files. No pin has to move: `render --ref` exists at every
+pin since 0.5.0, so the new file's `AUTOFORM_REF` may be set back to the
+project's own.
+
+Since a manual run never deploys, redeploy by re-running the Pages run that the
+newest successful verify run on `main` started. A re-run keeps its original
+event and so deploys the same commit. By the same rule, re-running an older
+verify run, or its Pages run, deploys that older commit, which stays up until
+the next deploy.
+
 Publication and audit are deliberately different gates. The generated
 `blueprint-pages.yml` runs `check` and `render`; it does not run `audit`. An
 invalid coverage contract fails `render` before any output is written, but a
