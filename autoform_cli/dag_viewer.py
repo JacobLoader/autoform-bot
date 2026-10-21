@@ -576,7 +576,7 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-hidden-button:hover { text-decoration: underline; }
 .bp-dag-body { position: relative; display: grid; grid-template-columns: var(--dag-navigation-width) minmax(0, 1fr); min-height: 0; }
 .bp-dag-navigation { z-index: 6; min-width: 0; min-height: 0; overflow: auto; border-right: 1px solid var(--dag-border); background: var(--dag-bg); }
-.bp-dag-navigation-inner { display: grid; align-content: start; min-height: 100%; padding: 16px 12px 24px; }
+.bp-dag-navigation-inner { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; min-height: 100%; padding: 16px 12px 24px; }
 .bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-title { margin: 0 6px; color: var(--dag-fg); font-size: 22px; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
 .bp-dag-navigation-summary { display: -webkit-box; margin: 9px 6px 15px; overflow: hidden; color: var(--dag-muted); font-size: 13px; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
 .bp-dag-viewer.bp-dag-viewer ol.bp-dag-navigation-path { margin: 0 6px 6px; color: var(--dag-muted); font-size: 12px; line-height: 1.4; }

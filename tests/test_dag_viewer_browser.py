@@ -517,9 +517,6 @@ def _record_label_paints(page: object, *, reject_family: bool) -> None:
               font.set.call(result, '11px serif');
             return result;
           };
-        } else {
-          document.addEventListener('DOMContentLoaded', () =>
-            document.documentElement.style.setProperty('--md-text-font-family', '"Times New Roman", serif'));
         }
         prototype.fillText = function (text, ...args) {
           if (this.canvas.classList.contains('bp-dag-canvas'))
@@ -563,6 +560,21 @@ def test_canvas_label_paints_use_the_site_family_or_a_valid_fallback(
 ) -> None:
     page = desktop_page
     _record_label_paints(page, reject_family=reject_family)
+    if not reject_family:
+        def serif_host_before_startup(route: object) -> None:
+            body = route.fetch().text()
+            marker = 'class="bp-dag-viewer"'
+            assert body.count(marker) == 1
+            body = body.replace(
+                marker,
+                marker + ' style="font-family: &quot;Times New Roman&quot;, serif !important;"',
+                1,
+            )
+            route.fulfill(content_type="text/html", body=body)
+
+        # The family must be present on the host before the runtime's probe;
+        # Material can override an inherited root custom property later.
+        page.route("**/dependencies.html", serif_host_before_startup)
     page.route("**/dependencies.json", _canvas_region)
     _open_site(page, site_url, "dependencies.html")
     page.wait_for_function("window.labelPaints.some(paint => paint.text.startsWith('Algebra and topology mathematical region'))")
@@ -1569,8 +1581,28 @@ def test_on_a_phone_the_landing_hero_opens_in_the_details_sheet(mobile_page: obj
 
 def test_on_a_phone_the_status_filter_and_search_results_open_in_view(mobile_page: object, site_url: str) -> None:
     """The Status popover opened past the screen's left edge, and the toolbar's popovers painted under the sheet."""
+    def longer_selected_statement(route: object) -> None:
+        payload = route.fetch().json()
+        result = next(node for node in payload["nodes"] if node["id"] == "algebra/result")
+        result["summary"] = (
+            "The main result compares the objects introduced by the base construction. "
+            "Its hypotheses specify the ambient space and the compatibility conditions between the objects. "
+            "The conclusion describes how an invariant is preserved under the permitted transformations. "
+            "First identify the relevant structure maps, then check each hypothesis before applying the result. "
+            "The base definition supplies the notation used throughout the statement and its applications. "
+            "Boundary cases require the same assumptions rather than an implicit extension to arbitrary objects. "
+            "The proof separates the construction of the comparison map from verification of its properties. "
+            "Examples compare finite constructions with their limiting counterparts, while the conclusion "
+            "remains restricted to the stated hypotheses."
+        )
+        route.fulfill(json=payload)
+
+    # A compact one-sentence result no longer makes the sheet tall enough to
+    # exercise overlap. Supply realistic longer content, not artificial CSS.
+    mobile_page.route("**/dependencies/chapters/algebra.json", longer_selected_statement)
     # The selection opens the sheet over the lower half of the screen.
     page = _open_site(mobile_page, site_url, "dependencies/chapters/algebra.html#node=algebra%2Fresult")
+    playwright.expect(page.locator(".bp-dag-sheet-handle")).to_have_attribute("aria-expanded", "true")
 
     def lengthen_the_index(route: object) -> None:
         index = route.fetch().json()
@@ -1611,7 +1643,14 @@ def test_on_a_phone_the_status_filter_and_search_results_open_in_view(mobile_pag
           return [y > sheet.top, result.contains(document.elementFromPoint(x, y))];
         }"""
     )
-    assert lowest == [True, True]
+    assert lowest == [True, True], page.evaluate(
+        """() => {
+          const sheet = document.querySelector('.bp-dag-inspector').getBoundingClientRect();
+          const list = document.querySelector('.bp-dag-search-results').getBoundingClientRect();
+          return {sheetTop: sheet.top, sheetHeight: sheet.height, listTop: list.top,
+            listBottom: list.bottom, viewportHeight: innerHeight};
+        }"""
+    )
 
 
 @pytest.mark.parametrize("width", (800, 1100, 1101, 1440))
@@ -1773,7 +1812,7 @@ def test_the_rail_under_the_open_details_leaves_the_tab_order(desktop_page: obje
 @pytest.mark.parametrize(
     ("path", "title"),
     (
-        ("dependencies/chapters/algebra.html#node=algebra%2Fresult", "Algebra dependencies"),
+        ("dependencies/chapters/algebra.html#node=algebra%2Fresult", "Algebra"),
         ("index.html#node=scope%3Aalgebra", "Explorer fixture"),
     ),
 )
