@@ -18,6 +18,7 @@ import subprocess
 import threading
 import time
 import urllib.parse
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -32,6 +33,12 @@ _WINDOWS_DRIVE_PREFIX_RE = re.compile(r"^[A-Za-z]:")
 _WINDOWS_ROOTED_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _SCRATCH_INIT_ATTEMPTS = 10
 _SCRATCH_INIT_DELAY_S = 0.05
+# `claim list` fetches into refs under this prefix that only that call reads.
+_LIST_REF_PREFIX = "refs/autoform-list/"
+_LIST_FETCH_ATTEMPTS = 3
+# How a stateless protocol v0 server refuses a want whose ref moved after it
+# advertised it; only this failure is worth fetching again.
+_MOVED_WANT = "not our ref"
 # A peer's push holds a ref's lock file for milliseconds; one that outlasts
 # this grace after a failed push is reported as blocking the claim.
 _LOCK_GRACE_S = 2.0
@@ -712,39 +719,58 @@ class ClaimBoard:
     def list(self) -> list[dict[str, Any]]:
         """Return all claim refs, including malformed and expired entries.
 
-        One fetch mirrors every claim ref and its commit, so each listed lease
-        is the one its ref named when the board answered, and the git commands
-        it takes do not grow with the number of claims. A ref that changes
-        meanwhile is listed as it was; every update checks ownership again.
+        One fetch copies every claim ref and its commit into refs private to
+        this call, so each listed lease is the one its ref named when the board
+        answered, other processes sharing the scratch cannot change it, and the
+        git commands it takes do not grow with the number of claims. A ref that
+        changes meanwhile is listed as it was; every update checks ownership
+        again.
         """
         self._ensure_scratch()
-        refspec = f"+{CLAIM_REF_PREFIX}*:{CLAIM_REF_PREFIX}*"
-        fetch = self._git(["fetch", "--quiet", "--prune", "--no-tags", self.repo_url, refspec], check=False)
-        if fetch.returncode != 0:
-            raise ClaimTransportError(f"cannot fetch the claim board: {fetch.stderr.strip()[:300]}")
-        return self._read_listed(self._mirrored_claims())
+        namespace = f"{_LIST_REF_PREFIX}{uuid.uuid4().hex}/"
+        listed: dict[str, str] = {}
+        try:
+            for attempt in range(_LIST_FETCH_ATTEMPTS):
+                fetch = self._git(
+                    ["fetch", "--quiet", "--no-tags", self.repo_url, f"+{CLAIM_REF_PREFIX}*:{namespace}*"],
+                    check=False,
+                )
+                if fetch.returncode == 0:
+                    break
+                if _MOVED_WANT not in fetch.stderr or attempt + 1 == _LIST_FETCH_ATTEMPTS:
+                    raise ClaimTransportError(f"cannot fetch the claim board: {fetch.stderr.strip()[:300]}")
+            listed = self._fetched_claims(namespace)
+            return self._read_listed(listed)
+        finally:
+            if listed:
+                deletions = "".join(f"delete {namespace}{key}\n" for key in listed)
+                self._git(["update-ref", "--stdin"], input_text=deletions)
 
-    def _mirrored_claims(self) -> dict[str, str]:
-        """Return the object ID of every validly named claim ref the last fetch mirrored, by key."""
-        proc = self._git(["for-each-ref", "--format=%(objectname)%09%(refname)", CLAIM_REF_PREFIX])
-        mirrored: dict[str, str] = {}
+    def _fetched_claims(self, namespace: str) -> dict[str, str]:
+        """Return the object ID of every validly named claim ref fetched into ``namespace``, by key."""
+        proc = self._git(["for-each-ref", "--format=%(objectname)%09%(refname)", namespace])
+        fetched: dict[str, str] = {}
         for line in proc.stdout.splitlines():
             oid, separator, ref = line.partition("\t")
-            if not separator or not ref.startswith(CLAIM_REF_PREFIX):
+            if not separator or not ref.startswith(namespace):
                 continue
-            key = ref[len(CLAIM_REF_PREFIX) :]
+            key = ref[len(namespace) :]
             try:
                 _validate_key(key)
             except ValueError:
                 continue
-            mirrored[key] = oid
-        return mirrored
+            fetched[key] = oid
+        return fetched
 
     def _read_commits(self, oids: Sequence[str]) -> dict[str, bytes | None]:
-        """Read every object with one ``cat-file --batch``: its raw commit, or None if missing or not a commit."""
+        """Read every object with one ``cat-file --batch``: its raw commit, or None if missing or not a commit.
+
+        A tag is peeled to its commit, as ``cat-file commit`` in :meth:`_read_lease` does.
+        """
         if not oids:
             return {}
-        output = self._git(["cat-file", "--batch"], input_bytes="".join(f"{oid}\n" for oid in oids).encode()).stdout
+        requests = "".join(f"{oid}^{{commit}}\n" for oid in oids).encode()
+        output = self._git(["cat-file", "--batch"], input_bytes=requests).stdout
         commits: dict[str, bytes | None] = {}
         position = 0
         for oid in oids:
@@ -759,10 +785,10 @@ class ClaimBoard:
             position += size + 1
         return commits
 
-    def _read_listed(self, mirrored: Mapping[str, str]) -> list[dict[str, Any]]:
-        commits = self._read_commits(list(dict.fromkeys(mirrored.values())))
+    def _read_listed(self, listed: Mapping[str, str]) -> list[dict[str, Any]]:
+        commits = self._read_commits(list(dict.fromkeys(listed.values())))
         leases: list[dict[str, Any]] = []
-        for key, oid in mirrored.items():
+        for key, oid in listed.items():
             try:
                 commit = commits[oid]
                 if commit is None:

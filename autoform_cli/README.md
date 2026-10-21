@@ -2024,10 +2024,12 @@ enforce the rule; it is what keeps two multi-article revisions from
 deadlocking.
 
 `claim list` copies the whole board with one fetch and reads every lease at
-once, so its cost hardly grows with the number of claims, and peers renewing
-claims meanwhile do not stop it. Each lease it prints is the one its ref named
-when the board answered; a listing is a report, not a lock, and every acquire,
-renew, and release checks ownership again.
+once, so its cost hardly grows with the number of claims. Each lease it prints
+is the one its ref named when the board answered. A peer's renewal meanwhile
+changes nothing, except that a server speaking Git's older stateless HTTP
+protocol may refuse the fetch, which is then repeated up to three times. A
+listing is a report, not a lock: every acquire, renew, and release checks
+ownership again.
 
 A Git process that stops while updating a claim ref leaves a lock file in the
 board, and Git then refuses the updates it guards:

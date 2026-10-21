@@ -596,7 +596,7 @@ def _refs(repo: Path) -> dict[str, str]:
 
 
 @pytest.mark.parametrize(("method", "key"), [("renew", "a"), ("release", "a"), ("acquire", "c")])
-def test_list_retries_when_a_claim_ref_changes_between_ls_remote_and_fetch(
+def test_list_sees_a_claim_change_made_just_before_its_fetch(
     tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch, method: str, key: str
 ) -> None:
     owner = _board(tmp_path, board_repo, "worker-a")
@@ -606,12 +606,12 @@ def test_list_retries_when_a_claim_ref_changes_between_ls_remote_and_fetch(
     git = reader._git
     changed: list[bool] = []
 
-    def change_before_first_fetch(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    def change_before_the_fetch(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if args[0] == "fetch" and not changed:
             changed.append(getattr(owner, method)(key))
         return git(args, **kwargs)
 
-    monkeypatch.setattr(reader, "_git", change_before_first_fetch)
+    monkeypatch.setattr(reader, "_git", change_before_the_fetch)
     listed = reader.list()
 
     assert changed == [True]
@@ -690,6 +690,68 @@ def test_list_runs_as_many_git_commands_for_many_claims_as_for_one(
     )
 
 
+def test_list_ignores_claim_refs_another_process_writes_into_the_shared_scratch(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire_many(["a", "b"], ttl=600)
+    stale = _refs(board_repo)[claims.CLAIM_REF_PREFIX + "b"]
+    reader = _board(tmp_path, board_repo, "worker-b")
+    assert [lease["_key"] for lease in reader.list()] == ["a", "b"]
+    assert owner.release("b")
+    git = reader._git
+
+    def peer_writes_after_fetch(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        proc = git(args, **kwargs)
+        if args[0] == "fetch":
+            # Another process on this scratch, such as `read`, writes the released lease's ref meanwhile.
+            git(["update-ref", claims.CLAIM_REF_PREFIX + "b", stale])
+        return proc
+
+    monkeypatch.setattr(reader, "_git", peer_writes_after_fetch)
+
+    assert [lease["_key"] for lease in reader.list()] == ["a"]
+
+
+def test_list_retries_a_fetch_the_board_refused_because_a_ref_moved(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire("a", ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+    fetches: list[list[str]] = []
+
+    def refused_once(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "fetch":
+            fetches.append(args)
+            if len(fetches) == 1:
+                # A stateless protocol v0 server refuses a want its refs no longer reach.
+                return subprocess.CompletedProcess(
+                    ["git", *args], 128, "", "fatal: remote error: upload-pack: not our ref 1234\n"
+                )
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(reader, "_git", refused_once)
+
+    assert [lease["_key"] for lease in reader.list()] == ["a"]
+    assert len(fetches) == 2
+
+
+def test_list_reads_a_lease_through_an_annotated_tag_as_read_does(tmp_path: Path, board_repo: Path) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire("a", ttl=600)
+    lease = _refs(board_repo)[claims.CLAIM_REF_PREFIX + "a"]
+    tag = _git("mktag", cwd=board_repo, input_text=f"object {lease}\ntype commit\ntag t\ntagger t <t@t> 0 +0000\n\nt\n")
+    _git("update-ref", claims.CLAIM_REF_PREFIX + "a", tag, cwd=board_repo)
+    reader = _board(tmp_path, board_repo, "worker-b")
+
+    assert reader.read("a") is not None
+    [listed] = reader.list()
+    assert listed["_malformed"] is False
+    assert listed["_oid"] == tag
+
+
 def test_list_drops_a_released_claim_it_listed_before(tmp_path: Path, board_repo: Path) -> None:
     owner = _board(tmp_path, board_repo, "worker-a")
     assert owner.acquire_many(["a", "b"], ttl=600)
@@ -699,6 +761,7 @@ def test_list_drops_a_released_claim_it_listed_before(tmp_path: Path, board_repo
     assert owner.release("b")
 
     assert [lease["_key"] for lease in reader.list()] == ["a"]
+    assert reader._git(["for-each-ref", "refs/"]).stdout == ""
 
 
 def test_list_reports_a_claim_ref_to_a_non_commit_as_malformed(tmp_path: Path, board_repo: Path) -> None:
