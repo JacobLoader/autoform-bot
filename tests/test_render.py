@@ -21,6 +21,7 @@ from urllib.parse import unquote
 
 import pytest
 import html5lib
+from mkdocs.utils.meta import get_data
 
 import autoform_cli.audit as audit_module
 import autoform_cli.lean as lean_module
@@ -1532,18 +1533,30 @@ const fs = require("fs");
 const vm = require("vm");
 const source = fs.readFileSync(process.argv[2], "utf8");
 
+function settle() { return new Promise((resolve) => setImmediate(resolve)); }
+
 async function run(blocks, preloaded) {
-  const calls = [], injected = [], observers = [];
-  let scheme = null;
-  const elements = blocks.map((text) => ({textContent: text, innerHTML: ""}));
+  const calls = [], injected = [], observers = [], errors = [];
+  let scheme = null, inFlight = 0, mostInFlight = 0;
+  const elements = blocks.map((block) => ({className: block[0], textContent: block[1], innerHTML: ""}));
   const mermaid = {
-    initialize: (config) => calls.push(["initialize", config.securityLevel, config.htmlLabels, config.theme]),
+    initialize: (config) => calls.push(
+      ["initialize", config.securityLevel, config.htmlLabels, config.flowchart.htmlLabels, config.theme]
+    ),
+    // A render settles on a later turn, so two drawn at once would overlap.
     render: (id, text) => {
       calls.push(["render", text]);
-      return Promise.resolve({svg: "<svg>" + text + "</svg>", bindFunctions: () => calls.push(["bind"])});
+      inFlight += 1;
+      mostInFlight = Math.max(mostInFlight, inFlight);
+      return settle().then(() => {
+        inFlight -= 1;
+        if (text.indexOf("broken") >= 0) throw new Error("parse error");
+        return {svg: "<svg>" + text + "</svg>", bindFunctions: () => calls.push(["bind"])};
+      });
     },
   };
   const context = {
+    console: {error: (message) => errors.push(message)},
     document: {
       querySelectorAll: () => elements,
       body: {getAttribute: () => scheme},
@@ -1556,19 +1569,23 @@ async function run(blocks, preloaded) {
   vm.createContext(context);
   vm.runInContext(source, context);
   if (!preloaded && injected.length) { context.mermaid = mermaid; injected[0].onload(); }
-  await new Promise((resolve) => setImmediate(resolve));
-  // A switch to the dark scheme redraws every diagram, still locked down.
+  // A switch to the dark scheme while the first pass is still drawing redraws
+  // every diagram, still locked down, once that pass is done.
   scheme = "slate";
   observers.forEach((callback) => callback([{attributeName: "data-md-color-scheme"}]));
-  await new Promise((resolve) => setImmediate(resolve));
-  return {calls, sources: injected.map((element) => element.src), drawn: elements.map((element) => element.innerHTML)};
+  for (let turn = 0; turn < 100; turn++) await settle();
+  return {
+    calls, errors, mostInFlight,
+    sources: injected.map((element) => element.src),
+    drawn: elements.map((element) => element.innerHTML),
+  };
 }
 
 (async () => {
   console.log(JSON.stringify({
     none: await run([], false),
-    loaded: await run(["graph LR\n  a --> b"], false),
-    preloaded: await run(["graph TD\n  c --> d"], true),
+    loaded: await run(JSON.parse(process.argv[3]), false),
+    preloaded: await run([["mermaid", "graph TD\n  c --> d"]], true),
   }));
 })();
 """
@@ -1579,7 +1596,10 @@ def test_the_site_draws_authored_diagrams_locked_down_and_only_where_a_page_has_
 
     Strict mode drops click callbacks and labels draw as plain text, and a page
     without a diagram never loads Mermaid, while a site configuration that
-    still loads it globally keeps working.
+    still loads it globally keeps working. An element of the class render once
+    gave its own graphs is drawn the same way, and no palette is added to any
+    diagram. Diagrams are drawn one at a time, a scheme change's redraw waits
+    for the pass before it, and a diagram that fails leaves the others drawn.
     """
     node = shutil.which("node")
     if node is None:
@@ -1588,21 +1608,46 @@ def test_the_site_draws_authored_diagrams_locked_down_and_only_where_a_page_has_
     script.write_text(render_module._mermaid_script(), encoding="utf-8")
     harness = tmp_path / "harness.js"
     harness.write_text(_MERMAID_HARNESS, encoding="utf-8")
-
-    result = json.loads(subprocess.run([node, str(harness), str(script)], capture_output=True, text=True, check=True).stdout)
-
-    assert result["none"] == {"calls": [], "sources": [], "drawn": []}
-    assert result["loaded"]["sources"] == [render_module.MERMAID_LIBRARY]
-    diagram = "graph LR\n  a --> b"
-    assert result["loaded"]["calls"] == [
-        ["initialize", "strict", False, "neutral"], ["render", diagram], ["bind"],
-        ["initialize", "strict", False, "dark"], ["render", diagram], ["bind"],
+    blocks = [
+        ("mermaid bp-graph", "graph LR\n  a --> b"),
+        ("mermaid", 'flowchart LR\n  A\n  click A call eval("document.title=1")'),
+        ("mermaid", "sequenceDiagram\n  A->>B: hi"),
+        ("mermaid", "graph LR\n  broken"),
+        ("mermaid", "graph TD\n  later --> drawn"),
     ]
-    assert result["loaded"]["drawn"] == [f"<svg>{diagram}</svg>"]
-    assert result["preloaded"]["sources"] == []
-    assert result["preloaded"]["calls"][:3] == [
-        ["initialize", "strict", False, "neutral"], ["render", "graph TD\n  c --> d"], ["bind"]
+
+    result = json.loads(
+        subprocess.run(
+            [node, str(harness), str(script), json.dumps(blocks)], capture_output=True, text=True, check=True
+        ).stdout
+    )
+
+    assert result["none"] == {"calls": [], "errors": [], "mostInFlight": 0, "sources": [], "drawn": []}
+    loaded = result["loaded"]
+    assert loaded["sources"] == [render_module.MERMAID_LIBRARY]
+    # Each diagram is drawn from its source as written, strictly and with
+    # plain-text labels, the whole light pass before the dark one.
+    assert loaded["calls"] == [
+        call
+        for theme in ("neutral", "dark")
+        for _classes, diagram in blocks
+        for call in (
+            ["initialize", "strict", False, False, theme],
+            ["render", diagram],
+            *([] if "broken" in diagram else [["bind"]]),
+        )
     ]
+    assert loaded["mostInFlight"] == 1
+    assert loaded["errors"] == ["autoform: a diagram could not be drawn"] * 2
+    assert loaded["drawn"] == ["" if "broken" in diagram else f"<svg>{diagram}</svg>" for _classes, diagram in blocks]
+    preloaded = result["preloaded"]
+    assert preloaded["sources"] == []
+    assert preloaded["calls"][:3] == [
+        ["initialize", "strict", False, False, "neutral"],
+        ["render", "graph TD\n  c --> d"],
+        ["bind"],
+    ]
+    assert preloaded["drawn"] == ["<svg>graph TD\n  c --> d</svg>"]
 
 
 def test_the_generated_script_is_valid_javascript(tmp_path: Path) -> None:
@@ -1614,6 +1659,20 @@ def test_the_generated_script_is_valid_javascript(tmp_path: Path) -> None:
         script = tmp_path / "out/javascripts" / name
         result = subprocess.run([node, "--check", str(script)], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
+
+
+def test_render_writes_no_mermaid_graph(tmp_path: Path) -> None:
+    """The explorer draws render's maps, so no page render writes holds a
+    Mermaid graph, and every diagram on the site is one an author wrote."""
+
+    _render(tmp_path)
+    out = tmp_path / "out"
+
+    for name in ("README.md", "dependencies.md", "dependencies/full.md", "dependencies/chapters/roadmap.md"):
+        page = (out / name).read_text(encoding="utf-8")
+        assert "```mermaid" not in page, name
+        assert 'class="mermaid' not in page, name
+        assert 'class="bp-dag-viewer"' in page, name
 
 
 @pytest.mark.parametrize("destination", ("same", "child", "parent"))
@@ -2741,6 +2800,32 @@ def test_a_directory_link_uses_tree_even_when_the_repo_url_says_blob() -> None:
     assert base.href(()) == "https://git.example/blob/x/repo/tree/abc/blueprint/sources"
 
 
+def test_render_leaves_html_comments_out_of_the_site_but_not_out_of_code(tmp_path: Path) -> None:
+    """A comment is a note to the authors, but one in a code block is code:
+    the site shows it as typed, as GitHub does, so a statement's box shows
+    every character of the statement an approval binds."""
+
+    project = _project(tmp_path)
+    top = project / "blueprint" / "roadmap" / "top.md"
+    top.write_text(
+        top.read_text(encoding="utf-8").replace(
+            "The main result.",
+            "The main result.<!-- secret note --> Shown.<!-->gone--> Mark one with `<!-- ... -->`.\n\n"
+            "```text\nfenced <!-- kept in a fence -->\n```\n\n    indented <!-- kept indented -->",
+        ),
+        encoding="utf-8",
+    )
+
+    render_site(project / "blueprint", tmp_path / "out", lean_root=project)
+    page = (tmp_path / "out/roadmap/README.md").read_text(encoding="utf-8")
+    assert "The main result. Shown." in page
+    assert "secret note" not in page and "gone" not in page
+    box = site_converter().convert(get_data(page)[0])
+    assert "<code>fenced &lt;!-- kept in a fence --&gt;\n</code>" in box
+    assert "<code>indented &lt;!-- kept indented --&gt;\n</code>" in box
+    assert "Mark one with <code>&lt;!-- ... --&gt;</code>." in box
+
+
 def _count_relative_links(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     """Record the target of every `relative_link` call render makes."""
     calls: list[Path] = []
@@ -3451,10 +3536,11 @@ def test_checking_the_output_site_hashes_its_files_without_holding_them(
 ) -> None:
     project = _project(tmp_path)
     (project / "blueprint/media").mkdir()
-    (project / "blueprint/media/plate.bin").write_bytes(os.urandom(8 * 1024 * 1024))
+    # Any file the site publishes; a .png is copied as it is, whatever it holds.
+    (project / "blueprint/media/plate.png").write_bytes(os.urandom(8 * 1024 * 1024))
     output = tmp_path / "out"
     render_site(project / "blueprint", output, lean_root=project)
-    assert (output / "media/plate.bin").is_file()
+    assert (output / "media/plate.png").is_file()
     if portable:
         monkeypatch.setattr(directory_binding_module, "DIRECTORY_BINDING_SUPPORTED", False)
 
@@ -3883,7 +3969,6 @@ def test_render_accepts_an_ancestor_that_grants_search_but_not_read(tmp_path: Pa
         ("assets/Autoform.svg", "assets/autoform.svg"),
         ("javascripts/Blueprint-dag.js", "javascripts/blueprint-dag.js"),
         ("Progress.md", None),
-        ("Graph.html", None),
         ("roadmap/dependencies.md", None),
         ("roadmap/dependencies.json", None),
     ],
@@ -4365,17 +4450,18 @@ def test_a_capture_during_a_render_skips_the_stage_being_written(
 ) -> None:
     project = _project(tmp_path)
     (project / "blueprint/Proofs.lean").write_text("theorem BlueprintProof : True := trivial\n", encoding="utf-8")
-    copy2 = shutil.copy2
+    write_bytes = Path.write_bytes
     captured: list[list[str]] = []
 
-    def copy_then_capture(source, target, *args, **kwargs):
-        result = copy2(source, target, *args, **kwargs)
-        if str(target).endswith(".lean"):
+    def write_then_capture(self: Path, data: bytes) -> int:
+        # Render writes the site's copy of each file from the bytes it captured.
+        result = write_bytes(self, data)
+        if self.suffix == ".lean" and any(part.startswith(render_module._STAGE_PREFIX) for part in self.parts):
             snapshot = lean_module.snapshot_project_sources(project)
             captured.append(sorted(path.as_posix() for path, _data in snapshot.source_files))
         return result
 
-    monkeypatch.setattr(render_module.shutil, "copy2", copy_then_capture)
+    monkeypatch.setattr(Path, "write_bytes", write_then_capture)
     render_site(project / "blueprint", project / "site-src", lean_root=project)
 
     assert captured == [["Project/Basic.lean", "blueprint/Proofs.lean"]]

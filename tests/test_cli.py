@@ -279,3 +279,24 @@ def test_an_unrelated_atlas_json_warns_in_render_and_audit(tmp_path: Path, capsy
     assert f"warning: atlas.json: {omission}" in capsys.readouterr().out.splitlines()
     assert main(["audit", str(blueprint)]) == 0
     assert capsys.readouterr().out.splitlines()[-1] == f"warning: atlas.json: atlas-omission: {omission}"
+
+
+def _with_body(blueprint: Path, body: str) -> Path:
+    article = blueprint / "roadmap" / "result.md"
+    article.write_text(
+        article.read_text(encoding="utf-8").replace("A precise statement.\n", f"A precise statement.\n\n{body}\n"),
+        encoding="utf-8",
+    )
+    return blueprint
+
+
+def test_check_warns_about_markup_the_site_shows_as_typed(tmp_path: Path, capsys) -> None:
+    """Markup a published page could run is reported, and check still passes:
+    the site shows the page as typed until it is fixed."""
+
+    blueprint = _with_body(_clean_blueprint(tmp_path), "<script>alert(1)</script>")
+
+    assert main(["check", str(blueprint)]) == 0
+    out = capsys.readouterr().out
+    assert "warning: result: line 9: raw HTML is not allowed: <script>" in out
+    assert "warning: result: the site shows it as typed until these are fixed" in out

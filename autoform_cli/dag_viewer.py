@@ -11,12 +11,13 @@ import heapq
 import html
 import json
 import math
+from dataclasses import replace
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-from .graph_views import INVENTORY_STATUSES, GraphView, ViewNode
+from .graph_views import FLATTENED_ROLES, INVENTORY_STATUSES, GraphView, ViewNode
 from .lean import declaration_names
 from .status import INVENTORY_STATES, MEANINGS, STATES
 
@@ -27,7 +28,8 @@ SCRIPT_PATH = "javascripts/blueprint-dag.js"
 #: The most nodes the explorer draws as a map; it only browses a larger view, which gets no layout.
 MAX_MAP_NODES = 120
 
-_PALETTE_KEYS = frozenset(state.key for state in (*STATES, *INVENTORY_STATES))
+_ALL_STATES = (*STATES, *INVENTORY_STATES)
+_PALETTE_KEYS = frozenset(state.key for state in _ALL_STATES)
 #: A catalog lists its keyword-declared public names; its explorer node and its Lean row
 #: in the book show this many and a count.
 _CATALOG_LEAN_NAMES = 8
@@ -42,13 +44,8 @@ def _positions(view: GraphView) -> dict[str, dict[str, int]]:
     if uses_atlas(view):
         return _atlas_positions(view)
     all_node_ids = [node.id for node in view.nodes]
-    known = set(all_node_ids)
-    if len(known) != len(all_node_ids):
-        raise ValueError("dependency view contains duplicate node ids")
     connected: set[str] = set()
     for edge in view.edges:
-        if edge.source not in known or edge.target not in known:
-            raise ValueError("dependency view edge names an unknown node")
         if edge.source != edge.target:
             connected.update((edge.source, edge.target))
 
@@ -112,14 +109,7 @@ def _positions(view: GraphView) -> dict[str, dict[str, int]]:
     result: dict[str, dict[str, int]] = {}
     for column, rank in enumerate(sorted(by_rank)):
         for row, node_id in enumerate(by_rank[rank]):
-            result[node_id] = {
-                "column": column,
-                "height": _NODE_HEIGHT,
-                "row": row,
-                "width": _NODE_WIDTH,
-                "x": column * (_NODE_WIDTH + _COLUMN_GAP),
-                "y": row * (_NODE_HEIGHT + _ROW_GAP),
-            }
+            result[node_id] = _cell(column, row)
 
     isolated = [node_id for node_id in all_node_ids if node_id not in connected]
     isolate_base = max((position["column"] for position in result.values()), default=-2) + 2
@@ -130,23 +120,43 @@ def _positions(view: GraphView) -> dict[str, dict[str, int]]:
     for slot, node_id in enumerate(isolated):
         column = isolate_base + slot % isolate_columns
         row = slot // isolate_columns
-        result[node_id] = {
-            "column": column,
-            "height": _NODE_HEIGHT,
-            "row": row,
-            "width": _NODE_WIDTH,
-            "x": column * (_NODE_WIDTH + _COLUMN_GAP),
-            "y": row * (_NODE_HEIGHT + _ROW_GAP),
-        }
+        result[node_id] = _cell(column, row)
     return result
 
 
+def _cell(column: int, row: int) -> dict[str, int]:
+    return {
+        "column": column,
+        "height": _NODE_HEIGHT,
+        "row": row,
+        "width": _NODE_WIDTH,
+        "x": column * (_NODE_WIDTH + _COLUMN_GAP),
+        "y": row * (_NODE_HEIGHT + _ROW_GAP),
+    }
+
+
+def drawn_view(view: GraphView) -> GraphView:
+    """Return the part of *view* the explorer draws.
+
+    An overview replaces collections and pagination ranges by their contents,
+    so it draws those contents, not the wrappers or their relations.
+    """
+    if not view.overview:
+        return view
+    nodes = tuple(node for node in view.nodes if node.navigation not in FLATTENED_ROLES)
+    ids = frozenset(node.id for node in nodes)
+    return replace(view, nodes=nodes, edges=tuple(
+        edge for edge in view.edges if edge.source in ids and edge.target in ids
+    ))
+
+
 def uses_atlas(view: GraphView) -> bool:
-    """Draw topic cards in regions only when every node is a topic.
+    """Draw topic cards in regions only when every drawn node is a topic.
 
     A leaf needs a readable card, so a view holding any leaf, such as a
     chapter with module catalogs beside its sections, is a DAG.
     """
+    view = drawn_view(view)
     return (
         bool(view.nodes)
         and all(node.kind == "scope" for node in view.nodes)
@@ -212,6 +222,7 @@ def _atlas_positions(view: GraphView) -> dict[str, dict[str, int]]:
             shifted = dict(position)
             shifted["x"] += block_x
             shifted["y"] += block_y
+            # An atlas places cards by x and y; column and row only keep the DAG's layout keys.
             shifted["column"] = shifted["x"]
             result[node_id] = shifted
         block_x += width + gap * 2
@@ -220,6 +231,11 @@ def _atlas_positions(view: GraphView) -> dict[str, dict[str, int]]:
 
 
 def _atlas_regions(view: GraphView, positions: Mapping[str, Mapping[str, int]]) -> list[dict[str, object]]:
+    """Frame each area's cards with 12 px of padding.
+
+    Each frame also holds a 34 px label band above its cards, inside the 42 px
+    region_header that _atlas_positions leaves for it.
+    """
     regions: list[dict[str, object]] = []
     # Areas that differ only in case would otherwise keep the set's hash-seeded order.
     areas = sorted({node.area for node in view.nodes if node.area}, key=lambda area: (area.casefold(), area))
@@ -248,7 +264,7 @@ def _palette() -> dict[str, dict[str, object]]:
             "light": {"fill": state.fill, "stroke": state.stroke, "text": state.text},
             "dark": {"fill": state.dark_fill, "stroke": state.dark_stroke, "text": state.dark_text},
         }
-        for state in (*STATES, *INVENTORY_STATES)
+        for state in _ALL_STATES
     }
 
 
@@ -283,13 +299,23 @@ def write_payload(
     """Write the deterministic layout and data one explorer page draws.
 
     *book* links a chapter's or section's explorer to its textbook page.
+
+    The payload carries only what the explorer reads. On an overview, the
+    collections and pagination ranges it replaces ride along with
+    ``map: false`` and no layout.
     """
-    positions = _positions(view) if len(view.nodes) <= MAX_MAP_NODES else {}
+    known = frozenset(node.id for node in view.nodes)
+    if len(known) != len(view.nodes):
+        raise ValueError("dependency view has duplicate node ids")
+    if any(edge.source not in known or edge.target not in known for edge in view.edges):
+        raise ValueError("dependency view edge names an unknown node")
+    map_view = drawn_view(view)
+    map_ids = frozenset(node.id for node in map_view.nodes)
+    positions = _positions(map_view) if len(map_view.nodes) <= MAX_MAP_NODES else {}
     degrees: dict[str, int] = {node.id: 0 for node in view.nodes}
-    for edge in view.edges:
-        if edge.source in degrees and edge.target in degrees:
-            degrees[edge.source] += 1
-            degrees[edge.target] += 1
+    for edge in map_view.edges:
+        degrees[edge.source] += 1
+        degrees[edge.target] += 1
 
     nodes: list[dict[str, object]] = []
     present_statuses: set[str] = set()
@@ -303,7 +329,7 @@ def write_payload(
             "internal_dependency_count": node.internal_dependency_count,
             "isolated": degrees[node.id] == 0,
             "kind": node.kind,
-            **({"layout": positions[node.id]} if positions else {}),
+            **({"layout": positions[node.id]} if node.id in positions else {}),
             "lean": node.lean,
             # The items the status counts add up to, so a scope's
             # "N items" header agrees with the rows beneath it.
@@ -315,6 +341,8 @@ def write_payload(
             "title": node.title,
             "url": links.get(node.id),
         }
+        if view.overview:
+            entry["map"] = node.id in map_ids
         if node.catalog == "module" and node.lean:
             names = declaration_names(node.lean)
             shown = names[:_CATALOG_LEAN_NAMES]
@@ -326,15 +354,15 @@ def write_payload(
         for edge in view.edges
     ]
     ordered_statuses = [
-        state.key for state in (*STATES, *INVENTORY_STATES) if state.key in present_statuses
+        state.key for state in _ALL_STATES if state.key in present_statuses
     ]
     payload = {
-        "edge_count": sum(edge.dependency_count for edge in view.edges),
+        "edge_count": sum(edge.dependency_count for edge in map_view.edges),
         "edges": edges,
         "nodes": nodes,
         "palette": _palette(),
         "present_statuses": ordered_statuses,
-        "regions": _atlas_regions(view, positions) if uses_atlas(view) else [],
+        "regions": _atlas_regions(map_view, positions) if uses_atlas(view) else [],
         "schema": SCHEMA,
         "title": view.title,
         "view": {
@@ -445,11 +473,18 @@ def _safe_fallback_href(value: str) -> bool:
 
 
 def viewer_script() -> str:
-    """Return the dependency-free browser runtime with leading space folded."""
+    """Return the dependency-free browser runtime with leading space folded.
+
+    The result must stay under 66,000 bytes (test_graph_view_rendering). Leading
+    indentation, blank lines and whole-line ``//`` comments are stripped, so they
+    cost nothing.
+    """
     # Keep the embedded source readable in Python without shipping indentation
-    # that browsers do not need. Internal spaces and line breaks stay intact.
+    # that browsers do not need. Internal spaces and the line breaks between
+    # code lines stay intact.
+    # Whole-line comments explain the source, not the page, so they stay here.
     lines = (line.lstrip() for line in _SCRIPT.splitlines())
-    return "\n".join(lines) + "\n"
+    return "\n".join(line for line in lines if line and not line.startswith("//")) + "\n"
 
 
 # Published pages put the explorer inside Material's article.md-typeset, whose
@@ -743,6 +778,8 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
   function mount(host, data, instance) {
     if (!data || data.schema !== "autoform-dag-view/v2" || !data.palette ||
         !Array.isArray(data.nodes) || !Array.isArray(data.edges)) throw new Error("unsupported graph payload");
+    var shown = data.nodes.filter(function (n) { return n.map !== false; }), ids = new Set(shown.map(function (n) { return n.id; }));
+    data.nodes = shown; data.edges = data.edges.filter(function (e) { return ids.has(e.source) && ids.has(e.target); });
     var intro = host.querySelector(".bp-dag-intro"), introHeading = intro && intro.querySelector("h1");
     var introTitle = introHeading ? introHeading.textContent.trim() : ""; if (intro) intro.remove();
     host.textContent = "";
@@ -1821,6 +1858,7 @@ __all__ = [
     "SCHEMA",
     "SCRIPT_PATH",
     "SEARCH_SCHEMA",
+    "drawn_view",
     "render_container",
     "uses_atlas",
     "viewer_script",

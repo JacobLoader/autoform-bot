@@ -98,7 +98,10 @@ def test_a_view_too_large_for_the_map_gets_no_layout(tmp_path: Path) -> None:
 
     assert not any("layout" in node for node in json.loads(output.read_text(encoding="utf-8"))["nodes"])
     # The runtime draws a map up to the same limit.
-    assert f"MAX_MAP_NODES = {dag_viewer.MAX_MAP_NODES}," in dag_viewer.viewer_script()
+    assert (
+        f"var NODE_W = {dag_viewer._NODE_WIDTH}, NODE_H = {dag_viewer._NODE_HEIGHT}, "
+        f"MAX_MAP_NODES = {dag_viewer.MAX_MAP_NODES}," in dag_viewer.viewer_script()
+    )
     # An atlas that large keeps its overview's count of topics in each region.
     topics = tuple(
         ViewNode(node.id, node.title, "scope", node.members, node.status_counts, area="Algebra") for node in nodes
@@ -254,7 +257,7 @@ def test_high_level_topics_use_a_readable_grouped_knowledge_atlas(tmp_path: Path
         ("Foundations", 10),
     }
     assert len({(layout["x"], layout["y"]) for layout in layouts}) == len(nodes)
-    # The same fields a DAG's layout has, which are all the explorer reads.
+    # The same fields a DAG's layout has; an atlas card is placed by x and y alone.
     assert all(set(layout) == {"column", "height", "row", "width", "x", "y"} for layout in layouts)
     assert all(layout["width"] > layout["height"] for layout in layouts)
     assert min(layout["width"] for layout in layouts) >= 220
@@ -384,7 +387,8 @@ def test_explorer_host_is_escaped_responsive_and_accessible() -> None:
     assert "(incident.get(state.selected.id) || []).forEach" in script
     assert "if (!state.activeDirty) return" in script
     assert "if (query === state.searchCacheQuery) return state.searchCache" in script
-    assert 'data.schema !== "autoform-dag-view/v2"' in script
+    assert f'data.schema !== "{dag_viewer.SCHEMA}"' in script
+    assert f'index.schema !== "{dag_viewer.SEARCH_SCHEMA}"' in script
     assert 'ctx.fillText("×" + count' in script
     assert "Title prefix" in script and "Id prefix" in script and "Word prefix" in script
     assert "Exact Lean name" in script and "Statement match" in script and "All terms match" in script

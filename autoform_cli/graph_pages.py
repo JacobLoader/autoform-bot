@@ -19,6 +19,7 @@ from urllib.parse import quote
 from . import dag_viewer
 from .graph import Graph
 from .graph_views import (
+    FLATTENED_ROLES,
     INVENTORY_STATUSES,
     ROOT_GROUP_TITLE,
     GraphView,
@@ -30,7 +31,7 @@ from .graph_views import (
     project_view,
     scope_views,
 )
-from .markdown import relative_link
+from .markdown import header_title, relative_link, rendered_visible_text, title_text
 from .status import INVENTORY_STATES, MEANINGS, STATES, NodeStatus
 
 NodeLinks = Callable[[Path, Iterable[str]], Mapping[str, str]]
@@ -49,6 +50,43 @@ def book_contents(graph: Graph, groups: Collection[str]) -> Path:
     return Path("roadmap/README.md" if "roadmap" in graph.nodes or "roadmap" in groups else "README.md")
 
 
+def graph_page_paths(graph: Graph) -> tuple[str, ...]:
+    """Every file :func:`write_graph_pages` writes for ``graph``, relative to
+    the site's root: each page, the payload beside it, and the search index."""
+
+    root = Path("/")
+    project_page, full_page, chapter_pages, scope_pages = _pages(graph, root, group_nodes(graph))
+    pages = {project_page, full_page, *chapter_pages.values(), *scope_pages.values()}
+    files = {*pages, *(page.with_suffix(".json") for page in pages), root / SEARCH_INDEX}
+    return tuple(sorted(path.relative_to(root).as_posix() for path in files))
+
+
+def _pages(
+    graph: Graph, destination: Path, groups: Collection[str]
+) -> tuple[Path, Path, dict[str, Path], dict[str, Path]]:
+    """The project, full, chapter, and scope pages for ``graph``, whose
+    :func:`group_nodes` are ``groups``, under ``destination``."""
+
+    # _write_page writes each payload beside its page.
+    project_page = (destination / PROJECT_PAYLOAD).with_suffix(".md")
+    full_page = destination / "dependencies/full.md"
+    chapter_pages = {group: destination / "dependencies/chapters" / f"{group or 'roadmap'}.md" for group in groups}
+    parents = {node.parent for node in graph.nodes.values() if node.parent is not None}
+    scope_pages = {
+        node_id: (
+            project_page
+            if node_id == "roadmap"
+            else chapter_pages[node_id]
+            if node_id in chapter_pages
+            else destination / "dependencies/scopes" / f"{node_id}.md"
+        )
+        for node_id in graph.nodes
+        if node_id in parents
+    }
+    scope_pages["roadmap"] = project_page
+    return project_page, full_page, chapter_pages, scope_pages
+
+
 def write_graph_pages(
     graph: Graph,
     statuses: dict[str, NodeStatus],
@@ -65,25 +103,11 @@ def write_graph_pages(
     destination = Path(destination).resolve()
     groups = group_nodes(graph)
     root_title = group_title(graph, "roadmap")
-    # _write_page writes each payload beside its page.
-    project_page = (destination / PROJECT_PAYLOAD).with_suffix(".md")
-    full_page = destination / "dependencies/full.md"
+    project_page, full_page, chapter_pages, scope_pages = _pages(graph, destination, groups)
     book_root = destination / book_contents(graph, groups)
     search_index = destination / SEARCH_INDEX
-    chapter_pages = {group: destination / "dependencies/chapters" / f"{group or 'roadmap'}.md" for group in groups}
     scope_maps = scope_views(graph, statuses)
     containers = scope_maps.keys()
-    scope_pages = {
-        node_id: (
-            project_page
-            if node_id == "roadmap"
-            else chapter_pages[node_id]
-            if node_id in chapter_pages
-            else destination / "dependencies/scopes" / f"{node_id}.md"
-        )
-        for node_id in containers
-    }
-    scope_pages["roadmap"] = project_page
     written: list[Path] = []
 
     complete = full_view(graph, statuses)
@@ -103,17 +127,16 @@ def write_graph_pages(
     # Chapter leads count what the rings count: scope targets plus module inventories.
     chapter_item_counts = {node.id: node.item_count for node in project.nodes}
 
-    def project_links(page: Path) -> dict[str, str]:
-        """Link the project view from *page*: chapters to their explorers, articles to the book."""
-        book_links = node_links(page, _article_link_ids(project))
-        links = {}
-        for view_node in project.nodes:
-            scope = view_node.id.removeprefix("scope:")
-            links[view_node.id] = (
-                _published_link(chapter_pages.get(scope) or scope_pages[scope], page)
-                if view_node.kind == "scope"
-                else book_links[view_node.id]
-            )
+    # A chapter links its own page. The root's own articles are drawn on
+    # their Top level page, not the project's.
+    scope_targets = {**scope_pages, **chapter_pages}
+
+    def view_links(view: GraphView, page: Path) -> dict[str, str]:
+        """Link *view* from *page*: articles to the book, scopes and boundaries to their explorers."""
+        links = dict(node_links(page, _article_link_ids(view)))
+        for view_node in view.nodes:
+            if view_node.kind != "node":
+                links[view_node.id] = _published_link(scope_targets[view_node.id.partition(":")[2]], page)
         return links
 
     written.append(
@@ -121,7 +144,7 @@ def write_graph_pages(
             project_page,
             view=project,
             statuses=_selected_statuses(graph, statuses, project, containers),
-            links=project_links(project_page),
+            links=view_links(project, project_page),
             heading=root_title,
             lead=(
                 f"{project_item_count} item{'s' if project_item_count != 1 else ''} across "
@@ -139,15 +162,7 @@ def write_graph_pages(
 
     for group, chapter_page in chapter_pages.items():
         view = scope_maps[group] if group in scope_maps else chapter_view(graph, statuses, group)
-        links = dict(node_links(chapter_page, _article_link_ids(view)))
-        for node in view.nodes:
-            if node.kind == "boundary":
-                external = node.id.removeprefix("boundary:")
-                # The root's own articles are drawn on their Top level page, not the project's.
-                links[node.id] = _published_link(chapter_pages.get(external) or scope_pages[external], chapter_page)
-            elif node.kind == "scope":
-                nested = node.id.removeprefix("scope:")
-                links[node.id] = _published_link(scope_pages[nested], chapter_page)
+        links = view_links(view, chapter_page)
 
         book_page = (
             book_root
@@ -196,14 +211,7 @@ def write_graph_pages(
             continue
         scope_page = scope_pages[scope]
         view = scope_maps[scope]
-        links = dict(node_links(scope_page, _article_link_ids(view)))
-        for node in view.nodes:
-            if node.kind == "scope":
-                nested = node.id.removeprefix("scope:")
-                links[node.id] = _published_link(scope_pages[nested], scope_page)
-            elif node.kind == "boundary":
-                external = node.id.removeprefix("boundary:")
-                links[node.id] = _published_link(chapter_pages.get(external) or scope_pages[external], scope_page)
+        links = view_links(view, scope_page)
         parent = graph.nodes[scope].parent
         parent_page = scope_pages.get(parent or "roadmap", project_page)
         written.append(
@@ -242,7 +250,7 @@ def write_graph_pages(
             full_page,
             view=project,
             statuses=_selected_statuses(graph, statuses, project, containers),
-            links=project_links(full_page),
+            links=view_links(project, full_page),
             heading=root_title,
             lead=(
                 f"Search {len(graph.nodes)} roadmap entries without flattening them into one canvas; "
@@ -306,7 +314,6 @@ def _write_page(
     search_href: str,
     breadcrumbs: tuple[tuple[str, str | None], ...],
     navigation: str = "",
-    extra: str = "",
     searchable: bool = True,
 ) -> Path:
     # Every projection is one payload and one explorer host, so readers get one
@@ -339,19 +346,18 @@ def _write_page(
         "  - navigation",
         "  - toc",
         "  - footer",
-        "---",
-        "",
-        f"# {heading}",
-        "",
     ]
+    if title_text(heading) != heading:
+        # MkDocs would take the title from the heading, whose references the
+        # theme reads back as characters in <title>, so it is named here.
+        sections.append(header_title(rendered_visible_text(heading)))
+    sections.extend(["---", "", f"# {title_text(heading)}", ""])
     if navigation:
         sections.extend([navigation, ""])
     # The legend rides on the lead sentence rather than sitting under the
     # explorer: it answers a question the reader asks once, not on every page.
     tip = render_legend_tip(statuses, _view_inventories(view))
     sections.extend([f"{lead} {tip}".rstrip(), "", explorer, ""])
-    if extra:
-        sections.extend([extra, ""])
     page.parent.mkdir(parents=True, exist_ok=True)
     page.write_text("\n".join(sections).rstrip() + "\n", encoding="utf-8")
     return page
@@ -379,7 +385,7 @@ def _selected_statuses(
 def _view_inventories(view: GraphView) -> dict[str, int]:
     """Count the module inventories the explorer's rings and nodes show, for the legend."""
     counts = dict.fromkeys(INVENTORY_STATUSES, 0)
-    for node in view.nodes:
+    for node in dag_viewer.drawn_view(view).nodes:
         for key, count in node.status_counts:
             if key in counts:
                 counts[key] += count
@@ -454,6 +460,8 @@ def _scope_breadcrumbs(
         (group_title(graph, "roadmap"), _published_link(project_page, page)),
     ]
     for node_id in reversed(lineage):
+        if node_id != scope and graph.nodes[node_id].navigation in FLATTENED_ROLES:
+            continue
         target = scope_pages.get(node_id)
         label = graph.nodes[node_id].title if node_id in graph.nodes else node_id
         items.append((label, _published_link(target, page) if target and target != page else None))
@@ -538,6 +546,7 @@ def render_legend_tip(
 __all__ = [
     "PROJECT_PAYLOAD",
     "SEARCH_INDEX",
+    "graph_page_paths",
     "render_legend",
     "render_legend_tip",
     "scope_page_href",
