@@ -331,8 +331,10 @@ uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform render blueprint \
   --output site-src --lean-root . --require-declarations
 uv run --with mkdocs --with mkdocs-material --with mkdocs-literate-nav \
   --with pymdown-extensions mkdocs build --strict
-uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform dashboard . --site-dir site
 ```
+
+`autoform dashboard . --site-dir site` then serves the built site locally, with
+live claims, until you stop it.
 
 Drop `--require-declarations` when reviewing work in progress, where a
 statement may name a Lean declaration that does not exist yet. On native
