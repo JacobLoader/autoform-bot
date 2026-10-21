@@ -82,6 +82,7 @@ from autoform_cli.skeleton import (
     render_probe,
     run_probe,
     source_excerpt,
+    stale_build_said,
     write_packets,
     write_skeleton_report,
 )
@@ -428,6 +429,64 @@ def test_probe_reports_a_failed_freshness_check_apart_from_stale_artifacts(
 
     assert "stale" not in str(refused.value)
     assert "permission denied" in str(refused.value)
+
+
+def test_a_failed_freshness_check_keeps_only_the_start_of_lake_output(
+    tmp_path: Path, monkeypatch, probe: str
+) -> None:
+    lake = "\n".join(f"error: .lake/build/lib/lean/Skel/M{number}.hash: permission denied" for number in range(5000))
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr=lake)
+
+    monkeypatch.setattr("autoform_cli.skeleton._run_bounded_command", fake_run)
+
+    with pytest.raises(SkeletonError) as refused:
+        run_probe(probe, tmp_path)
+
+    [message] = refused.value.issues
+    lines = message.splitlines()
+    assert lines[1] == "error: .lake/build/lib/lean/Skel/M0.hash: permission denied"
+    assert lines[-1] == "(4980 more lines from Lake)"
+    assert len(lines) == 22
+
+
+def test_a_failed_freshness_check_keeps_the_reason_lake_prints_on_stdout(
+    tmp_path: Path, monkeypatch, probe: str
+) -> None:
+    # Lake prints each target's error on stdout and only its summary on stderr.
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command, 1, stdout="error: Skel/Main.olean.hash: permission denied\n", stderr="error: build failed\n"
+        )
+
+    monkeypatch.setattr("autoform_cli.skeleton._run_bounded_command", fake_run)
+
+    with pytest.raises(SkeletonError) as refused:
+        run_probe(probe, tmp_path)
+
+    [message] = refused.value.issues
+    assert message.splitlines()[1:] == ["error: Skel/Main.olean.hash: permission denied", "error: build failed"]
+
+
+def test_a_stale_build_keeps_the_unbuilt_module_lake_prints_on_stdout_beside_a_warning_on_stderr(
+    tmp_path: Path, monkeypatch, probe: str
+) -> None:
+    # Lake prints its build monitor on stdout; a workspace warning still reaches stderr.
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command,
+            3,
+            stdout="✖ [2/3] Building Skel.Main\nerror: target is out-of-date and needs to be rebuilt\n",
+            stderr="warning: manifest out of date: packages directory changed\n",
+        )
+
+    monkeypatch.setattr("autoform_cli.skeleton._run_bounded_command", fake_run)
+
+    with pytest.raises(SkeletonError) as refused:
+        run_probe(probe, tmp_path)
+
+    assert stale_build_said(refused.value) == "✖ [2/3] Building Skel.Main"
 
 
 def test_probe_semantic_schema_matches_the_python_reader() -> None:

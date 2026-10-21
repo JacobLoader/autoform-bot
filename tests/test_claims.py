@@ -596,7 +596,7 @@ def _refs(repo: Path) -> dict[str, str]:
 
 
 @pytest.mark.parametrize(("method", "key"), [("renew", "a"), ("release", "a"), ("acquire", "c")])
-def test_list_retries_when_a_claim_ref_changes_between_ls_remote_and_fetch(
+def test_list_sees_a_claim_change_made_just_before_its_fetch(
     tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch, method: str, key: str
 ) -> None:
     owner = _board(tmp_path, board_repo, "worker-a")
@@ -606,12 +606,12 @@ def test_list_retries_when_a_claim_ref_changes_between_ls_remote_and_fetch(
     git = reader._git
     changed: list[bool] = []
 
-    def change_before_first_fetch(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    def change_before_the_fetch(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if args[0] == "fetch" and not changed:
             changed.append(getattr(owner, method)(key))
         return git(args, **kwargs)
 
-    monkeypatch.setattr(reader, "_git", change_before_first_fetch)
+    monkeypatch.setattr(reader, "_git", change_before_the_fetch)
     listed = reader.list()
 
     assert changed == [True]
@@ -628,12 +628,9 @@ def test_list_returns_its_verified_snapshot_when_refs_change_while_leases_are_pa
     before = _refs(board_repo)
     reader = _board(tmp_path, board_repo, "worker-b")
     git = reader._git
-    ls_remotes: list[list[str]] = []
 
     def renew_while_parsing(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        if args[0] == "ls-remote":
-            ls_remotes.append(args)
-        if args[:2] == ["cat-file", "commit"]:
+        if args[0] == "cat-file":
             assert owner.renew("b")
         return git(args, **kwargs)
 
@@ -643,28 +640,223 @@ def test_list_returns_its_verified_snapshot_when_refs_change_while_leases_are_pa
     assert _refs(board_repo) != before
     assert {claims.CLAIM_REF_PREFIX + lease["_key"]: lease["_oid"] for lease in listed} == before
     assert not any(lease["_malformed"] for lease in listed)
-    assert len(ls_remotes) == 2
 
 
-def test_list_raises_when_claim_refs_keep_changing(
+def test_list_lists_every_claim_while_a_peer_keeps_renewing_one(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire_many(["a", "b", "c"], ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+
+    def renew_after_each_git_command(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        proc = git(args, **kwargs)
+        assert owner.renew("a")
+        return proc
+
+    monkeypatch.setattr(reader, "_git", renew_after_each_git_command)
+    listed = reader.list()
+
+    assert [lease["_key"] for lease in listed] == ["a", "b", "c"]
+    assert not any(lease["_malformed"] for lease in listed)
+
+
+def _list_git_commands(tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch, count: int) -> int:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire_many([f"k{index}" for index in range(count)], ttl=600)
+    reader = _board(tmp_path, board_repo, f"reader-{count}")
+    git = reader._git
+    commands: list[list[str]] = []
+
+    def counting_git(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        commands.append(args)
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(reader, "_git", counting_git)
+    assert len(reader.list()) == count
+    return len(commands)
+
+
+def test_list_runs_as_many_git_commands_for_many_claims_as_for_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    small, large = tmp_path / "small.git", tmp_path / "large.git"
+    for repo in (small, large):
+        _git("init", "--bare", "--quiet", str(repo))
+
+    assert _list_git_commands(tmp_path, small, monkeypatch, 1) == _list_git_commands(
+        tmp_path, large, monkeypatch, 30
+    )
+
+
+def test_list_leaves_no_refs_behind_for_a_claim_ref_with_an_invalid_key(tmp_path: Path, board_repo: Path) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire("a", ttl=600)
+    oid = _refs(board_repo)[claims.CLAIM_REF_PREFIX + "a"]
+    _git("update-ref", claims.CLAIM_REF_PREFIX + "not+a+key", oid, cwd=board_repo)
+    reader = _board(tmp_path, board_repo, "worker-b")
+
+    assert [lease["_key"] for lease in reader.list()] == ["a"]
+    assert reader._git(["for-each-ref", "refs/"]).stdout == ""
+
+
+def test_list_leaves_no_refs_behind_when_reading_them_fails(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire("a", ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+    failed: list[bool] = []
+
+    def first_listing_fails(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "for-each-ref" and not failed:
+            failed.append(True)
+            raise claims.ClaimTransportError("simulated for-each-ref failure")
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(reader, "_git", first_listing_fails)
+    with pytest.raises(claims.ClaimTransportError, match="simulated for-each-ref failure"):
+        reader.list()
+
+    assert git(["for-each-ref", "refs/"]).stdout == ""
+
+
+def test_list_ignores_claim_refs_another_process_writes_into_the_shared_scratch(
     tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     owner = _board(tmp_path, board_repo, "worker-a")
     assert owner.acquire_many(["a", "b"], ttl=600)
+    stale = _refs(board_repo)[claims.CLAIM_REF_PREFIX + "b"]
     reader = _board(tmp_path, board_repo, "worker-b")
+    assert [lease["_key"] for lease in reader.list()] == ["a", "b"]
+    assert owner.release("b")
     git = reader._git
 
-    def renew_after_each_ls_remote(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    def peer_writes_after_fetch(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         proc = git(args, **kwargs)
-        if args[0] == "ls-remote":
-            before = _refs(board_repo)
-            assert owner.renew("a")
-            assert _refs(board_repo) != before
+        if args[0] == "fetch":
+            # Another process on this scratch, such as `read`, writes the released lease's ref meanwhile.
+            git(["update-ref", claims.CLAIM_REF_PREFIX + "b", stale])
         return proc
 
-    monkeypatch.setattr(reader, "_git", renew_after_each_ls_remote)
-    with pytest.raises(claims.ClaimTransportError, match="changed during each"):
-        reader.list()
+    monkeypatch.setattr(reader, "_git", peer_writes_after_fetch)
+
+    assert [lease["_key"] for lease in reader.list()] == ["a"]
+
+
+def test_list_retries_a_fetch_the_board_refused_because_a_ref_moved(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire("a", ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+    fetches: list[list[str]] = []
+
+    def refused_once(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "fetch":
+            fetches.append(args)
+            if len(fetches) == 1:
+                # A stateless protocol v0 server refuses a want its refs no longer reach.
+                return subprocess.CompletedProcess(
+                    ["git", *args], 128, "", "fatal: remote error: upload-pack: not our ref 1234\n"
+                )
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(reader, "_git", refused_once)
+
+    assert [lease["_key"] for lease in reader.list()] == ["a"]
+    assert len(fetches) == 2
+
+
+def test_list_offers_the_board_no_local_refs_to_negotiate_from(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire_many([f"k{index}" for index in range(20)], ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    reader._ensure_scratch()
+    # The scratch an older `list` used keeps a copy of every claim ref. Under
+    # protocol v0 offering them all takes rounds in which a renewal fails the fetch.
+    reader._git(["fetch", "--quiet", str(board_repo), f"+{claims.CLAIM_REF_PREFIX}*:{claims.CLAIM_REF_PREFIX}*"])
+    assert owner.renew_many([f"k{index}" for index in range(20)])
+    monkeypatch.setenv("GIT_TRACE_PACKET", "1")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.version")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "0")
+    git = reader._git
+    traces: list[str] = []
+
+    def traced(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        proc = git(args, **kwargs)
+        if args[0] == "fetch":
+            traces.append(proc.stderr)
+        return proc
+
+    monkeypatch.setattr(reader, "_git", traced)
+
+    assert len(reader.list()) == 20
+    assert len(traces) == 1 and "packet:" in traces[0] and "> have " not in traces[0]
+
+
+def test_read_offers_the_board_no_local_refs_to_negotiate_from(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire_many([f"k{index}" for index in range(20)], ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    reader._ensure_scratch()
+    # A scratch keeps the claim refs an older `list` mirrored and the private
+    # refs of a `list` killed before its cleanup ran.
+    reader._git(["fetch", "--quiet", str(board_repo), f"+{claims.CLAIM_REF_PREFIX}*:{claims.CLAIM_REF_PREFIX}*"])
+    reader._git(["fetch", "--quiet", str(board_repo), f"+{claims.CLAIM_REF_PREFIX}*:refs/autoform-list/killed/*"])
+    assert owner.renew_many([f"k{index}" for index in range(20)])
+    monkeypatch.setenv("GIT_TRACE_PACKET", "1")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.version")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "0")
+    git = reader._git
+    traces: list[str] = []
+
+    def traced(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        proc = git(args, **kwargs)
+        if args[0] == "fetch":
+            traces.append(proc.stderr)
+        return proc
+
+    monkeypatch.setattr(reader, "_git", traced)
+
+    lease = reader.read("k0")
+    assert lease is not None and lease["owner"] == "worker-a"
+    assert len(traces) == 1 and "packet:" in traces[0] and "> have " not in traces[0]
+
+
+def test_list_reads_a_lease_through_an_annotated_tag_as_read_does(tmp_path: Path, board_repo: Path) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire("a", ttl=600)
+    lease = _refs(board_repo)[claims.CLAIM_REF_PREFIX + "a"]
+    tag = _git("mktag", cwd=board_repo, input_text=f"object {lease}\ntype commit\ntag t\ntagger t <t@t> 0 +0000\n\nt\n")
+    _git("update-ref", claims.CLAIM_REF_PREFIX + "a", tag, cwd=board_repo)
+    reader = _board(tmp_path, board_repo, "worker-b")
+
+    assert reader.read("a") is not None
+    [listed] = reader.list()
+    assert listed["_malformed"] is False
+    assert listed["_oid"] == tag
+
+
+def test_list_drops_a_released_claim_it_listed_before(tmp_path: Path, board_repo: Path) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire_many(["a", "b"], ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    assert [lease["_key"] for lease in reader.list()] == ["a", "b"]
+
+    assert owner.release("b")
+
+    assert [lease["_key"] for lease in reader.list()] == ["a"]
+    assert reader._git(["for-each-ref", "refs/"]).stdout == ""
 
 
 def test_list_reports_a_claim_ref_to_a_non_commit_as_malformed(tmp_path: Path, board_repo: Path) -> None:
@@ -680,7 +872,87 @@ def test_list_reports_a_claim_ref_to_a_non_commit_as_malformed(tmp_path: Path, b
     assert listed["live"]["_malformed"] is False
 
 
-def test_list_reports_a_failed_fetch_of_an_unchanged_claim_without_retrying(
+def _plant_packed_leases(repo: Path, keys: Sequence[str]) -> dict[str, str]:
+    """Plant leases under packed refs, which hold names that differ only in case on any filesystem."""
+    oids = {}
+    for key in keys:
+        oids[key] = _plant_lease(repo, key)
+        _git("update-ref", "-d", claims.CLAIM_REF_PREFIX + key, cwd=repo)
+    (repo / "packed-refs").write_text(
+        "# pack-refs with: peeled fully-peeled sorted \n"
+        + "".join(f"{oid} {claims.CLAIM_REF_PREFIX}{key}\n" for key, oid in sorted(oids.items()))
+    )
+    return oids
+
+
+@pytest.mark.parametrize("ignorecase", ["true", "false"])
+def test_list_lists_claim_keys_that_differ_only_in_case_on_any_filesystem(
+    tmp_path: Path, board_repo: Path, ignorecase: str
+) -> None:
+    # A case-sensitive board can hold both refs; a case-insensitive scratch cannot store them under their names.
+    oids = _plant_packed_leases(board_repo, ["lean/Foo", "lean/foo"])
+    reader = _board(tmp_path, board_repo, "worker-b")
+    reader._ensure_scratch()
+    reader._git(["config", "core.ignorecase", ignorecase])
+
+    listed = reader.list()
+
+    assert [(item["_key"], item["_oid"], item["_malformed"]) for item in listed] == [
+        ("lean/Foo", oids["lean/Foo"], False),
+        ("lean/foo", oids["lean/foo"], False),
+    ]
+    assert reader._git(["for-each-ref", "refs/"]).stdout == ""
+
+
+def test_list_of_keys_that_differ_only_in_case_drops_a_claim_released_after_naming_it(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    oids = _plant_packed_leases(board_repo, ["lean/Foo", "lean/foo", "other"])
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+    named: list[bool] = []
+
+    def released_after_ls_remote(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "fetch" and "--stdin" not in args:
+            # What a case-insensitive scratch answers; a case-sensitive one would store both names.
+            stderr = "error: the remote has references that only differ in casing\n"
+            return subprocess.CompletedProcess(["git", *args], 1, "", stderr)
+        proc = git(args, **kwargs)
+        if args[0] == "ls-remote" and not named:
+            named.append(True)
+            _git("update-ref", "-d", claims.CLAIM_REF_PREFIX + "other", cwd=board_repo)
+        return proc
+
+    monkeypatch.setattr(reader, "_git", released_after_ls_remote)
+
+    assert [(item["_key"], item["_oid"]) for item in reader.list()] == [
+        ("lean/Foo", oids["lean/Foo"]),
+        ("lean/foo", oids["lean/foo"]),
+    ]
+    assert git(["for-each-ref", "refs/"]).stdout == ""
+
+
+def test_list_reports_why_a_fetch_failed_without_git_s_negotiation_warning(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+    warning = "warning: ignoring --negotiation-tip=refs/autoform-list/x/* because it does not match any refs\n"
+    reason = "fatal: unable to access the board: " + "x" * 250
+
+    def failing_fetch(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "fetch":
+            return subprocess.CompletedProcess(["git", *args], 128, "", warning + reason + "\n")
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(reader, "_git", failing_fetch)
+    with pytest.raises(claims.ClaimTransportError) as failed:
+        reader.list()
+    assert str(failed.value).startswith("cannot fetch the claim board: fatal: unable to access the board: ")
+    assert "negotiation-tip" not in str(failed.value)
+
+
+def test_list_reports_a_failed_fetch_without_retrying(
     tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     owner = _board(tmp_path, board_repo, "worker-a")
@@ -696,7 +968,7 @@ def test_list_reports_a_failed_fetch_of_an_unchanged_claim_without_retrying(
         return git(args, **kwargs)
 
     monkeypatch.setattr(reader, "_git", failing_fetch)
-    with pytest.raises(claims.ClaimTransportError, match=r"cannot fetch claim 'a'.*simulated fetch failure"):
+    with pytest.raises(claims.ClaimTransportError, match=r"cannot fetch the claim board.*simulated fetch failure"):
         reader.list()
     assert len(fetches) == 1
 
