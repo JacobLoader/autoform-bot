@@ -117,8 +117,9 @@ An optional container-only `navigation` role makes the difference explicit:
 - `topic` (the default): a mathematical subject or coherent group of results.
 - `collection`: a library or other organizational collection. Its parent's
   overview shows the collection's children in its place.
-- `transparent`: a generated pagination or range container. It is flattened
-  the same way and left out of the outline and ancestor breadcrumbs.
+- `transparent`: a generated pagination or range container, flattened the
+  same way; like a collection, it is left out of the outline and ancestor
+  breadcrumbs.
 - `source`: a book or other source corpus, shown as itself.
 - `module`: a container that mirrors one Lean source module and holds its
   declarations. It is shown like a topic, and its size is the module's (see
@@ -128,7 +129,8 @@ An overview, a page with a collection, pagination or source child, draws what
 remains after collections and pagination are replaced by their contents.
 These roles never change article identity, containment, proof readiness, or
 dependency edges; a relation that mentions a collection itself stays attached
-to the collection.
+to the collection, so no map draws it: depend on an article inside the
+collection instead.
 
 For a taxonomy maintained separately from article files, `blueprint/atlas.json`
 may assign the same areas without moving pages:

@@ -2,7 +2,8 @@
 
 The Markdown graph remains the source of truth.  These views only select or
 aggregate its nodes and edges so the same data can answer project-, chapter-,
-and theorem-level questions without inventing a second graph format.
+and nested-scope questions, plus a whole-graph node list for search, without
+inventing a second graph format.
 """
 
 from __future__ import annotations
@@ -494,7 +495,10 @@ def is_scope_target(node: Node) -> bool:
 
     Only leaves that declare something or are marked not ready count, so a
     note cannot hold a finished chapter open but deferred work does. A module
-    catalog is inventory evidence, never a target.
+    catalog is inventory evidence, never a target. The dashboards count with
+    _is_countable instead, which leaves out a not-ready leaf that declares
+    nothing; only this predicate counts one (README, "What coverage
+    completeness does and does not claim").
     """
     return node.catalog is None and (node.formalizable or node.not_ready)
 
@@ -557,7 +561,10 @@ def _is_countable(graph: Graph, node_id: str, containers: frozenset[str]) -> boo
     freshly scaffolded vault report "0 of 1 targets complete, 1 ready now": the
     roadmap landing page has no children yet, so it counted as an unstarted
     result, and the site claimed work existed before any had been planned. A
-    module catalog declares nothing, so it never counts.
+    module catalog declares nothing, so it never counts. A scope counts with
+    is_scope_target instead, the only predicate that also counts a not-ready
+    leaf that declares nothing (README, "What coverage completeness does and
+    does not claim").
     """
 
     return node_id not in containers and graph.nodes[node_id].formalizable
