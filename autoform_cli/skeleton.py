@@ -1774,12 +1774,11 @@ def _check_artifacts_fresh(
         timeout=timeout,
         context="cannot verify Lean build freshness",
     )
-    detail = (result.stderr or result.stdout).strip()
+    # Lake prints each target's line on stdout and only warnings and its summary on stderr.
+    output = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
     if result.returncode == _LAKE_NO_BUILD_EXIT:
-        raise SkeletonError([f"{STALE_BUILD}{shlex.join(modules)}` before {_probe_purpose(label)}\n{detail}"])
+        raise SkeletonError([f"{STALE_BUILD}{shlex.join(modules)}` before {_probe_purpose(label)}\n{output}"])
     if result.returncode != 0:
-        # Lake prints each target's error on stdout and only its summary on stderr.
-        output = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
         raise SkeletonError(
             [
                 f"cannot verify Lean build freshness: `lake --rehash --no-build build` exited with status "
