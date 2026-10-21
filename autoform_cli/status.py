@@ -12,7 +12,7 @@ progress, stroke encodes statement progress.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -97,6 +97,38 @@ STATES: tuple[State, ...] = (
 
 _BY_KEY = {state.key: state for state in STATES}
 
+#: Neutral statuses for module catalogs, which record inspection of existing
+#: Lean rather than formalization targets: checked once fully proved, pending
+#: until then. Each takes a grey stroke of its own, apart from planned's, so
+#: planned targets and both kinds of inventory stay apart in a status ring.
+INVENTORY_STATES: tuple[State, ...] = (
+    replace(
+        _BY_KEY["planned"],
+        key="inventory_checked",
+        label="inventory checked",
+        stroke="#65676B",
+        dark_stroke="#B0B3B8",
+    ),
+    State("inventory_pending", "inventory pending", "#F0F2F5", "#8A8D91", "#65676B",
+          "#242526", "#8A8D91", "#B0B3B8"),
+)
+
+#: What each state means, for the legends and the explorer's swatches.
+MEANINGS = {
+    "mathlib": "Upstreamed into Mathlib.",
+    "fully_proved": "Proved, and every prerequisite is fully proved too.",
+    "proved": "Proof compiles, but something it rests on is not finished.",
+    "defined": "Definition is written in Lean.",
+    "conditional": "Proof compiles, but rests on an open statement without a recorded Lean proof.",
+    "can_prove": "Statement is in Lean and nothing it needs is blocked, so the proof can start.",
+    "stated": "Statement is in Lean; the proof is not.",
+    "can_state": "Nothing it needs is blocked, so the statement can be written in Lean.",
+    "not_ready": "Needs more blueprint work before it can be attempted.",
+    "planned": "Described in the blueprint only.",
+    "inventory_checked": "Module inventory checked in full; it records inspection, not a mathematical proof.",
+    "inventory_pending": "Module inventory not yet checked in full; it records inspection, not a mathematical proof.",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class NodeStatus:
@@ -106,7 +138,9 @@ class NodeStatus:
     next phase, in authored order. ``assumes`` names the open statements (not
     proved, but stated or a theorem whose ``statement: retracted`` keeps its
     ``lean:`` declaration in the build) a proof of this node rests on; it is
-    empty unless the project allows open statements.
+    empty unless the project allows open statements. A module catalog is never
+    an open statement, but a proof resting on one with ``lean:`` assumes the
+    open statements the catalog rests on.
     """
 
     node_id: str
@@ -152,7 +186,8 @@ def derive(graph: Graph) -> dict[str, NodeStatus]:
     statuses: dict[str, NodeStatus] = {}
     # The open statements a proof reaches through each node, as the Lean walk
     # would: an open statement contributes itself and whatever its statement
-    # reaches, and a proved node is entered fully.
+    # reaches, and a proved node or a module catalog with `lean:` is entered
+    # fully.
     reaches: dict[str, frozenset[str]] = {}
     for node_id in topological_order(graph):
         node = graph.nodes[node_id]
@@ -186,11 +221,13 @@ def derive(graph: Graph) -> dict[str, NodeStatus]:
             # declaration, which stays in the build, sorry and all, until
             # Formalize restates it. A draft `lean:` on a never-stated theorem
             # is not an assumption. A retracted definition is not open, but its
-            # body still reaches what it used.
+            # body still reaches what it used. A module catalog licenses no sorry
+            # either: one with `lean:` is entered, stated or not, as a definition
+            # is, so nothing that rests on it assumes it.
             if not node.mathlib:
                 reached = frozenset().union(*(reaches.get(other, frozenset()) for other in node.dependencies))
                 assumes = tuple(sorted(reached))
-                if proved or (definition and node.lean):
+                if proved or ((definition or node.catalog is not None) and node.lean):
                     reaches[node_id] = reached
                 elif stated or node.statement_retracted:
                     reaches[node_id] = frozenset({node_id}).union(
@@ -299,6 +336,8 @@ def summarize(statuses: dict[str, NodeStatus]) -> list[tuple[State, int]]:
 
 __all__ = [
     "DEFINITION_DECLARATIONS",
+    "INVENTORY_STATES",
+    "MEANINGS",
     "STATES",
     "NodeStatus",
     "State",

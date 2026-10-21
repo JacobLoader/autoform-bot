@@ -16,6 +16,7 @@ from autoform_cli.graph import (
 )
 from autoform_cli import graph_pages, graph_views, render
 from autoform_cli.audit import audit_graph
+from autoform_cli.coverage import load_coverage, validate_coverage_roles
 from autoform_cli.graph_views import chapter_view, group_nodes, project_view, scope_view
 from autoform_cli.render import _book_page_order, render_site
 from autoform_cli.runtime import (
@@ -379,6 +380,7 @@ def test_bulk_scope_views_scale_linearly_with_the_number_of_containers(tmp_path:
 
 def _index_builds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chapters: int) -> dict[str, int]:
     graph = _nested_graph(tmp_path / str(chapters), chapters, 3)
+    nodes = _CountingDict(graph.nodes)
     builds = {"_containment_children": 0, "_relations": 0}
 
     def counted(name: str):
@@ -394,12 +396,14 @@ def _index_builds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chapters: int
         for name in builds:
             patch.setattr(graph_views, name, counted(name))
         graph_pages.write_graph_pages(
-            graph,
+            Graph(graph.blueprint_dir, nodes),
             derive(graph),
             tmp_path / str(chapters) / "site",
-            node_links=lambda page: {node_id: "book.html" for node_id in graph.nodes},
+            node_links=lambda page, node_ids: {
+                node_id: "book.html" for node_id in node_ids
+            },
         )
-    return builds
+    return {**builds, "graph walks": nodes.values_calls}
 
 
 def test_graph_page_publication_builds_whole_graph_indexes_a_fixed_number_of_times(
@@ -409,8 +413,10 @@ def test_graph_page_publication_builds_whole_graph_indexes_a_fixed_number_of_tim
     small = _index_builds(tmp_path, monkeypatch, 4)
     large = _index_builds(tmp_path, monkeypatch, 8)
 
+    # Every section has its own page. Rebuilding the containers set for each
+    # page's legend made the graph walks grow with the chapters.
     assert large == small
-    assert max(small.values()) <= 4
+    assert max(small["_containment_children"], small["_relations"]) <= 4
 
 
 def _written_blueprint(tmp_path: Path, sections: int = 1, chapters: int = 1, dependencies: bool = False) -> Path:
@@ -429,7 +435,12 @@ def _written_blueprint(tmp_path: Path, sections: int = 1, chapters: int = 1, dep
     (blueprint / "coverage").mkdir()
     (blueprint / "coverage" / "README.md").write_text(
         "# Coverage\n\n| Area | Coverage | Evidence |\n| --- | --- | --- |\n"
-        "| Project scope | MAPPED | Source audit pending |\n",
+        "| Project scope | MAPPED | Source audit pending |\n"
+        + "".join(
+            f"| {group}/{name} | DECOMPOSED | [A](../roadmap/{group}/{name}/a.md) |\n"
+            for group in groups
+            for name in names
+        ),
         encoding="utf-8",
     )
     for group, title in groups.items():
@@ -489,6 +500,8 @@ def test_site_rendering_indexes_containers_a_fixed_number_of_times(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # render imports the index builder that graph_views' own helpers call.
+    monkeypatch.setattr(graph_views, "_containers", lambda graph: render._containers(graph))
     small, large = (
         _render_calls(_written_blueprint(tmp_path / str(sections), sections), monkeypatch, render, "_containers")
         for sections in (2, 6)
@@ -511,9 +524,9 @@ def test_site_rendering_resolves_paths_linearly_in_sections_and_chapters(
     small = _path_resolves(tmp_path, monkeypatch, **{axis: 8})
     large = _path_resolves(tmp_path, monkeypatch, **{axis: 16})
 
-    # Every statement, section and chapter has its own map page. Linking every
-    # node from every page made doubling the sections or chapters multiply the
-    # resolves by 2.8 or 3.2.
+    # Every section and chapter has its own scope map page, and every section a
+    # DECOMPOSED coverage row. Linking every node from every page made the
+    # resolves grow with the pages times the nodes.
     assert large <= 2 * small
 
 
@@ -529,6 +542,38 @@ def test_site_rendering_never_iterates_a_pages_node_links(
     monkeypatch.setattr(render._PageLinks, "__iter__", iterated)
 
     render_site(_written_blueprint(tmp_path, 2, chapters=2, dependencies=True), tmp_path / "site")
+
+
+def _coverage_role_resolves(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sections: int) -> int:
+    blueprint = _written_blueprint(tmp_path / str(sections), sections)
+    graph = load_graph(blueprint)
+    coverage, _issues = load_coverage(blueprint)
+    assert coverage is not None
+    calls = 0
+    original = Path.resolve
+
+    def counted(self: Path, strict: bool = False) -> Path:
+        nonlocal calls
+        calls += 1
+        return original(self, strict)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "resolve", counted)
+        validate_coverage_roles(graph, coverage)
+    return calls
+
+
+def test_coverage_roles_resolve_paths_linearly_in_the_number_of_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    small = _coverage_role_resolves(tmp_path, monkeypatch, 8)
+    large = _coverage_role_resolves(tmp_path, monkeypatch, 16)
+
+    # Every section adds a DECOMPOSED row. Resolving every article's path again
+    # for each row took the role check from 216 to 816 resolves; counted across
+    # a whole render, the same growth read as only 2.26 times.
+    assert large <= 2 * small
 
 
 def test_audit_does_not_scan_for_children_per_node(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

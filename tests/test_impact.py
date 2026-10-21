@@ -2171,6 +2171,35 @@ def test_cli_reports_probe_failures_line_by_line(tmp_path: Path, monkeypatch, ca
     ]
 
 
+@pytest.mark.parametrize("command", [["impact"], ["import-impact"]])
+def test_cli_names_the_libraries_to_build_for_a_stale_build_instead_of_every_module(
+    tmp_path: Path, monkeypatch, capsys, command: list[str]
+) -> None:
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _stub_lean_root(tmp_path)
+    modules = " ".join(f"Demo.M{number}" for number in range(2000))
+    # What `skeleton.run_probe` raises: every imported module, then Lake's replay before the unbuilt one.
+    lake = (
+        "⚠ [2/9] Replayed Demo.M3\nwarning: Demo/M3.lean:1:8: declaration uses `sorry`\n"
+        "✖ [3/9] Building Demo.M7\nerror: target is out-of-date and needs to be rebuilt\n"
+        "Some required targets logged failures:\n- Demo.M7"
+    )
+    stale = SkeletonError(
+        [f"Lean build artifacts are stale; run `lake build {modules}` before running the impact probe\n{lake}"]
+    )
+    _stub_probe(monkeypatch, error=stale)
+    module = ["Demo"] if command == ["import-impact"] else []
+
+    code = cli.main(["work", *command, _BASE_ID, *module, str(project), "--lean-root", str(lean_root)])
+
+    output = capsys.readouterr()
+    assert code == 2
+    assert output.err.splitlines() == [
+        "error: Lean build artifacts are stale; run `lake build Demo` before running the impact probe "
+        "(1 module; Lake: ✖ [3/9] Building Demo.M7)"
+    ]
+
+
 def test_cli_requires_a_lake_project_and_a_lean_root(tmp_path: Path, monkeypatch, capsys) -> None:
     project = _blueprint_project(tmp_path, "Demo")
     empty_root = tmp_path / "not-lean"
@@ -2209,12 +2238,12 @@ def test_revision_impact_retries_an_initial_source_capture_race(
     original_capture = lean_module.BoundProjectSources.capture
     captures = 0
 
-    def changing_once(bound):
+    def changing_once(bound, **kwargs):
         nonlocal captures
         captures += 1
         if captures == 1:
             raise TreeChangedError("directory tree changed while it was captured")
-        return original_capture(bound)
+        return original_capture(bound, **kwargs)
 
     monkeypatch.setattr(lean_module.BoundProjectSources, "capture", changing_once)
     monkeypatch.setattr(lean_module, "_SNAPSHOT_RETRY_DELAY_SECONDS", 0)
