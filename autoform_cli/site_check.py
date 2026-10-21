@@ -88,49 +88,74 @@ def check_site(site_dir: str | Path, source_dir: str | Path | None = None) -> Si
     site = Path(site_dir)
     if not site.is_dir():
         raise SiteCheckError(f"{site} is not a directory")
+    source = None if source_dir is None else Path(source_dir)
+    if source is not None and not source.is_dir():
+        raise SiteCheckError(f"{source} is not a directory")
+    issues: list[str] = []
     pages: dict[str, _Page] = {}
     for path in sorted(site.rglob("*.html")):
-        if path.is_file():
-            page = _Page()
-            parser = _PageParser(page)
-            parser.feed(path.read_text(encoding="utf-8", errors="replace"))
-            parser.close()
-            pages[path.relative_to(site).as_posix()] = page
-    issues: list[str] = []
+        if not path.is_file():
+            continue
+        name = path.relative_to(site).as_posix()
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as error:
+            issues.append(f"{name}: could not be read: {error}")
+            continue
+        page = _Page()
+        parser = _PageParser(page)
+        parser.feed(text)
+        parser.close()
+        pages[name] = page
     files: dict[str, str | None] = {}
+    # A missing file many pages link to, such as a shared stylesheet, is reported once, with a count.
+    missing: dict[str, tuple[int, set[str]]] = {}
     for name, page in pages.items():
         for link in page.links:
             problem = _link_problem(site, pages, files, name, link)
-            if problem is not None:
-                issues.append(f"{name}: {problem}")
-    if source_dir is not None:
-        source = Path(source_dir)
-        if not source.is_dir():
-            raise SiteCheckError(f"{source} is not a directory")
+            if problem is None:
+                continue
+            message, target = problem
+            if target in missing:
+                missing[target][1].add(name)
+                continue
+            if target is not None:
+                missing[target] = (len(issues), {name})
+            issues.append(f"{name}: {message}")
+    for index, linking in missing.values():
+        if len(linking) > 1:
+            issues[index] += f"; {len(linking) - 1} other page(s) link to it too"
+    if source is not None:
         issues.extend(_card_problems(source, pages))
-    return SiteReport(len(pages), tuple(issues))
+    # Render repeats a body link in a hidden validation copy, so one broken link can appear twice.
+    return SiteReport(len(pages), tuple(dict.fromkeys(issues)))
 
 
 def _link_problem(
     site: Path, pages: dict[str, _Page], files: dict[str, str | None], page: str, link: str
-) -> str | None:
-    parts = urlsplit(link.strip())
+) -> tuple[str, str | None] | None:
+    """What is wrong with *link* on *page*, and the missing site path when that is the problem."""
+
+    try:
+        parts = urlsplit(link.strip())
+    except ValueError:
+        return f"{link} is not a valid URL", None
     if parts.scheme or parts.netloc or parts.path.startswith("/"):
         return None
     target = page
     if parts.path:
         joined = posixpath.normpath(posixpath.join(posixpath.dirname(page), unquote(parts.path)))
         if joined == ".." or joined.startswith("../"):
-            return f"{link} leaves the site"
+            return f"{link} leaves the site", None
         if joined not in files:
             files[joined] = _published_file(site, joined)
         found = files[joined]
         if found is None:
-            return f"{link} names {joined}, which the site does not contain"
+            return f"{link} names {joined}, which the site does not contain", joined
         target = found
     fragment = unquote(parts.fragment)
     if fragment and target in pages and fragment not in pages[target].ids:
-        return f"{link} names no anchor #{fragment} on {target}"
+        return f"{link} names no anchor #{fragment} on {target}", None
     return None
 
 
@@ -147,10 +172,15 @@ def _card_problems(source: Path, pages: dict[str, _Page]) -> list[str]:
     for path in sorted(source.rglob("*.md")):
         if not path.is_file():
             continue
-        expected = [html.unescape(node) for node in _SOURCE_CARD.findall(path.read_text(encoding="utf-8", errors="replace"))]
+        relative = path.relative_to(source).as_posix()
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as error:
+            issues.append(f"{relative}: could not be read: {error}")
+            continue
+        expected = [html.unescape(node) for node in _SOURCE_CARD.findall(text)]
         if not expected:
             continue
-        relative = path.relative_to(source).as_posix()
         built = _built_page(relative, pages)
         if built is None:
             issues.append(f"{relative}: no built page holds its {len(expected)} statement card(s)")

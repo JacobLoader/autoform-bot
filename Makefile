@@ -19,3 +19,4 @@ check-example:
 		--lean-root $(THESIS_EXAMPLE) \
 		--require-declarations
 	uv run --extra dev mkdocs build --strict --config-file $(THESIS_EXAMPLE)/mkdocs.yml
+	uv run autoform site check $(THESIS_EXAMPLE)/site --source $(THESIS_EXAMPLE)/site-src

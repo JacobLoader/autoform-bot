@@ -774,12 +774,12 @@ def _site_check(args: argparse.Namespace) -> int:
     try:
         report = check_site(args.site_dir, args.source)
     except SiteCheckError as exc:
-        print(f"error: {exc}")
+        print(f"error: {_human_text(exc)}")
         return 1
 
-    print(f"{args.site_dir}: {report.pages} pages, {len(report.issues)} problem(s)")
+    print(f"{_human_text(args.site_dir)}: {report.pages} pages, {len(report.issues)} problem(s)")
     for issue in report.issues:
-        print(f"warning: {issue}")
+        print(f"warning: {_human_text(issue)}")
     # It informs: what it finds never fails the build.
     return 0
 

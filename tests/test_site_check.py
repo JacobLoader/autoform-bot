@@ -11,6 +11,28 @@ from autoform_cli.scaffold import scaffold_project
 from autoform_cli.site_check import SiteCheckError, check_site
 
 
+class _CountingPages(dict):
+    def __init__(self, pages: dict) -> None:
+        super().__init__(pages)
+        self.scans = 0
+
+    def __iter__(self):
+        self.scans += 1
+        return super().__iter__()
+
+    def keys(self):
+        self.scans += 1
+        return super().keys()
+
+    def values(self):
+        self.scans += 1
+        return super().values()
+
+    def items(self):
+        self.scans += 1
+        return super().items()
+
+
 def _site(root: Path, pages: dict[str, str]) -> Path:
     for name, body in pages.items():
         path = root / name
@@ -24,10 +46,14 @@ def test_check_reports_dead_links_missing_anchors_and_links_that_leave_the_site(
         tmp_path / "site",
         {
             "index.html": (
-                '<a href="a.html">a</a> <a href="a.html#kept">kept</a> <a href="a.html#gone">gone</a>'
+                '<link rel="stylesheet" href="missing.css"><script src="missing.js"></script>'
+                '<a href="a.html">a</a> <a href="a.html#kept">kept</a> <a href="a.html#named">named</a>'
+                '<a href="a.html#gone">gone</a>'
                 '<a href="missing.html">missing</a> <a href="roadmap/ch/README.html#x">readme</a>'
                 '<a href="../outside.html">outside</a> <img src="figure.svg"> <a href="#top">top</a>'
-                '<a href="#nowhere">nowhere</a> <span id="top"></span>'
+                '<a href="#nowhere">nowhere</a> <span id="top"></span> <a href="http://[oops/thesis">mirror</a>'
+                # Render repeats a body link in a hidden copy that MkDocs validates.
+                '<div class="bp-body-link-validation" hidden><a href="a.html#gone"></a></div>'
             ),
             "a.html": '<h2 id="kept">Kept</h2><a name="named"></a><a href="index.html#named">wrong page</a>',
             "roadmap/ch/index.html": '<div id="x"></div>',
@@ -39,12 +65,46 @@ def test_check_reports_dead_links_missing_anchors_and_links_that_leave_the_site(
     assert report.pages == 3
     assert report.issues == (
         "a.html: index.html#named names no anchor #named on index.html",
+        "index.html: missing.css names missing.css, which the site does not contain",
+        "index.html: missing.js names missing.js, which the site does not contain",
         "index.html: a.html#gone names no anchor #gone on a.html",
         "index.html: missing.html names missing.html, which the site does not contain",
         "index.html: roadmap/ch/README.html#x names roadmap/ch/README.html, which the site does not contain",
         "index.html: ../outside.html leaves the site",
         "index.html: figure.svg names figure.svg, which the site does not contain",
         "index.html: #nowhere names no anchor #nowhere on index.html",
+        "index.html: http://[oops/thesis is not a valid URL",
+    )
+
+
+def test_check_reports_a_file_many_pages_lack_once(tmp_path: Path) -> None:
+    head = '<link rel="stylesheet" href="{0}assets/site.css"><a href="{0}gone.html">gone</a>'
+    site = _site(tmp_path / "site", {"a.html": head.format(""), "b.html": head.format(""), "sub/c.html": head.format("../")})
+
+    assert check_site(site).issues == (
+        "a.html: assets/site.css names assets/site.css, which the site does not contain; 2 other page(s) link to it too",
+        "a.html: gone.html names gone.html, which the site does not contain; 2 other page(s) link to it too",
+    )
+
+
+def test_check_warns_about_a_page_or_source_it_cannot_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    site = _site(tmp_path / "site", {"index.html": '<a href="locked.html#x">locked</a>', "locked.html": '<p id="x"></p>'})
+    source = _site(tmp_path / "site-src", {"locked.md": "# Locked\n"})
+    read_text = Path.read_text
+
+    def locked_read_text(self: Path, *args, **kwargs) -> str:
+        if self.stem == "locked":
+            raise PermissionError(13, "Permission denied", str(self))
+        return read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", locked_read_text)
+
+    report = check_site(site, source)
+
+    assert report.pages == 1
+    assert report.issues == (
+        f"locked.html: could not be read: [Errno 13] Permission denied: '{site / 'locked.html'}'",
+        f"locked.md: could not be read: [Errno 13] Permission denied: '{source / 'locked.md'}'",
     )
 
 
@@ -98,7 +158,9 @@ def test_check_compares_each_page_with_the_cards_render_wrote(tmp_path: Path) ->
     )
 
 
-def test_check_reads_each_page_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_reads_each_page_once_and_never_scans_the_pages_for_a_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     count = 1_200
     pages = {
         f"page{index:04d}.html": f'<h1 id="p{index}">Page</h1><a href="page{(index + 1) % count:04d}.html#p{(index + 1) % count}">next</a>'
@@ -113,21 +175,34 @@ def test_check_reads_each_page_once(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         feed(self, data)
 
     monkeypatch.setattr(site_check._PageParser, "feed", counting_feed)
+    counted: list[_CountingPages] = []
+    link_problem = site_check._link_problem
+
+    def counting_link_problem(site: Path, pages: dict, *args):
+        if not counted:
+            counted.append(_CountingPages(pages))
+        return link_problem(site, counted[0], *args)
+
+    monkeypatch.setattr(site_check, "_link_problem", counting_link_problem)
 
     report = check_site(site)
 
     assert report.pages == count
     assert report.issues == ()
     assert len(fed) == count
+    assert counted[0].scans == 0
 
 
 def test_cli_prints_problems_as_warnings_and_never_fails_on_them(tmp_path: Path, capsys) -> None:
-    site = _site(tmp_path / "site", {"index.html": '<a href="missing.html">missing</a>'})
+    site = _site(
+        tmp_path / "site", {"index.html": '<a href="missing.html">missing</a><a href="#x&#10;warning: forged">x</a>'}
+    )
 
     assert main(["site", "check", str(site)]) == 0
     assert capsys.readouterr().out == (
-        f"{site}: 1 pages, 1 problem(s)\n"
+        f"{site}: 1 pages, 2 problem(s)\n"
         "warning: index.html: missing.html names missing.html, which the site does not contain\n"
+        "warning: index.html: #x\\nwarning: forged names no anchor #xwarning: forged on index.html\n"
     )
     assert main(["site", "check", str(tmp_path / "absent")]) == 1
     assert capsys.readouterr().out == f"error: {tmp_path / 'absent'} is not a directory\n"
@@ -135,7 +210,7 @@ def test_cli_prints_problems_as_warnings_and_never_fails_on_them(tmp_path: Path,
         check_site(site, tmp_path / "no-source")
 
 
-def test_check_passes_a_rendered_project_that_mkdocs_built_with_the_template(tmp_path: Path) -> None:
+def test_check_finds_only_the_known_broken_links_in_a_rendered_project_mkdocs_built(tmp_path: Path) -> None:
     mkdocs_build = pytest.importorskip("mkdocs.commands.build")
     from mkdocs.config import load_config
 
@@ -143,19 +218,38 @@ def test_check_passes_a_rendered_project_that_mkdocs_built_with_the_template(tmp
     scaffold_project(project, title="Site Check", repository_url="https://github.com/owner/repo")
     roadmap = project / "blueprint" / "roadmap"
     (roadmap / "README.md").write_text(
-        "---\n---\n\n# Roadmap\n\nThe one result.\n\n## Results\n\n- [Top](top.md)\n", encoding="utf-8"
+        "---\n---\n\n# Roadmap\n\nOne chapter.\n\n## Chapters\n\n- [Chapter](ch/README.md)\n", encoding="utf-8"
     )
-    (roadmap / "top.md").write_text(
-        "---\ndeclaration: theorem\nstatement: formalized\nproof: formalized\nlean: Project.top\n---\n\n"
-        "# Top\n\nFor $a < b$ and every n, the main result holds.\n\n## Depends on\n\nThis node has no prerequisites.\n",
+    (roadmap / "ch").mkdir()
+    (roadmap / "ch" / "README.md").write_text(
+        "---\n---\n\n# Chapter\n\nThree results.\n\n## Results\n\n"
+        "- [First](first.md)\n- [Second](second.md)\n- [Third](third.md)\n",
         encoding="utf-8",
     )
+    article = (
+        "---\ndeclaration: theorem\nstatement: formalized\n{proof}lean: Project.{name}\n---\n\n"
+        "# {title}\n\n{body}\n\n## Depends on\n\n{depends}\n"
+    )
+    # Comparisons the site's Markdown conversion once read as tags, losing every later card on the page.
+    first = "For $a<b>c$, use [the result][ref], not [this](#nowhere).\n\n## Sources\n\n[ref]: <second.md>"
+    second = "Use only r<n.\n\n## Proof sketch\n\nFor $i<ell$, continue the proof."
+    for name, proof, body, depends in (
+        ("first", "proof: formalized\n", first, "This node has no prerequisites."),
+        ("second", "proof: formalized\n", second, "- [First](first.md)"),
+        ("third", "", "The last result.", "- [Second](second.md)"),
+    ):
+        (roadmap / "ch" / f"{name}.md").write_text(
+            article.format(proof=proof, name=name, title=name.title(), body=body, depends=depends), encoding="utf-8"
+        )
     render_site(project / "blueprint", project / "site-src")
     mkdocs_build.build(load_config(config_file=str(project / "mkdocs.yml")))
 
     report = check_site(project / "site", project / "site-src")
 
-    # The card the check compares, written with a `<` the site's conversion once mistook for a tag.
-    assert 'data-autoform-node-id="top"' in (project / "site-src/roadmap/README.md").read_text(encoding="utf-8")
+    landing = (project / "site-src/README.md").read_text(encoding="utf-8")
+    assert '<div class="bp-next-target" data-autoform-node-id="ch/third">' in landing
     assert report.pages > 0
-    assert report.issues == ()
+    # Until #90, Next up links a chapter as README.html, which MkDocs publishes as index.html.
+    assert [issue for issue in report.issues if not issue.startswith("index.html: roadmap/ch/README.html")] == [
+        "roadmap/ch/index.html: #nowhere names no anchor #nowhere on roadmap/ch/index.html",
+    ]
