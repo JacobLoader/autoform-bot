@@ -295,6 +295,22 @@ def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
         assert "lake-build" not in read(relative), relative
 
 
+def test_readme_tells_users_how_to_run_several_sessions(repo_root: Path) -> None:
+    """A session's agent limit is not the project's: several sessions share one claim board (#421).
+
+    Sessions started together each see an empty board and would choose no claims,
+    so only the user's request can tell a session that others share the project.
+    """
+    readme = " ".join((repo_root / "README.md").read_text(encoding="utf-8").split())
+    assert "## Run several sessions" in readme
+    assert "own clone of the project, with the same `origin` and the same branch" in readme
+    assert "Tell each session that other sessions share the project" in readme
+    assert "push claims and verified results to `origin`" in readme
+    assert "each one sees an empty claim board and would otherwise work without claims" in readme
+    assert "raise `max_threads` under `[agents]` in `~/.codex/config.toml`" in readme
+    assert "They also share one Lean runtime" in readme
+
+
 def test_implementation_notes_are_hidden_and_keyed_by_article_id(repo_root: Path) -> None:
     """Notes written into articles crept into published books as Lean commentary.
 
@@ -1667,6 +1683,25 @@ def test_roadmap_commits_so_the_published_site_can_catch_up(repo_root: Path) -> 
 
     assert "Commit the vault" in roadmap
     assert "outward-facing" in roadmap
+
+
+def test_roadmap_retracts_against_the_branch_formalize_works_from(repo_root: Path) -> None:
+    """Roadmap's base can predate a Formalize landing, with or without claims.
+
+    If Roadmap looks for `lean:` only on its own base, an article Formalize
+    formalized meanwhile keeps `statement: formalized` through a clean rebase
+    or merge although the revision changed its statement, and check and audit
+    both pass.
+    """
+
+    roadmap = " ".join((repo_root / "skills/roadmap/SKILL.md").read_text(encoding="utf-8").split())
+    for required in (
+        "Before the revision lands on that branch, and so before releasing any claim",
+        "bring it up to date with that branch by rebase or merge, "
+        "retract any revised article that gained `lean:` there",
+        "report the revised articles that had no `lean:` on that branch at your last update",
+    ):
+        assert required in roadmap
 
 
 def test_example_workflows_match_the_scaffold_templates(repo_root: Path) -> None:

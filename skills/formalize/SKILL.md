@@ -150,7 +150,10 @@ a theorem, the complete proof, which is why `work list` offers the phase only
 once the proof prerequisites are proved. Under `open_statements: allowed`, the
 statement phase of a theorem writes the faithful statement with a proof body of
 exactly `sorry` and records `statement: formalized`, or writes the full proof
-and, on acceptance, records both assertions. That `sorry` is the declaration's
+and, on acceptance, records both assertions. Write such a statement as a
+`theorem` with a `sorry` proof, not with Batteries' `theorem_wanted` or
+`proof_wanted`: a dependent's proof can cite the theorem, but not the private
+placeholder a wanted command declares. That `sorry` is the declaration's
 whole body: never part of its type, a helper, a definition, or a `where` clause,
 and never one case of a recursive proof, which Lean can compile into
 auxiliaries such as `_f` that CI rejects. A definition is never left open: its
@@ -214,7 +217,10 @@ article is proved; an empty file fails `autoform check`. Never link the hidden
 note from an article, because publication omits it. A missing prerequisite, an
 incorrect decomposition, a change another article needs beyond an import repair,
 or a proof recorded without its statement returns to Roadmap instead of silently
-changing the DAG.
+changing the DAG. So does a `check` warning that a shared library declaration's
+docstring, or its module's, cites the blueprint's sources, even when deleting a
+stale note brings it back: report it, and neither keep the note nor edit a
+source page for it.
 
 Run `autoform check <PROJECT>/blueprint --lean-root <PROJECT>` and `autoform
 audit <PROJECT>/blueprint --lean-root <PROJECT>`. Resolve every finding this

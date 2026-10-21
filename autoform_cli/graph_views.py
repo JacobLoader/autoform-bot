@@ -2,7 +2,8 @@
 
 The Markdown graph remains the source of truth.  These views only select or
 aggregate its nodes and edges so the same data can answer project-, chapter-,
-and theorem-level questions without inventing a second graph format.
+and nested-scope questions, plus a whole-graph node list for search, without
+inventing a second graph format.
 """
 
 from __future__ import annotations
@@ -27,6 +28,8 @@ _H1 = re.compile(r"^ {0,3}#[ \t]+(.+?)[ \t]*#*[ \t]*$")
 INVENTORY_STATUSES = tuple(state.key for state in INVENTORY_STATES)
 #: What the project's views call the root's own articles, since the root's title names the whole project.
 ROOT_GROUP_TITLE = "Top level"
+#: The navigation roles an overview replaces by their contents.
+FLATTENED_ROLES = frozenset({"collection", "transparent"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +49,7 @@ class ViewNode:
     lean: str | None = None
     area: str | None = None
     internal_dependency_count: int = 0
+    navigation: str | None = None
 
     @property
     def item_count(self) -> int:
@@ -76,6 +80,7 @@ class GraphView:
     edges: tuple[ViewEdge, ...]
     scope: str | None = None
     summary: str | None = None
+    overview: bool = False
 
     @property
     def member_ids(self) -> tuple[str, ...]:
@@ -135,7 +140,7 @@ def project_view(graph: Graph, statuses: dict[str, NodeStatus]) -> GraphView:
             graph,
             statuses,
             _scope_node_id(group),
-            ROOT_GROUP_TITLE if group in {"", "roadmap"} else group_title(graph, group),
+            _group_label(graph, group),
             grouped.get(group, ()),
             # The root's summary and area describe the project, not its top level.
             summary=graph.nodes[group].summary if group in graph.nodes and group != "roadmap" else None,
@@ -179,17 +184,7 @@ def chapter_view(graph: Graph, statuses: dict[str, NodeStatus], group: str) -> G
             edge_counts[(endpoint(source), endpoint(target))][1 if proof_only else 0] += 1
 
     nodes = [_theorem_node(graph.nodes[node_id], statuses[node_id]) for node_id in grouped[group]]
-    nodes.extend(
-        ViewNode(
-            id=_boundary_node_id(external),
-            title=ROOT_GROUP_TITLE if external in {"", "roadmap"} else group_title(graph, external),
-            kind="boundary",
-            members=tuple(sorted(external_members)),
-            status_counts=_status_counts(graph, external_members, statuses),
-            status_key=_rollup_status_key(graph, external_members, statuses),
-        )
-        for external, external_members in sorted(boundaries.items())
-    )
+    nodes.extend(_boundary_node(graph, statuses, *item) for item in sorted(boundaries.items()))
     return GraphView(
         kind="chapter",
         title=f"{group_title(graph, group)} dependency map",
@@ -300,10 +295,16 @@ def _scope_view(
     top_scope: Callable[[str], str],
     include_external: bool,
 ) -> GraphView:
-    direct = children[scope]
-    members = {child: _leaf_descendants(children, child) for child in direct}
+    # A library or pagination range is organization, not a mathematical
+    # concept. Authored roles let every producer expose topics without a
+    # renderer guessing from directory names. Source books remain available
+    # as provenance, separate from the mathematical overview.
+    direct, collections, owners = _navigation_children(graph, scope, children)
+    overview = any(graph.nodes[child].navigation in FLATTENED_ROLES | {"source"} for child in children[scope])
+    entries = (*direct, *collections)
+    members = {child: _leaf_descendants(children, child) for child in entries}
     nodes: list[ViewNode] = []
-    for child in direct:
+    for child in entries:
         article = graph.nodes[child]
         if child in children:
             nodes.append(
@@ -316,6 +317,7 @@ def _scope_view(
                     summary=article.summary,
                     area=article.area,
                     internal_dependency_count=internal_counts.get(child, 0),
+                    navigation=article.navigation,
                 )
             )
         else:
@@ -332,23 +334,15 @@ def _scope_view(
         return _scope_node_id(child) if child in children else child
 
     for source, target, proof_only, source_child, target_child in relations:
+        source_child = owners.get(source) if source_child is not None else None
+        target_child = owners.get(target) if target_child is not None else None
         if source_child == target_child:  # both outside the scope, or both under one child
             continue
         if (source_child is None or target_child is None) and not include_external:
             continue
         edge_counts[(endpoint(source, source_child), endpoint(target, target_child))][1 if proof_only else 0] += 1
 
-    for external, external_members in sorted(boundaries.items()):
-        nodes.append(
-            ViewNode(
-                id=_boundary_node_id(external),
-                title=ROOT_GROUP_TITLE if external in {"", "roadmap"} else group_title(graph, external),
-                kind="boundary",
-                members=tuple(sorted(external_members)),
-                status_counts=_status_counts(graph, external_members, statuses),
-                status_key=_rollup_status_key(graph, external_members, statuses),
-            )
-        )
+    nodes.extend(_boundary_node(graph, statuses, *item) for item in sorted(boundaries.items()))
     return GraphView(
         kind="chapter",
         title=f"{graph.nodes[scope].title} dependency map",
@@ -356,7 +350,47 @@ def _scope_view(
         edges=_edges(edge_counts),
         scope=scope,
         summary=graph.nodes[scope].summary,
+        overview=overview,
     )
+
+
+def _navigation_children(
+    graph: Graph, scope: str, children: dict[str, tuple[str, ...]]
+) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, str]]:
+    """Flatten only explicitly transparent collections, never mathematical scopes.
+
+    Every original endpoint keeps an owner. Edges mentioning a collection
+    itself remain attached to that collection, rather than being attributed
+    to a mathematical child without evidence.
+    """
+    visible: list[str] = []
+    collections: list[str] = []
+    owners: dict[str, str] = {}
+
+    def own_subtree(node_id: str, owner: str) -> None:
+        pending = [node_id]
+        while pending:
+            current = pending.pop()
+            owners[current] = owner
+            pending.extend(reversed(children.get(current, ())))
+
+    # _containment_children has checked that this is a forest. Explicit stacks
+    # keep both role flattening and ownership finite beyond Python's call-depth
+    # limit, while reversed pushes preserve the authored sibling order.
+    pending: list[tuple[str, str | None]] = [(child, None) for child in reversed(children[scope])]
+    while pending:
+        node_id, collection = pending.pop()
+        if graph.nodes[node_id].navigation in FLATTENED_ROLES and node_id in children:
+            owner = collection or node_id
+            if collection is None:
+                collections.append(node_id)
+            owners[node_id] = owner
+            pending.extend((child, owner) for child in reversed(children[node_id]))
+        else:
+            visible.append(node_id)
+            own_subtree(node_id, node_id)
+
+    return tuple(visible), tuple(collections), owners
 
 
 def full_view(graph: Graph, statuses: dict[str, NodeStatus]) -> GraphView:
@@ -461,7 +495,11 @@ def is_scope_target(node: Node) -> bool:
 
     Only leaves that declare something or are marked not ready count, so a
     note cannot hold a finished chapter open but deferred work does. A module
-    catalog is inventory evidence, never a target.
+    catalog is inventory evidence, never a target. The book's progress
+    figures and ``autoform check`` count with _is_countable instead, which
+    leaves out a not-ready leaf that declares nothing; this predicate counts
+    one, as audit's scope completion does inline (README, "What coverage
+    completeness does and does not claim").
     """
     return node.catalog is None and (node.formalizable or node.not_ready)
 
@@ -524,7 +562,10 @@ def _is_countable(graph: Graph, node_id: str, containers: frozenset[str]) -> boo
     freshly scaffolded vault report "0 of 1 targets complete, 1 ready now": the
     roadmap landing page has no children yet, so it counted as an unstarted
     result, and the site claimed work existed before any had been planned. A
-    module catalog declares nothing, so it never counts.
+    module catalog declares nothing, so it never counts. A scope counts with
+    is_scope_target instead, the only predicate that also counts a not-ready
+    leaf that declares nothing (README, "What coverage completeness does and
+    does not claim").
     """
 
     return node_id not in containers and graph.nodes[node_id].formalizable
@@ -562,6 +603,7 @@ def _scope_node(
     summary: str | None = None,
     area: str | None = None,
     internal_dependency_count: int = 0,
+    navigation: str | None = None,
 ) -> ViewNode:
     """Summarize a container by the formalization targets beneath it.
 
@@ -584,6 +626,7 @@ def _scope_node(
         summary=summary,
         area=area,
         internal_dependency_count=internal_dependency_count,
+        navigation=navigation,
     )
 
 
@@ -602,6 +645,7 @@ def container_nodes(graph: Graph, statuses: dict[str, NodeStatus]) -> dict[str, 
             summary=graph.nodes[node_id].summary,
             area=graph.nodes[node_id].area,
             internal_dependency_count=internal_counts.get(node_id, 0),
+            navigation=graph.nodes[node_id].navigation,
         )
         for node_id in children
         if node_id in graph.nodes
@@ -684,6 +728,22 @@ def _scope_node_id(group: str) -> str:
 
 def _boundary_node_id(group: str) -> str:
     return f"boundary:{group or 'roadmap'}"
+
+
+def _group_label(graph: Graph, group: str) -> str:
+    return ROOT_GROUP_TITLE if group in {"", "roadmap"} else group_title(graph, group)
+
+
+def _boundary_node(graph: Graph, statuses: dict[str, NodeStatus], external: str, members: set[str]) -> ViewNode:
+    """Collapse the *members* of scope *external* that a view relates to into one node."""
+    return ViewNode(
+        id=_boundary_node_id(external),
+        title=_group_label(graph, external),
+        kind="boundary",
+        members=tuple(sorted(members)),
+        status_counts=_status_counts(graph, members, statuses),
+        status_key=_rollup_status_key(graph, members, statuses),
+    )
 
 
 def _top_scope(graph: Graph, node_id: str, children: dict[str, tuple[str, ...]]) -> str:

@@ -161,7 +161,8 @@ add deterministic IDs.
 Articles hold only frontmatter and informal mathematics; put Lean-side findings
 such as Mathlib gaps, prior art, and candidate declaration names in
 `blueprint/.implementation-notes/<article_id>.md`, never a transcript, a secret,
-or a machine-local path. The hidden per-article file
+or a machine-local path; Finish records a shared library declaration that does
+not apply on the source's page instead. The hidden per-article file
 stays out of the mathematical wiki and remains valid when the article moves.
 Never link it from an article. Delete it when the article is proved or marked
 `mathlib: true`; delete a container's note when every formalizable descendant,
@@ -184,7 +185,16 @@ make sure the request covers them. When a revision changes a statement whose
 article has `lean:`, retract it: replace `statement: formalized` with
 `statement: retracted`, remove `proof: formalized`, and keep `lean:`, which
 Formalize needs to run `autoform work impact`; an article without `lean:` just
-loses `statement` and `proof`. When the project's CI pins an `AUTOFORM_REF`
+loses `statement` and `proof`. Formalize may land `lean:` on the branch it works
+from after your checkout, with or without claims. Before the revision lands on
+that branch, and so before releasing any claim, bring it up to date with that
+branch by rebase or merge, retract any revised article that gained `lean:`
+there, repeat the Finish step's final validation, and commit the retraction as a
+new commit. When the revision lands later through a pull request, report the
+revised articles that had no `lean:` on that branch at your last update, and
+list them in the pull request's description if you open it, so whoever merges it
+retracts any that have gained `lean:` by then.
+When the project's CI pins an `AUTOFORM_REF`
 older than the marker, its `autoform check` rejects `statement: retracted`:
 remove `statement` and `proof` and keep `lean:` until the pin moves, and report
 the old pin. Under the open policy a retracted theorem stays
@@ -253,10 +263,18 @@ contract, `blueprint/README.md`, and the repository `README.md`.
 After the final edit, use the CLI reference to run `autoform check` with
 `--lean-root .` and `autoform audit`, refresh the Mermaid graph, and resolve
 every finding introduced by this work or inside the adopted boundary. A `check`
-warning that a shared library declares a result citing one of the blueprint's
-sources usually means a library search was skipped: search for that declaration
-and reuse it as the library search rules say, or name it in the implementation
-note of the article it concerns, with why it does not apply. Report unrelated
+warning that a shared library declaration's docstring cites one of the
+blueprint's sources usually means a library search was skipped. Reuse the
+declaration as the library search rules say, and name it in the implementation
+note of each article that uses it. If it does not apply, or no article concerns
+it, name it on the source's page under `blueprint/sources/` with the reason;
+that record outlasts the implementation notes, which audit asks to delete once
+their article is proved. It covers every article that reaches the source,
+including ones added later, so give a reason that holds for each, and revisit it
+when the adopted boundary changes. A warning about a module's docstring is a
+library hit for each declaration it counts: naming the module on the source's
+page records them all, and importing the module, or naming one of them, silences
+the rest, so review the module when its warning first appears. Report unrelated
 pre-existing findings instead of silently widening scope. A
 `catalog-unbounded-limit` or `catalog-unscoped-limit` warning describes
 existing Lean code and never fails the audit: report it, and change that code
