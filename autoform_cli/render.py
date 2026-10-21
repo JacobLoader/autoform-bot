@@ -405,7 +405,7 @@ def publication_issues(graph: Graph, blueprint: Path) -> list[str]:
     blueprint = blueprint_root(blueprint)
     try:
         # Capture leaves out the folders that say published: false, as render does.
-        snapshot, _unpublished = _capture_blueprint(blueprint)
+        snapshot, _unpublished, _nodes = _capture_blueprint(blueprint)
     except PublicationError as exc:
         return [f"{issue}; autoform render stops until this is fixed" for issue in exc.issues]
     files = _captured_files(snapshot, blueprint)
