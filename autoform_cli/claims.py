@@ -744,8 +744,18 @@ class ClaimBoard:
         refs: dict[str, str] | None = None
         try:
             for attempt in range(_LIST_FETCH_ATTEMPTS):
+                # Negotiate only from this call's refs, which do not exist yet: the
+                # scratch's other refs save nothing here, and under protocol v0 each
+                # round spent offering them is a window in which a renewal fails it.
                 fetch = self._git(
-                    ["fetch", "--quiet", "--no-tags", self.repo_url, f"+{CLAIM_REF_PREFIX}*:{namespace}*"],
+                    [
+                        "fetch",
+                        "--quiet",
+                        "--no-tags",
+                        f"--negotiation-tip={namespace}*",
+                        self.repo_url,
+                        f"+{CLAIM_REF_PREFIX}*:{namespace}*",
+                    ],
                     check=False,
                 )
                 if fetch.returncode == 0:
