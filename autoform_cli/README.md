@@ -1638,10 +1638,15 @@ through an alias, by an article that records `proof: formalized`, or by a
 definition that records `statement: formalized`, since a stated definition
 counts as proved. A wanted command
 without a body elaborates to a placeholder that carries no `sorry`, so no
-`sorry` check catches one. The kernel-trust audit of the generated verify
-workflow does not resolve wanted targets yet: Batteries declares every
-placeholder `private`, so that audit reports a `lean:` name naming one as not a
-declaration of the Lean build, as it does for any `private` declaration.
+`sorry` check catches one. Batteries declares every placeholder `private`, so
+the kernel-trust audit of the generated verify workflow looks a `lean:` name up
+among the root package's placeholders when the build has no declaration of that
+name. A target that resolves to a placeholder, or to a public alias of one,
+passes as wanted only when the assumption contract records its article as
+`stated`, `can_prove`, `can_state`, `planned` or `not_ready`. Any other state
+fails it, as `lean-target-wanted` fails proved and defined articles, and so do a
+`mathlib` state and a state the helper does not know. The audit still reports
+any other `private` declaration as not a declaration of the Lean build.
 
 ### Warnings
 
