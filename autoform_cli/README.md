@@ -365,19 +365,41 @@ autoform audit blueprint --lean-root .
 `check` validates the graph contract. With `--lean-root` it resolves names only
 in the project's own Lean files, not in Mathlib or other dependencies under
 `.lake`; when a name is not found, a note at the end of the output says that a
-shared library's declaration belongs in the article's implementation note. It
-also warns about each complete declaration in a usable shared library (see
-`autoform library list`) whose docstring, or whose module's docstring, cites an
-arXiv paper or DOI that an article's `## Sources` links cite, directly or
-through a blueprint page they link, when no implementation note and no project
-Lean file names it. An article stops counting once it is proved, when audit asks
-for its implementation note to go. Such a declaration usually proves part of the
-source being formalized, so reuse it rather than proving it again, or name it in
-the implementation note of the article it concerns to record why not.
-Identifiers match across their usual forms: versions, `abs` and `pdf` URLs, the
-`arXiv:` prefix, arXiv's own DOIs, and `doi:` or `https://doi.org/`. These
-warnings never change the exit status, and comparing a library costs one read of
-its indexed sources.
+shared library's declaration belongs in the article's implementation note.
+
+With `--lean-root`, `check` also compares the blueprint's sources with each
+usable shared library whose package is checked out (see
+`autoform library list`). An unproved article reaches the arXiv papers and DOIs
+that its `## Sources` link targets cite, and those cited by a Markdown page
+under the blueprint that such a link names, up to 4 MiB; link text is not read.
+A container stops reaching them once every formalizable article in its scope,
+and every leaf marked `not_ready` beneath it, is proved, and there is at least
+one: when audit asks for its implementation note to be deleted. For each
+complete declaration whose own docstring cites a reached source, `check` warns
+unless an implementation note, a Markdown page under `blueprint/sources/` or a
+page an article's `## Sources` links names it in full, or a project Lean file
+names it in full or by its last name component, since `open` shortens names; any
+identifier with that component counts, comments and strings included, so a
+generic one such as `symm` can hide the warning. Declarations that cite a
+reached source only through their module's docstring share one warning for the
+module, which naming the module, or in full one of its declarations citing that
+source, silences; a Lean file that imports the module names it, but one that
+imports only an umbrella module above it does not. Such a declaration usually
+proves part of the source being formalized: reuse it and name it in the
+implementation note of the article that uses it, or name it on the source's page
+under `blueprint/sources/` with why it does not apply.
+
+Identifiers match across their usual forms: versions; `abs`, `pdf`, `html`,
+`e-print` and `src` URLs, with or without a trailing slash; old-style
+identifiers such as `math.AG/0210149`; arXiv's own DOIs; `https://doi.org/` and
+`dx.doi.org` links, percent-encoded or not, up to a query or fragment; and the
+labels `arXiv:`, `arXiv`, `doi:` and `DOI`, with the label or the identifier in
+backticks, emphasis or a table cell. A bare number cites nothing. `check` also
+warns when a library's index cannot be read or parsed, when one with a citing
+declaration fails verification against its checkout, and when the project's Lake
+files cannot be used. None of these warnings changes the exit status, and a
+library's sources are hashed only when one of its declarations cites a reached
+source.
 
 `audit` adds deterministic completeness,
 provenance, coverage, checked-fact, and optional Lean-target checks. It is local
