@@ -3629,13 +3629,14 @@ def write_packets(
     passages: str | Path | None = None,
     report_path: str | Path | None = None,
 ) -> list[Path]:
-    """Write one blind packet per skeleton for independent auditors.
+    """Write one comment-stripped packet per skeleton.
 
-    Each packet holds only what the auditor may see: the comment-stripped
-    skeleton. Nothing names the article, the source, or the intent. The
-    manifest beside the packets maps each file back to its article and hash so
-    testimony about a packet can be filed and checked, without the auditor
-    reading it.
+    Each packet holds only what an auditor may see: the comment-stripped
+    skeleton. Nothing in it names the article, the source, or the intent, but
+    its file name, under the article's path, names the article and the
+    declaration, so a blind auditor is given the packets ``review prepare``
+    writes instead, named by the hash of their bytes. The manifest beside the
+    packets maps each file back to its article and hashes.
 
     With ``passages``, the source passage each article cites is written to a
     second directory, one ``passage.txt`` per article. A faithfulness judge
