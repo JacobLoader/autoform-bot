@@ -805,6 +805,7 @@ def test_search_cli_emits_stable_json(tmp_path: Path, capsys) -> None:
     assert hit == {
         "article_id": None,
         "article_path": "blueprint/roadmap/convexity/hyperplane.md",
+        "catalog": None,
         "declaration": "theorem",
         "lean_targets": [{"declaration": "Project.separation", "line": None, "source_file": None}],
         "matched_fields": ["title", "statement_text"],
@@ -819,6 +820,27 @@ def test_search_cli_emits_stable_json(tmp_path: Path, capsys) -> None:
         "title": "Separating hyperplane",
         "used_by": ["convexity/support"],
         "used_by_count": 1,
+    }
+
+
+def test_a_catalog_hit_says_it_is_a_module_inventory(tmp_path: Path, capsys) -> None:
+    """A declaration both exposited and inventoried hits twice; only one hit is a duplicate candidate."""
+    project = _project(tmp_path)
+    _article(
+        project,
+        "convexity/inventory.md",
+        title="Convexity module",
+        body="An existing module.",
+        metadata=("catalog: module", "lean: Project.separation"),
+    )
+
+    assert cli.main(["search", str(project), "Project.separation", "--json"]) == 0
+    document = json.loads(capsys.readouterr().out)
+    # The key is additive, so the schema stays v1; --library already has v2.
+    assert document["schema"] == "autoform-search/v1"
+    assert {hit["node_id"]: hit["catalog"] for hit in document["hits"]} == {
+        "convexity/hyperplane": None,
+        "convexity/inventory": "module",
     }
 
 

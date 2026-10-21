@@ -237,7 +237,8 @@ def _blueprint_sources(graph: Graph) -> tuple[dict[str, set[str]], dict[Path, st
     that a link names cites, since Roadmap records source locations in ``blueprint/sources/``. A proved
     article reaches nothing: it needs no search. Nor does a container once its implementation note may
     be deleted, as audit decides: every formalizable article in its scope, and every leaf marked
-    ``not_ready`` beneath it, is proved, and there is at least one.
+    ``not_ready`` beneath it, is proved, and there is at least one. Nor does a module catalog: it
+    inventories existing Lean, so it has no proof to search a library for.
     """
 
     contained: dict[str, list[str]] = defaultdict(list)
@@ -252,7 +253,7 @@ def _blueprint_sources(graph: Graph) -> tuple[dict[str, set[str]], dict[Path, st
         has_target[node_id], implemented[node_id] = False, True
         for child_id in contained.get(node_id, ()):
             child = graph.nodes[child_id]
-            if child.formalizable or (child.not_ready and child_id not in contained):
+            if child.catalog is None and (child.formalizable or (child.not_ready and child_id not in contained)):
                 has_target[node_id] = True
                 implemented[node_id] = implemented[node_id] and derived[child_id].proved
             if has_target[child_id]:
@@ -268,7 +269,7 @@ def _blueprint_sources(graph: Graph) -> tuple[dict[str, set[str]], dict[Path, st
             if page is not None and page not in pages:
                 text = _page_text(page)
                 pages[page] = (text, cited_sources(text))
-            if derived[node.id].proved or (has_target[node.id] and implemented[node.id]):
+            if node.catalog is not None or derived[node.id].proved or (has_target[node.id] and implemented[node.id]):
                 continue
             for source in cited_sources(target) | (pages[page][1] if page is not None else frozenset()):
                 citing[source].add(node.id)

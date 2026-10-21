@@ -10,15 +10,20 @@ a second graph file that could drift from the book.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from html import unescape
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .lean import declaration_names
 from .markdown import (
+    INLINE_CODE,
+    _INLINE_MATH,
+    _blank,
     _is_hidden_path,
     directory_path,
     link_definitions,
@@ -30,10 +35,22 @@ from .markdown import (
 
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
+#: An inline link or image; its label may hold bracket pairs, as the page reads it.
+_MARKDOWN_LINK_TEXT = re.compile(r"!?\[((?:[^\[\]]|\[[^\[\]]*\])+)\]\([^)]*\)")
+#: A full, collapsed or shortcut reference link: ``[text][label]``, ``[label][]`` or ``[label]``.
+_REFERENCE_LINK_TEXT = re.compile(r"!?\[((?:[^\[\]]|\[[^\[\]]*\])+)\](?:\[([^\[\]]*)\])?")
+_HTML_TAG = re.compile(r"<[A-Za-z/!][^>]*>")
+# A code span may wrap across the paragraph's lines, as the page reads it. An
+# escaped character is matched first, so an escaped backtick opens no span;
+# inside one a backslash is literal, so ``a\`` still closes it.
+_CODE_SPAN = re.compile(r"\\.|" + INLINE_CODE.pattern, re.DOTALL)
 ARTICLE_ID_PATTERN = re.compile(r"af_[0-9a-f]{24}\Z")
 _FRONTMATTER_KEYS = frozenset(
     {
         "article_id",
+        "area",
+        "navigation",
+        "catalog",
         "declaration",
         "lean",
         "statement",
@@ -52,6 +69,9 @@ _FORMALIZED = "formalized"
 _RETRACTED = "retracted"
 _TRUE = frozenset({"true", "yes"})
 _FALSE = frozenset({"false", "no"})
+_CATALOG_DECLARATION_KEYS = frozenset(
+    {"declaration", "mathlib", "mathlib_declaration", "mathlib_file"}
+)
 
 #: ``## Depends on`` carries the prerequisites needed to *state* a node;
 #: ``## Proof depends on`` carries the extra prerequisites its *proof* needs.
@@ -59,6 +79,8 @@ _FALSE = frozenset({"false", "no"})
 _STATEMENT_SECTION = "depends on"
 _PROOF_SECTION = "proof depends on"
 _SOURCES_SECTION = "sources"
+ATLAS_SCHEMA = "autoform-atlas/v1"
+_MAX_ATLAS_BYTES = 1_000_000
 IMPLEMENTATION_NOTES_DIR = ".implementation-notes"
 
 
@@ -106,6 +128,12 @@ class Node:
     depth: int = 0
     article_id: str | None = None
     source_sha256: str | None = None
+    catalog: str | None = None
+    summary: str | None = None
+    area: str | None = None
+    #: Presentation only: a collection is transparent in a mathematical
+    #: overview; a source is a book or other provenance, not a peer topic.
+    navigation: str | None = None
 
     @property
     def formalizable(self) -> bool:
@@ -135,6 +163,10 @@ class Graph:
         """Return the direct contained articles of *node_id*."""
         return tuple(node.id for node in self.nodes.values() if node.parent == node_id)
 
+    def lean_names(self) -> tuple[str, ...]:
+        """Return the distinct ``lean:`` names, in node order."""
+        return tuple(dict.fromkeys(name for node in self.nodes.values() for name in declaration_names(node.lean or "")))
+
 
 @dataclass(frozen=True, slots=True)
 class _ParsedNode:
@@ -145,6 +177,7 @@ class _ParsedNode:
     proof_targets: tuple[str, ...]
     source_targets: tuple[str, ...]
     metadata: dict[str, str]
+    summary: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +292,7 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
             proof_dependencies=tuple(proof_dependencies),
             kind="article",
             declaration=metadata.get("declaration"),
+            catalog=metadata.get("catalog"),
             lean=metadata.get("lean"),
             statement_formalized=metadata.get("statement") == _FORMALIZED,
             statement_retracted=metadata.get("statement") == _RETRACTED,
@@ -274,8 +308,13 @@ def load_graph(blueprint_dir: str | Path) -> Graph:
             depth=_article_depth(parsed_node.id, parents),
             article_id=metadata.get("article_id"),
             source_sha256=source_hashes[parsed_node.id],
+            summary=parsed_node.summary,
+            navigation=metadata.get("navigation"),
+            area=metadata.get("area"),
         )
 
+    for node_id, area in _atlas_assignments(blueprint, nodes)[0].items():
+        nodes[node_id] = replace(nodes[node_id], area=area)
     if not issues:
         issues.extend(_find_cycles(nodes))
     if issues:
@@ -331,6 +370,106 @@ def unpublished_content(files: tuple[tuple[str, bytes], ...]) -> tuple[tuple[str
             if article_id is not None:
                 article_ids.add(article_id)
     return tuple(folders), frozenset(article_ids)
+
+
+def unpublished_node_ids(files: tuple[tuple[str, bytes], ...], folders: tuple[str, ...]) -> frozenset[str]:
+    """The node IDs of the articles in *folders*, as ``_article_id`` names them: a folder's README is the folder.
+
+    For render's atlas warnings, since atlas entries name node IDs, not
+    article IDs.
+    """
+    return frozenset(
+        name.removeprefix("roadmap/").removesuffix(".md").removesuffix("/README")
+        for name, _data in files
+        if name.endswith(".md") and any(name.startswith(f"{folder}/") for folder in folders)
+    )
+
+
+def atlas_omissions(graph: Graph, unpublished: frozenset[str] = frozenset()) -> list[str]:
+    """Say what ``blueprint/atlas.json`` asks for that loading ignored, for check, render and audit to warn about.
+
+    Render's graph lacks the nodes in unpublished folders; *unpublished* names
+    them, so their entries draw no warning there, as they draw none in check.
+    """
+    return _atlas_assignments(graph.blueprint_dir, graph.nodes, unpublished)[1]
+
+
+def _atlas_assignments(
+    blueprint: Path, nodes: dict[str, Node], unpublished: frozenset[str] = frozenset()
+) -> tuple[dict[str, str], list[str]]:
+    """Read the optional authored taxonomy: the areas it assigns, and what it leaves out.
+
+    The file only assigns areas, so nothing in it stops a command. An article's
+    own ``area:`` wins, the first area listing a node wins, and a file that is
+    not readable ``autoform-atlas/v1`` JSON is ignored whole.
+    """
+    path = blueprint / "atlas.json"
+    try:
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            return {}, ["ignored, since it is not a regular file inside the blueprint"]
+        with path.open("rb") as handle:
+            raw = handle.read(_MAX_ATLAS_BYTES + 1)
+    except FileNotFoundError:
+        return {}, []
+    except OSError as error:
+        return {}, [f"ignored, since it cannot be read: {error.strerror}"]
+    if len(raw) > _MAX_ATLAS_BYTES:
+        return {}, [f"ignored, since it exceeds {_MAX_ATLAS_BYTES} bytes"]
+    try:
+        payload = json.loads(raw)
+    except (ValueError, RecursionError) as error:
+        return {}, [f"ignored, since it is not valid JSON: {error}"]
+    if not isinstance(payload, dict) or payload.get("schema") != ATLAS_SCHEMA:
+        return {}, [f"ignored, since its schema is not {ATLAS_SCHEMA!r}"]
+    areas = payload.get("areas")
+    if not isinstance(areas, dict):
+        return {}, ["ignored, since its 'areas' is not an object"]
+    assigned: dict[str, str] = {}
+    omissions: list[str] = []
+    for area, node_ids in areas.items():
+        if not area.strip() or not isinstance(node_ids, list):
+            omissions.append(f"area {area!r} is ignored; it needs a name and an array of roadmap node ids")
+            continue
+        for node_id in node_ids:
+            if isinstance(node_id, str) and node_id in unpublished:
+                continue
+            if not isinstance(node_id, str) or node_id not in nodes:
+                omissions.append(f"{node_id!r} under {area!r} is ignored, since no roadmap node has that id")
+            elif node_id in assigned:
+                omissions.append(f"{node_id!r} under {area!r} is ignored, since {assigned[node_id]!r} already holds it")
+            elif nodes[node_id].area not in {None, area}:
+                omissions.append(
+                    f"{node_id!r} under {area!r} is ignored, since its frontmatter area is {nodes[node_id].area!r}"
+                )
+            else:
+                assigned[node_id] = area
+    return assigned, omissions
+
+
+def catalogs_without_ledger(graph: Graph) -> list[str]:
+    """Name each module catalog with no ``## Sources`` link into ``blueprint/sources/``.
+
+    The catalog contract asks for a declaration ledger there. A link that points
+    there at no file, or at a hidden path, is a source link that check and audit
+    report for every article, so this reads the links alone and touches no file.
+    """
+    sources = graph.blueprint_dir / "sources"
+    return [
+        node.id
+        for node in graph.nodes.values()
+        if node.catalog is not None and not any(_links_into(node.path, target, sources) for target in node.sources)
+    ]
+
+
+def _links_into(article: Path, target: str, directory: Path) -> bool:
+    """Whether the local link ``target`` in ``article`` points beneath ``directory``."""
+    try:
+        split = urlsplit(target)
+    except ValueError:
+        return False
+    if split.scheme or split.netloc or not split.path:
+        return False
+    return directory in Path(os.path.normpath(article.parent / unquote(split.path))).parents
 
 
 def _discover_nodes(blueprint: Path) -> tuple[list[_NodeSource], list[str]]:
@@ -646,8 +785,83 @@ def _parse_node(node_id: str, path: Path, text: str) -> tuple[_ParsedNode | None
         tuple(targets[_PROOF_SECTION]),
         tuple(targets[_SOURCES_SECTION]),
         metadata,
+        _extract_summary(body, references),
     )
     return parsed, []
+
+
+def _extract_summary(body: list[str], references: dict[str, str], *, limit: int = 420) -> str | None:
+    """Return the first reader-facing prose paragraph from a roadmap article.
+
+    ``body`` is the article below its frontmatter with fences, comments and
+    indented code already masked, and ``references`` its link definitions, so
+    the summary reads what the page shows.
+    """
+
+    def unwrap(link: re.Match[str]) -> str:
+        # Without a definition, the page shows a reference link's brackets as written.
+        label = " ".join((link.group(2) or link.group(1)).lower().split())
+        return link.group(1) if label in references else link.group(0)
+
+    paragraph: list[str] = []
+    excluded = False
+    for raw in body:
+        heading = _HEADING.match(raw)
+        if heading:
+            if paragraph:
+                break
+            excluded = len(heading.group(1)) == 2 and heading.group(2).strip().casefold() in {
+                _STATEMENT_SECTION,
+                _PROOF_SECTION,
+                _SOURCES_SECTION,
+            }
+            continue
+        text = raw.strip()
+        # The page ends a paragraph at a reference definition, as at a blank line.
+        if not text or link_definitions([raw]):
+            if paragraph:
+                break
+            continue
+        if excluded or text.startswith(("- ", "* ", "+ ", "> ", "|", "$$", "\\[", "<div")):
+            continue
+        text = _MARKDOWN_LINK_TEXT.sub(r"\1", text)
+        text = _REFERENCE_LINK_TEXT.sub(unwrap, text)
+        if unescape(_strip_markup(text)).strip():
+            paragraph.append(text)
+    # Inline math may wrap across the paragraph's lines, so markup is read in the whole paragraph.
+    summary = " ".join(unescape(_strip_markup("\n".join(paragraph))).split())
+    if not summary:
+        return None
+    if len(summary) <= limit:
+        return summary
+    clipped = summary[: limit - 1].rsplit(" ", 1)[0]
+    return (clipped or summary[: limit - 1]).rstrip() + "…"
+
+
+def _strip_markup(text: str) -> str:
+    """Drop inline HTML and strong emphasis from *text*, but not from its code or math.
+
+    A tag runs from ``<`` and a letter, ``/`` or ``!`` to ``>``, so stripping
+    across inline math read ``For $0 <a$ and $r > 0$`` as one tag. Code spans,
+    then inline math, are read first, as the page reads them.
+    """
+
+    def strip(prose: str) -> str:
+        return _HTML_TAG.sub("", prose).replace("**", "").replace("__", "")
+
+    code = [match for match in _CODE_SPAN.finditer(text) if match[1]]
+    code_masked = _CODE_SPAN.sub(lambda match: _blank(match) if match[1] else match[0], text)
+    spans = sorted(match.span() for match in (*code, *_INLINE_MATH.finditer(code_masked)))
+    parts: list[str] = []
+    end = 0
+    for start, stop in spans:
+        # A code span inside inline math is already kept with it.
+        if start < end:
+            continue
+        parts.extend((strip(text[end:start]), text[start:stop]))
+        end = stop
+    parts.append(strip(text[end:]))
+    return "".join(parts)
 
 
 def _parse_frontmatter(node_id: str, lines: list[str]) -> tuple[dict[str, str], int, list[str]]:
@@ -685,6 +899,16 @@ def _parse_frontmatter(node_id: str, lines: list[str]) -> tuple[dict[str, str], 
             continue
         metadata[key] = value
 
+    if "catalog" in metadata:
+        for key in sorted(_CATALOG_DECLARATION_KEYS.intersection(metadata)):
+            issues.append(
+                f"{node_id}: 'catalog' cannot be combined with declaration-specific "
+                f"frontmatter key {key!r}"
+            )
+
+    if metadata.get("navigation") in {"collection", "source", "transparent", "module"} and "declaration" in metadata:
+        issues.append(f"{node_id}: 'navigation' describes containers, not declaration articles")
+
     if metadata.get("statement") == _RETRACTED:
         if "lean" not in metadata:
             issues.append(
@@ -702,7 +926,13 @@ def _parse_frontmatter(node_id: str, lines: list[str]) -> tuple[dict[str, str], 
         issues.append(f"{node_id}: proof: formalized needs statement: formalized")
     formalized = [key for key in ("statement", "proof") if metadata.get(key) == _FORMALIZED]
     if formalized and not declaration_names(metadata.get("lean", "")):
-        issues.append(f"{node_id}: {formalized[0]}: formalized needs the lean: declaration that formalizes it")
+        if metadata.get("catalog") is not None:
+            issues.append(
+                f"{node_id}: {formalized[0]}: formalized on a module catalog needs the lean: names "
+                "of the public declarations it inventories"
+            )
+        else:
+            issues.append(f"{node_id}: {formalized[0]}: formalized needs the lean: declaration that formalizes it")
     return metadata, end + 1, issues
 
 
@@ -714,6 +944,14 @@ def _normalize_value(node_id: str, line_number: int, key: str, value: str) -> tu
         if not ARTICLE_ID_PATTERN.fullmatch(value):
             return value, f"{location}: malformed article_id {value!r}"
         return value, None
+    if key == "catalog":
+        if folded != "module":
+            return value, f"{location}: 'catalog' accepts only 'module'"
+        return folded, None
+    if key == "navigation":
+        if folded not in {"topic", "collection", "source", "transparent", "module"}:
+            return value, f"{location}: 'navigation' accepts topic, collection, source, transparent, or module"
+        return folded, None
     if key == "statement":
         if folded not in {_FORMALIZED, _RETRACTED}:
             return value, (
@@ -842,6 +1080,9 @@ __all__ = [
     "Graph",
     "GraphValidationError",
     "Node",
+    "atlas_omissions",
+    "catalogs_without_ledger",
     "load_graph",
     "unpublished_content",
+    "unpublished_node_ids",
 ]
