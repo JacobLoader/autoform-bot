@@ -872,6 +872,84 @@ def test_list_reports_a_claim_ref_to_a_non_commit_as_malformed(tmp_path: Path, b
     assert listed["live"]["_malformed"] is False
 
 
+def _plant_packed_leases(repo: Path, keys: Sequence[str]) -> dict[str, str]:
+    """Plant leases under packed refs, which hold names that differ only in case on any filesystem."""
+    oids = {}
+    for key in keys:
+        oids[key] = _plant_lease(repo, key)
+        _git("update-ref", "-d", claims.CLAIM_REF_PREFIX + key, cwd=repo)
+    (repo / "packed-refs").write_text(
+        "# pack-refs with: peeled fully-peeled sorted \n"
+        + "".join(f"{oid} {claims.CLAIM_REF_PREFIX}{key}\n" for key, oid in sorted(oids.items()))
+    )
+    return oids
+
+
+@pytest.mark.parametrize("ignorecase", ["true", "false"])
+def test_list_lists_claim_keys_that_differ_only_in_case_on_any_filesystem(
+    tmp_path: Path, board_repo: Path, ignorecase: str
+) -> None:
+    # A case-sensitive board can hold both refs; a case-insensitive scratch cannot store them under their names.
+    oids = _plant_packed_leases(board_repo, ["lean/Foo", "lean/foo"])
+    reader = _board(tmp_path, board_repo, "worker-b")
+    reader._ensure_scratch()
+    reader._git(["config", "core.ignorecase", ignorecase])
+
+    listed = reader.list()
+
+    assert [(item["_key"], item["_oid"], item["_malformed"]) for item in listed] == [
+        ("lean/Foo", oids["lean/Foo"], False),
+        ("lean/foo", oids["lean/foo"], False),
+    ]
+    assert reader._git(["for-each-ref", "refs/"]).stdout == ""
+
+
+def test_list_of_keys_that_differ_only_in_case_drops_a_claim_released_after_naming_it(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    oids = _plant_packed_leases(board_repo, ["lean/Foo", "lean/foo", "other"])
+    reader = _board(tmp_path, board_repo, "worker-b")
+    reader._ensure_scratch()
+    reader._git(["config", "core.ignorecase", "true"])
+    git = reader._git
+    named: list[bool] = []
+
+    def released_after_ls_remote(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        proc = git(args, **kwargs)
+        if args[0] == "ls-remote" and not named:
+            named.append(True)
+            _git("update-ref", "-d", claims.CLAIM_REF_PREFIX + "other", cwd=board_repo)
+        return proc
+
+    monkeypatch.setattr(reader, "_git", released_after_ls_remote)
+
+    assert [(item["_key"], item["_oid"]) for item in reader.list()] == [
+        ("lean/Foo", oids["lean/Foo"]),
+        ("lean/foo", oids["lean/foo"]),
+    ]
+    assert git(["for-each-ref", "refs/"]).stdout == ""
+
+
+def test_list_reports_why_a_fetch_failed_without_git_s_negotiation_warning(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+    warning = "warning: ignoring --negotiation-tip=refs/autoform-list/x/* because it does not match any refs\n"
+    reason = "fatal: unable to access the board: " + "x" * 250
+
+    def failing_fetch(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "fetch":
+            return subprocess.CompletedProcess(["git", *args], 128, "", warning + reason + "\n")
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(reader, "_git", failing_fetch)
+    with pytest.raises(claims.ClaimTransportError) as failed:
+        reader.list()
+    assert str(failed.value).startswith("cannot fetch the claim board: fatal: unable to access the board: ")
+    assert "negotiation-tip" not in str(failed.value)
+
+
 def test_list_reports_a_failed_fetch_without_retrying(
     tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

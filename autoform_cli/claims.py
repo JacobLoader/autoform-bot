@@ -40,8 +40,16 @@ _LIST_FETCH_ATTEMPTS = 3
 # haves; an exact ref name that does not exist would fail the fetch instead.
 _NO_NEGOTIATION_TIP = f"{_LIST_REF_PREFIX}none/*"
 # How a stateless protocol v0 server refuses a want whose ref moved after it
-# advertised it; only this failure is worth fetching again.
+# advertised it; this failure is worth fetching again.
 _MOVED_WANT = "not our ref"
+# How a fetch refuses a named ref the board no longer has, which is worth
+# fetching again only when the listing named its refs first.
+_MISSING_REF = "couldn't find remote ref"
+# How Git refuses to store two fetched refs whose names differ only in case:
+# with `core.ignorecase`, or by finding the other one's file already there.
+_CASE_COLLISION = ("only differ in casing", "reference already exists")
+# The warning a fetch prints for a `--negotiation-tip` that matches no ref yet.
+_NEGOTIATION_TIP_WARNING = "warning: ignoring --negotiation-tip="
 # A peer's push holds a ref's lock file for milliseconds; one that outlasts
 # this grace after a failed push is reported as blocking the claim.
 _LOCK_GRACE_S = 2.0
@@ -185,6 +193,12 @@ def _claims_by_key(refs: Mapping[str, str], namespace: str) -> dict[str, str]:
             continue
         claims[key] = oid
     return claims
+
+
+def _fetch_failure(stderr: str) -> str:
+    """Why a fetch failed, without the warning every listing's fetch prints."""
+    lines = (line for line in stderr.splitlines() if not line.startswith(_NEGOTIATION_TIP_WARNING))
+    return "\n".join(lines).strip()[:300]
 
 
 def _rejected_keys(detail: str, keys_by_ref: Mapping[str, str], markers: Sequence[str]) -> tuple[str, ...]:
@@ -754,32 +768,57 @@ class ClaimBoard:
         again.
         """
         self._ensure_scratch()
-        namespace = f"{_LIST_REF_PREFIX}{uuid.uuid4().hex}/"
-        refs: dict[str, str] | None = None
+        written: dict[str, dict[str, str] | None] = {}
         try:
-            for attempt in range(_LIST_FETCH_ATTEMPTS):
-                # Negotiate only from this call's refs, which do not exist yet: the
-                # scratch's other refs save nothing here, and under protocol v0 each
-                # round spent offering them is a window in which a renewal fails it.
-                fetch = self._git(
-                    [
-                        "fetch",
-                        "--quiet",
-                        "--no-tags",
-                        f"--negotiation-tip={namespace}*",
-                        self.repo_url,
-                        f"+{CLAIM_REF_PREFIX}*:{namespace}*",
-                    ],
-                    check=False,
-                )
-                if fetch.returncode == 0:
-                    break
-                if _MOVED_WANT not in fetch.stderr or attempt + 1 == _LIST_FETCH_ATTEMPTS:
-                    raise ClaimTransportError(f"cannot fetch the claim board: {fetch.stderr.strip()[:300]}")
-            refs = self._refs_in(namespace)
-            return self._read_listed(_claims_by_key(refs, namespace))
+            return self._read_listed(self._fetch_claims(written))
         finally:
-            self._delete_refs(namespace, refs)
+            for namespace, refs in written.items():
+                self._delete_refs(namespace, refs)
+
+    def _fetch_claims(self, written: dict[str, dict[str, str] | None]) -> dict[str, str]:
+        """Fetch every claim ref into refs private to this call; return each claim's object ID, by key.
+
+        Each fetch's namespace goes into ``written`` before it runs, with the refs
+        it wrote once they are read. A private ref is named after its claim key,
+        which a case-insensitive scratch cannot do for two keys that differ only
+        in case; the board's keys are then fetched again by name into numbered refs.
+        """
+        keys: list[str] | None = None
+        failures = 0
+        while True:
+            namespace = f"{_LIST_REF_PREFIX}{uuid.uuid4().hex}/"
+            written[namespace] = None
+            # Negotiate only from this fetch's refs, which do not exist yet: the
+            # scratch's other refs save nothing here, and under protocol v0 each
+            # round spent offering them is a window in which a renewal fails it.
+            args = ["fetch", "--quiet", "--no-tags", f"--negotiation-tip={namespace}*"]
+            if keys is None:
+                fetch = self._git([*args, self.repo_url, f"+{CLAIM_REF_PREFIX}*:{namespace}*"], check=False)
+            else:
+                refspecs = "".join(f"+{CLAIM_REF_PREFIX}{key}:{namespace}{index}\n" for index, key in enumerate(keys))
+                fetch = self._git([*args, "--stdin", self.repo_url], check=False, input_text=refspecs)
+            if fetch.returncode == 0:
+                refs = written[namespace] = self._refs_in(namespace)
+                if keys is None:
+                    return _claims_by_key(refs, namespace)
+                numbered = ((key, refs.get(f"{namespace}{index}")) for index, key in enumerate(keys))
+                return {key: oid for key, oid in numbered if oid is not None}
+            if keys is None and any(marker in fetch.stderr for marker in _CASE_COLLISION):
+                keys = self._remote_keys()
+                continue
+            failures += 1
+            # A claim released after `ls-remote` named it is no longer there to fetch.
+            retryable = _MOVED_WANT in fetch.stderr or (keys is not None and _MISSING_REF in fetch.stderr)
+            if not retryable or failures == _LIST_FETCH_ATTEMPTS:
+                raise ClaimTransportError(f"cannot fetch the claim board: {_fetch_failure(fetch.stderr)}")
+            if keys is not None:
+                keys = self._remote_keys()
+
+    def _remote_keys(self) -> list[str]:
+        """Return every validly named claim key the board advertises."""
+        proc = self._git(["ls-remote", "--refs", self.repo_url, f"{CLAIM_REF_PREFIX}*"])
+        refs = {line.partition("\t")[2]: "" for line in proc.stdout.splitlines()}
+        return list(_claims_by_key(refs, CLAIM_REF_PREFIX))
 
     def _refs_in(self, namespace: str) -> dict[str, str]:
         """Return the object ID of every ref under ``namespace``, by ref name."""

@@ -2037,8 +2037,10 @@ once, so its cost hardly grows with the number of claims. Each lease it prints
 is the one its ref named when the board answered. A peer's renewal meanwhile
 changes nothing, except that a server speaking Git's older stateless HTTP
 protocol may refuse the fetch, which is then repeated up to three times. A
-listing is a report, not a lock: every acquire, renew, and release checks
-ownership again.
+board with claim keys that differ only in case, which a case-insensitive
+scratch cannot store under their names, is listed with one more command that
+names its claims first. A listing is a report, not a lock: every acquire,
+renew, and release checks ownership again.
 
 A Git process that stops while updating a claim ref leaves a lock file in the
 board, and Git then refuses the updates it guards:
