@@ -253,7 +253,7 @@ def _blueprint_sources(graph: Graph) -> tuple[dict[str, set[str]], dict[Path, st
         has_target[node_id], implemented[node_id] = False, True
         for child_id in contained.get(node_id, ()):
             child = graph.nodes[child_id]
-            if child.formalizable or (child.not_ready and child_id not in contained):
+            if child.catalog is None and (child.formalizable or (child.not_ready and child_id not in contained)):
                 has_target[node_id] = True
                 implemented[node_id] = implemented[node_id] and derived[child_id].proved
             if has_target[child_id]:
