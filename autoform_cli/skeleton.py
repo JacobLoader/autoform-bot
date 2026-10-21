@@ -3115,25 +3115,6 @@ def _dependency_order(items: list[TrustedDeclaration]) -> list[TrustedDeclaratio
 # --------------------------------------------------------------------------- #
 
 
-def source_excerpt(
-    item: TrustedDeclaration | DeclarationSkeleton, lean_root: Path
-) -> str | None:
-    """Return the source lines of ``item``, or ``None`` when they cannot be read."""
-
-    if item.path is None or item.start_line is None or item.end_line is None:
-        return None
-    root = lean_root.resolve()
-    candidate = (root / item.path).resolve()
-    try:
-        candidate.relative_to(root)
-        lines = candidate.read_text(encoding="utf-8").split("\n")
-    except (ValueError, OSError, UnicodeError):
-        return None
-    if item.start_line < 1 or item.end_line > len(lines) or item.end_line < item.start_line:
-        return None
-    return "\n".join(lines[item.start_line - 1 : item.end_line])
-
-
 def format_report(report: SkeletonReport, *, lean_root: Path | None = None) -> str:
     """Render the report as the text a reviewer reads.
 
@@ -3690,7 +3671,6 @@ __all__ = [
     "run_probe",
     "select_lean_targets",
     "snapshot_inputs",
-    "source_excerpt",
     "source_passage",
     "write_packets",
     "write_skeleton_report",

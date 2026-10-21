@@ -81,7 +81,6 @@ from autoform_cli.skeleton import (
     path_of,
     render_probe,
     run_probe,
-    source_excerpt,
     write_packets,
     write_skeleton_report,
 )
@@ -2875,12 +2874,6 @@ def test_public_skeleton_compatibility_helpers(tmp_path: Path) -> None:
     assert not declaration.defines
     assert replace(declaration, kind="def").defines
     assert not replace(declaration, kind="axiom").defines
-
-    project = tmp_path / "project"
-    excerpt = source_excerpt(declaration, project)
-    assert excerpt is not None and excerpt.endswith("  sorry")
-    assert source_excerpt(replace(declaration, path="../outside.lean"), project) is None
-    assert source_excerpt(replace(declaration, end_line=10_000), project) is None
 
 
 def test_report_states_shared_material_once(tmp_path: Path) -> None:

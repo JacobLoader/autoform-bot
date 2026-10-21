@@ -34,7 +34,6 @@ from autoform_cli.lean import (
     open_project_sources,
     repository_top_level,
     snapshot_project_sources,
-    strip_lean_comments,
     verify_repository_snapshot,
 )
 from autoform_cli.skeleton import _output_identity, _replace_outputs
@@ -3477,6 +3476,11 @@ def test_quoted_names_keep_spaces_and_dots_inside_one_component(tmp_path: Path) 
     assert index.find("A.«b c.d»") is not None
 
 
+def _strip_comments(text: str) -> str:
+    """The non-blank lines the audit reads from *text*, trailing whitespace dropped."""
+    return "\n".join(line.rstrip() for line in lean_module._without_lean_comments(text).splitlines() if line.strip())
+
+
 def test_comment_stripping_preserves_comment_markers_inside_strings() -> None:
     source = (
         'def a := "a--b /- c -/" -- remove me\n'
@@ -3486,7 +3490,7 @@ def test_comment_stripping_preserves_comment_markers_inside_strings() -> None:
         "def «e--f» : Char := '-'"
     )
 
-    assert strip_lean_comments(source) == (
+    assert _strip_comments(source) == (
         'def a := "a--b /- c -/"\n'
         'def b := r#"d--e /- f -/"#\n'
         'def c := s!"value {"a--b"}"\n'
@@ -3497,8 +3501,8 @@ def test_comment_stripping_preserves_comment_markers_inside_strings() -> None:
 
 def test_comment_stripping_reads_slash_dash_dash_slash_as_a_docstring() -> None:
     # Lean reads `/--` as a docstring opener, so `/--/ ... -/` is one comment.
-    assert strip_lean_comments("/--/ KEEPOUT -/\ndef d : Nat := 6") == "def d : Nat := 6"
-    assert strip_lean_comments("/-!/ KEEPOUT -/\ndef d : Nat := 6") == "def d : Nat := 6"
+    assert _strip_comments("/--/ KEEPOUT -/\ndef d : Nat := 6") == "def d : Nat := 6"
+    assert _strip_comments("/-!/ KEEPOUT -/\ndef d : Nat := 6") == "def d : Nat := 6"
 
 
 def test_double_brace_in_interpolation_opens_a_structure_instance(tmp_path: Path) -> None:
@@ -3506,7 +3510,7 @@ def test_double_brace_in_interpolation_opens_a_structure_instance(tmp_path: Path
     line = 'def s : String := s!"{{ fst := "--", snd := 1 : String × Nat }.fst}"'
     index = _index(tmp_path, line.replace("--", "/-") + "\ndef t : Nat := 1\n")
 
-    assert strip_lean_comments(line + " -- remove me") == line
+    assert _strip_comments(line + " -- remove me") == line
     assert index.find("t") is not None
 
 
@@ -3541,7 +3545,7 @@ def test_comment_stripping_follows_every_lexer_state(
     if everywhere:
         for name in ("_CODE_EVENT", "_INTERPOLATION_EVENT", "_LITERAL_EVENT"):
             monkeypatch.setattr(lean_module, name, re.compile(r"(?s)."))
-    assert strip_lean_comments(source) == expected
+    assert _strip_comments(source) == expected
 
 
 def test_a_raw_string_ends_at_its_first_closer(tmp_path: Path) -> None:
