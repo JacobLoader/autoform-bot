@@ -27,6 +27,8 @@ _H1 = re.compile(r"^ {0,3}#[ \t]+(.+?)[ \t]*#*[ \t]*$")
 INVENTORY_STATUSES = tuple(state.key for state in INVENTORY_STATES)
 #: What the project's views call the root's own articles, since the root's title names the whole project.
 ROOT_GROUP_TITLE = "Top level"
+#: The navigation roles an overview replaces by their contents.
+FLATTENED_ROLES = frozenset({"collection", "transparent"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,7 +311,7 @@ def _scope_view(
     # renderer guessing from directory names. Source books remain available
     # as provenance, separate from the mathematical overview.
     direct, collections, owners = _navigation_children(graph, scope, children)
-    overview = any(graph.nodes[child].navigation in {"collection", "source", "transparent"} for child in children[scope])
+    overview = any(graph.nodes[child].navigation in FLATTENED_ROLES | {"source"} for child in children[scope])
     entries = (*direct, *collections)
     members = {child: _leaf_descendants(children, child) for child in entries}
     nodes: list[ViewNode] = []
@@ -400,7 +402,7 @@ def _navigation_children(
     pending: list[tuple[str, str | None]] = [(child, None) for child in reversed(children[scope])]
     while pending:
         node_id, collection = pending.pop()
-        if graph.nodes[node_id].navigation in {"collection", "transparent"} and node_id in children:
+        if graph.nodes[node_id].navigation in FLATTENED_ROLES and node_id in children:
             owner = collection or node_id
             if collection is None:
                 collections.append(node_id)

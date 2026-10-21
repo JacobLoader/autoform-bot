@@ -17,7 +17,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-from .graph_views import INVENTORY_STATUSES, GraphView, ViewNode
+from .graph_views import FLATTENED_ROLES, INVENTORY_STATUSES, GraphView, ViewNode
 from .lean import declaration_names
 from .status import INVENTORY_STATES, MEANINGS, STATES
 
@@ -142,12 +142,28 @@ def _positions(view: GraphView) -> dict[str, dict[str, int]]:
     return result
 
 
+def drawn_view(view: GraphView) -> GraphView:
+    """Return the part of *view* the explorer draws.
+
+    An overview replaces collections and pagination ranges by their contents,
+    so it draws those contents, not the wrappers or their relations.
+    """
+    if not view.overview:
+        return view
+    nodes = tuple(node for node in view.nodes if node.navigation not in FLATTENED_ROLES)
+    ids = frozenset(node.id for node in nodes)
+    return replace(view, nodes=nodes, edges=tuple(
+        edge for edge in view.edges if edge.source in ids and edge.target in ids
+    ))
+
+
 def uses_atlas(view: GraphView) -> bool:
-    """Draw topic cards in regions only when every node is a topic.
+    """Draw topic cards in regions only when every drawn node is a topic.
 
     A leaf needs a readable card, so a view holding any leaf, such as a
     chapter with module catalogs beside its sections, is a DAG.
     """
+    view = drawn_view(view)
     return (
         bool(view.nodes)
         and all(node.kind == "scope" for node in view.nodes)
@@ -290,22 +306,13 @@ def write_payload(
         raise ValueError("dependency view has duplicate node ids")
     if any(edge.source not in known or edge.target not in known for edge in view.edges):
         raise ValueError("dependency view edge names an unknown node")
-    # An overview replaces collections and pagination ranges by their
-    # contents, so it draws those contents and not the wrappers themselves.
-    map_nodes = tuple(
-        node for node in view.nodes
-        if not view.overview or node.navigation not in {"collection", "transparent"}
-    )
-    map_ids = frozenset(node.id for node in map_nodes)
-    map_view = replace(view, nodes=map_nodes, edges=tuple(
-        edge for edge in view.edges if edge.source in map_ids and edge.target in map_ids
-    ))
-    positions = _positions(map_view) if len(map_nodes) <= MAX_MAP_NODES else {}
+    map_view = drawn_view(view)
+    map_ids = frozenset(node.id for node in map_view.nodes)
+    positions = _positions(map_view) if len(map_view.nodes) <= MAX_MAP_NODES else {}
     degrees: dict[str, int] = {node.id: 0 for node in view.nodes}
-    for edge in view.edges:
-        if edge.source in degrees and edge.target in degrees:
-            degrees[edge.source] += 1
-            degrees[edge.target] += 1
+    for edge in map_view.edges:
+        degrees[edge.source] += 1
+        degrees[edge.target] += 1
 
     nodes: list[dict[str, object]] = []
     present_statuses: set[str] = set()
@@ -349,12 +356,12 @@ def write_payload(
         state.key for state in (*STATES, *INVENTORY_STATES) if state.key in present_statuses
     ]
     payload = {
-        "edge_count": sum(edge.dependency_count for edge in view.edges),
+        "edge_count": sum(edge.dependency_count for edge in map_view.edges),
         "edges": edges,
         "nodes": nodes,
         "palette": _palette(),
         "present_statuses": ordered_statuses,
-        "regions": _atlas_regions(map_view, positions) if uses_atlas(map_view) else [],
+        "regions": _atlas_regions(map_view, positions) if uses_atlas(view) else [],
         "schema": SCHEMA,
         "title": view.title,
         "view": {
@@ -364,7 +371,7 @@ def write_payload(
             ],
             "book": book,
             "kind": view.kind,
-            "presentation": "atlas" if uses_atlas(map_view) else "dag",
+            "presentation": "atlas" if uses_atlas(view) else "dag",
             "summary": view.summary,
             **({"overview": True} if view.overview else {}),
             **({"total_count": view.total_count} if view.total_count is not None else {}),
@@ -1846,6 +1853,7 @@ __all__ = [
     "SCHEMA",
     "SCRIPT_PATH",
     "SEARCH_SCHEMA",
+    "drawn_view",
     "render_container",
     "uses_atlas",
     "viewer_script",

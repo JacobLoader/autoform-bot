@@ -18,6 +18,7 @@ from urllib.parse import quote
 from . import dag_viewer, mermaid
 from .graph import Graph
 from .graph_views import (
+    FLATTENED_ROLES,
     INVENTORY_STATUSES,
     ROOT_GROUP_TITLE,
     GraphView,
@@ -401,7 +402,7 @@ def _selected_statuses(
 def _view_inventories(view: GraphView) -> dict[str, int]:
     """Count the module inventories the explorer's rings and nodes show, for the legend."""
     counts = dict.fromkeys(INVENTORY_STATUSES, 0)
-    for node in view.nodes:
+    for node in dag_viewer.drawn_view(view).nodes:
         for key, count in node.status_counts:
             if key in counts:
                 counts[key] += count
@@ -476,7 +477,7 @@ def _scope_breadcrumbs(
         (group_title(graph, "roadmap"), _published_link(project_page, page)),
     ]
     for node_id in reversed(lineage):
-        if node_id != scope and graph.nodes[node_id].navigation in {"collection", "transparent"}:
+        if node_id != scope and graph.nodes[node_id].navigation in FLATTENED_ROLES:
             continue
         target = scope_pages.get(node_id)
         label = graph.nodes[node_id].title if node_id in graph.nodes else node_id

@@ -9,8 +9,8 @@ import pytest
 
 from autoform_cli import dag_viewer
 from autoform_cli.graph import Graph, GraphValidationError, Node, load_graph
-from autoform_cli.graph_pages import write_graph_pages
-from autoform_cli.graph_views import scope_view, scope_views
+from autoform_cli.graph_pages import _dependency_heading, write_graph_pages
+from autoform_cli.graph_views import GraphView, ViewEdge, ViewNode, scope_view, scope_views
 from autoform_cli.status import derive
 
 
@@ -82,6 +82,53 @@ def test_topics_replace_library_and_pagination_peers_without_dropping_sources_or
     assert all("layout" not in node for node in payload["nodes"] if not node["map"])
     assert all("layout" in node for node in payload["nodes"] if node["map"])
     assert len(payload["edges"]) == 4  # relations of the collections themselves stay in the payload
+    # The rail counts and the isolate grid follow the map, not the payload.
+    assert payload["edge_count"] == 3
+    assert [node["isolated"] for node in payload["nodes"] if node["id"] == "Geometry/result"] == [True]
+
+
+def test_an_overview_legend_counts_a_collected_catalog_once(tmp_path: Path) -> None:
+    nodes: dict[str, Node] = {}
+
+    def add(node_id: str, parent: str | None = None, **facts: object) -> None:
+        nodes[node_id] = Node(node_id, node_id, tmp_path / f"{node_id}.md", (), parent=parent, **facts)
+
+    add("roadmap")
+    add("G", "roadmap")
+    add("G/lib", "G", navigation="collection")
+    add("G/lib/m", "G/lib")
+    add("G/lib/m/catalog", "G/lib/m", catalog="module")
+    add("G/lib/m/theorem", "G/lib/m", declaration="theorem")
+    add("G/r", "G", declaration="theorem")
+    graph = Graph(tmp_path, nodes)
+    site = tmp_path / "site"
+    write_graph_pages(graph, derive(graph), site,
+        node_links=lambda _page, node_ids: {node_id: "book.html#" + node_id for node_id in node_ids})
+    page = (site / "dependencies/chapters/G.md").read_text()
+    assert 'inventory pending</span><span class="bp-legend-count">1<' in page
+
+
+def _scope(node_id: str, **facts: object) -> ViewNode:
+    return ViewNode(id=node_id, title=node_id, kind="scope", members=(), status_counts=(), **facts)
+
+
+@pytest.mark.parametrize("view", (
+    GraphView(
+        kind="chapter", title="Areas dependency map", overview=True,
+        nodes=(_scope("scope:a"), _scope("scope:b"), _scope("scope:lib", navigation="collection", area="Library")),
+        edges=(ViewEdge("scope:a", "scope:b", 1, 0),),
+    ),
+    GraphView(
+        kind="chapter", title="Wrapper dependency map", overview=True,
+        nodes=(_scope("scope:a"), _scope("scope:lib", navigation="collection")),
+        edges=(ViewEdge("scope:lib", "scope:a", 1, 0),),
+    ),
+), ids=("collection-area-beside-topics", "only-edge-on-the-collection"))
+def test_an_overview_heading_names_what_its_map_draws(tmp_path: Path, view: GraphView) -> None:
+    output = tmp_path / "view.json"
+    dag_viewer.write_payload(output, view, links={})
+    presentation = json.loads(output.read_text())["view"]["presentation"]
+    assert _dependency_heading(view).endswith(" dependencies") == (presentation == "dag")
 
 
 def test_breadcrumbs_skip_collections_and_pagination(tmp_path: Path) -> None:
