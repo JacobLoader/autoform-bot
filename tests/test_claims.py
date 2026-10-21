@@ -801,6 +801,38 @@ def test_list_offers_the_board_no_local_refs_to_negotiate_from(
     assert len(traces) == 1 and "packet:" in traces[0] and "> have " not in traces[0]
 
 
+def test_read_offers_the_board_no_local_refs_to_negotiate_from(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire_many([f"k{index}" for index in range(20)], ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    reader._ensure_scratch()
+    # A scratch keeps the claim refs an older `list` mirrored and the private
+    # refs of a `list` killed before its cleanup ran.
+    reader._git(["fetch", "--quiet", str(board_repo), f"+{claims.CLAIM_REF_PREFIX}*:{claims.CLAIM_REF_PREFIX}*"])
+    reader._git(["fetch", "--quiet", str(board_repo), f"+{claims.CLAIM_REF_PREFIX}*:refs/autoform-list/killed/*"])
+    assert owner.renew_many([f"k{index}" for index in range(20)])
+    monkeypatch.setenv("GIT_TRACE_PACKET", "1")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.version")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "0")
+    git = reader._git
+    traces: list[str] = []
+
+    def traced(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        proc = git(args, **kwargs)
+        if args[0] == "fetch":
+            traces.append(proc.stderr)
+        return proc
+
+    monkeypatch.setattr(reader, "_git", traced)
+
+    lease = reader.read("k0")
+    assert lease is not None and lease["owner"] == "worker-a"
+    assert len(traces) == 1 and "packet:" in traces[0] and "> have " not in traces[0]
+
+
 def test_list_reads_a_lease_through_an_annotated_tag_as_read_does(tmp_path: Path, board_repo: Path) -> None:
     owner = _board(tmp_path, board_repo, "worker-a")
     assert owner.acquire("a", ttl=600)

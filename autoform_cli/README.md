@@ -572,7 +572,9 @@ probed module (only those need to be built) matches its exact source inputs;
 a missing `lake-manifest.json`, stale artifacts, or a source tree that
 changes during extraction makes the command fail. That check rehashes every
 input and rewrites Lake's `.hash` files, so the project's `.lake` directory
-must be writable. A lexical closure would miss what
+must be writable. When the check fails other than as stale, the error keeps
+the first 20 lines of Lake's standard output and error and counts the rest.
+A lexical closure would miss what
 `open`, notation, implicit instances, and auto-bound variables bring in, and
 every miss silently shrinks the surface a reader is told to trust. Constructors,
 projections, recursors, `noConfusion` helpers, and matchers are folded onto the
@@ -896,9 +898,9 @@ and binds its answer to the Markdown `source_revision`, the repository
 `lean_source_revision`, and a `build_revision` hash of the normalized Lean
 records. The probe imports project modules, so run it only in a trusted checkout
 or sandbox. A missing or stale build is reported as for `work import-impact`.
-It compares elaborated types and values; changes to notation,
-attributes, instance priority, or unreported generated declarations still
-require human review.
+It compares elaborated types and values; changes to notation, attributes,
+instance priority, or unreported generated declarations still require human
+review.
 
 Report the coordination and review scope of an import edit without forbidding
 the edit:
@@ -913,8 +915,9 @@ every module of the root libraries, so each must be built: a missing or stale
 build exits 2 with the `lake build` command for those libraries, how many
 modules were checked, and the first module Lake found unbuilt. Freshness is
 Lake's rehash of this checkout's `.lake` against this checkout's sources, so a
-build in another clone or worktree does not make this one fresh. `SELECTOR` identifies
-the working article and `MODULE` the module whose effective header would change.
+build in another clone or worktree does not make this one fresh.
+`SELECTOR` identifies the working article and `MODULE` the module whose
+effective header would change.
 Lean supplies the loaded module graph; Autoform binds every node to its captured
 root source and configured root-package artifact so dependencies cannot shadow
 it. The probe imports project modules, so run it only in a trusted checkout or

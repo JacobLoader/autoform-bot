@@ -36,6 +36,9 @@ _SCRATCH_INIT_DELAY_S = 0.05
 # `claim list` fetches into refs under this prefix that only that call reads.
 _LIST_REF_PREFIX = "refs/autoform-list/"
 _LIST_FETCH_ATTEMPTS = 3
+# A glob that matches no ref, so a fetch given it as `--negotiation-tip` sends no
+# haves; an exact ref name that does not exist would fail the fetch instead.
+_NO_NEGOTIATION_TIP = f"{_LIST_REF_PREFIX}none/*"
 # How a stateless protocol v0 server refuses a want whose ref moved after it
 # advertised it; only this failure is worth fetching again.
 _MOVED_WANT = "not our ref"
@@ -346,7 +349,18 @@ class ClaimBoard:
     def _read_lease(self, key: str, oid: str) -> dict[str, Any]:
         ref = self._ref(key)
         if self._git(["cat-file", "-e", f"{oid}^{{commit}}"], check=False).returncode != 0:
-            self._git(["fetch", "--quiet", self.repo_url, f"+{ref}:{ref}"])
+            # Offer the board no local refs: the scratch can keep every claim ref
+            # an older `list` mirrored and the private refs of a killed `list`,
+            # and negotiating from them saves nothing for one lease.
+            self._git(
+                [
+                    "fetch",
+                    "--quiet",
+                    f"--negotiation-tip={_NO_NEGOTIATION_TIP}",
+                    self.repo_url,
+                    f"+{ref}:{ref}",
+                ]
+            )
         proc = self._git(["cat-file", "commit", oid], check=False)
         if proc.returncode != 0:
             raise MalformedLeaseError(f"claim {key!r} does not point to a readable commit")
