@@ -1250,10 +1250,12 @@ without a body elaborates to a placeholder that carries no `sorry`, so no
 `sorry` check catches one. Batteries declares every placeholder `private`, so
 the kernel-trust audit of the generated verify workflow looks a `lean:` name up
 among the root package's placeholders when the build has no declaration of that
-name. It reports a target it finds there as wanted, and fails one whose article
-the assumption contract records as proved or defined, as `lean-target-wanted`
-does. It still reports any other `private` declaration as not a declaration of
-the Lean build.
+name. A target that resolves to a placeholder, or to a public alias of one,
+passes as wanted only when the assumption contract records its article as
+`stated`, `can_prove`, `can_state`, `planned` or `not_ready`. Any other state
+fails it, as `lean-target-wanted` fails proved and defined articles, and so do a
+`mathlib` state and a state the helper does not know. The audit still reports
+any other `private` declaration as not a declaration of the Lean build.
 
 ### Structure
 
