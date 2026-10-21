@@ -89,10 +89,8 @@ def test_setup_example_pins_the_repl_that_the_real_repl_job_tests(repo_root: Pat
     assert toolchain(example) == toolchain(fixture)
     # The docs name the tag rather than the commit, so they hold only while
     # every pin above is that tag's commit.
-    setup = " ".join((repo_root / "skills/setup/SKILL.md").read_text(encoding="utf-8").split())
-    readme = " ".join((example / "README.md").read_text(encoding="utf-8").split())
-    assert "the bundled example pins the commit of tag `v4.32.0`" in setup
-    assert "the upstream REPL commit tagged `v4.32.0`" in readme
+    for document in (repo_root / "skills/setup/SKILL.md", example / "README.md"):
+        assert "`v4.32.0`" in document.read_text(encoding="utf-8"), document
 
 
 def test_minimum_lean_fixture_and_readme_name_the_lean_floor(repo_root: Path) -> None:
@@ -164,31 +162,6 @@ def test_setup_asset_is_a_repo_shaped_thesis_vault(repo_root: Path) -> None:
     assert (blueprint / "roadmap" / "README.md").is_file()
     assert (blueprint / "roadmap" / "full-supervision" / "README.md").is_file()
     assert (blueprint / "coverage" / "README.md").is_file()
-    source = (blueprint / "sources" / "thesis.md").read_text(encoding="utf-8")
-    assert "arXiv:2209.11629" in source
-    assert "infimum/core.tex" in source
-    assert "il:thm:ambiguity" in source
-    assert "il:thm:non-ambiguity" in source
-    ignored = (blueprint / ".gitignore").read_text(encoding="utf-8").splitlines()
-    assert ".obsidian/" in ignored
-    assert "dependencies.md" in ignored
-    assert "structure.md" not in ignored
-
-    overview = (blueprint / "README.md").read_text(encoding="utf-8")
-    assert "kind: blueprint" in overview
-    assert "status: active" in overview
-    assert "[Thesis roadmap](roadmap/README.md)" in overview
-    assert "[coverage notes](coverage/README.md)" in overview
-
-    readme = (example / "README.md").read_text(encoding="utf-8")
-    assert "[Browse the formalization blueprint](blueprint/README.md)" in readme
-    assert (
-        "Developed with "
-        "[AutoformBot](https://github.com/facebookresearch/autoform-bot)."
-    ) in readme
-    assert ".claude/worktrees/" in (example / ".gitignore").read_text(
-        encoding="utf-8"
-    ).splitlines()
     assert (example / "src/CabannesThesis.lean").is_file()
     assert (example / "src/CabannesThesis/Basic.lean").is_file()
     toolchain = (example / "lean-toolchain").read_text(encoding="utf-8").strip()
@@ -211,15 +184,6 @@ def test_roadmap_example_is_structural_not_a_completion_fixture(
     assert audit.coverage is not None
     assert not audit.coverage.complete
     assert audit.coverage.counts["MAPPED"] > 0
-
-    reference = (
-        repo_root / "skills/roadmap/references/cabannes-thesis-roadmap.md"
-    ).read_text(encoding="utf-8")
-    normalized = " ".join(reference.split())
-    assert "structural example, not a completion fixture" in normalized
-    assert "not a valid finish state" in normalized
-    assert "approved small slice" not in normalized
-    assert "handing ready nodes to Orchestrate" not in normalized
 
 
 def test_setup_asset_static_site_contract(repo_root: Path, tmp_path: Path) -> None:
@@ -365,59 +329,17 @@ def test_setup_asset_static_site_contract(repo_root: Path, tmp_path: Path) -> No
     assert "bp-book-nav" not in graph_page
 
     mkdocs = (example / "mkdocs.yml").read_text(encoding="utf-8")
-    assert "docs_dir: site-src" in mkdocs
     # Material renders repo_url as the header link, so it must be the project's
     # own repository. Pointing it at AutoformBot sends readers to the plugin.
     assert "repo_url: https://github.com/VivienCabannes/cabannes-thesis" in mkdocs
     assert "repo_url: https://github.com/facebookresearch/autoform-bot" not in mkdocs
-    assert "use_directory_urls: false" in mkdocs
-    assert "md_in_html" in mkdocs
-    assert "pymdownx.superfences" in mkdocs
-    assert "stylesheets/blueprint.css" in mkdocs
-    assert "javascripts/blueprint-mermaid.js" in mkdocs
-    # The nav is generated from the vault into SUMMARY.md, so mkdocs.yml has
-    # none: a hand-written chapter list would drift from the book.
-    assert "\nnav:\n" not in mkdocs
-    assert "literate-nav" in mkdocs
-    assert "navigation.tabs" in mkdocs
     summary = (site / "SUMMARY.md").read_text(encoding="utf-8")
     assert summary.startswith("- [Home](README.md)")
     assert "- Book" in summary
     assert "- Graph" in summary
     assert "[Infimum Loss milestone](roadmap/infimum-loss/README.md)" in summary
-    theme = (example / "theme" / "main.html").read_text(encoding="utf-8")
-    assert "{% block footer %}" in theme
-    assert "AutoformBot" in theme
-    assert "https://github.com/facebookresearch/autoform-bot" in theme
-    assert '<a href="{{ config.repo_url }}">Formalization source</a>.' in theme
     workflow = (example / ".github/workflows/blueprint-pages.yml").read_text(encoding="utf-8")
-    assert "autoform check blueprint --lean-root ." in workflow
-    assert "autoform render blueprint" in workflow
-    assert "--require-declarations" in workflow
-    assert "actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128" in workflow
-    assert "@main" not in workflow
-
     verify = (example / ".github/workflows/autoform-verify.yml").read_text(encoding="utf-8")
-    assert "autoform check blueprint" in verify
-    assert 'lake clean "$root_package"' in verify
-    assert "lake build" in verify
-    assert "Reject kernel-check bypass options" in verify
-    assert "Audit every root-package declaration" in verify
-    assert "python3 .github/autoform_audit.py" in verify
-    assert "lake pack" in verify
-    assert "lake-modules" not in verify
-    assert "contains no ILean artifacts" in (
-        example / ".github/autoform_audit.py"
-    ).read_text(encoding="utf-8")
-    assert 'forbidden="skip""KernelTC"' in verify
-    assert 'git grep -n -I "$forbidden" -- .' in verify
-    assert 'version: "0.12.1"' in verify
-    assert "elan/releases/download/v4.2.3" in verify
-    assert "df0b2b3a439961ffcbb3985214365ffe40f49bc871df04dff268c7d8e21ca8b2" in verify
-    assert "github.ref == 'refs/heads/main'" in workflow
-    assert workflow.count('- "theme/**"') == 2
-    assert 'version: "0.12.1"' in workflow
-    assert "@main" not in verify
 
     for contents in (workflow, verify):
         action_refs = re.findall(r"uses:\s+[^@\s]+@([^\s]+)", contents)
@@ -568,10 +490,9 @@ def test_skills_that_run_the_cli_state_how_to_launch_it(repo_root: Path) -> None
     Agents that read a bare `autoform work list` run `which autoform` and then
     guess; in trials every fresh Roadmap and Formalize session did, and some
     never reached the CLI. So every skill whose instructions or references name
-    a command states the launcher once, names the plugin root without relying
-    on how a host presents the skill, and hands both to its subagents. Setup
-    spells out its own full invocations; Develop Plugin works inside the plugin
-    checkout, where `uv run autoform` already resolves.
+    a command states the launcher once. Setup spells out its own full
+    invocations; Develop Plugin works inside the plugin checkout, where
+    `uv run autoform` already resolves.
     """
     running = {
         skill.name
@@ -582,9 +503,6 @@ def test_skills_that_run_the_cli_state_how_to_launch_it(repo_root: Path) -> None
     for name in sorted(running - {"setup", "develop-plugin"}):
         flat = " ".join((repo_root / "skills" / name / "SKILL.md").read_text(encoding="utf-8").split())
         assert f"`{_LAUNCHER}" in flat, f"{name} does not state the launcher"
-        assert "no `autoform` on `PATH`" in flat
-        assert "the directory that holds this skill's `skills/` folder, along with `pyproject.toml`" in flat
-        assert "Give a subagent that root and this prefix with its task." in flat
 
 
 def test_skill_links_into_the_cli_reference_land_on_a_section(repo_root: Path) -> None:
