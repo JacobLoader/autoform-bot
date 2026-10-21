@@ -480,7 +480,8 @@ def viewer_script() -> str:
     cost nothing.
     """
     # Keep the embedded source readable in Python without shipping indentation
-    # that browsers do not need. Internal spaces and line breaks stay intact.
+    # that browsers do not need. Internal spaces and the line breaks between
+    # code lines stay intact.
     # Whole-line comments explain the source, not the page, so they stay here.
     lines = (line.lstrip() for line in _SCRIPT.splitlines())
     return "\n".join(line for line in lines if line and not line.startswith("//")) + "\n"

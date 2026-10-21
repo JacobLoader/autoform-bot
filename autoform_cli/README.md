@@ -128,9 +128,10 @@ An optional container-only `navigation` role makes the difference explicit:
 An overview, a page with a collection, pagination or source child, draws what
 remains after collections and pagination are replaced by their contents.
 These roles never change article identity, containment, proof readiness, or
-dependency edges; a relation that mentions a collection itself stays attached
-to the collection, so no map draws it: depend on an article inside the
-collection instead.
+dependency edges. A relation that mentions a collection itself stays attached
+to the collection, so the overview that shows the collection's contents in its
+place does not draw it, while other pages draw it from the collection's
+boundary: depend on an article inside the collection instead.
 
 For a taxonomy maintained separately from article files, `blueprint/atlas.json`
 may assign the same areas without moving pages:

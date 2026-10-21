@@ -495,9 +495,10 @@ def is_scope_target(node: Node) -> bool:
 
     Only leaves that declare something or are marked not ready count, so a
     note cannot hold a finished chapter open but deferred work does. A module
-    catalog is inventory evidence, never a target. The dashboards count with
-    _is_countable instead, which leaves out a not-ready leaf that declares
-    nothing; only this predicate counts one (README, "What coverage
+    catalog is inventory evidence, never a target. The book's progress
+    figures and ``autoform check`` count with _is_countable instead, which
+    leaves out a not-ready leaf that declares nothing; this predicate counts
+    one, as audit's scope completion does inline (README, "What coverage
     completeness does and does not claim").
     """
     return node.catalog is None and (node.formalizable or node.not_ready)

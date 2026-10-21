@@ -112,22 +112,24 @@ def _scope(node_id: str, **facts: object) -> ViewNode:
     return ViewNode(id=node_id, title=node_id, kind="scope", members=(), status_counts=(), **facts)
 
 
-@pytest.mark.parametrize("view", (
-    GraphView(
+@pytest.mark.parametrize(("view", "expected"), (
+    (GraphView(
         kind="chapter", title="Areas dependency map", overview=True,
         nodes=(_scope("scope:a"), _scope("scope:b"), _scope("scope:lib", navigation="collection", area="Library")),
         edges=(ViewEdge("scope:a", "scope:b", 1, 0),),
-    ),
-    GraphView(
+    ), "dag"),
+    (GraphView(
         kind="chapter", title="Wrapper dependency map", overview=True,
         nodes=(_scope("scope:a"), _scope("scope:lib", navigation="collection")),
         edges=(ViewEdge("scope:lib", "scope:a", 1, 0),),
-    ),
+    ), "atlas"),
 ), ids=("collection-area-beside-topics", "only-edge-on-the-collection"))
-def test_an_overview_heading_names_what_its_map_draws(tmp_path: Path, view: GraphView) -> None:
+def test_an_overview_heading_names_what_its_map_draws(tmp_path: Path, view: GraphView, expected: str) -> None:
     output = tmp_path / "view.json"
     dag_viewer.write_payload(output, view, links={})
     presentation = json.loads(output.read_text())["view"]["presentation"]
+    # Drawn, the first is a->b with no area and the second a lone topic.
+    assert presentation == expected
     assert _dependency_heading(view).endswith(" dependencies") == (presentation == "dag")
 
 
