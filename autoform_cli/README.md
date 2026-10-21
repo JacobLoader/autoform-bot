@@ -1037,14 +1037,15 @@ record under `runs/` in the debrief store described below, together with the
 installed AutoformBot version. A directory without a roadmap, as during Setup,
 is accepted as the project. When `autoform_friction` is not empty, `record` also
 writes a draft issue for `facebookresearch/autoform-bot` to `issues/` in the
-store and prints its absolute path. The draft ends, below a `---` footer that is not
-part of the issue, with a GitHub link that opens a new issue pre-filled with it
-(the title alone, when the draft is too long for a link). The draft holds only the
-AutoformBot friction and the environment, with the project path replaced by
-`$PROJECT` and home directories by `~`. Nothing is sent: the user reviews,
-edits, and submits the issue. With `--json`, `record` prints one object,
-`{"run_id": ..., "path": ..., "issue": null | {"path": ..., "url": ...,
-"url_has_body": true | false}}`.
+store and prints its absolute path. The draft ends, below a `---` footer that is
+not part of the issue, with a link to GitHub's new-issue form pre-filled with
+the draft as it was recorded, so edits belong in the form. When the draft is too
+long for a link, the link fills in only the title, and the footer and `record`'s
+output say so. The draft holds only the AutoformBot friction and the
+environment, with the project path replaced by `$PROJECT` and home directories
+by `~`. Nothing is sent: the user reviews, edits, and submits the issue. With
+`--json`, `record` prints one object, `{"run_id": ..., "path": ..., "issue":
+null | {"path": ..., "url": ..., "url_has_body": true | false}}`.
 
 Ask the agent that just finished a formalization attempt what infrastructure
 would have made it cheaper, and keep its answer:

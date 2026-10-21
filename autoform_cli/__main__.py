@@ -1337,7 +1337,12 @@ def _debrief_orchestrator(args: argparse.Namespace) -> int:
         print("no AutoformBot friction reported; no issue drafted")
         return 0
     print(_human_text(f"drafted an issue for {debrief_orchestrator.ISSUE_REPOSITORY} at {issue.path}"))
-    print("nothing has been sent; the draft ends with a link that opens it as a pre-filled issue")
+    if issue.url_has_body:
+        print("nothing has been sent; the draft ends with a link that opens the issue form pre-filled with the "
+              "draft as it was recorded")
+    else:
+        print("nothing has been sent; the draft is too long for a link, so its footer opens the issue form with "
+              "the title only")
     return 0
 
 

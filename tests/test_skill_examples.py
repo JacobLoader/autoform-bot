@@ -1184,6 +1184,18 @@ def _documented_invocations(reference: str) -> set[tuple[str, ...]]:
     return invocations
 
 
+def test_debrief_skill_links_the_draft_safely_and_names_the_too_long_case(repo_root: Path) -> None:
+    text = " ".join((repo_root / "skills/debrief-orchestrator/SKILL.md").read_text(encoding="utf-8").split())
+
+    for required in (
+        # Angle brackets keep a link whose path has a space or a parenthesis.
+        "(</home/me/proj/.git/autoform/debriefs/issues/RUN_ID.md>)",
+        "pre-filled with the draft as it was recorded, so edits belong in the form",
+        "If `record` says the draft is too long for a link",
+    ):
+        assert required in text, required
+
+
 def test_cli_reference_documents_only_commands_that_exist(repo_root: Path) -> None:
     """The CLI reference is the single source of truth, so it must be checkable.
 
