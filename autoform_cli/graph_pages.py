@@ -328,7 +328,6 @@ def _write_page(
     search_href: str,
     breadcrumbs: tuple[tuple[str, str | None], ...],
     navigation: str = "",
-    extra: str = "",
     searchable: bool = True,
 ) -> Path:
     # Every projection is one payload and one explorer host, so readers get one
@@ -373,8 +372,6 @@ def _write_page(
     # explorer: it answers a question the reader asks once, not on every page.
     tip = mermaid.render_legend_tip(statuses, _view_inventories(view))
     sections.extend([f"{lead} {tip}".rstrip(), "", explorer, ""])
-    if extra:
-        sections.extend([extra, ""])
     page.parent.mkdir(parents=True, exist_ok=True)
     page.write_text("\n".join(sections).rstrip() + "\n", encoding="utf-8")
     return page

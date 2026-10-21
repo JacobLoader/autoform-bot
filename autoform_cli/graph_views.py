@@ -49,7 +49,6 @@ class ViewNode:
     area: str | None = None
     internal_dependency_count: int = 0
     navigation: str | None = None
-    examples: tuple[str, ...] = ()
 
     @property
     def item_count(self) -> int:
@@ -81,7 +80,6 @@ class GraphView:
     scope: str | None = None
     summary: str | None = None
     overview: bool = False
-    total_count: int | None = None
 
     @property
     def member_ids(self) -> tuple[str, ...]:
@@ -372,7 +370,6 @@ def _scope_view(
         scope=scope,
         summary=graph.nodes[scope].summary,
         overview=overview,
-        total_count=sum(count for _, count in _status_counts(graph, _leaf_descendants(children, scope), statuses)),
     )
 
 
@@ -642,7 +639,6 @@ def _scope_node(
         area=area,
         internal_dependency_count=internal_dependency_count,
         navigation=navigation,
-        examples=tuple(graph.nodes[node_id].title for node_id in targets[:3]),
     )
 
 

@@ -55,7 +55,7 @@ def test_topics_replace_library_and_pagination_peers_without_dropping_sources_or
     statuses = derive(graph)
     view = scope_view(graph, statuses, "Geometry")
     assert view == scope_views(graph, statuses)["Geometry"]
-    assert view.overview and view.total_count == 5
+    assert view.overview
     assert {node.title for node in view.nodes if node.kind == "scope" and not node.navigation} == {
         "Distance geometry", "Comparison geometry", "Comparison triangles",
     }

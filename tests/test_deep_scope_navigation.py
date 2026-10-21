@@ -49,7 +49,7 @@ def test_deep_role_flattening_preserves_topic_boundaries_source_order_and_edges(
     assert [node.id for node in view.nodes] == [
         "before", "scope:topic0000", "scope:source", "direct-result", "after", "scope:wrapper0000",
     ]
-    assert view.overview and view.total_count == 5
+    assert view.overview
     assert next(node for node in view.nodes if node.id == "scope:topic0000").members == ("result",)
     assert next(node for node in view.nodes if node.id == "scope:source").navigation == "source"
     assert {(edge.source, edge.target, edge.statement_count, edge.proof_count) for edge in view.edges} == {

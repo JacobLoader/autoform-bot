@@ -340,8 +340,6 @@ def write_payload(
         }
         if view.overview:
             entry["map"] = node.id in map_ids
-        if node.navigation:
-            entry["navigation"] = node.navigation
         if node.catalog == "module" and node.lean:
             names = declaration_names(node.lean)
             shown = names[:_CATALOG_LEAN_NAMES]
@@ -373,8 +371,6 @@ def write_payload(
             "kind": view.kind,
             "presentation": "atlas" if uses_atlas(view) else "dag",
             "summary": view.summary,
-            **({"overview": True} if view.overview else {}),
-            **({"total_count": view.total_count} if view.total_count is not None else {}),
         },
     }
     return _write_json(path, payload)
