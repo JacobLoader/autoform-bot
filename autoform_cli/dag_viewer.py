@@ -222,6 +222,7 @@ def _atlas_positions(view: GraphView) -> dict[str, dict[str, int]]:
             shifted = dict(position)
             shifted["x"] += block_x
             shifted["y"] += block_y
+            # An atlas places cards by x and y; column and row only keep the DAG's layout keys.
             shifted["column"] = shifted["x"]
             result[node_id] = shifted
         block_x += width + gap * 2
@@ -230,6 +231,11 @@ def _atlas_positions(view: GraphView) -> dict[str, dict[str, int]]:
 
 
 def _atlas_regions(view: GraphView, positions: Mapping[str, Mapping[str, int]]) -> list[dict[str, object]]:
+    """Frame each area's cards with 12 px of padding.
+
+    Each frame also holds a 34 px label band above its cards, inside the 42 px
+    region_header that _atlas_positions leaves for it.
+    """
     regions: list[dict[str, object]] = []
     # Areas that differ only in case would otherwise keep the set's hash-seeded order.
     areas = sorted({node.area for node in view.nodes if node.area}, key=lambda area: (area.casefold(), area))
@@ -293,6 +299,10 @@ def write_payload(
     """Write the deterministic layout and data one explorer page draws.
 
     *book* links a chapter's or section's explorer to its textbook page.
+
+    The payload carries only what the explorer reads. On an overview, the
+    collections and pagination ranges it replaces ride along with
+    ``map: false`` and no layout.
     """
     known = frozenset(node.id for node in view.nodes)
     if len(known) != len(view.nodes):
@@ -463,12 +473,17 @@ def _safe_fallback_href(value: str) -> bool:
 
 
 def viewer_script() -> str:
-    """Return the dependency-free browser runtime with leading space folded."""
+    """Return the dependency-free browser runtime with leading space folded.
+
+    The result must stay under 66,000 bytes (test_graph_view_rendering). Leading
+    indentation, blank lines and whole-line ``//`` comments are stripped, so they
+    cost nothing.
+    """
     # Keep the embedded source readable in Python without shipping indentation
     # that browsers do not need. Internal spaces and line breaks stay intact.
     # Whole-line comments explain the source, not the page, so they stay here.
     lines = (line.lstrip() for line in _SCRIPT.splitlines())
-    return "\n".join(line for line in lines if not line.startswith("//")) + "\n"
+    return "\n".join(line for line in lines if line and not line.startswith("//")) + "\n"
 
 
 # Published pages put the explorer inside Material's article.md-typeset, whose
