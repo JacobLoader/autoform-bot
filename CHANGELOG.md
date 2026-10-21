@@ -98,7 +98,7 @@ theme. Each group names the pull requests to read for detail.
 ### Contracts
 
 Public CLI and JSON shapes are contracts. The JSON schema identifiers on main
-include `autoform-skeleton/v5`, `autoform-work/v2`, `autoform-runtime/v3`,
+include `autoform-skeleton/v5`, `autoform-work/v2`, `autoform-runtime/v4`,
 `autoform-search/v2`, `autoform-publication/v2` and `autoform-impact/v1`.
 
 ### Dependencies

@@ -783,7 +783,9 @@ def _documented_commands(text: str) -> list[tuple[str, bool]]:
     fence = re.compile(r"^ *```[^\n]*\n(.*?)^ *```", re.DOTALL | re.MULTILINE)
     lines = [(line, True) for block in fence.findall(text) for line in block.replace("\\\n", " ").splitlines()]
     lines += [(code, False) for code in re.findall(r"`([^`]*\bautoform [^`]*)`", " ".join(fence.sub("", text).split()))]
-    return [(found[1], fenced) for line, fenced in lines if (found := re.search(r"(?:^|[\s\"'])autoform (.*)", line))]
+    # `autoform 0.5.0 (...)` is what --version prints, not a command.
+    command = re.compile(r"(?:^|[\s\"'])autoform (?!\d)(.*)")
+    return [(found[1], fenced) for line, fenced in lines if (found := command.search(line))]
 
 
 def test_documented_autoform_commands_parse(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
