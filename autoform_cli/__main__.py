@@ -22,7 +22,8 @@ from .audit import audit_blueprint
 from .claims import CLAIM_TTL_S, ClaimBoard, ClaimTransportError, author_claim_key
 from .doctor import diagnose_project
 from .dashboard import publication_bound_live_state, serve_dashboard
-from .graph import Graph, GraphValidationError, load_graph
+from .graph import Graph, GraphValidationError, atlas_omissions, catalogs_without_ledger, load_graph
+from .graph_views import _countable, _module_inventories
 from .impact import (
     ImpactError,
     format_impact,
@@ -30,7 +31,7 @@ from .impact import (
     module_import_impact,
     revision_impact,
 )
-from .lean import build_linker, declaration_names, index_failure_message
+from .lean import declaration_names, index_failure_message, index_project
 from .library.citations import library_citation_warnings
 from .library.generate import GenerateError, check_index, generate_index, write_index
 from .library.index import INDEX_FILE
@@ -54,6 +55,16 @@ from .skeleton import (
 from .work import WORK_SCHEMA, WorkError, assumption_contract, list_ready_work, work_context
 
 
+class _Version(argparse.Action):
+    """Print the version only when asked, since reading a plugin checkout's commit runs git."""
+
+    def __call__(
+        self, parser: argparse.ArgumentParser, namespace: object, values: object, option: str | None = None
+    ) -> None:
+        print(f"{parser.prog} {debrief_orchestrator.autoform_version()}")
+        parser.exit()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     if os.name == "posix" and signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN:
         # An ignored SIGCHLD, on Linux even one inherited across exec, has the kernel
@@ -61,6 +72,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # waits for its own children.
         signal.signal(signal.SIGCHLD, signal.SIG_DFL)
     parser = argparse.ArgumentParser(prog="autoform")
+    parser.add_argument(
+        "--version", action=_Version, nargs=0, default=argparse.SUPPRESS, help="show the version and exit"
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init = subparsers.add_parser("init", help="write the blueprint vault, site config, and CI")
@@ -654,28 +668,39 @@ def _check(args: argparse.Namespace) -> int:
     if args.lean_root is not None:
         source_warnings += [_human_text(warning) for warning in library_citation_warnings(graph, args.lean_root)]
 
-    linker = None
+    # Check looks each name up and builds no permalink, so it skips the Git
+    # work a linker does.
+    index = None
     if args.lean_root is not None:
         try:
-            linker = build_linker(args.lean_root)
+            index = index_project(args.lean_root)
         except OSError as error:
             print(f"error: {index_failure_message(error)}")
             return 1
 
+    # The book's hero counts the same targets and inventories.
     statuses = status.derive(graph)
-    summary = " · ".join(f"{count} {state.label}" for state, count in status.summarize(statuses))
+    target_statuses = {node_id: statuses[node_id] for node_id in _countable(graph)}
+    inventories = len(_module_inventories(graph))
+    summary = " · ".join(
+        f"{count} {state.label}" for state, count in status.summarize(target_statuses)
+    )
     print(f"OK: {len(graph.nodes)} articles, {graph.edge_count} dependencies")
     if summary:
         print(f"    {summary}")
+    if inventories:
+        label = "module inventory" if inventories == 1 else "module inventories"
+        print(f"    {inventories} {label}")
 
-    if linker is not None:
+    if index is not None:
         missing = [
             f"{node.id}: declaration defined more than once in {args.lean_root}: {name} ({ambiguous})"
-            if (ambiguous := linker.index.ambiguity(name))
+            if (ambiguous := index.ambiguity(name))
             else f"{node.id}: declaration not found in {args.lean_root}: {name}"
+            + ("; a name Lean generates is not indexed and belongs in the catalog's ledger" if node.catalog else "")
             for node in graph.nodes.values()
             for name in declaration_names(node.lean or "")
-            if linker.location(name) is None
+            if index.find(name) is None
         ]
         for issue in missing:
             print(f"error: {issue}")
@@ -687,10 +712,15 @@ def _check(args: argparse.Namespace) -> int:
             )
         if missing:
             return 1
-        declared = sum(1 for node in graph.nodes.values() if node.lean)
-        print(f"    {declared} declaration(s) resolved in the Lean sources")
+        print(f"    {len(graph.lean_names())} declaration name(s) resolved in the Lean sources")
     for omission in projection_omissions(graph):
         print(f"warning: {omission}")
+    for omission in atlas_omissions(graph):
+        print(f"warning: atlas.json: {omission}")
+    for node_id in catalogs_without_ledger(graph):
+        print(
+            f"warning: {node_id}: module catalog links no declaration ledger under blueprint/sources/ from '## Sources'"
+        )
     for warning in _byte_order_mark_warnings(graph) + _formalizable_container_warnings(graph) + source_warnings:
         print(f"warning: {warning}")
     # What the site would leave out or show as typed, and what would stop
@@ -713,11 +743,14 @@ def _audit(args: argparse.Namespace) -> int:
                 "    coverage: "
                 f"{counts['MAPPED']} mapped · "
                 f"{counts['DECOMPOSED']} decomposed · "
+                f"{counts['INVENTORIED']} inventoried · "
                 f"{counts['DEFERRED']} deferred · "
                 f"{counts['OUT']} out"
             )
         for finding in result.findings:
             print(f"error: {finding.article_path}: {finding.code}: {finding.reason}")
+        for warning in result.warnings:
+            print(f"warning: {warning.article_path}: {warning.code}: {warning.message}")
     return 0 if result.clean else 1
 
 
@@ -1337,7 +1370,12 @@ def _debrief_orchestrator(args: argparse.Namespace) -> int:
         print("no AutoformBot friction reported; no issue drafted")
         return 0
     print(_human_text(f"drafted an issue for {debrief_orchestrator.ISSUE_REPOSITORY} at {issue.path}"))
-    print("nothing has been sent; the draft ends with a link that opens it as a pre-filled issue")
+    if issue.url_has_body:
+        print("nothing has been sent; the draft ends with a link that opens the issue form pre-filled with the "
+              "draft as it was recorded")
+    else:
+        print("nothing has been sent; the draft is too long for a link, so its footer opens the issue form with "
+              "the title only")
     return 0
 
 
