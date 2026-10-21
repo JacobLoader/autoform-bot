@@ -273,6 +273,10 @@ running from the project root:
 uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform check blueprint --lean-root .
 ```
 
+`autoform --version` prints the installed version, followed by the plugin
+checkout's commit when it runs from one, as in `autoform 0.5.0 (745a88599469)`;
+a debrief records the same string.
+
 Create a new project's vault, site configuration, and CI. The layout is fixed,
 so it is written rather than described; existing files are left alone, which
 makes the same command the repair path:
@@ -703,7 +707,9 @@ probed module (only those need to be built) matches its exact source inputs;
 a missing `lake-manifest.json`, stale artifacts, or a source tree that
 changes during extraction makes the command fail. That check rehashes every
 input and rewrites Lake's `.hash` files, so the project's `.lake` directory
-must be writable. A lexical closure would miss what
+must be writable. When the check fails other than as stale, the error keeps
+the first 20 lines of Lake's standard output and error and counts the rest.
+A lexical closure would miss what
 `open`, notation, implicit instances, and auto-bound variables bring in, and
 every miss silently shrinks the surface a reader is told to trust. Constructors,
 projections, recursors, `noConfusion` helpers, and matchers are folded onto the
@@ -1029,9 +1035,10 @@ refuses any content or source-identity change. JSON uses `autoform-impact/v1`
 and binds its answer to the Markdown `source_revision`, the repository
 `lean_source_revision`, and a `build_revision` hash of the normalized Lean
 records. The probe imports project modules, so run it only in a trusted checkout
-or sandbox. It compares elaborated types and values; changes to notation,
-attributes, instance priority, or unreported generated declarations still
-require human review.
+or sandbox. A missing or stale build is reported as for `work import-impact`.
+It compares elaborated types and values; changes to notation, attributes,
+instance priority, or unreported generated declarations still require human
+review.
 
 Report the coordination and review scope of an import edit without forbidding
 the edit:
@@ -1041,8 +1048,14 @@ autoform work import-impact SELECTOR MODULE [TARGET] --lean-root PATH [--json] [
 ```
 
 `import-impact` is advisory and does not edit authored roadmap or Lean source;
-its Lake freshness check may refresh build hash sidecars. `SELECTOR` identifies
-the working article and `MODULE` the module whose effective header would change.
+its Lake freshness check may refresh build hash sidecars. The probe imports
+every module of the root libraries, so each must be built: a missing or stale
+build exits 2 with the `lake build` command for those libraries, how many
+modules were checked, and the first module Lake found unbuilt. Freshness is
+Lake's rehash of this checkout's `.lake` against this checkout's sources, so a
+build in another clone or worktree does not make this one fresh.
+`SELECTOR` identifies the working article and `MODULE` the module whose
+effective header would change.
 Lean supplies the loaded module graph; Autoform binds every node to its captured
 root source and configured root-package artifact so dependencies cannot shadow
 it. The probe imports project modules, so run it only in a trusted checkout or
@@ -1171,14 +1184,15 @@ record under `runs/` in the debrief store described below, together with the
 installed AutoformBot version. A directory without a roadmap, as during Setup,
 is accepted as the project. When `autoform_friction` is not empty, `record` also
 writes a draft issue for `facebookresearch/autoform-bot` to `issues/` in the
-store and prints its absolute path. The draft ends, below a `---` footer that is not
-part of the issue, with a GitHub link that opens a new issue pre-filled with it
-(the title alone, when the draft is too long for a link). The draft holds only the
-AutoformBot friction and the environment, with the project path replaced by
-`$PROJECT` and home directories by `~`. Nothing is sent: the user reviews,
-edits, and submits the issue. With `--json`, `record` prints one object,
-`{"run_id": ..., "path": ..., "issue": null | {"path": ..., "url": ...,
-"url_has_body": true | false}}`.
+store and prints its absolute path. The draft ends, below a `---` footer that is
+not part of the issue, with a link to GitHub's new-issue form pre-filled with
+the draft as it was recorded, so edits belong in the form. When the draft is too
+long for a link, the link fills in only the title, and the footer and `record`'s
+output say so. The draft holds only the AutoformBot friction and the
+environment, with the project path replaced by `$PROJECT` and home directories
+by `~`. Nothing is sent: the user reviews, edits, and submits the issue. With
+`--json`, `record` prints one object, `{"run_id": ..., "path": ..., "issue":
+null | {"path": ..., "url": ..., "url_has_body": true | false}}`.
 
 Ask the agent that just finished a formalization attempt what infrastructure
 would have made it cheaper, and keep its answer:
@@ -2270,6 +2284,16 @@ when it is refused, release everything already held and retry with the whole
 set, never holding some claims while waiting for others. The CLI does not
 enforce the rule; it is what keeps two multi-article revisions from
 deadlocking.
+
+`claim list` copies the whole board with one fetch and reads every lease at
+once, so its cost hardly grows with the number of claims. Each lease it prints
+is the one its ref named when the board answered. A peer's renewal meanwhile
+changes nothing, except that a server speaking Git's older stateless HTTP
+protocol may refuse the fetch, which is then repeated up to three times. A
+board with claim keys that differ only in case, which a case-insensitive
+scratch cannot store under their names, is listed with one more command that
+names its claims first. A listing is a report, not a lock: every acquire,
+renew, and release checks ownership again.
 
 A Git process that stops while updating a claim ref leaves a lock file in the
 board, and Git then refuses the updates it guards:

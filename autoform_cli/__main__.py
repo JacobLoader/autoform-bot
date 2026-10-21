@@ -55,6 +55,16 @@ from .skeleton import (
 from .work import WORK_SCHEMA, WorkError, assumption_contract, list_ready_work, work_context
 
 
+class _Version(argparse.Action):
+    """Print the version only when asked, since reading a plugin checkout's commit runs git."""
+
+    def __call__(
+        self, parser: argparse.ArgumentParser, namespace: object, values: object, option: str | None = None
+    ) -> None:
+        print(f"{parser.prog} {debrief_orchestrator.autoform_version()}")
+        parser.exit()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     if os.name == "posix" and signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN:
         # An ignored SIGCHLD, on Linux even one inherited across exec, has the kernel
@@ -62,6 +72,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # waits for its own children.
         signal.signal(signal.SIGCHLD, signal.SIG_DFL)
     parser = argparse.ArgumentParser(prog="autoform")
+    parser.add_argument(
+        "--version", action=_Version, nargs=0, default=argparse.SUPPRESS, help="show the version and exit"
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init = subparsers.add_parser("init", help="write the blueprint vault, site config, and CI")
@@ -1357,7 +1370,12 @@ def _debrief_orchestrator(args: argparse.Namespace) -> int:
         print("no AutoformBot friction reported; no issue drafted")
         return 0
     print(_human_text(f"drafted an issue for {debrief_orchestrator.ISSUE_REPOSITORY} at {issue.path}"))
-    print("nothing has been sent; the draft ends with a link that opens it as a pre-filled issue")
+    if issue.url_has_body:
+        print("nothing has been sent; the draft ends with a link that opens the issue form pre-filled with the "
+              "draft as it was recorded")
+    else:
+        print("nothing has been sent; the draft is too long for a link, so its footer opens the issue form with "
+              "the title only")
     return 0
 
 
