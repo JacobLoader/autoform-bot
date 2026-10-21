@@ -1685,6 +1685,25 @@ def test_roadmap_commits_so_the_published_site_can_catch_up(repo_root: Path) -> 
     assert "outward-facing" in roadmap
 
 
+def test_roadmap_retracts_against_the_branch_formalize_works_from(repo_root: Path) -> None:
+    """Roadmap's base can predate a Formalize landing, with or without claims.
+
+    If Roadmap looks for `lean:` only on its own base, an article Formalize
+    formalized meanwhile keeps `statement: formalized` through a clean rebase
+    or merge although the revision changed its statement, and check and audit
+    both pass.
+    """
+
+    roadmap = " ".join((repo_root / "skills/roadmap/SKILL.md").read_text(encoding="utf-8").split())
+    for required in (
+        "Before the revision lands on that branch, and so before releasing any claim",
+        "bring it up to date with that branch by rebase or merge, "
+        "retract any revised article that gained `lean:` there",
+        "report the revised articles that had no `lean:` on that branch at your last update",
+    ):
+        assert required in roadmap
+
+
 def test_example_workflows_match_the_scaffold_templates(repo_root: Path) -> None:
     """The executable example differs only by its concrete immutable pin."""
 
