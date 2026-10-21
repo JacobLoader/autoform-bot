@@ -81,7 +81,7 @@ jobs:
           uvx --from "git+${AUTOFORM_SOURCE}@${AUTOFORM_REF}"
           autoform check blueprint --lean-root .
 
-      # Writes site-src/: statement boxes, derived statuses, the Mermaid graph,
+      # Writes site-src/: statement boxes, derived statuses, dependency maps,
       # and permalinks into the Lean code at this exact commit. A deploy names
       # the verified commit, since GITHUB_SHA is then main's newest one.
       - name: Render the blueprint

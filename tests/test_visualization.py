@@ -53,10 +53,14 @@ def test_export_writes_a_mermaid_page_linking_to_markdown(tmp_path: Path) -> Non
     # Handles are assigned in sorted order, so pin the links and the edge by
     # their targets rather than by whichever index a node happens to get.
     handles = dict(re.findall(r'click (n\d+) "([^"]+)"', document))
-    lemma = next(k for k, v in handles.items() if v == "roadmap/foundations/base lemma.md")
+    # Vault links are percent-encoded, so the space in the file name reads %20.
+    lemma = next(k for k, v in handles.items() if v == "roadmap/foundations/base%20lemma.md")
     main = next(k for k, v in handles.items() if v == "roadmap/main.md")
     assert f"  {lemma} --> {main}" in document
-    assert "Main <result>" in document
+    # Mermaid shows its entity codes as the characters, so the title reads as
+    # typed without becoming markup in the label.
+    assert f'{main}("Main #lt;result#gt;")' in document
+    assert "<result>" not in document
 
 
 def test_diagram_colours_and_shapes_follow_derived_status(tmp_path: Path) -> None:
@@ -100,6 +104,47 @@ def test_the_published_graph_defers_its_palette_to_the_theme(tmp_path: Path) -> 
 
     assert ":::can_state" in published
     assert "classDef" not in published
+
+
+def test_a_title_is_text_in_a_label_and_a_tooltip(tmp_path: Path) -> None:
+    """Mermaid draws a label as HTML, so the markup a title can carry in its
+    code is written as entities, which it shows as typed."""
+    blueprint = tmp_path / "blueprint"
+    _write_node(blueprint / "roadmap" / "result.md", 'Top `<b style="position:fixed">x</b>` & co', declaration="theorem")
+    graph = load_graph(blueprint)
+
+    diagram = mermaid.render_diagram(graph, derive(graph), tmp_path / "dependencies.md", links={"result": "x.html"})
+    title = "Top #96;#lt;b style=#quot;position:fixed#quot;#gt;x#lt;/b#gt;#96; #amp; co"
+
+    assert f'n0("{title}"):::can_state' in diagram
+    assert f'click n0 "x.html" "{title} — ' in diagram
+    assert "<b" not in diagram and "&" not in diagram
+
+
+def test_a_link_is_one_url_that_names_no_scheme(tmp_path: Path) -> None:
+    """A link is made from file and folder names, which may hold a quote, a
+    semicolon or a colon; written as a URL, it stays one Mermaid string and
+    a relative path, so a name cannot add a click's call or a script link. A
+    link already percent-encoded keeps its escapes rather than gaining a
+    second layer, as ``a%20b`` would become ``a%2520b``."""
+    blueprint = tmp_path / "blueprint"
+    for name in ("a", "b", "c"):
+        _write_node(blueprint / "roadmap" / f"{name}.md", "T", declaration="theorem")
+    graph = load_graph(blueprint)
+    links = {
+        "a": "javascript:alert(7).html",
+        "b": '../roadmap/index.html#t";click n0 call alert(7);click n0 "op',
+        "c": "roadmap/a%20b.md#c",
+    }
+
+    diagram = mermaid.render_diagram(graph, derive(graph), tmp_path / "dependencies.md", links=links)
+    clicks = [line.rpartition(' "')[0] for line in diagram.splitlines() if "click" in line]
+
+    assert clicks == [
+        '  click n0 "javascript%3Aalert%287%29.html"',
+        '  click n1 "../roadmap/index.html#t%22%3Bclick%20n0%20call%20alert%287%29%3Bclick%20n0%20%22op"',
+        '  click n2 "roadmap/a%20b.md#c"',
+    ]
 
 
 def test_proof_only_dependencies_are_dashed(tmp_path: Path) -> None:
@@ -158,6 +203,27 @@ def test_a_conditional_proof_has_its_own_colour_and_legend_entry(tmp_path: Path)
     assert "Proof compiles, but rests on an open statement without a recorded Lean proof." in document
 
 
+def test_vault_legends_count_the_deferred_work_their_scope_boxes_count(tmp_path: Path) -> None:
+    """A leaf marked not ready that declares nothing yet holds its scope open.
+
+    The scope box counts it, so the legend under the map counts it too.
+    """
+    blueprint = tmp_path / "blueprint"
+    _write_node(blueprint / "roadmap" / "README.md", "Roadmap")
+    _write_node(blueprint / "roadmap" / "drafts" / "README.md", "Drafts")
+    _write_node(blueprint / "roadmap" / "drafts" / "result.md", "Result", declaration="theorem")
+    _write_node(blueprint / "roadmap" / "drafts" / "later.md", "Later", not_ready="true")
+
+    vault = export_graph(blueprint).read_text(encoding="utf-8")
+
+    assert '["Drafts<br/><small>2 items · 1 ready to state · 1 not ready</small>"]:::scope' in vault
+    assert (
+        '<span class="bp-swatch bp-swatch-not_ready"></span>'
+        '<span class="bp-legend-label">not ready</span>'
+        '<span class="bp-legend-count">1</span>'
+    ) in vault.split("## Legend", 1)[1]
+
+
 def test_the_legend_explains_readiness_without_naming_a_policy(tmp_path: Path) -> None:
     """Readiness depends on the project's policy, so the legend words it without naming one."""
     blueprint = tmp_path / "blueprint"
@@ -183,6 +249,22 @@ def test_the_exported_legend_leaves_out_containers(tmp_path: Path) -> None:
 
     assert document.count('class="bp-legend-count"') == 1
     assert '<span class="bp-legend-count">1</span>' in document
+
+
+def test_the_exported_legend_counts_a_prose_leaf_the_map_colours(tmp_path: Path) -> None:
+    """The map draws a prose leaf in its derived state, so the legend has its row."""
+    blueprint = tmp_path / "blueprint"
+    _write_node(blueprint / "roadmap" / "README.md", "Roadmap")
+    _write_node(blueprint / "roadmap" / "base.md", "Base", declaration="def", statement="formalized")
+    _write_node(blueprint / "roadmap" / "notation.md", "Notation")
+
+    document = export_graph(blueprint).read_text(encoding="utf-8")
+
+    assert '("Notation"):::can_state' in document
+    assert (
+        '<span class="bp-legend-label">ready to state</span>'
+        '<span class="bp-legend-count">1</span>'
+    ) in document.split("## Legend", 1)[1]
 
 
 def test_cli_writes_only_the_graph_by_default(
@@ -342,6 +424,74 @@ def test_the_vault_gets_a_structure_page_obsidian_can_read(tmp_path: Path) -> No
     # It never lists itself, and never the other generated view.
     assert "structure.md)" not in page
     assert "dependencies.md)" not in page
+
+
+def test_vault_views_label_checked_catalogs_as_module_inventories(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint"
+    ledger = blueprint / "sources/catalog.md"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text("# Catalog declarations\n", encoding="utf-8")
+    catalog = blueprint / "roadmap/catalog.md"
+    _write_node(
+        catalog,
+        "Existing module",
+        catalog="module",
+        lean="Existing.module",
+        statement="formalized",
+        proof="formalized",
+    )
+    with catalog.open("a", encoding="utf-8") as stream:
+        stream.write("\n## Sources\n\n- [Ledger](../sources/catalog.md)\n")
+
+    graph_page = export_graph(blueprint).read_text(encoding="utf-8")
+    structure_page = export_structure(blueprint).read_text(encoding="utf-8")
+
+    assert '("Existing module"):::planned' in graph_page
+    assert '"Existing module — inventory checked"' in graph_page
+    assert "fully proved" not in graph_page
+    assert (
+        "[Existing module](roadmap/catalog.md) · module inventory · inventory checked"
+        in structure_page
+    )
+
+
+def test_vault_maps_count_every_catalog_as_an_inventory(tmp_path: Path) -> None:
+    """A scope box counts a catalog that is not yet checked, as a pending inventory.
+
+    It used to count only checked catalogs, so a scope of unchecked ones read
+    as empty on the vault map. The legend under the map lists the inventory
+    statuses the boxes count, and the map and the structure page name an
+    unchecked catalog by that status, not as ready to state.
+    """
+    blueprint = tmp_path / "blueprint"
+    ledger = blueprint / "sources/catalog.md"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text("# Catalog declarations\n", encoding="utf-8")
+    _write_node(blueprint / "roadmap" / "README.md", "Roadmap")
+    _write_node(blueprint / "roadmap" / "modules" / "README.md", "Modules")
+    checked = blueprint / "roadmap/modules/checked.md"
+    pending = blueprint / "roadmap/modules/pending.md"
+    _write_node(checked, "Checked module", catalog="module", statement="formalized", proof="formalized")
+    _write_node(pending, "Pending module", catalog="module")
+    for catalog in (checked, pending):
+        with catalog.open("a", encoding="utf-8") as stream:
+            stream.write("\n## Sources\n\n- [Ledger](../../sources/catalog.md)\n")
+
+    vault = export_graph(blueprint).read_text(encoding="utf-8")
+
+    assert '["Modules<br/><small>2 items · 1 inventory checked · 1 inventory pending</small>"]:::scope' in vault
+    legend = vault.split("## Legend", 1)[1]
+    for key, label in (("inventory_checked", "inventory checked"), ("inventory_pending", "inventory pending")):
+        assert (
+            f'<span class="bp-swatch bp-swatch-{key}"></span>'
+            f'<span class="bp-legend-label">{label}</span>'
+            '<span class="bp-legend-count">1</span>'
+        ) in legend
+    assert ":::can_state" not in vault
+    assert '("Pending module"):::planned' in vault
+    assert '"Pending module — inventory pending"' in vault
+    structure = export_structure(blueprint).read_text(encoding="utf-8")
+    assert "[Pending module](roadmap/modules/pending.md) · module inventory · inventory pending" in structure
 
 
 def test_the_vault_structure_page_leaves_implementation_notes_out(tmp_path: Path) -> None:

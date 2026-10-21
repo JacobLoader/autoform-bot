@@ -214,7 +214,10 @@ article is proved; an empty file fails `autoform check`. Never link the hidden
 note from an article, because publication omits it. A missing prerequisite, an
 incorrect decomposition, a change another article needs beyond an import repair,
 or a proof recorded without its statement returns to Roadmap instead of silently
-changing the DAG.
+changing the DAG. So does a `check` warning that a shared library declaration's
+docstring, or its module's, cites the blueprint's sources, even when deleting a
+stale note brings it back: report it, and neither keep the note nor edit a
+source page for it.
 
 Run `autoform check <PROJECT>/blueprint --lean-root <PROJECT>` and `autoform
 audit <PROJECT>/blueprint --lean-root <PROJECT>`. Resolve every finding this
@@ -224,7 +227,10 @@ revised article's `lean:` until it is deleted. Delete every note the audit
 reports as `stale-implementation-note`, including a container's note that this
 proof completed or that an earlier commit left behind, even though it belongs
 to another article; the audit fails until they are all gone. Report other
-pre-existing findings instead of fixing them.
+pre-existing findings instead of fixing them. A `catalog-unbounded-limit` or
+`catalog-unscoped-limit` warning describes existing Lean code and never fails
+the audit: report it, and change that code only when the user asks, rebuilding
+before anything is recorded.
 
 Commit the verified result in its worktree and rebase onto or merge the current
 shared branch. On the result, run the default `lake build` and `autoform audit`,

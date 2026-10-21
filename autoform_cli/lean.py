@@ -136,7 +136,11 @@ MANAGED_OUTPUT_SCHEMAS = frozenset(
 #: Render marks each finished site with this manifest. ``mkdocs`` copies it
 #: into its own output, so both folders hold rendered copies, never sources.
 PUBLICATION_MANIFEST = "publication.json"
-PUBLICATION_SCHEMA = "autoform-publication/v2"
+#: v3 adds the shared dependency explorer to v2's inventoried site and hashes
+#: the blueprint under a label of its own.
+PUBLICATION_SCHEMA = "autoform-publication/v3"
+#: Sites render may replace: each records a file inventory to check first.
+_REPLACEABLE_SCHEMAS = frozenset({"autoform-publication/v2", PUBLICATION_SCHEMA})
 #: Render never writes a larger manifest, so the next render can always read it.
 PUBLICATION_MANIFEST_MAX_BYTES = 8 * 1024 * 1024
 
@@ -740,10 +744,11 @@ def _is_complete_publication(data: bytes) -> bool:
         value = json.loads(data)
     except (ValueError, RecursionError):
         return False
+    schema = value.get("schema") if isinstance(value, dict) else None
     return (
         isinstance(value, dict)
-        and isinstance(value.get("schema"), str)
-        and value.get("schema") in {"autoform-publication/v1", PUBLICATION_SCHEMA}
+        and isinstance(schema, str)
+        and schema in {"autoform-publication/v1", *_REPLACEABLE_SCHEMAS}
         and value.get("complete") is True
     )
 
@@ -839,6 +844,9 @@ def _scan(text: str, relative: Path) -> tuple[list[Declaration], int]:
             name = name or _name_token(body)
             if name is None:
                 continue
+            # `_name_token` stops before the `{` in an explicit universe
+            # binder, leaving the syntactic separator behind.
+            name = name.removesuffix(".")
             found.append(Declaration(_qualified(namespaces, name), relative, number, keyword, protected, private))
     return found, len(lines)
 
@@ -1110,13 +1118,14 @@ class SourceLinker:
     index: SourceIndex
     repository_url: str | None = None
     ref: str | None = None
-    linkable_paths: frozenset[Path] | None = None
     indexed: bool = True
     """False when the sources were not read, so no name was looked up."""
     links_blueprint: bool = False
     """True when the blueprint's files are in ``ref``'s commit too, so links into it show the published bytes."""
     spellings: Mapping[str, str] = field(default_factory=dict)
     """Committed path of each repository path whose name Git stores under another spelling."""
+    root_prefix: str = ""
+    """The Lean root's path below the repository's top level, or empty at the top level."""
 
     def location(self, name: str) -> Declaration | None:
         return self.index.find(name)
@@ -1124,113 +1133,17 @@ class SourceLinker:
     def url(self, name: str) -> str | None:
         """Return a permanent link to *name*, or ``None`` if it cannot be built."""
         declaration = self.index.find(name)
-        if (
-            declaration is None
-            or not self.repository_url
-            or not self.ref
-            or (
-                self.linkable_paths is not None
-                and declaration.path not in self.linkable_paths
-            )
-        ):
+        if declaration is None or not self.repository_url or not self.ref:
             return None
+        encoded_ref = quote_from_bytes(os.fsencode(self.ref), safe="")
         relative = declaration.path.as_posix()
+        if self.root_prefix:
+            relative = f"{self.root_prefix}/{relative}"
         path = "/".join(
             quote_from_bytes(os.fsencode(part), safe="")
             for part in self.spellings.get(relative, relative).split("/")
         )
-        return f"{self.repository_url}/blob/{self.ref}/{path}#L{declaration.line}"
-
-
-def build_linker(lean_root: str | Path) -> SourceLinker:
-    """Index *lean_root* and resolve repository coordinates."""
-    resolved_root = resolve_lean_root(lean_root)
-    snapshot, repository_url, ref, linkable_paths = _capture_link_state(resolved_root)
-    if repository_url is None:
-        repository_url = detect_repository_url(resolved_root)
-    return SourceLinker(
-        index=snapshot.index,
-        repository_url=repository_url,
-        ref=ref,
-        linkable_paths=linkable_paths,
-    )
-
-
-def _capture_link_state(
-    root: Path,
-) -> tuple[
-    IndexedSourceSnapshot,
-    str | None,
-    str | None,
-    frozenset[Path] | None,
-]:
-    """Capture source bytes and prove which ones belong to one stable commit."""
-
-    last_snapshot: IndexedSourceSnapshot | None = None
-    last_url: str | None = None
-    for attempt in range(_SNAPSHOT_ATTEMPTS):
-        if attempt:
-            time.sleep(_SNAPSHOT_RETRY_DELAY_SECONDS * attempt)
-        before_url = detect_repository_url(root)
-        before_ref = detect_ref(root)
-        snapshot = snapshot_project_sources(root)
-        last_snapshot = snapshot
-        last_url = before_url
-        after_url = detect_repository_url(root)
-        after_ref = detect_ref(root)
-        if before_url != after_url or before_ref != after_ref:
-            continue
-        if before_ref is None:
-            return snapshot, before_url, None, frozenset()
-        commit = _git(root, "rev-parse", "--verify", f"{before_ref}^{{commit}}")
-        if commit is None:
-            return snapshot, before_url, None, frozenset()
-        linkable = _committed_source_paths(root, snapshot, commit)
-        if linkable is None:
-            return snapshot, before_url, None, frozenset()
-        if (
-            detect_repository_url(root) == before_url
-            and detect_ref(root) == before_ref
-        ):
-            return snapshot, before_url, commit, linkable
-    assert last_snapshot is not None
-    return last_snapshot, last_url, None, frozenset()
-
-
-def _committed_source_paths(
-    root: Path,
-    snapshot: IndexedSourceSnapshot,
-    commit: str,
-) -> frozenset[Path] | None:
-    """Return captured files whose Git blob is exactly the commit's blob."""
-
-    top_level_text = _git(root, "rev-parse", "--show-toplevel")
-    algorithm = _git(root, "rev-parse", "--show-object-format")
-    if top_level_text is None or algorithm not in {"sha1", "sha256"}:
-        return None
-    top_level = Path(top_level_text).resolve()
-    try:
-        prefix = root.resolve().relative_to(top_level)
-    except (OSError, RuntimeError, ValueError):
-        return None
-    if prefix.parts:
-        # SourceLinker URLs are rooted at ``lean_root`` today.  Until that API
-        # carries a repository-relative prefix, refusing links is safer than
-        # emitting a valid commit with the wrong path.
-        return frozenset()
-    repo_paths = {
-        path: (prefix / path).as_posix()
-        for path, _data in snapshot.source_files
-    }
-    tree_oids = _git_tree_oids(root, commit, tuple(repo_paths.values()))
-    if tree_oids is None:
-        return None
-    linkable: set[Path] = set()
-    for path, data in snapshot.source_files:
-        framed = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
-        if hashlib.new(algorithm, framed).hexdigest() == tree_oids.get(repo_paths[path]):
-            linkable.add(path)
-    return frozenset(linkable)
+        return f"{self.repository_url}/blob/{encoded_ref}/{path}#L{declaration.line}"
 
 
 def verify_repository_snapshot(
@@ -1250,6 +1163,9 @@ def verify_repository_snapshot(
     to the repository only. The shared Git runner strips ambient overrides.
     Given *spellings*, a file Git committed under another spelling of its name
     is accepted too, and its committed path recorded there (``_git_tree_oids``).
+
+    *root* may be any directory of the working tree: files are compared at their
+    paths from its top level.
     """
 
     def refuse(reason: str) -> None:
@@ -1261,12 +1177,12 @@ def verify_repository_snapshot(
     algorithm = _git(root, "rev-parse", "--show-object-format")
     if commit is None or algorithm not in {"sha1", "sha256"}:
         return refuse(f"{requested_ref!r} does not name a commit in a local Git repository")
-    prefix = _git(root, "rev-parse", "--show-prefix")
-    if prefix:  # tree paths start at the top level, so nothing below could match
+    top_level = repository_top_level(root)  # where tree paths start
+    if top_level is None:
         return refuse(
-            f"the Lean root is the subdirectory {prefix.rstrip('/')} of its Git repository; "
-            "links need the repository top level"
+            "the Lean root is outside its Git repository's working tree, or spelled other than as Git spells it"
         )
+    root = top_level
     captured: dict[str, bytes] = {}
     try:
         for path, data in files:
@@ -1382,6 +1298,32 @@ def detect_repository_url(root: str | Path) -> str | None:
     return _normalize_remote(remote) if remote else None
 
 
+def repository_top_level(root: str | Path) -> Path | None:
+    """The top level of *root*'s Git working tree, spelled as *root* is.
+
+    *root*'s last parts must spell Git's path to it, compared in NFC, since
+    macOS Git composes names; otherwise, or outside a working tree, the top
+    level is unknown and this is ``None``. *root* should be resolved, as
+    ``resolve_lean_root`` gives it.
+    """
+    try:
+        output = _git(root, "rev-parse", "--is-inside-work-tree", "--show-prefix")
+    except ValueError:  # Git printed a name that is not UTF-8
+        return None
+    lines = output.splitlines() if output is not None else []
+    if not lines or lines[0] != "true":
+        return None
+    parts = lines[1].rstrip("/").split("/") if len(lines) > 1 else []
+    if not parts:
+        return Path(root)
+    spelled = Path(root).parts[-len(parts) :]
+    if [unicodedata.normalize("NFC", part) for part in spelled] != [
+        unicodedata.normalize("NFC", part) for part in parts
+    ]:
+        return None
+    return Path(root).parents[len(parts) - 1]
+
+
 def detect_ref(root: str | Path) -> str | None:
     """Prefer the exact commit so links keep pointing at the reviewed code."""
     github_sha = os.environ.get("GITHUB_SHA") if _is_github_workspace(root) else None
@@ -1494,13 +1436,13 @@ __all__ = [
     "SourceIndex",
     "SourceLinker",
     "bind_project_source_snapshot",
-    "build_linker",
     "declaration_names",
     "detect_ref",
     "detect_repository_url",
     "index_failure_message",
     "index_project",
     "project_source_revision",
+    "repository_top_level",
     "resolve_lean_root",
     "snapshot_project_sources",
     "strip_lean_comments",

@@ -22,7 +22,8 @@ from .audit import audit_blueprint
 from .claims import CLAIM_TTL_S, ClaimBoard, ClaimTransportError, author_claim_key
 from .doctor import diagnose_project
 from .dashboard import publication_bound_live_state, serve_dashboard
-from .graph import Graph, GraphValidationError, load_graph
+from .graph import Graph, GraphValidationError, atlas_omissions, catalogs_without_ledger, load_graph
+from .graph_views import _countable, _module_inventories
 from .impact import (
     ImpactError,
     format_impact,
@@ -30,7 +31,7 @@ from .impact import (
     module_import_impact,
     revision_impact,
 )
-from .lean import build_linker, declaration_names, index_failure_message
+from .lean import declaration_names, index_failure_message, index_project
 from .library.citations import library_citation_warnings
 from .library.generate import GenerateError, check_index, generate_index, write_index
 from .library.index import INDEX_FILE
@@ -39,7 +40,7 @@ from .library.locate import LibraryError, WorkspaceError
 from .library.search import LibraryResult, library_argument, search_with_libraries
 from .markdown import local_target_issue
 from .project import ProjectCatalogError, ProjectCreateError, create_project, inspect_project, load_release_catalog
-from .render import SOURCES_DIR, PublicationError, render_site
+from .render import SOURCES_DIR, PublicationError, publication_issues, render_site
 from .runtime import RuntimeProjectionError, projection_omissions, resolve_runtime_paths
 from .scaffold import ScaffoldError, scaffold_project
 from .search import SearchError, search_blueprint, statement_preview
@@ -283,7 +284,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="keep articles whose frontmatter declaration is KIND: theorem, lemma, def, ... (repeatable)",
     )
     search.add_argument(
-        "--limit", type=int, default=20, metavar="N", help="show at most N articles (default 20)"
+        "--limit",
+        type=int,
+        default=20,
+        metavar="N",
+        help="show at most N hits from the blueprint and from each --library (default 20)",
     )
     search.add_argument(
         "--library",
@@ -585,6 +590,7 @@ def _source_link_issues(graph: Graph) -> tuple[list[str], list[str]]:
         "malformed-source-url": "is not a valid URL",
         "malformed-source-link": "contains an invalid path",
         "hidden-source-target": "names a hidden path, which render omits",
+        "generated-source-target": "names a generated view, which render omits",
     }
     issues, warnings = [], []
     for node in graph.nodes.values():
@@ -595,9 +601,14 @@ def _source_link_issues(graph: Graph) -> tuple[list[str], list[str]]:
                 continue
             code = issue[0]
             if code == "hidden-source-target":
-                # The path local_target_issue found hidden: as written, with its `..` steps applied.
-                spelled = Path(os.path.normpath(node.path.parent.resolve() / unquote(urlsplit(located).path)))
-                if spelled.relative_to(graph.blueprint_dir).parts[:1] == (SOURCES_DIR,):
+                # A link that names a hidden note under sources/, and steps through no other
+                # hidden folder on the way, only needs the note committed. No repository link
+                # mends any other hidden link.
+                written = unquote(urlsplit(located).path)
+                inside = Path(os.path.normpath(node.path.parent.resolve() / written)).relative_to(graph.blueprint_dir)
+                hidden = [part for part in Path(written).parts if part.startswith(".") and part != ".."]
+                if inside.parts[:1] == (SOURCES_DIR,) and hidden == [p for p in inside.parts if p.startswith(".")]:
+                    spelled = graph.blueprint_dir / inside
                     if os.path.isfile(spelled):
                         warnings.append(
                             f"{node.id}: source target names a hidden path, which only a repository link reaches, "
@@ -644,28 +655,39 @@ def _check(args: argparse.Namespace) -> int:
     if args.lean_root is not None:
         source_warnings += [_human_text(warning) for warning in library_citation_warnings(graph, args.lean_root)]
 
-    linker = None
+    # Check looks each name up and builds no permalink, so it skips the Git
+    # work a linker does.
+    index = None
     if args.lean_root is not None:
         try:
-            linker = build_linker(args.lean_root)
+            index = index_project(args.lean_root)
         except OSError as error:
             print(f"error: {index_failure_message(error)}")
             return 1
 
+    # The book's hero counts the same targets and inventories.
     statuses = status.derive(graph)
-    summary = " · ".join(f"{count} {state.label}" for state, count in status.summarize(statuses))
+    target_statuses = {node_id: statuses[node_id] for node_id in _countable(graph)}
+    inventories = len(_module_inventories(graph))
+    summary = " · ".join(
+        f"{count} {state.label}" for state, count in status.summarize(target_statuses)
+    )
     print(f"OK: {len(graph.nodes)} articles, {graph.edge_count} dependencies")
     if summary:
         print(f"    {summary}")
+    if inventories:
+        label = "module inventory" if inventories == 1 else "module inventories"
+        print(f"    {inventories} {label}")
 
-    if linker is not None:
+    if index is not None:
         missing = [
             f"{node.id}: declaration defined more than once in {args.lean_root}: {name} ({ambiguous})"
-            if (ambiguous := linker.index.ambiguity(name))
+            if (ambiguous := index.ambiguity(name))
             else f"{node.id}: declaration not found in {args.lean_root}: {name}"
+            + ("; a name Lean generates is not indexed and belongs in the catalog's ledger" if node.catalog else "")
             for node in graph.nodes.values()
             for name in declaration_names(node.lean or "")
-            if linker.location(name) is None
+            if index.find(name) is None
         ]
         for issue in missing:
             print(f"error: {issue}")
@@ -677,11 +699,20 @@ def _check(args: argparse.Namespace) -> int:
             )
         if missing:
             return 1
-        declared = sum(1 for node in graph.nodes.values() if node.lean)
-        print(f"    {declared} declaration(s) resolved in the Lean sources")
+        print(f"    {len(graph.lean_names())} declaration name(s) resolved in the Lean sources")
     for omission in projection_omissions(graph):
         print(f"warning: {omission}")
+    for omission in atlas_omissions(graph):
+        print(f"warning: atlas.json: {omission}")
+    for node_id in catalogs_without_ledger(graph):
+        print(
+            f"warning: {node_id}: module catalog links no declaration ledger under blueprint/sources/ from '## Sources'"
+        )
     for warning in _byte_order_mark_warnings(graph) + _formalizable_container_warnings(graph) + source_warnings:
+        print(f"warning: {warning}")
+    # What the site would leave out or show as typed, and what would stop
+    # render; none of it fails check.
+    for warning in publication_issues(graph, Path(args.blueprint_dir)):
         print(f"warning: {warning}")
     return 0
 
@@ -699,11 +730,14 @@ def _audit(args: argparse.Namespace) -> int:
                 "    coverage: "
                 f"{counts['MAPPED']} mapped · "
                 f"{counts['DECOMPOSED']} decomposed · "
+                f"{counts['INVENTORIED']} inventoried · "
                 f"{counts['DEFERRED']} deferred · "
                 f"{counts['OUT']} out"
             )
         for finding in result.findings:
             print(f"error: {finding.article_path}: {finding.code}: {finding.reason}")
+        for warning in result.warnings:
+            print(f"warning: {warning.article_path}: {warning.code}: {warning.message}")
     return 0 if result.clean else 1
 
 
@@ -969,10 +1003,16 @@ def _search(args: argparse.Namespace) -> int:
         print("error: project, blueprint, or Lean root path cannot be read", file=sys.stderr)
         return 2
 
+    notes = []
+    if result.unused_declarations:
+        kinds = ", ".join(result.unused_declarations)
+        notes.append(_human_text(f"note: no article declares kind {kinds}, so the search used only the other kinds"))
     note = None if args.libraries else _unsearched_library_note(args.target, args.lean_root)
+    if note:
+        notes.append(note)
     if args.json:
         print(result.to_json() if combined is None else combined.to_json())
-        if note:
+        for note in notes:
             print(note, file=sys.stderr)
         return 0
     # Every count comes first, and each hit's statement on its first line, so output cut short still shows them.
@@ -1007,9 +1047,10 @@ def _search(args: argparse.Namespace) -> int:
         print("  Matched: " + ", ".join(hit.matched_fields))
     for library in libraries:
         _print_library(library)
-    if note:
+    if notes:
         sys.stdout.flush()
-        print(note, file=sys.stderr)
+        for note in notes:
+            print(note, file=sys.stderr)
     return 0
 
 
@@ -1316,9 +1357,12 @@ def _debrief_orchestrator(args: argparse.Namespace) -> int:
         print("no AutoformBot friction reported; no issue drafted")
         return 0
     print(_human_text(f"drafted an issue for {debrief_orchestrator.ISSUE_REPOSITORY} at {issue.path}"))
-    if not issue.url_has_body:
-        print("the draft is too long for a link; paste its body into the issue form")
-    print(f"nothing has been sent; to review, edit and submit it, open: {issue.url}")
+    if issue.url_has_body:
+        print("nothing has been sent; the draft ends with a link that opens the issue form pre-filled with the "
+              "draft as it was recorded")
+    else:
+        print("nothing has been sent; the draft is too long for a link, so its footer opens the issue form with "
+              "the title only")
     return 0
 
 
