@@ -139,7 +139,7 @@ def project_view(graph: Graph, statuses: dict[str, NodeStatus]) -> GraphView:
             graph,
             statuses,
             _scope_node_id(group),
-            ROOT_GROUP_TITLE if group in {"", "roadmap"} else group_title(graph, group),
+            _group_label(graph, group),
             grouped.get(group, ()),
             # The root's summary and area describe the project, not its top level.
             summary=graph.nodes[group].summary if group in graph.nodes and group != "roadmap" else None,
@@ -183,17 +183,7 @@ def chapter_view(graph: Graph, statuses: dict[str, NodeStatus], group: str) -> G
             edge_counts[(endpoint(source), endpoint(target))][1 if proof_only else 0] += 1
 
     nodes = [_theorem_node(graph.nodes[node_id], statuses[node_id]) for node_id in grouped[group]]
-    nodes.extend(
-        ViewNode(
-            id=_boundary_node_id(external),
-            title=ROOT_GROUP_TITLE if external in {"", "roadmap"} else group_title(graph, external),
-            kind="boundary",
-            members=tuple(sorted(external_members)),
-            status_counts=_status_counts(graph, external_members, statuses),
-            status_key=_rollup_status_key(graph, external_members, statuses),
-        )
-        for external, external_members in sorted(boundaries.items())
-    )
+    nodes.extend(_boundary_node(graph, statuses, *item) for item in sorted(boundaries.items()))
     return GraphView(
         kind="chapter",
         title=f"{group_title(graph, group)} dependency map",
@@ -351,17 +341,7 @@ def _scope_view(
             continue
         edge_counts[(endpoint(source, source_child), endpoint(target, target_child))][1 if proof_only else 0] += 1
 
-    for external, external_members in sorted(boundaries.items()):
-        nodes.append(
-            ViewNode(
-                id=_boundary_node_id(external),
-                title=ROOT_GROUP_TITLE if external in {"", "roadmap"} else group_title(graph, external),
-                kind="boundary",
-                members=tuple(sorted(external_members)),
-                status_counts=_status_counts(graph, external_members, statuses),
-                status_key=_rollup_status_key(graph, external_members, statuses),
-            )
-        )
+    nodes.extend(_boundary_node(graph, statuses, *item) for item in sorted(boundaries.items()))
     return GraphView(
         kind="chapter",
         title=f"{graph.nodes[scope].title} dependency map",
@@ -740,6 +720,22 @@ def _scope_node_id(group: str) -> str:
 
 def _boundary_node_id(group: str) -> str:
     return f"boundary:{group or 'roadmap'}"
+
+
+def _group_label(graph: Graph, group: str) -> str:
+    return ROOT_GROUP_TITLE if group in {"", "roadmap"} else group_title(graph, group)
+
+
+def _boundary_node(graph: Graph, statuses: dict[str, NodeStatus], external: str, members: set[str]) -> ViewNode:
+    """Collapse the *members* of scope *external* that a view relates to into one node."""
+    return ViewNode(
+        id=_boundary_node_id(external),
+        title=_group_label(graph, external),
+        kind="boundary",
+        members=tuple(sorted(members)),
+        status_counts=_status_counts(graph, members, statuses),
+        status_key=_rollup_status_key(graph, members, statuses),
+    )
 
 
 def _top_scope(graph: Graph, node_id: str, children: dict[str, tuple[str, ...]]) -> str:

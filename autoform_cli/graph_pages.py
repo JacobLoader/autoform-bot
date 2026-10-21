@@ -125,17 +125,16 @@ def write_graph_pages(
     # Chapter leads count what the rings count: scope targets plus module inventories.
     chapter_item_counts = {node.id: node.item_count for node in project.nodes}
 
-    def project_links(page: Path) -> dict[str, str]:
-        """Link the project view from *page*: chapters to their explorers, articles to the book."""
-        book_links = node_links(page, _article_link_ids(project))
-        links = {}
-        for view_node in project.nodes:
-            scope = view_node.id.removeprefix("scope:")
-            links[view_node.id] = (
-                _published_link(chapter_pages.get(scope) or scope_pages[scope], page)
-                if view_node.kind == "scope"
-                else book_links[view_node.id]
-            )
+    # A chapter links its own page. The root's own articles are drawn on
+    # their Top level page, not the project's.
+    scope_targets = {**scope_pages, **chapter_pages}
+
+    def view_links(view: GraphView, page: Path) -> dict[str, str]:
+        """Link *view* from *page*: articles to the book, scopes and boundaries to their explorers."""
+        links = dict(node_links(page, _article_link_ids(view)))
+        for view_node in view.nodes:
+            if view_node.kind != "node":
+                links[view_node.id] = _published_link(scope_targets[view_node.id.partition(":")[2]], page)
         return links
 
     written.append(
@@ -143,7 +142,7 @@ def write_graph_pages(
             project_page,
             view=project,
             statuses=_selected_statuses(graph, statuses, project, containers),
-            links=project_links(project_page),
+            links=view_links(project, project_page),
             heading=root_title,
             lead=(
                 f"{project_item_count} item{'s' if project_item_count != 1 else ''} across "
@@ -161,15 +160,7 @@ def write_graph_pages(
 
     for group, chapter_page in chapter_pages.items():
         view = scope_maps[group] if group in scope_maps else chapter_view(graph, statuses, group)
-        links = dict(node_links(chapter_page, _article_link_ids(view)))
-        for node in view.nodes:
-            if node.kind == "boundary":
-                external = node.id.removeprefix("boundary:")
-                # The root's own articles are drawn on their Top level page, not the project's.
-                links[node.id] = _published_link(chapter_pages.get(external) or scope_pages[external], chapter_page)
-            elif node.kind == "scope":
-                nested = node.id.removeprefix("scope:")
-                links[node.id] = _published_link(scope_pages[nested], chapter_page)
+        links = view_links(view, chapter_page)
 
         book_page = (
             book_root
@@ -218,14 +209,7 @@ def write_graph_pages(
             continue
         scope_page = scope_pages[scope]
         view = scope_maps[scope]
-        links = dict(node_links(scope_page, _article_link_ids(view)))
-        for node in view.nodes:
-            if node.kind == "scope":
-                nested = node.id.removeprefix("scope:")
-                links[node.id] = _published_link(scope_pages[nested], scope_page)
-            elif node.kind == "boundary":
-                external = node.id.removeprefix("boundary:")
-                links[node.id] = _published_link(chapter_pages.get(external) or scope_pages[external], scope_page)
+        links = view_links(view, scope_page)
         parent = graph.nodes[scope].parent
         parent_page = scope_pages.get(parent or "roadmap", project_page)
         written.append(
@@ -264,7 +248,7 @@ def write_graph_pages(
             full_page,
             view=project,
             statuses=_selected_statuses(graph, statuses, project, containers),
-            links=project_links(full_page),
+            links=view_links(project, full_page),
             heading=root_title,
             lead=(
                 f"Search {len(graph.nodes)} roadmap entries without flattening them into one canvas; "

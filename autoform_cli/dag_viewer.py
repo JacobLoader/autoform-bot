@@ -28,7 +28,8 @@ SCRIPT_PATH = "javascripts/blueprint-dag.js"
 #: The most nodes the explorer draws as a map; it only browses a larger view, which gets no layout.
 MAX_MAP_NODES = 120
 
-_PALETTE_KEYS = frozenset(state.key for state in (*STATES, *INVENTORY_STATES))
+_ALL_STATES = (*STATES, *INVENTORY_STATES)
+_PALETTE_KEYS = frozenset(state.key for state in _ALL_STATES)
 #: A catalog lists its keyword-declared public names; its explorer node and its Lean row
 #: in the book show this many and a count.
 _CATALOG_LEAN_NAMES = 8
@@ -43,13 +44,8 @@ def _positions(view: GraphView) -> dict[str, dict[str, int]]:
     if uses_atlas(view):
         return _atlas_positions(view)
     all_node_ids = [node.id for node in view.nodes]
-    known = set(all_node_ids)
-    if len(known) != len(all_node_ids):
-        raise ValueError("dependency view contains duplicate node ids")
     connected: set[str] = set()
     for edge in view.edges:
-        if edge.source not in known or edge.target not in known:
-            raise ValueError("dependency view edge names an unknown node")
         if edge.source != edge.target:
             connected.update((edge.source, edge.target))
 
@@ -113,14 +109,7 @@ def _positions(view: GraphView) -> dict[str, dict[str, int]]:
     result: dict[str, dict[str, int]] = {}
     for column, rank in enumerate(sorted(by_rank)):
         for row, node_id in enumerate(by_rank[rank]):
-            result[node_id] = {
-                "column": column,
-                "height": _NODE_HEIGHT,
-                "row": row,
-                "width": _NODE_WIDTH,
-                "x": column * (_NODE_WIDTH + _COLUMN_GAP),
-                "y": row * (_NODE_HEIGHT + _ROW_GAP),
-            }
+            result[node_id] = _cell(column, row)
 
     isolated = [node_id for node_id in all_node_ids if node_id not in connected]
     isolate_base = max((position["column"] for position in result.values()), default=-2) + 2
@@ -131,15 +120,19 @@ def _positions(view: GraphView) -> dict[str, dict[str, int]]:
     for slot, node_id in enumerate(isolated):
         column = isolate_base + slot % isolate_columns
         row = slot // isolate_columns
-        result[node_id] = {
-            "column": column,
-            "height": _NODE_HEIGHT,
-            "row": row,
-            "width": _NODE_WIDTH,
-            "x": column * (_NODE_WIDTH + _COLUMN_GAP),
-            "y": row * (_NODE_HEIGHT + _ROW_GAP),
-        }
+        result[node_id] = _cell(column, row)
     return result
+
+
+def _cell(column: int, row: int) -> dict[str, int]:
+    return {
+        "column": column,
+        "height": _NODE_HEIGHT,
+        "row": row,
+        "width": _NODE_WIDTH,
+        "x": column * (_NODE_WIDTH + _COLUMN_GAP),
+        "y": row * (_NODE_HEIGHT + _ROW_GAP),
+    }
 
 
 def drawn_view(view: GraphView) -> GraphView:
@@ -265,7 +258,7 @@ def _palette() -> dict[str, dict[str, object]]:
             "light": {"fill": state.fill, "stroke": state.stroke, "text": state.text},
             "dark": {"fill": state.dark_fill, "stroke": state.dark_stroke, "text": state.dark_text},
         }
-        for state in (*STATES, *INVENTORY_STATES)
+        for state in _ALL_STATES
     }
 
 
@@ -351,7 +344,7 @@ def write_payload(
         for edge in view.edges
     ]
     ordered_statuses = [
-        state.key for state in (*STATES, *INVENTORY_STATES) if state.key in present_statuses
+        state.key for state in _ALL_STATES if state.key in present_statuses
     ]
     payload = {
         "edge_count": sum(edge.dependency_count for edge in map_view.edges),
