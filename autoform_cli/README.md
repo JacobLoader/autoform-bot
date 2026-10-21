@@ -2555,3 +2555,21 @@ swap without a lock, and reads the Lean sources only for an explicit
 `--lean-root`, which then fails closed. Without one it publishes no code
 links; when a published statement names a `lean:` declaration it warns, and
 `--require-declarations` makes it exit 1.
+
+Check the site MkDocs builds from render's output for what the build broke:
+
+```bash
+autoform site check site --source site-src
+```
+
+`mkdocs build --strict` never checks a link written as raw HTML, as render
+writes card references, the structure page and the landing page's Next up card,
+and it logs a broken Markdown anchor only at info level. `site check` reads
+every HTML page of the built site and reports, as warnings, an internal link or
+asset whose target the site does not contain, a fragment that matches no `id`
+on its target page, a link that is not a valid URL, and, with `--source`, each
+statement card that render wrote into a source page but the page built from it
+lacks. A link with a scheme or a network location, or a path from the site
+root, depends on where the site is served and is not checked. The exit status
+is 0 whatever it finds; it is 1 only when the site or the source is not a
+directory.
