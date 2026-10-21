@@ -2046,6 +2046,14 @@ the two, since a Lean reach the Markdown does not declare fails. The policy lets
 dependents be stated and proved against a faithful statement before its proof
 exists; the price is conditional
 results that stay incomplete until every open statement they rest on is proved.
+A dependent's proof can cite an open statement because its `sorry` proof
+compiles, but not the placeholder a Batteries wanted command declares:
+`theorem_wanted foo : T` declares a private `def` of type `ProofWanted T`, not a
+theorem of `T`. Readiness still counts a prerequisite that records `statement:
+formalized` against a wanted target like any other stated prerequisite. So under
+this policy, state every theorem as a `theorem` with a `sorry` proof, not with
+`theorem_wanted` or `proof_wanted`, and before a dependent cites an existing
+wanted prerequisite, restate it that way or prove it.
 
 A retracted theorem, one recording `statement: retracted` as a revision leaves
 it, stays an open statement: the Lean its `lean:` names,
