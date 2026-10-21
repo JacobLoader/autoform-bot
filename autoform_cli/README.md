@@ -895,7 +895,11 @@ refuses any content or source-identity change. JSON uses `autoform-impact/v1`
 and binds its answer to the Markdown `source_revision`, the repository
 `lean_source_revision`, and a `build_revision` hash of the normalized Lean
 records. The probe imports project modules, so run it only in a trusted checkout
-or sandbox. It compares elaborated types and values; changes to notation,
+or sandbox. It imports every root library, so a missing or stale build exits 2
+with the `lake build` command for those libraries and the first module Lake
+found unbuilt, as `work import-impact` does. Freshness is Lake's rehash of this
+checkout's `.lake`: a build made in another clone or worktree does not count.
+It compares elaborated types and values; changes to notation,
 attributes, instance priority, or unreported generated declarations still
 require human review.
 

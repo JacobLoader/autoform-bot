@@ -1770,13 +1770,7 @@ def _check_artifacts_fresh(
     )
     detail = (result.stderr or result.stdout).strip()
     if result.returncode == _LAKE_NO_BUILD_EXIT:
-        build_command = shlex.join(["lake", "build", *modules])
-        raise SkeletonError(
-            [
-                "Lean build artifacts are stale; run "
-                f"`{build_command}` before {_probe_purpose(label)}\n{detail}"
-            ]
-        )
+        raise SkeletonError([f"{STALE_BUILD}{shlex.join(modules)}` before {_probe_purpose(label)}\n{detail}"])
     if result.returncode != 0:
         raise SkeletonError(
             [
@@ -1785,6 +1779,27 @@ def _check_artifacts_fresh(
                 f"\n{detail}"
             ]
         )
+
+
+STALE_BUILD = "Lean build artifacts are stale; run `lake build "
+_LAKE_SAID = 200
+
+
+def stale_build_said(error: SkeletonError) -> str | None:
+    """Lake's line for the first unbuilt module if ``error`` is a stale build, ``""`` if Lake said nothing.
+
+    ``_check_artifacts_fresh`` names every probed module and appends all of Lake's
+    output, in which Lake first replays the warnings of what is built; ``✖``
+    marks the module that is not. A caller that imports whole libraries names
+    them instead, with only this line.
+    """
+
+    detail = "; ".join(error.issues)
+    if not detail.startswith(STALE_BUILD):
+        return None
+    lines = [line.strip() for line in detail.split("\n")[1:] if line.strip()]
+    said = next((line for line in lines if line.startswith("✖")), lines[0] if lines else "")
+    return said if len(said) <= _LAKE_SAID else said[: _LAKE_SAID - 3].rstrip() + "..."
 
 
 def _lake_executable(lean_root: Path, label: str = "skeleton probe") -> str:

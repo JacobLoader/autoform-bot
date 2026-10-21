@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -1373,18 +1374,31 @@ def _load_impact_evidence(
             source_snapshot,
             strict_module_ownership=require_modules,
         )
-        output = skeleton.run_probe(
-            render_impact_probe(
-                imports=imports,
-                project_modules=local_modules,
-                artifact_dir=_root_artifact_dir(libraries),
-                glob_directories=_glob_directories(libraries),
-                emit_module_evidence=require_modules,
-            ),
-            root,
-            timeout=skeleton.DEFAULT_PROBE_TIMEOUT if timeout is None else timeout,
-            label="impact probe",
-        )
+        try:
+            output = skeleton.run_probe(
+                render_impact_probe(
+                    imports=imports,
+                    project_modules=local_modules,
+                    artifact_dir=_root_artifact_dir(libraries),
+                    glob_directories=_glob_directories(libraries),
+                    emit_module_evidence=require_modules,
+                ),
+                root,
+                timeout=skeleton.DEFAULT_PROBE_TIMEOUT if timeout is None else timeout,
+                label="impact probe",
+            )
+        except SkeletonError as error:
+            said = skeleton.stale_build_said(error)
+            if said is None:
+                raise
+            # The probe imports every root library's modules, which can be thousands; the libraries say the same.
+            names = shlex.join(sorted({library.name for library in libraries}))
+            raise SkeletonError(
+                [
+                    f"{skeleton.STALE_BUILD}{names}` before running the impact probe"
+                    + (f" (Lake: {said})" if said else "")
+                ]
+            ) from None
         latest = load_runtime_graph(project_or_blueprint)
         if latest.source_revision != source_revision:
             raise ImpactError("the roadmap changed while the impact probe ran; rerun the command")
