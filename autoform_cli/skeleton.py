@@ -1773,6 +1773,12 @@ def _probe_purpose(label: str) -> str:
     return "extracting skeletons" if label == "skeleton probe" else f"running the {label}"
 
 
+STALE_BUILD = "Lean build artifacts are stale; run `lake build "
+_LAKE_SAID = 200
+# A freshness check over thousands of modules can fail with a line for each.
+_LAKE_LINES = 20
+
+
 def _check_artifacts_fresh(
     lake: str, lean_root: Path, modules: tuple[str, ...], *, timeout: float, label: str = "skeleton probe"
 ) -> None:
@@ -1789,23 +1795,44 @@ def _check_artifacts_fresh(
         timeout=timeout,
         context="cannot verify Lean build freshness",
     )
-    detail = (result.stderr or result.stdout).strip()
+    # Lake prints each target's line on stdout and only warnings and its summary on stderr.
+    output = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
     if result.returncode == _LAKE_NO_BUILD_EXIT:
-        build_command = shlex.join(["lake", "build", *modules])
-        raise SkeletonError(
-            [
-                "Lean build artifacts are stale; run "
-                f"`{build_command}` before {_probe_purpose(label)}\n{detail}"
-            ]
-        )
+        raise SkeletonError([f"{STALE_BUILD}{shlex.join(modules)}` before {_probe_purpose(label)}\n{output}"])
     if result.returncode != 0:
         raise SkeletonError(
             [
                 f"cannot verify Lean build freshness: `lake --rehash --no-build build` exited with status "
                 f"{result.returncode}; the check rewrites `.hash` files under `.lake`, which must be writable"
-                f"\n{detail}"
+                f"\n{_first_lines(output)}"
             ]
         )
+
+
+def _first_lines(detail: str) -> str:
+    """Lake's first lines, with a count of the rest."""
+
+    lines = detail.splitlines()
+    if len(lines) <= _LAKE_LINES:
+        return detail
+    return "\n".join([*lines[:_LAKE_LINES], f"({len(lines) - _LAKE_LINES} more lines from Lake)"])
+
+
+def stale_build_said(error: SkeletonError) -> str | None:
+    """Lake's line for the first unbuilt module if ``error`` is a stale build, ``""`` if Lake said nothing.
+
+    ``_check_artifacts_fresh`` names every probed module and appends all of Lake's
+    output, in which Lake first replays the warnings of what is built; ``✖``
+    marks the module that is not. A caller that imports whole libraries names
+    them instead, with only this line.
+    """
+
+    detail = "; ".join(error.issues)
+    if not detail.startswith(STALE_BUILD):
+        return None
+    lines = [line.strip() for line in detail.split("\n")[1:] if line.strip()]
+    said = next((line for line in lines if line.startswith("✖")), lines[0] if lines else "")
+    return said if len(said) <= _LAKE_SAID else said[: _LAKE_SAID - 3].rstrip() + "..."
 
 
 def _lake_executable(lean_root: Path, label: str = "skeleton probe") -> str:

@@ -227,7 +227,10 @@ revised article's `lean:` until it is deleted. Delete every note the audit
 reports as `stale-implementation-note`, including a container's note that this
 proof completed or that an earlier commit left behind, even though it belongs
 to another article; the audit fails until they are all gone. Report other
-pre-existing findings instead of fixing them.
+pre-existing findings instead of fixing them. A `catalog-unbounded-limit` or
+`catalog-unscoped-limit` warning describes existing Lean code and never fails
+the audit: report it, and change that code only when the user asks, rebuilding
+before anything is recorded.
 
 If `<PROJECT>/blueprint/.autoform-review` exists, project CI also runs the
 statement-review gate: `autoform review check` fails on a formalized statement

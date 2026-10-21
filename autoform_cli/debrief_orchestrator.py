@@ -20,7 +20,7 @@ Store layout::
 
     runs/<run_id>.json      one RunRecord per run, schema_version 1
     issues/<run_id>.md      draft issue, written only when there is AutoformBot friction;
-                            it ends with a link that opens it as a pre-filled issue
+                            it ends with a link that opens the issue form pre-filled
 """
 
 from __future__ import annotations
@@ -325,17 +325,23 @@ def _issue_body(entry: RunRecord, redactions: list[tuple[str, str]]) -> str:
 def _draft_text(title: str, body: str, url: str, url_has_body: bool) -> str:
     """The draft as stored: the issue, then a footer with the link that is not part of it.
 
-    The link holds the whole draft, thousands of characters, so it lives here
-    rather than in the agent's report.
+    The link can hold the whole draft, thousands of characters, so it lives here
+    rather than in the agent's report. It is built when the draft is written, so
+    the footer says, before the link, where edits go.
     """
     if url_has_body:
-        link = f"[Open this draft as a pre-filled AutoformBot issue]({url})"
-    else:
-        link = (
-            f"[Open the AutoformBot issue form]({url}) with the title filled in; the draft is "
-            "too long for a link, so paste the text above this footer as the body."
+        note = (
+            "The link holds the draft as it was recorded, so make your edits in the form; if you edited this "
+            "file, copy its title into the form's title and the text between the title and this footer over "
+            f"its body. [Open the AutoformBot issue form pre-filled with the recorded draft]({url})"
         )
-    return f"# {title}\n\n{body}\n---\n\nNot part of the issue; nothing has been sent. {link}\n"
+    else:
+        note = (
+            "The draft is too long for a link, so the link fills in only the title as it was recorded: paste "
+            "the text between the title and this footer as the body, and copy the title into the form's title "
+            f"if you edited it. [Open the AutoformBot issue form]({url})"
+        )
+    return f"# {title}\n\n{body}\n---\n\nNot part of the issue; nothing has been sent. {note}\n"
 
 
 def issue_url(title: str, body: str) -> tuple[str, bool]:

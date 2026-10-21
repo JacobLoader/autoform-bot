@@ -3,6 +3,15 @@
 Read these contracts when changing coordination state, publication surfaces,
 generated files, or dependency pins.
 
+## Knowledge-map publication
+
+Full-viewport knowledge maps use authored mathematical areas and prose to drive
+regions and reading panels. Keep containment and dependency distinct; regions
+come only from authored areas, never from folders or paths. Never fit the whole
+repository.
+Run `make test-browser` for any explorer change: `make test` skips the WebKit
+suite, which CI runs with `AUTOFORM_REQUIRE_BROWSER_TESTS=1`.
+
 ## Coordination and local views
 
 - `refs/autoform-claims/*` is shared cross-machine coordination state. Pushing

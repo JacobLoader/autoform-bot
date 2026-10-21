@@ -32,18 +32,20 @@ answer, correct it and resubmit.
 
 When the answer reports friction with AutoformBot, `record` writes a draft issue
 for `facebookresearch/autoform-bot` outside the working tree and prints its
-absolute path. The draft ends with a link that opens it as a pre-filled issue.
-The user does not see command output, so end your final report with the draft
-as a Markdown link whose target is that absolute path exactly as printed, for
-example `[Draft AutoformBot issue](/home/me/proj/.git/autoform/debriefs/issues/<run_id>.md)`,
-so they can click it open: it lives under `.git`, which editors and file
-browsers hide, so a shortened or relative path is hard to find. Say that
-nothing has been sent and that the link to submit it is at the bottom of the
-draft. Do not paste that submit link itself: it holds the whole draft and runs
-to thousands of characters. Never submit the issue
-yourself, with `gh` or otherwise: the user reviews it, edits it, and sends it.
-Local paths are replaced by placeholders, but the draft is only as private as
-your answer, so leave project-specific content out of it.
+absolute path. The user does not see command output, so end your final report
+with the draft as a Markdown link to that path, exactly as printed and in angle
+brackets, so that a space or a parenthesis in it cannot break the link:
+`[Draft AutoformBot issue](</home/me/proj/.git/autoform/debriefs/issues/RUN_ID.md>)`.
+Give the whole path: the draft usually lives under `.git`, which editors and
+file browsers hide. Say that nothing has been sent. Say that the link at the
+bottom of the draft opens the issue form pre-filled with the draft as it was
+recorded, so edits belong in the form. If `record` says the draft is too long
+for a link, say instead that the link fills in only the title and the footer
+says what to paste. Do not paste that link itself: it can run to thousands of
+characters. Never submit the issue yourself, with `gh` or otherwise: the user
+reviews it, edits it, and sends it. Local paths are replaced by placeholders,
+but the draft is only as private as your answer, so leave project-specific
+content out of it.
 
 Debriefs are on by default. A user who does not want them sets
 `AUTOFORM_DEBRIEF=0`.
