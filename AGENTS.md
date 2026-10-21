@@ -72,4 +72,4 @@ The [CLI reference](autoform_cli/README.md) gives each command's exact rules.
 | `work`, `search` | invalid usage (2); bytes changed since the graph loaded; a refused library | none; they leave out values they cannot represent, which `check` warns about |
 | `library index` | a missing or stale build (2); a stale index under `--check` (1) | none |
 | `project`, `doctor` | an inspection or catalog error, a failed diagnosis | a release pairing it cannot resolve |
-| `init` | an existing entry that differs only in letter case or Unicode form from a path it manages, even with `--force`; a write through a link | the existing entries it left alone |
+| `init` | an input or target it cannot use safely: a case or Unicode variant of a path it manages (even with `--force`), a link or unusable root `.gitignore` in the way, a directory it cannot list, an invalid option or pinned Autoform tree | the existing entries it left alone; CI it skips when there is no Autoform ref to pin |

@@ -757,13 +757,14 @@ _GENERATED_LINKS = {
 
 def test_markdown_links_and_anchors_resolve(repo_root: Path) -> None:
     """Every relative link, #anchor, and `scripts/` path in tracked Markdown lands on something."""
-    broken = []
+    broken, checked = [], 0
     for page in _tracked_markdown(repo_root):
         where = page.relative_to(repo_root).as_posix()
         text = page.read_text(encoding="utf-8")
         for line, target in markdown_links(text):
             if re.match(r"[a-z][a-z0-9+.-]*:|/", target) or (where, target) in _GENERATED_LINKS:
                 continue
+            checked += 1
             relative, _, fragment = target.partition("#")
             linked = (page.parent / unquote(relative)).resolve() if relative else page
             if not linked.exists() or (
@@ -773,6 +774,7 @@ def test_markdown_links_and_anchors_resolve(repo_root: Path) -> None:
         for helper in re.findall(r"(?<![\w/.-])scripts/[\w./-]*\w", text):
             if not (repo_root / helper).is_file():
                 broken.append(f"{where}: {helper}")
+    assert checked > 50  # the link extraction still finds the docs' links
     assert not broken, broken
 
 
@@ -857,12 +859,14 @@ _UNSHIPPED_SCHEMAS = {
 
 def test_documented_schema_ids_exist_in_code(repo_root: Path) -> None:
     code = _shipped_code(repo_root)
-    missing = [
-        f"{page.relative_to(repo_root)}: {schema}"
+    named = [
+        (page.relative_to(repo_root), schema)
         for page in _tracked_markdown(repo_root)
         for schema in re.findall(r"\bautoform-[a-z0-9-]+/v\d+\b", page.read_text(encoding="utf-8"))
-        if schema not in code and schema not in _UNSHIPPED_SCHEMAS
     ]
+    assert len({schema for _, schema in named}) >= 10  # the extraction still finds the docs' schema ids
+    unknown = [(where, schema) for where, schema in named if schema not in code]
+    missing = [f"{where}: {schema}" for where, schema in unknown if schema not in _UNSHIPPED_SCHEMAS]
     assert not missing, missing
 
 
