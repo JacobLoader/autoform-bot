@@ -11,6 +11,7 @@ import shutil
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 
@@ -355,7 +356,7 @@ def test_what_render_captured_in_the_way_stops_it_once_gone(
         _render(blueprint)
 
 
-@pytest.mark.parametrize("folder", ["dependencies", "dependencies/nodes", "javascripts", "stylesheets", "assets"])
+@pytest.mark.parametrize("folder", ["dependencies", "dependencies/chapters", "javascripts", "stylesheets", "assets"])
 def test_a_file_where_render_needs_a_folder_stops_render(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], folder: str
 ) -> None:
@@ -963,7 +964,7 @@ def test_the_landing_page_is_checked_without_the_dashboard_render_adds(tmp_path:
     blueprint = _vault(tmp_path)
 
     assert publication_issues(load_graph(blueprint), blueprint) == []
-    assert '<div class="bp-landing"' in (_render(blueprint) / "README.md").read_text(encoding="utf-8")
+    assert 'class="bp-dag-intro bp-landing-intro"' in (_render(blueprint) / "README.md").read_text(encoding="utf-8")
 
 
 def test_a_page_that_is_not_utf8_is_left_out_by_name(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -1132,9 +1133,9 @@ def test_a_fence_header_that_sets_more_than_a_language_is_reported(article: str,
     ids=["raw", "code", "formula"],
 )
 def test_a_title_reaches_the_places_render_writes_it_as_text(tmp_path: Path, heading: str) -> None:
-    """Render writes article titles into graph headings, the navigation, and
-    page metadata, and the theme prints the last two as they are, so a title
-    reaches each as text, whatever markup or code it holds."""
+    """Render writes article titles into explorer page headings, the
+    navigation, and page metadata, and the theme prints the last two as they
+    are, so a title reaches each as text, whatever markup or code it holds."""
 
     blueprint = _vault(tmp_path)
     for path in (blueprint / "roadmap/top.md", blueprint / "README.md", blueprint / "roadmap/README.md"):
@@ -1146,7 +1147,7 @@ def test_a_title_reaches_the_places_render_writes_it_as_text(tmp_path: Path, hea
     from mkdocs.utils.meta import get_data
 
     graph_heading = next(
-        line for line in (site / "dependencies/nodes/top.md").read_text(encoding="utf-8").splitlines() if line.startswith("# ")
+        line for line in (site / "dependencies.md").read_text(encoding="utf-8").splitlines() if line.startswith("# ")
     )
     summary = (site / "SUMMARY.md").read_text(encoding="utf-8")
     published = [
@@ -1291,21 +1292,24 @@ def test_a_page_named_with_markup_is_titled_as_text(tmp_path: Path) -> None:
 
 
 def test_a_graph_page_is_published_under_its_title_as_text(tmp_path: Path) -> None:
-    """Render writes a statement's title into its graph page's heading, so
+    """Render writes the roadmap's title into its explorer page's heading, so
     that page names the title in its header too."""
 
     from mkdocs.utils.meta import get_data
 
     blueprint = _vault(tmp_path)
-    top = blueprint / "roadmap/top.md"
-    top.write_text(top.read_text(encoding="utf-8").replace("# Top", "# Top `</title><svg onload=alert(1)>`"), encoding="utf-8")
+    roadmap = blueprint / "roadmap/README.md"
+    roadmap.write_text(
+        roadmap.read_text(encoding="utf-8").replace("# Roadmap", "# Roadmap `</title><svg onload=alert(1)>`"),
+        encoding="utf-8",
+    )
 
     site = _render(blueprint)
 
-    meta = get_data((site / "dependencies/nodes/top.md").read_text(encoding="utf-8"))[1]
-    assert meta["title"].startswith("Top &lt;/title&gt;&lt;svg onload=alert(1)&gt;")
+    meta = get_data((site / "dependencies.md").read_text(encoding="utf-8"))[1]
+    assert meta["title"].startswith("Roadmap &lt;/title&gt;&lt;svg onload=alert(1)&gt;")
     # A heading render writes in full keeps the title its navigation entry gives.
-    assert "title" not in get_data((site / "dependencies/full.md").read_text(encoding="utf-8"))[1]
+    assert "title" not in get_data((site / "dependencies/chapters/roadmap.md").read_text(encoding="utf-8"))[1]
 
 
 def test_a_title_holding_a_backslash_escape_is_read_back_as_written(tmp_path: Path) -> None:
@@ -1344,8 +1348,8 @@ def test_a_folder_named_like_a_scheme_is_linked_by_a_relative_path(
 ) -> None:
     """Render writes its book navigation and dependency links from folder
     names. A link whose first folder is named like ``javascript:...`` would
-    read as a script URL, so render starts it with ./ instead, and check has
-    nothing to report."""
+    read as a script URL, so render percent-encodes the colon, or starts a
+    Markdown link it keeps decoded with ./, and check has nothing to report."""
 
     blueprint = tmp_path / "project/blueprint"
     shutil.copytree(_EXAMPLE / "blueprint", blueprint)
@@ -1357,6 +1361,8 @@ def test_a_folder_named_like_a_scheme_is_linked_by_a_relative_path(
             text.replace("](full-supervision/", f"](./{encoded}/").replace("/full-supervision/", f"/{encoded}/"),
             encoding="utf-8",
         )
+    atlas = blueprint / "atlas.json"
+    atlas.write_text(atlas.read_text(encoding="utf-8").replace('"full-supervision"', json.dumps(name)), encoding="utf-8")
 
     assert main(["check", str(blueprint)]) == 0
     assert "warning" not in capsys.readouterr().out
@@ -1369,8 +1375,27 @@ def test_a_folder_named_like_a_scheme_is_linked_by_a_relative_path(
         for page in site.rglob("*.md")
         for found in re.finditer(r'href="([^"]*)"|\]\(<?([^)\s>]+)', page.read_text(encoding="utf-8"))
     ]
-    assert f"./{name}/index.html" in targets
+    assert f"{quote(name, safe='')}/index.html" in targets
     assert [target for target in targets if scheme.match(target) and not target.startswith(("http", "mailto:"))] == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows cannot name a folder with a colon")
+def test_a_rewritten_link_into_a_folder_named_like_a_scheme_stays_relative(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Render writes a Markdown link it moves decoded, so a link whose first
+    folder is named like ``javascript:x`` would read as a script URL once
+    rewritten. Render starts it with ./, so the page publishes as written."""
+
+    blueprint = _vault(tmp_path)
+    (blueprint / "roadmap/javascript:x").mkdir()
+    (blueprint / "roadmap/javascript:x/data.txt").write_text("data\n", encoding="utf-8")
+    _with_article(blueprint, "The main result, see [the data](./javascript:x/data.txt).")
+
+    assert main(["check", str(blueprint)]) == 0
+    assert "warning" not in capsys.readouterr().out
+    chapter = (_render(blueprint) / "roadmap/README.md").read_text(encoding="utf-8")
+    assert "see [the data](./javascript:x/data.txt)." in chapter
 
 
 @pytest.mark.parametrize("name", ["dependencies.html", "graph.html", "progress.md"])
@@ -1427,7 +1452,7 @@ def test_a_landing_page_named_in_lowercase_is_rendered(tmp_path: Path) -> None:
 
     landing = next(path for path in site.iterdir() if path.name.lower() == "readme.md")
     if (site / "README.md").is_file():  # the disk ignores case
-        assert '<div class="bp-landing"' in landing.read_text(encoding="utf-8")
+        assert 'class="bp-dag-intro bp-landing-intro"' in landing.read_text(encoding="utf-8")
 
 
 def test_a_landing_page_that_is_not_utf8_is_left_out(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

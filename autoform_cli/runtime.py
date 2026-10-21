@@ -18,7 +18,7 @@ from .lean import LeanSourceError, declaration_names, index_failure_message, ind
 from .markdown import directory_path, resolved_path
 from .status import derive, is_definition
 
-RUNTIME_SCHEMA = "autoform-runtime/v3"
+RUNTIME_SCHEMA = "autoform-runtime/v4"
 RUNTIME_AUTHORITY = "markdown-articles"
 
 
@@ -123,12 +123,14 @@ class RuntimeNode:
     mathlib: bool
     mathlib_declarations: tuple[str, ...]
     mathlib_file: str | None
+    catalog: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
             "article_id": self.article_id,
             "article_path": self.article_path,
             "assertions": self.assertions.as_dict(),
+            "catalog": self.catalog,
             "declaration": self.declaration,
             "dependencies": list(self.dependencies),
             "depth": self.depth,
@@ -355,8 +357,11 @@ def build_runtime_graph(
                 parent=node.parent,
                 depth=node.depth,
                 declaration=node.declaration,
+                catalog=node.catalog,
                 formalizable=node.formalizable,
-                dispatchable=node.formalizable and node_id not in parents,
+                dispatchable=(
+                    node.catalog is None and node.formalizable and node_id not in parents
+                ),
                 statement_dependencies=node.statement_dependencies,
                 proof_dependencies=node.proof_dependencies,
                 dependencies=node.dependencies,
@@ -558,6 +563,10 @@ def _validate_runtime(runtime: RuntimeGraph) -> None:
         has_children = node.id in parents_with_children
         if node.dispatchable and (not node.formalizable or has_children):
             issues.append(f"{node.id}: dispatchable node is not a formalizable leaf")
+        if node.catalog is not None and node.dispatchable:
+            issues.append(f"{node.id}: catalog node is dispatchable")
+        if node.catalog not in {None, "module"}:
+            issues.append(f"{node.id}: runtime catalog kind is unsupported")
         if Path(node.article_path).is_absolute() or PureWindowsPath(node.article_path).is_absolute():
             issues.append(f"{node.id}: runtime article path is absolute")
     if runtime.article_count != len(runtime.nodes):
