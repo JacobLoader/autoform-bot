@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import os
+import re
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -441,6 +442,291 @@ def _load_search_index(page: object, entries: int = 64) -> object:
     search.focus()
     playwright.expect(search).to_have_attribute("placeholder", f"Search {entries} roadmap entries")
     return search
+
+
+def _paint_frame(page: object) -> None:
+    page.evaluate("() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))")
+
+
+def _canvas_pixels(page: object) -> dict[str, object]:
+    return page.locator(".bp-dag-canvas").evaluate(
+        """canvas => {
+          const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+          let painted = 0;
+          for (let index = 3; index < pixels.length; index += 4) if (pixels[index]) painted++;
+          return {width: canvas.width, height: canvas.height, painted};
+        }"""
+    )
+
+
+def _assert_sheet_state(page: object, *, selected: str | None, opened: bool) -> None:
+    _paint_frame(page)
+    state = page.locator(".bp-dag-viewer").evaluate(
+        "host => ({selected: host.classList.contains('bp-dag-has-selection'), "
+        "opened: host.classList.contains('bp-dag-sheet-open')})"
+    )
+    assert state == {"selected": selected is not None, "opened": opened}
+    playwright.expect(page.locator(".bp-dag-sheet-handle")).to_have_attribute("aria-expanded", str(opened).lower())
+    inner = page.locator(".bp-dag-inspector-inner")
+    assert inner.get_attribute("inert") == (None if opened else "")
+    assert inner.get_attribute("aria-hidden") == (None if opened else "true")
+    marked = page.locator('.bp-dag-node[data-selected="true"]')
+    playwright.expect(marked).to_have_count(0 if selected is None else 1)
+    if selected is not None:
+        playwright.expect(marked).to_have_attribute("data-autoform-node-id", selected)
+
+
+def _canvas_region(route: object) -> None:
+    """Give this page a real authored region label without changing its fixture."""
+    payload = route.fetch().json()
+    label = "Algebra and topology mathematical region"
+    layouts = [node["layout"] for node in payload["nodes"]]
+    left = min(box["x"] for box in layouts) - 12
+    top = min(box["y"] for box in layouts) - 46
+    right = max(box["x"] + box["width"] for box in layouts) + 12
+    bottom = max(box["y"] + box["height"] for box in layouts) + 12
+    for node in payload["nodes"]:
+        node["area"] = label
+    payload["regions"] = [{
+        "label": label, "count": len(layouts), "x": left, "y": top,
+        "width": right - left, "height": bottom - top,
+    }]
+    route.fulfill(json=payload)
+
+
+def _record_label_paints(page: object, *, reject_family: bool) -> None:
+    page.add_init_script(
+        """
+        const rejectFamily = __REJECT_FAMILY__;
+        window.labelPaints = [];
+        const prototype = CanvasRenderingContext2D.prototype;
+        const paint = prototype.fillText;
+        const font = Object.getOwnPropertyDescriptor(prototype, 'font');
+        if (rejectFamily) {
+          Object.defineProperty(prototype, 'font', {
+            configurable: font.configurable, enumerable: font.enumerable, get: font.get,
+            set(value) {
+              if (String(value).includes('Plus Jakarta Sans')) return;
+              font.set.call(this, value);
+            }
+          });
+          const context = HTMLCanvasElement.prototype.getContext;
+          HTMLCanvasElement.prototype.getContext = function (...args) {
+            const result = context.apply(this, args);
+            if (args[0] === '2d' && result && this.classList.contains('bp-dag-canvas'))
+              font.set.call(result, '11px serif');
+            return result;
+          };
+        } else {
+          document.addEventListener('DOMContentLoaded', () =>
+            document.documentElement.style.setProperty('--md-text-font-family', '"Times New Roman", serif'));
+        }
+        prototype.fillText = function (text, ...args) {
+          if (this.canvas.classList.contains('bp-dag-canvas'))
+            window.labelPaints.push({text: String(text), font: this.font, width: this.measureText(text).width});
+          return paint.call(this, text, ...args);
+        };
+        """.replace("__REJECT_FAMILY__", str(reject_family).lower())
+    )
+
+
+def test_widening_with_the_book_focused_resizes_and_repaints_the_live_canvas(
+    desktop_page: object, site_url: str
+) -> None:
+    page = desktop_page
+    page.emulate_media(reduced_motion="reduce")
+    page.set_viewport_size({"width": 1000, "height": 800})
+    _open_site(page, site_url, "dependencies/chapters/algebra.html#node=algebra%2Fresult")
+    _paint_frame(page)
+    book = page.locator(".bp-dag-book").element_handle()
+    book.focus()
+    before = _canvas_pixels(page)
+    assert before["painted"] > 0
+
+    page.set_viewport_size({"width": 1280, "height": 900})
+    playwright.expect(page.locator(".bp-dag-toolbar + .bp-dag-book")).to_have_count(1)
+    _paint_frame(page)
+    assert book.evaluate("node => node === document.activeElement && node === document.querySelector('.bp-dag-book')")
+    after = _canvas_pixels(page)
+    assert after["width"] != before["width"] and after["height"] != before["height"]
+    assert after["painted"] > 0, "Resizing cleared the canvas without painting the graph again"
+    stage = page.locator(".bp-dag-stage").bounding_box()
+    ratio = page.evaluate("Math.min(2, devicePixelRatio || 1)")
+    assert stage is not None
+    assert abs(after["width"] - stage["width"] * ratio) <= 1
+    assert abs(after["height"] - stage["height"] * ratio) <= 1
+
+
+@pytest.mark.parametrize("reject_family", (False, True), ids=("multiword-site-font", "rejected-site-font"))
+def test_canvas_label_paints_use_the_site_family_or_a_valid_fallback(
+    desktop_page: object, site_url: str, reject_family: bool
+) -> None:
+    page = desktop_page
+    _record_label_paints(page, reject_family=reject_family)
+    page.route("**/dependencies.json", _canvas_region)
+    _open_site(page, site_url, "dependencies.html")
+    page.wait_for_function("window.labelPaints.some(paint => paint.text.startsWith('Algebra and topology mathematical region'))")
+    painted = page.evaluate(
+        "window.labelPaints.filter(paint => paint.text.startsWith('Algebra and topology mathematical region')).at(-1)"
+    )
+    family = page.locator(".bp-dag-viewer").evaluate("host => getComputedStyle(host).fontFamily")
+    assert ("Plus Jakarta Sans" if reject_family else "Times New Roman") in family
+    measured = page.evaluate(
+        """({text, family}) => {
+          const ctx = document.createElement('canvas').getContext('2d');
+          ctx.font = '700 13px ' + family;
+          const expected = ctx.measureText(text).width;
+          ctx.font = '700 13px sans-serif';
+          return {expected, generic: ctx.measureText(text).width};
+        }""",
+        {"text": painted["text"], "family": "sans-serif" if reject_family else family},
+    )
+    assert abs(painted["width"] - measured["expected"]) < .1
+    assert float(re.search(r"(\d+(?:\.\d+)?)px", painted["font"]).group(1)) >= 11
+    if not reject_family:
+        assert abs(painted["width"] - measured["generic"]) > .5, "The live labels ignored the site's serif family"
+
+
+def test_a_deep_long_rail_trail_keeps_its_full_accessible_names(
+    desktop_page: object, site_url: str
+) -> None:
+    page = desktop_page
+    labels = (
+        "Collected mathematical foundations and supporting results",
+        "Topological vector spaces and infinite-dimensional functional analysis",
+        "Spectral theory of compact self-adjoint operators and its applications",
+        "The complete mathematical statement and prerequisite structure of the current result",
+    )
+
+    def long_trail(route: object) -> None:
+        payload = route.fetch().json()
+        payload["title"] = labels[-1]
+        payload["view"]["breadcrumbs"] = [
+            {"label": label, "url": "../../roadmap/index.html" if index < len(labels) - 1 else None}
+            for index, label in enumerate(labels)
+        ]
+        route.fulfill(json=payload)
+
+    page.route("**/dependencies/chapters/algebra.json", long_trail)
+    _open_site(page, site_url, "dependencies/chapters/algebra.html")
+    rail = page.locator(".bp-dag-navigation")
+    crumbs = rail.locator(".bp-dag-navigation-path li")
+    playwright.expect(crumbs).to_have_count(len(labels) - 1)
+    rail_box = rail.bounding_box()
+    assert rail_box is not None
+    for index, label in enumerate(labels[:-1]):
+        crumb = crumbs.nth(index)
+        link = crumb.get_by_role("link", name=label, exact=True)
+        playwright.expect(link).to_be_visible()
+        readable = crumb.evaluate(
+            """item => {
+              const link = item.querySelector('a'), box = item.getBoundingClientRect();
+              return {title: (link && link.title) || item.title,
+                unclipped: item.scrollWidth <= item.clientWidth + 1,
+                left: box.left, right: box.right};
+            }"""
+        )
+        assert readable["title"] == label or readable["unclipped"], "An elided mathematical ancestor has no full tooltip"
+        assert readable["left"] >= rail_box["x"]
+        assert readable["right"] <= rail_box["x"] + rail_box["width"] + 1
+    title = rail.get_by_role("heading", name=labels[-1], exact=True)
+    playwright.expect(title).to_be_visible()
+    assert title.evaluate("node => node.scrollWidth <= node.clientWidth + 1 || node.title === node.textContent")
+
+
+@pytest.mark.parametrize("width", (390, 1000, 1280))
+def test_sheet_selection_close_clear_filter_and_history_states_stay_consistent(
+    desktop_page: object, explorer_url: str, width: int
+) -> None:
+    page = desktop_page
+    page.emulate_media(reduced_motion="reduce")
+    page.set_viewport_size({"width": width, "height": 900})
+    if width == 1000:
+        def trail_without_book(route: object) -> None:
+            payload = route.fetch().json()
+            payload["view"]["book"] = None
+            payload["view"]["breadcrumbs"] = [
+                {"label": "Mathematics", "url": "articles.html"},
+                {"label": "Standalone dependency explorer", "url": None},
+            ]
+            route.fulfill(json=payload)
+
+        page.route("**/graph.json", trail_without_book)
+    _open_ready(page, explorer_url)
+    _assert_sheet_state(page, selected=None, opened=False)
+    if width == 390:
+        page.locator(".bp-dag-sheet-handle").click()
+        _assert_sheet_state(page, selected=None, opened=True)
+        page.locator(".bp-dag-sheet-handle").click()
+        _assert_sheet_state(page, selected=None, opened=False)
+
+    foundation = page.locator('[data-autoform-node-id="chapter/foundation"]')
+    middle = page.locator('[data-autoform-node-id="chapter/middle"]')
+    original = foundation.bounding_box()
+    assert original is not None
+    foundation.click()
+    _assert_sheet_state(page, selected="chapter/foundation", opened=True)
+    if width == 1000:
+        assert abs(foundation.bounding_box()["y"] - original["y"]) < 2, "Opening the trail row moved the clicked card"
+    page.get_by_role("button", name="Close details", exact=True).click()
+    _assert_sheet_state(page, selected="chapter/foundation", opened=False)
+    if width == 1000:
+        assert abs(foundation.bounding_box()["y"] - original["y"]) < 2, "Closing the trail row moved the selection"
+    foundation.click()
+    _assert_sheet_state(page, selected="chapter/foundation", opened=True)
+    foundation.press("Escape")
+    _assert_sheet_state(page, selected=None, opened=False)
+    if width == 1000:
+        assert abs(foundation.bounding_box()["y"] - original["y"]) < 2, "Clearing selection changed the map's vertical position"
+    assert "node=" not in page.url
+
+    foundation.click()
+    middle.click()
+    _assert_sheet_state(page, selected="chapter/middle", opened=True)
+    page.locator(".bp-dag-filter-summary").click()
+    page.locator('.bp-dag-filter-popover input[value="can_prove"]').uncheck()
+    _assert_sheet_state(page, selected=None, opened=False)
+    page.evaluate("history.back()")
+    page.wait_for_function("location.hash.includes('node=chapter%2Ffoundation')")
+    _assert_sheet_state(page, selected="chapter/foundation", opened=True)
+    page.evaluate("history.forward()")
+    page.wait_for_function("!new URLSearchParams(location.hash.slice(1)).has('node')")
+    _assert_sheet_state(page, selected=None, opened=False)
+    playwright.expect(page.locator('.bp-dag-filter-popover input[value="can_prove"]')).not_to_be_checked()
+
+
+def test_edges_group_and_status_summary_follow_checkbox_and_history_state(
+    desktop_page: object, explorer_url: str
+) -> None:
+    page = desktop_page
+    _open_ready(page, explorer_url)
+    summary = page.locator(".bp-dag-filter-summary")
+    middle = page.locator('[data-autoform-node-id="chapter/middle"]')
+    foundation = page.locator('[data-autoform-node-id="chapter/foundation"]')
+    middle.click()
+    summary.click()
+    edges = page.get_by_role("group", name="Edges", exact=True)
+    playwright.expect(edges).to_be_visible()
+    isolates = edges.get_by_role("checkbox", name="Include items without edges", exact=True)
+    playwright.expect(summary).to_have_text("Status")
+    isolates.uncheck()
+    playwright.expect(summary).to_have_text("Status · edges only")
+    foundation.click()
+    summary.click()
+    isolates.check()
+    playwright.expect(summary).to_have_text("Status")
+    page.evaluate("history.back()")
+    page.wait_for_function("location.hash.includes('isolates=0')")
+    playwright.expect(isolates).not_to_be_checked()
+    playwright.expect(summary).to_have_text("Status · edges only")
+    page.evaluate("history.forward()")
+    page.wait_for_function("!location.hash.includes('isolates=0')")
+    playwright.expect(isolates).to_be_checked()
+    playwright.expect(summary).to_have_text("Status")
+    page.locator('.bp-dag-filter-popover input[value="planned"]').uncheck()
+    playwright.expect(summary).to_have_text("Status · 2")
+    isolates.uncheck()
+    playwright.expect(summary).to_have_text("Status · 2 · edges only")
 
 
 def test_mobile_node_interaction_and_selected_sheet_collapse(mobile_page: object, explorer_url: str) -> None:

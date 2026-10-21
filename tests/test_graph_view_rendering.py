@@ -57,7 +57,6 @@ def test_full_view_payload_is_deterministic_layout_ready_and_data_only(tmp_path:
     assert payload["view"] == {
         "book": None,
         "breadcrumbs": [],
-        "kind": "full",
         "presentation": "dag",
         "summary": None,
     }
@@ -533,7 +532,7 @@ def test_explorer_styles_keep_one_family_one_type_scale_and_one_micro_label() ->
     style = dag_viewer._STYLE
     assert "serif" not in style.replace("sans-serif", "")
     assert set(re.findall(r"font-size: ([^;]+);", style)) <= {"11px", "12px", "13px", "14px", "17px", "22px"}
-    assert set(re.findall(r"font-weight: ([^;]+);", style)) <= {"400", "500", "600", "700"}
+    assert set(re.findall(r"font-weight: ([^;]+);", style)) <= {"400", "600", "700"}
     uppercase = [rule.split("{")[0].strip() for rule in style.splitlines() if "text-transform: uppercase" in rule]
     assert uppercase == [
         ".bp-dag-filter-popover legend, .bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-group h2",
@@ -604,12 +603,9 @@ def test_explorer_head_is_one_row_where_the_rail_always_shows() -> None:
     # That row grows the head while details open, so the map shifts back by it instead of jumping under the pointer.
     assert (
         'var top = refs.body.offsetTop; host.classList.toggle("bp-dag-sheet-open", Boolean(open));\n'
+        'host.classList.toggle("bp-dag-has-selection", Boolean(selected));\n'
         "state.transform.y += top - refs.body.offsetTop; schedule();"
     ) in script
-    # The row's rule reads the selection too, so the sheet closes while it is still set.
-    assert 'host.classList.remove("bp-dag-has-selection"); setSheet(false)' not in script
-    assert script.count('setSheet(false); host.classList.remove("bp-dag-has-selection");') == 3
-    assert 'host.classList.add("bp-dag-has-selection"); setSheet(true);' in script
 
 
 def test_explorer_drops_the_map_guide_and_keeps_a_plain_note_for_real_crops() -> None:
@@ -678,10 +674,10 @@ def test_explorer_elevation_is_two_shadows_and_a_selection_ring_that_keeps_the_c
 def test_explorer_canvas_paints_its_labels_in_the_site_family_at_11px_or_more() -> None:
     """Region and edge-count labels were painted in the generic sans-serif, the edge counts down to 9px."""
     script = dag_viewer.viewer_script()
-    assert "px sans-serif" not in script
+    assert script.count('refs.ctx.font = "10px sans-serif";') == 1  # Parse probe only, never a painted label.
     assert 'family = getComputedStyle(host).fontFamily; refs.ctx.font = "11px " + family;' in script
     fonts = re.findall(r"ctx\.font = ([^;]+);", script)
-    assert fonts == ['"11px " + family', '"700 13px " + family', 'Math.max(11, 10 * state.transform.scale) + "px " + family']
+    assert fonts == ['"10px sans-serif"', '"11px " + family', '"700 13px " + family', 'Math.max(11, 10 * state.transform.scale) + "px " + family']
 
 
 def _contrast(first: str, second: str) -> float:

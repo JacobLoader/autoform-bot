@@ -114,7 +114,9 @@ INVENTORY_STATES: tuple[State, ...] = (
         stroke="#65676B",
         dark_stroke="#C8CACE",
     ),
-    State("inventory_pending", "inventory pending", "#F0F2F5", "#8A8D91", "#65676B",
+    # Pending must remain a visible grey card on the light sunken map, with
+    # a label that stays readable after the metadata's muted colour mix.
+    State("inventory_pending", "inventory pending", "#BDC3CB", "#85898E", "#45494F",
           "#242526", "#9EA1A6", "#B0B3B8"),
 )
 
