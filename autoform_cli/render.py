@@ -2433,6 +2433,10 @@ def _rewrite_links(
         # unchanged link stays byte-for-byte unchanged, and ``bracketed`` can
         # protect a moved path containing a space or parenthesis.
         href = unquote(mermaid.relative_link(published, page, candidate.suffix))
+        # Decoded, a first segment that holds a colon, such as a folder named
+        # ``javascript:x``, would read as the URL's scheme.
+        if ":" in href.split("/", 1)[0]:
+            href = f"./{href}"
         return f"{href}{asked}{query}{separator}{fragment}"
 
     unlinked: set[str] = set()

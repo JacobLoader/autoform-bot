@@ -11,6 +11,7 @@ import shutil
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 
@@ -1305,8 +1306,8 @@ def test_a_folder_named_like_a_scheme_is_linked_by_a_relative_path(
 ) -> None:
     """Render writes its book navigation and dependency links from folder
     names. A link whose first folder is named like ``javascript:...`` would
-    read as a script URL, so render starts it with ./ instead, and check has
-    nothing to report."""
+    read as a script URL, so render percent-encodes the colon, or starts a
+    Markdown link it keeps decoded with ./, and check has nothing to report."""
 
     blueprint = tmp_path / "project/blueprint"
     shutil.copytree(_EXAMPLE / "blueprint", blueprint)
@@ -1318,6 +1319,8 @@ def test_a_folder_named_like_a_scheme_is_linked_by_a_relative_path(
             text.replace("](full-supervision/", f"](./{encoded}/").replace("/full-supervision/", f"/{encoded}/"),
             encoding="utf-8",
         )
+    atlas = blueprint / "atlas.json"
+    atlas.write_text(atlas.read_text(encoding="utf-8").replace('"full-supervision"', json.dumps(name)), encoding="utf-8")
 
     assert main(["check", str(blueprint)]) == 0
     assert "warning" not in capsys.readouterr().out
@@ -1330,8 +1333,27 @@ def test_a_folder_named_like_a_scheme_is_linked_by_a_relative_path(
         for page in site.rglob("*.md")
         for found in re.finditer(r'href="([^"]*)"|\]\(<?([^)\s>]+)', page.read_text(encoding="utf-8"))
     ]
-    assert f"./{name}/index.html" in targets
+    assert f"{quote(name, safe='')}/index.html" in targets
     assert [target for target in targets if scheme.match(target) and not target.startswith(("http", "mailto:"))] == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows cannot name a folder with a colon")
+def test_a_rewritten_link_into_a_folder_named_like_a_scheme_stays_relative(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Render writes a Markdown link it moves decoded, so a link whose first
+    folder is named like ``javascript:x`` would read as a script URL once
+    rewritten. Render starts it with ./, so the page publishes as written."""
+
+    blueprint = _vault(tmp_path)
+    (blueprint / "roadmap/javascript:x").mkdir()
+    (blueprint / "roadmap/javascript:x/data.txt").write_text("data\n", encoding="utf-8")
+    _with_article(blueprint, "The main result, see [the data](./javascript:x/data.txt).")
+
+    assert main(["check", str(blueprint)]) == 0
+    assert "warning" not in capsys.readouterr().out
+    chapter = (_render(blueprint) / "roadmap/README.md").read_text(encoding="utf-8")
+    assert "see [the data](./javascript:x/data.txt)." in chapter
 
 
 @pytest.mark.parametrize("name", ["dependencies.html", "graph.html", "progress.md"])
