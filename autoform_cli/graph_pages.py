@@ -29,6 +29,7 @@ from .graph_views import (
     project_view,
     scope_views,
 )
+from .markdown import header_title, rendered_visible_text, title_text
 from .status import NodeStatus
 
 NodeLinks = Callable[[Path, Iterable[str]], Mapping[str, str]]
@@ -44,6 +45,43 @@ def book_contents(graph: Graph, groups: Collection[str]) -> Path:
     nor root leaves has no such page, so its trails start at home.
     """
     return Path("roadmap/README.md" if "roadmap" in graph.nodes or "roadmap" in groups else "README.md")
+
+
+def graph_page_paths(graph: Graph) -> tuple[str, ...]:
+    """Every file :func:`write_graph_pages` writes for ``graph``, relative to
+    the site's root: each page, the payload beside it, and the search index."""
+
+    root = Path("/")
+    project_page, full_page, chapter_pages, scope_pages = _pages(graph, root, group_nodes(graph))
+    pages = {project_page, full_page, *chapter_pages.values(), *scope_pages.values()}
+    files = {*pages, *(page.with_suffix(".json") for page in pages), root / SEARCH_INDEX}
+    return tuple(sorted(path.relative_to(root).as_posix() for path in files))
+
+
+def _pages(
+    graph: Graph, destination: Path, groups: Collection[str]
+) -> tuple[Path, Path, dict[str, Path], dict[str, Path]]:
+    """The project, full, chapter, and scope pages for ``graph``, whose
+    :func:`group_nodes` are ``groups``, under ``destination``."""
+
+    # _write_page writes each payload beside its page.
+    project_page = (destination / PROJECT_PAYLOAD).with_suffix(".md")
+    full_page = destination / "dependencies/full.md"
+    chapter_pages = {group: destination / "dependencies/chapters" / f"{group or 'roadmap'}.md" for group in groups}
+    parents = {node.parent for node in graph.nodes.values() if node.parent is not None}
+    scope_pages = {
+        node_id: (
+            project_page
+            if node_id == "roadmap"
+            else chapter_pages[node_id]
+            if node_id in chapter_pages
+            else destination / "dependencies/scopes" / f"{node_id}.md"
+        )
+        for node_id in graph.nodes
+        if node_id in parents
+    }
+    scope_pages["roadmap"] = project_page
+    return project_page, full_page, chapter_pages, scope_pages
 
 
 def write_graph_pages(
@@ -62,25 +100,11 @@ def write_graph_pages(
     destination = Path(destination).resolve()
     groups = group_nodes(graph)
     root_title = group_title(graph, "roadmap")
-    # _write_page writes each payload beside its page.
-    project_page = (destination / PROJECT_PAYLOAD).with_suffix(".md")
-    full_page = destination / "dependencies/full.md"
+    project_page, full_page, chapter_pages, scope_pages = _pages(graph, destination, groups)
     book_root = destination / book_contents(graph, groups)
     search_index = destination / SEARCH_INDEX
-    chapter_pages = {group: destination / "dependencies/chapters" / f"{group or 'roadmap'}.md" for group in groups}
     scope_maps = scope_views(graph, statuses)
     containers = scope_maps.keys()
-    scope_pages = {
-        node_id: (
-            project_page
-            if node_id == "roadmap"
-            else chapter_pages[node_id]
-            if node_id in chapter_pages
-            else destination / "dependencies/scopes" / f"{node_id}.md"
-        )
-        for node_id in containers
-    }
-    scope_pages["roadmap"] = project_page
     written: list[Path] = []
 
     complete = full_view(graph, statuses)
@@ -336,11 +360,12 @@ def _write_page(
         "  - navigation",
         "  - toc",
         "  - footer",
-        "---",
-        "",
-        f"# {heading}",
-        "",
     ]
+    if title_text(heading) != heading:
+        # MkDocs would take the title from the heading, whose references the
+        # theme reads back as characters in <title>, so it is named here.
+        sections.append(header_title(rendered_visible_text(heading)))
+    sections.extend(["---", "", f"# {title_text(heading)}", ""])
     if navigation:
         sections.extend([navigation, ""])
     # The legend rides on the lead sentence rather than sitting under the
@@ -460,4 +485,11 @@ def _scope_breadcrumbs(
     return tuple(items)
 
 
-__all__ = ["PROJECT_PAYLOAD", "SEARCH_INDEX", "scope_page_href", "scope_page_path", "write_graph_pages"]
+__all__ = [
+    "PROJECT_PAYLOAD",
+    "SEARCH_INDEX",
+    "graph_page_paths",
+    "scope_page_href",
+    "scope_page_path",
+    "write_graph_pages",
+]

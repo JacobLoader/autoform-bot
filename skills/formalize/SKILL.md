@@ -214,7 +214,10 @@ article is proved; an empty file fails `autoform check`. Never link the hidden
 note from an article, because publication omits it. A missing prerequisite, an
 incorrect decomposition, a change another article needs beyond an import repair,
 or a proof recorded without its statement returns to Roadmap instead of silently
-changing the DAG.
+changing the DAG. So does a `check` warning that a shared library declaration's
+docstring, or its module's, cites the blueprint's sources, even when deleting a
+stale note brings it back: report it, and neither keep the note nor edit a
+source page for it.
 
 Run `autoform check <PROJECT>/blueprint --lean-root <PROJECT>` and `autoform
 audit <PROJECT>/blueprint --lean-root <PROJECT>`. Resolve every finding this

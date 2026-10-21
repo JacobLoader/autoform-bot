@@ -47,9 +47,36 @@ def source_links(graph: Graph, output: Path, link_extension: str) -> dict[str, s
     }
 
 
+#: The class of a graph render would publish on the site as raw HTML, which
+#: no article may hold: the site's diagram script draws an element of this
+#: class with the loose security its links need, and every other diagram
+#: strictly. The dependency explorer replaced render's Mermaid maps, so no
+#: page render writes holds one now, and every diagram is drawn strictly.
+GRAPH_CLASS = "bp-graph"
+
+
 def _escape(text: str) -> str:
-    """Make *text* safe inside a quoted Mermaid label."""
-    return text.replace('"', "#quot;").replace("`", "#96;")
+    """Make *text* safe inside a quoted Mermaid label.
+
+    Mermaid draws a label as HTML, so the markup characters are written as
+    its entity codes, which it shows as typed.
+    """
+    for character, code in (('"', "#quot;"), ("`", "#96;"), ("&", "#amp;"), ("<", "#lt;"), (">", "#gt;")):
+        text = text.replace(character, code)
+    return text
+
+
+def _href(link: str) -> str:
+    """Write *link* as the URL a click opens.
+
+    A link is made from file and folder names, which may hold a quote that
+    would end Mermaid's string and start a click's call, or a colon that
+    would make the path a ``javascript:`` URL; percent-encoded, it is one
+    string and a relative path to the same page. A link :func:`relative_link`
+    wrote is percent-encoded already, so its ``%`` escapes are kept as they
+    are rather than encoded a second time.
+    """
+    return quote(link, safe="/#%")
 
 
 def render_diagram(
@@ -108,7 +135,7 @@ def render_diagram(
         else:
             state_label = display_state(node, statuses[node.id]).label
         tooltip = _escape(f"{node.title} — {state_label}")
-        lines.append(f'  click {handles[node.id]} "{links[node.id]}" "{tooltip}"')
+        lines.append(f'  click {handles[node.id]} "{_href(links[node.id])}" "{tooltip}"')
 
     if include_classdefs:
         lines.extend(f"  {line}" for line in classdef_lines())
@@ -292,6 +319,7 @@ def render_page(
 
 
 __all__ = [
+    "GRAPH_CLASS",
     "node_link",
     "relative_link",
     "render_diagram",

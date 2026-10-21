@@ -57,7 +57,10 @@ def test_export_writes_a_mermaid_page_linking_to_markdown(tmp_path: Path) -> Non
     lemma = next(k for k, v in handles.items() if v == "roadmap/foundations/base%20lemma.md")
     main = next(k for k, v in handles.items() if v == "roadmap/main.md")
     assert f"  {lemma} --> {main}" in document
-    assert "Main <result>" in document
+    # Mermaid shows its entity codes as the characters, so the title reads as
+    # typed without becoming markup in the label.
+    assert f'{main}("Main #lt;result#gt;")' in document
+    assert "<result>" not in document
 
 
 def test_diagram_colours_and_shapes_follow_derived_status(tmp_path: Path) -> None:
@@ -101,6 +104,47 @@ def test_the_published_graph_defers_its_palette_to_the_theme(tmp_path: Path) -> 
 
     assert ":::can_state" in published
     assert "classDef" not in published
+
+
+def test_a_title_is_text_in_a_label_and_a_tooltip(tmp_path: Path) -> None:
+    """Mermaid draws a label as HTML, so the markup a title can carry in its
+    code is written as entities, which it shows as typed."""
+    blueprint = tmp_path / "blueprint"
+    _write_node(blueprint / "roadmap" / "result.md", 'Top `<b style="position:fixed">x</b>` & co', declaration="theorem")
+    graph = load_graph(blueprint)
+
+    diagram = mermaid.render_diagram(graph, derive(graph), tmp_path / "dependencies.md", links={"result": "x.html"})
+    title = "Top #96;#lt;b style=#quot;position:fixed#quot;#gt;x#lt;/b#gt;#96; #amp; co"
+
+    assert f'n0("{title}"):::can_state' in diagram
+    assert f'click n0 "x.html" "{title} — ' in diagram
+    assert "<b" not in diagram and "&" not in diagram
+
+
+def test_a_link_is_one_url_that_names_no_scheme(tmp_path: Path) -> None:
+    """A link is made from file and folder names, which may hold a quote, a
+    semicolon or a colon; written as a URL, it stays one Mermaid string and
+    a relative path, so a name cannot add a click's call or a script link. A
+    link already percent-encoded keeps its escapes rather than gaining a
+    second layer, as ``a%20b`` would become ``a%2520b``."""
+    blueprint = tmp_path / "blueprint"
+    for name in ("a", "b", "c"):
+        _write_node(blueprint / "roadmap" / f"{name}.md", "T", declaration="theorem")
+    graph = load_graph(blueprint)
+    links = {
+        "a": "javascript:alert(7).html",
+        "b": '../roadmap/index.html#t";click n0 call alert(7);click n0 "op',
+        "c": "roadmap/a%20b.md#c",
+    }
+
+    diagram = mermaid.render_diagram(graph, derive(graph), tmp_path / "dependencies.md", links=links)
+    clicks = [line.rpartition(' "')[0] for line in diagram.splitlines() if "click" in line]
+
+    assert clicks == [
+        '  click n0 "javascript%3Aalert%287%29.html"',
+        '  click n1 "../roadmap/index.html#t%22%3Bclick%20n0%20call%20alert%287%29%3Bclick%20n0%20%22op"',
+        '  click n2 "roadmap/a%20b.md#c"',
+    ]
 
 
 def test_proof_only_dependencies_are_dashed(tmp_path: Path) -> None:

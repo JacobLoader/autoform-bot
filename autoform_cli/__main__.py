@@ -40,7 +40,7 @@ from .library.locate import LibraryError, WorkspaceError
 from .library.search import LibraryResult, library_argument, search_with_libraries
 from .markdown import local_target_issue
 from .project import ProjectCatalogError, ProjectCreateError, create_project, inspect_project, load_release_catalog
-from .render import SOURCES_DIR, PublicationError, render_site
+from .render import SOURCES_DIR, PublicationError, publication_issues, render_site
 from .runtime import RuntimeProjectionError, projection_omissions, resolve_runtime_paths
 from .scaffold import ScaffoldError, scaffold_project
 from .search import SearchError, search_blueprint, statement_preview
@@ -601,9 +601,14 @@ def _source_link_issues(graph: Graph) -> tuple[list[str], list[str]]:
                 continue
             code = issue[0]
             if code == "hidden-source-target":
-                # The path local_target_issue found hidden: as written, with its `..` steps applied.
-                spelled = Path(os.path.normpath(node.path.parent.resolve() / unquote(urlsplit(located).path)))
-                if spelled.relative_to(graph.blueprint_dir).parts[:1] == (SOURCES_DIR,):
+                # A link that names a hidden note under sources/, and steps through no other
+                # hidden folder on the way, only needs the note committed. No repository link
+                # mends any other hidden link.
+                written = unquote(urlsplit(located).path)
+                inside = Path(os.path.normpath(node.path.parent.resolve() / written)).relative_to(graph.blueprint_dir)
+                hidden = [part for part in Path(written).parts if part.startswith(".") and part != ".."]
+                if inside.parts[:1] == (SOURCES_DIR,) and hidden == [p for p in inside.parts if p.startswith(".")]:
+                    spelled = graph.blueprint_dir / inside
                     if os.path.isfile(spelled):
                         warnings.append(
                             f"{node.id}: source target names a hidden path, which only a repository link reaches, "
@@ -704,6 +709,10 @@ def _check(args: argparse.Namespace) -> int:
             f"warning: {node_id}: module catalog links no declaration ledger under blueprint/sources/ from '## Sources'"
         )
     for warning in _byte_order_mark_warnings(graph) + _formalizable_container_warnings(graph) + source_warnings:
+        print(f"warning: {warning}")
+    # What the site would leave out or show as typed, and what would stop
+    # render; none of it fails check.
+    for warning in publication_issues(graph, Path(args.blueprint_dir)):
         print(f"warning: {warning}")
     return 0
 
@@ -1348,9 +1357,7 @@ def _debrief_orchestrator(args: argparse.Namespace) -> int:
         print("no AutoformBot friction reported; no issue drafted")
         return 0
     print(_human_text(f"drafted an issue for {debrief_orchestrator.ISSUE_REPOSITORY} at {issue.path}"))
-    if not issue.url_has_body:
-        print("the draft is too long for a link; paste its body into the issue form")
-    print(f"nothing has been sent; to review, edit and submit it, open: {issue.url}")
+    print("nothing has been sent; the draft ends with a link that opens it as a pre-filled issue")
     return 0
 
 
