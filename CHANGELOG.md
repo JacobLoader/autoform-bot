@@ -26,7 +26,7 @@ theme. Each group names the pull requests to read for detail.
   `autoform library` lists the Lean libraries a project depends on and writes
   the index a library publishes, ATLAS among them; `autoform search --library`
   searches that index, and the skills reuse its results (#204, #278, #311,
-  #343, #379).
+  #343, #379, #400, #408).
 - **Projects.** `autoform project new`, `inspect` and `versions` create and
   inspect Lean projects from a pinned release catalog (#14, #96, #211).
 - **Dashboard.** `autoform dashboard` serves the built site on a loopback port,
@@ -44,7 +44,7 @@ theme. Each group names the pull requests to read for detail.
   project code in its probe (#156, #190, #247, #264).
 - **Statement status.** Open statements and conditional proofs (#138).
 - **Feedback.** `autoform debrief`: forms agents fill in about their work
-  (#195).
+  (#195, #414).
 - **Version.** `autoform --version` prints the installed version and, from a
   plugin checkout, its commit (#397).
 
@@ -54,7 +54,7 @@ theme. Each group names the pull requests to read for detail.
   keeps the exit status instead of failing a repository that passed before
   (#325, #335, #361), a rule AGENTS.md now states (#394).
 - **Claims are optional.** A single Formalize run keeps its own workers apart,
-  and builds take no claim (#298, #324).
+  and builds take no claim (#298, #324, #420).
 - **Publication.** Render publishes a site transactionally (#165), scales
   linearly (#289, #339), checks the site it replaces without reading it into
   memory (#365), and links files by the spelling Git committed (#301, #333).
@@ -63,8 +63,8 @@ theme. Each group names the pull requests to read for detail.
   path (#321), and container articles that set a declaration (#328); since
   #361, hidden source notes and declaring containers pass with a warning.
   `check` and `audit` now read the blueprint render publishes: hidden paths are
-  no part of it, and a dependency on a hidden page or a link to a generated
-  view fails (#380).
+  no part of it, and a dependency on a hidden page, a link that steps through a
+  hidden folder, or a link to a generated view fails (#380, #409).
 
 ### Removed
 
@@ -91,7 +91,9 @@ theme. Each group names the pull requests to read for detail.
   the Lean root is a subdirectory of its repository (#318, #320, #326, #327,
   #355, #406).
 - **Security:** credentials stripped from remote URLs, URL queries redacted,
-  and nonlocal dashboard requests rejected (#98, #125, #245).
+  nonlocal dashboard requests rejected, and every published page treated as
+  untrusted: markup the site cannot trust is shown as typed, and a file a
+  browser could run is left out, each with a warning (#98, #125, #215, #245).
 
 ### Contracts
 
