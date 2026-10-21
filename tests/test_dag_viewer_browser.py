@@ -1586,15 +1586,12 @@ def test_on_a_phone_the_status_filter_and_search_results_open_in_view(mobile_pag
         result = next(node for node in payload["nodes"] if node["id"] == "algebra/result")
         result["summary"] = (
             "The main result compares the objects introduced by the base construction. "
-            "Its hypotheses specify the ambient space and the compatibility conditions between the objects. "
-            "The conclusion describes how an invariant is preserved under the permitted transformations. "
-            "First identify the relevant structure maps, then check each hypothesis before applying the result. "
-            "The base definition supplies the notation used throughout the statement and its applications. "
-            "Boundary cases require the same assumptions rather than an implicit extension to arbitrary objects. "
-            "The proof separates the construction of the comparison map from verification of its properties. "
-            "Examples compare finite constructions with their limiting counterparts, while the conclusion "
-            "remains restricted to the stated hypotheses."
+            "Its hypotheses fix the ambient space and require compatible structure maps. "
+            "The conclusion states that the invariant is preserved by the permitted transformations. "
+            "To apply it, identify these maps and verify every hypothesis. "
+            "The base definition supplies the notation; boundary cases retain the same assumptions."
         )
+        assert len(result["summary"]) <= 420  # The loader's normal generated-preview limit.
         route.fulfill(json=payload)
 
     # A compact one-sentence result no longer makes the sheet tall enough to
