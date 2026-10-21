@@ -225,7 +225,7 @@ An article asserts only facts a human or agent verified:
 | `discussion: 42` | Issue number or URL where the article is being discussed. |
 | `article_id: af_...` | Durable identity, `af_` plus 24 lowercase hex digits; `autoform work` requires it on unfinished formalizable leaves. |
 | `open_statements: allowed` | Project policy, valid only in `roadmap/README.md`: a theorem's statement may land with a `sorry` proof (see [Open statements](#open-statements)). Absent or `forbidden` keeps the strict policy. |
-| `published: false` | Folder setting, valid only in the `README.md` of a folder below `roadmap/`: `check` and `audit` validate the folder and everything in it, but render leaves it out of the site and of the publication hash. No link on a published page may point into it, whether a dependency, a source or prose, and `audit` and render reject coverage evidence that does. A folder inside an unpublished one is unpublished too, whatever its own README says. |
+| `published: false` | Folder setting, valid only in the `README.md` of a folder below `roadmap/`: `check` and `audit` validate the folder and everything in it, but render leaves it out of the site and of the publication hash. No link on a published roadmap article may point into it, whether a dependency, a source or prose; a link from any other page keeps only its text, with a warning. `audit` and render reject coverage evidence that points into it. A folder inside an unpublished one is unpublished too, whatever its own README says. |
 
 Everything a reader thinks of as progress is *derived* from the DAG on every
 run, so it cannot go stale. Readiness depends on the project's policy: under
@@ -1358,6 +1358,10 @@ site leaves it out, and `check` and `render` warn about it by its path: write
 it as Markdown, save it as an image, a PDF, or plain text, or keep it outside
 `blueprint/`. An Obsidian `.canvas` file is left out without a warning, as
 `.obsidian` is. A Markdown page that is not UTF-8 is left out with a warning too.
+A link to anything the site leaves out keeps only its text, so the strict
+build finds nothing missing: such a file, a hidden path outside `sources/`, or
+a page in a `published: false` folder. `check` and `render` warn about each
+such link to a hidden path or an unpublished folder, naming the page.
 A copy of one of the files render writes, listed above, is not published;
 render's own is.
 
