@@ -1008,14 +1008,16 @@ autoform review record blueprint --packets review-packets \
 autoform review check blueprint --lean-root .
 ```
 
-`review prepare` extracts every Lean-mapped article from the current built
-tree and writes one blind packet per declaration under `blind/`, named by the
-hash of its bytes, so that, unlike a `skeleton --packets` file, its name tells
-its reader nothing, with a manifest that maps each to its article and hashes for
+`review prepare` extracts every Lean-mapped article from the current built tree
+and writes one blind packet per declaration under `blind/`, named by the hash
+of its bytes, so that, unlike a `skeleton --packets` file, its name tells its
+reader nothing, with a manifest that maps each to its article and hashes for
 the coordinator. Every Lean-mapped review article must be a declaration-sized
-leaf. An article marked `origin: cited` must link to an in-vault, non-Markdown
-source snapshot with an exact `#L<start>-L<end>` range, and no article may cite
-blank lines; preparation refuses a citation it cannot put before the reviewer.
+leaf; a module catalog, whose `lean:` names inventory a module rather than
+state one result, is not under review. An article marked `origin: cited` must
+link to an in-vault, non-Markdown source snapshot with an exact
+`#L<start>-L<end>` range, and no article may cite blank lines; preparation
+refuses a citation it cannot put before the reviewer.
 
 `review record` runs no Lean. It reads the packet `review prepare` wrote for
 the article and declaration and refuses one whose bytes do not match its hash,

@@ -444,6 +444,21 @@ def test_an_approval_binds_the_project_macros_its_statement_uses(tmp_path: Path,
     assert _state(blueprint).status == status
 
 
+def test_the_bundle_binds_the_macros_its_caller_captured(tmp_path: Path) -> None:
+    """Render passes the tex-macros.json it captured, so the evidence binds the
+    macros the site shows, not the file as it is later."""
+
+    blueprint = _blueprint(tmp_path)
+    _edit(blueprint / "roadmap" / "basics" / "result.md", "A supremum is **unique**.", "For $x \\in \\R$, it is unique.")
+    (blueprint / "tex-macros.json").write_text('{"R": "\\\\mathbb{R}"}', encoding="utf-8")
+    graph = load_graph(blueprint)
+    report = _extracted(graph)
+
+    assert build_review_bundle(graph, report).articles[0].macros == (("R", '"\\\\mathbb{R}"'),)
+    captured = build_review_bundle(graph, report, macros={"R": "\\mathbb{C}"}).articles[0]
+    assert captured.macros == (("R", '"\\\\mathbb{C}"'),)
+
+
 def test_a_card_filed_again_after_a_lean_bump_keeps_the_approval(tmp_path: Path) -> None:
     """The approval binds the testimony and the packet, not the card's bytes,
     whose statement line a bump changes."""
@@ -467,6 +482,33 @@ def test_a_macro_definition_holding_a_lone_surrogate_is_bound_without_raising(tm
     _file_card(blueprint, _report().nodes[0].declarations[0])
 
     assert _state(blueprint).status == "unapproved"
+
+
+def test_a_module_catalog_is_not_under_review(tmp_path: Path) -> None:
+    """A catalog's `lean:` names inventory a module rather than state one
+    result, so review leaves it out: it needs no article_id, no read-backs and
+    no approval, and its names need not all resolve."""
+
+    blueprint = _blueprint(tmp_path)
+    (blueprint / "roadmap" / "basics" / "catalog.md").write_text(
+        "---\ncatalog: module\nlean: Skel.cat_a, Skel.cat_b\n---\n\n# Catalog\n\nA module.\n\n## Depends on\n\nNone.\n",
+        encoding="utf-8",
+    )
+    result = _report()
+    catalog = NodeSkeleton("basics/catalog", "roadmap/basics/catalog.md", (_declaration("Skel.cat_a"),))
+    report = replace(
+        result,
+        targets=(("basics/catalog", ("Skel.cat_a", "Skel.cat_b")), *result.targets),
+        selected_nodes=("basics/catalog", *result.selected_nodes),
+        nodes=(catalog, *result.nodes),
+        unresolved=(UnresolvedTarget("basics/catalog", "Skel.cat_b", "probe failed"),),
+    )
+    _file_card(blueprint, result.nodes[0].declarations[0])
+
+    graph = load_graph(blueprint)
+    bundle = build_review_bundle(graph, _extracted(graph, report))
+    assert [article.node_id for article in bundle.articles] == ["basics/result"]
+    assert _codes(review_findings(graph, bundle, load_readbacks(blueprint))) == ["review-unapproved"]
 
 
 def test_a_malformed_review_approved_is_drift_and_does_not_stop_loading(tmp_path: Path) -> None:

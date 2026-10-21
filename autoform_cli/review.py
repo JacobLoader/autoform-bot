@@ -198,24 +198,26 @@ def _parsed_text(node: Node) -> str:
     return data.decode("utf-8")
 
 
-def build_review_bundle(graph: Graph, skeleton: SkeletonReport) -> ReviewBundle:
+def build_review_bundle(
+    graph: Graph, skeleton: SkeletonReport, *, macros: Mapping[str, object] | None = None
+) -> ReviewBundle:
     """Build the review evidence after proving the report is clean and complete.
 
     The report must have been extracted from exactly this blueprint: its
     ``blueprint_hash`` must name ``graph``. A report paired with articles it
     never saw is incoherent evidence, and is refused before anything in it is
-    compared with them.
+    compared with them. ``macros`` are the project TeX macros the statements
+    are typeset with, by default read from the blueprint's
+    ``tex-macros.json``; a caller that captured that file passes what it
+    captured, so the evidence binds the macros it shows.
     """
 
     findings = _snapshot_findings(graph, skeleton) or _report_findings(graph, skeleton)
     if findings:
         raise ReviewError(findings)
 
-    review_nodes = sorted(
-        (node for node in graph.nodes.values() if node.lean is not None),
-        key=lambda node: node.article_id or "",
-    )
-    macros = _project_macros(graph.blueprint_dir)
+    review_nodes = sorted(_review_nodes(graph), key=lambda node: node.article_id or "")
+    macros = _project_macros(graph.blueprint_dir) if macros is None else macros
     # _report_findings found a record for each, and an article_id.
     return ReviewBundle(
         tuple(_current_article(graph, node, skeleton.node(node.id), macros) for node in review_nodes)
@@ -460,9 +462,7 @@ def _report_findings(graph: Graph, skeleton: SkeletonReport) -> list[ReviewFindi
     findings: list[ReviewFinding] = []
     # Indexed once, so no article's shape check rescans the graph for its children.
     parents = {item.parent for item in graph.nodes.values() if item.parent is not None}
-    for node in sorted(graph.nodes.values(), key=lambda item: item.id):
-        if node.lean is None:
-            continue
+    for node in _review_nodes(graph):
         if node.article_id is None:
             reason = "Lean-mapped article has no durable article_id; run `autoform migrate` before preparing review evidence"
             findings.append(ReviewFinding(node.id, "review-article-id-missing", reason))
@@ -481,7 +481,11 @@ def _report_findings(graph: Graph, skeleton: SkeletonReport) -> list[ReviewFindi
     report_ids = [node.node_id for node in skeleton.nodes]
     if len(report_ids) != len(set(report_ids)):
         findings.append(ReviewFinding("", "review-report-duplicate", "skeleton report contains duplicate article ids"))
+    reviewed = {node.id for node in _review_nodes(graph)}
     for issue in skeleton.unresolved:
+        # A catalog's inventory is not under review, so its names need not resolve here.
+        if issue.node_id not in reviewed:
+            continue
         reason = f"skeleton extraction is incomplete: {issue.message}"
         findings.append(ReviewFinding(issue.node_id, "review-report-unresolved", reason))
     actual = {node.node_id for node in skeleton.nodes}
@@ -493,7 +497,7 @@ def _report_findings(graph: Graph, skeleton: SkeletonReport) -> list[ReviewFindi
         findings.append(ReviewFinding(node_id, "review-report-extra", reason))
     # Shared, so every article citing one file cuts its passage from one read.
     files: dict[Path, bytes | str] = {}
-    for node_id in sorted(set(expected) & actual):
+    for node_id in sorted(reviewed & actual):
         findings.extend(_node_findings(graph, graph.nodes[node_id], skeleton.node(node_id), files))
     return sorted(findings)
 
@@ -587,6 +591,18 @@ def _used_macros(text: str, macros: Mapping[str, object]) -> tuple[tuple[str, st
                 parts = [definition] if isinstance(definition, str) else definition
                 work.extend(part for part in parts if isinstance(part, str))
     return tuple(sorted(used.items()))
+
+
+def _review_nodes(graph: Graph) -> list[Node]:
+    """The articles under review, in id order: every Lean-mapped article but a
+    module catalog, whose ``lean:`` names inventory a module rather than state
+    one result."""
+
+    return [
+        node
+        for _, node in sorted(graph.nodes.items())
+        if node.lean is not None and node.catalog is None
+    ]
 
 
 def _declaration_mapping(graph: Graph) -> dict[str, tuple[str, ...]]:
