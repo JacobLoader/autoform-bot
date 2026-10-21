@@ -867,7 +867,7 @@ repeated until none is added; Lean loads them and what they import. Only those
 modules must be built, and stale-build advice names only them. An article owns a
 declaration when one of its `lean:` names equals it or is a dotted prefix of it,
 so `affected_articles` may list more articles and `article_local` is always
-`false`; `affected_unowned_helpers` keep the parent-chain rule, and
+`false`; `affected_unowned_helpers` keep the default scope's rule, and
 `unresolved_articles` leaves out a name the source index places outside
 `affected_modules`. A `.lean` file outside the captured sources, as in
 `.lake/packages` or a path dependency, that may import a candidate makes the
@@ -882,14 +882,17 @@ whose key is `module_claim_key`. `affected_claim_targets` are downstream
 warnings, not ownership requirements; `claim_keys` and `affected_claim_keys`
 match the JSON of `autoform claim list --worker-id WORKER` given those targets.
 `affected_articles` lists each article that names, or owns through the parent
-chain, a declaration in an affected module, with those `modules`, and
-`selected_affected` says whether the selected article is one.
-`unresolved_articles` reports local declarations absent from the loaded
-environment without blocking unrelated edits, and each
-`affected_unowned_helpers` entry carries its own claim target and key.
-`article_local` holds only when `selected_affected` does,
-`affected_claim_targets` is empty, and no other article has unresolved
-declarations.
+chain, a declaration in an affected module, with those `modules`. A declaration
+with no owner through the parent chain belongs to the one article that names
+declarations in its module, when exactly one does, so a worker's own helpers,
+public or private, count as its article's. In a module that no article, or
+several, name declarations in, such a declaration is an
+`affected_unowned_helpers` entry, carrying its own claim target and key.
+`selected_affected` says whether the selected article is one of the affected
+articles. `unresolved_articles` reports local declarations absent from the
+loaded environment without blocking unrelated edits. `article_local` holds only
+when `selected_affected` does, `affected_claim_targets` is empty, and no other
+article has unresolved declarations.
 
 Imports are allowed regardless of reported breadth. Follow the [Formalize import
 workflow](../skills/formalize/SKILL.md#import-edits) for baseline evidence,
