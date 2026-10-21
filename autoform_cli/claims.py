@@ -32,7 +32,6 @@ _WINDOWS_DRIVE_PREFIX_RE = re.compile(r"^[A-Za-z]:")
 _WINDOWS_ROOTED_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _SCRATCH_INIT_ATTEMPTS = 10
 _SCRATCH_INIT_DELAY_S = 0.05
-_LIST_ATTEMPTS = 3
 # A peer's push holds a ref's lock file for milliseconds; one that outlasts
 # this grace after a failed push is reported as blocking the claim.
 _LOCK_GRACE_S = 2.0
@@ -92,10 +91,6 @@ class ClaimTransportError(RuntimeError):
 
 class MalformedLeaseError(ClaimTransportError):
     """A claim ref exists, but its lease cannot be verified safely."""
-
-
-class _ClaimRefChanged(ClaimTransportError):
-    """A listed claim ref moved or was deleted before its lease was read."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,21 +250,24 @@ class ClaimBoard:
         *,
         check: bool = True,
         input_text: str | None = None,
-    ) -> subprocess.CompletedProcess[str]:
+        input_bytes: bytes | None = None,
+    ) -> subprocess.CompletedProcess[Any]:
+        """Run git in the scratch board; with ``input_bytes``, input and output are bytes."""
         try:
             proc = subprocess.run(
                 ["git", *args],
                 cwd=self.scratch,
                 capture_output=True,
-                text=True,
-                input=input_text,
+                text=input_bytes is None,
+                input=input_text if input_bytes is None else input_bytes,
                 timeout=120,
                 env={**os.environ, **_GIT_ENV},
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ClaimTransportError(f"git claim-board operation failed: {exc}") from exc
         if check and proc.returncode != 0:
-            detail = (proc.stderr or proc.stdout).strip()[:300]
+            output = proc.stderr or proc.stdout
+            detail = (output if isinstance(output, str) else os.fsdecode(output)).strip()[:300]
             raise ClaimTransportError(f"git {' '.join(args[:2])} failed against claim board: {detail}")
         return proc
 
@@ -332,7 +330,11 @@ class ClaimBoard:
         proc = self._git(["cat-file", "commit", oid], check=False)
         if proc.returncode != 0:
             raise MalformedLeaseError(f"claim {key!r} does not point to a readable commit")
-        _, separator, message = proc.stdout.partition("\n\n")
+        return self._parse_lease(key, proc.stdout)
+
+    def _parse_lease(self, key: str, commit: str) -> dict[str, Any]:
+        """Return the verified lease in the text of ``key``'s commit, or raise ``MalformedLeaseError``."""
+        _, separator, message = commit.partition("\n\n")
         if not separator:
             raise MalformedLeaseError(f"claim {key!r} has no lease message")
         try:
@@ -710,27 +712,22 @@ class ClaimBoard:
     def list(self) -> list[dict[str, Any]]:
         """Return all claim refs, including malformed and expired entries.
 
-        Refs that keep changing while they are read raise ``ClaimTransportError``.
-        Any change to a claim ref between an attempt's two ``ls-remote`` calls
-        restarts it, so the chance of this error grows with the number of claims
-        and with board-wide renew, acquire and release activity.
+        One fetch mirrors every claim ref and its commit, so each listed lease
+        is the one its ref named when the board answered, and the git commands
+        it takes do not grow with the number of claims. A ref that changes
+        meanwhile is listed as it was; every update checks ownership again.
         """
         self._ensure_scratch()
-        for _ in range(_LIST_ATTEMPTS):
-            advertised = self._advertised_claims()
-            try:
-                for key, oid in advertised.items():
-                    self._fetch_listed(key, oid)
-            except _ClaimRefChanged:
-                continue
-            if self._advertised_claims() == advertised:
-                return self._read_listed(advertised)
-        raise ClaimTransportError(f"claim refs changed during each of {_LIST_ATTEMPTS} attempts to list them")
+        refspec = f"+{CLAIM_REF_PREFIX}*:{CLAIM_REF_PREFIX}*"
+        fetch = self._git(["fetch", "--quiet", "--prune", "--no-tags", self.repo_url, refspec], check=False)
+        if fetch.returncode != 0:
+            raise ClaimTransportError(f"cannot fetch the claim board: {fetch.stderr.strip()[:300]}")
+        return self._read_listed(self._mirrored_claims())
 
-    def _advertised_claims(self) -> dict[str, str]:
-        """Return the object ID of every validly named claim ref, by key."""
-        proc = self._git(["ls-remote", self.repo_url, CLAIM_REF_PREFIX + "*"])
-        advertised: dict[str, str] = {}
+    def _mirrored_claims(self) -> dict[str, str]:
+        """Return the object ID of every validly named claim ref the last fetch mirrored, by key."""
+        proc = self._git(["for-each-ref", "--format=%(objectname)%09%(refname)", CLAIM_REF_PREFIX])
+        mirrored: dict[str, str] = {}
         for line in proc.stdout.splitlines():
             oid, separator, ref = line.partition("\t")
             if not separator or not ref.startswith(CLAIM_REF_PREFIX):
@@ -740,14 +737,41 @@ class ClaimBoard:
                 _validate_key(key)
             except ValueError:
                 continue
-            advertised[key] = oid
-        return advertised
+            mirrored[key] = oid
+        return mirrored
 
-    def _read_listed(self, advertised: Mapping[str, str]) -> list[dict[str, Any]]:
+    def _read_commits(self, oids: Sequence[str]) -> dict[str, bytes | None]:
+        """Read every object with one ``cat-file --batch``: its raw commit, or None if missing or not a commit."""
+        if not oids:
+            return {}
+        output = self._git(["cat-file", "--batch"], input_bytes="".join(f"{oid}\n" for oid in oids).encode()).stdout
+        commits: dict[str, bytes | None] = {}
+        position = 0
+        for oid in oids:
+            end = output.index(b"\n", position)
+            header = output[position:end].split(b" ")
+            position = end + 1
+            if len(header) != 3:
+                commits[oid] = None
+                continue
+            size = int(header[2])
+            commits[oid] = output[position : position + size] if header[1] == b"commit" else None
+            position += size + 1
+        return commits
+
+    def _read_listed(self, mirrored: Mapping[str, str]) -> list[dict[str, Any]]:
+        commits = self._read_commits(list(dict.fromkeys(mirrored.values())))
         leases: list[dict[str, Any]] = []
-        for key, oid in advertised.items():
+        for key, oid in mirrored.items():
             try:
-                lease = dict(self._read_lease(key, oid))
+                commit = commits[oid]
+                if commit is None:
+                    raise MalformedLeaseError(f"claim {key!r} does not point to a readable commit")
+                try:
+                    text = commit.decode()
+                except UnicodeDecodeError as exc:
+                    raise MalformedLeaseError(f"claim {key!r} has invalid lease JSON") from exc
+                lease = dict(self._parse_lease(key, text))
             except MalformedLeaseError as exc:
                 lease = {
                     "resource": key,
@@ -762,18 +786,6 @@ class ClaimBoard:
             lease["_expired"] = not lease["_malformed"] and self.expired(lease)
             leases.append(lease)
         return sorted(leases, key=lambda lease: str(lease["_key"]))
-
-    def _fetch_listed(self, key: str, oid: str) -> None:
-        """Make the listed ``oid`` local, or raise ``_ClaimRefChanged`` if its ref no longer points to it."""
-        if self._git(["cat-file", "-e", oid], check=False).returncode == 0:
-            return
-        ref = self._ref(key)
-        fetch = self._git(["fetch", "--quiet", self.repo_url, f"+{ref}:{ref}"], check=False)
-        if fetch.returncode == 0 and self._git(["cat-file", "-e", oid], check=False).returncode == 0:
-            return
-        if fetch.returncode == 0 or self._remote_oid(key) != oid:
-            raise _ClaimRefChanged(key)
-        raise ClaimTransportError(f"cannot fetch claim {key!r} from the claim board: {fetch.stderr.strip()[:300]}")
 
     def cleanup(self) -> int:
         """CAS-delete leases expired at snapshot time and return the deletion count.
