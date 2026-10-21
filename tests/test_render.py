@@ -1547,9 +1547,10 @@ def test_the_generated_script_is_valid_javascript(tmp_path: Path) -> None:
         assert result.returncode == 0, result.stderr
 
 
-def test_render_marks_each_graph_it_draws(tmp_path: Path) -> None:
-    """Render writes each graph as raw HTML of a class only it gives, which
-    no article can write, and the site converts it as written."""
+def test_render_draws_no_graph_loose(tmp_path: Path) -> None:
+    """The explorer draws render's maps, so no page render writes holds a
+    graph of the class the site's diagram script would draw loose, and every
+    diagram on the site is drawn strictly."""
 
     _render(tmp_path)
     out = tmp_path / "out"
@@ -1557,12 +1558,8 @@ def test_render_marks_each_graph_it_draws(tmp_path: Path) -> None:
     for name in ("README.md", "dependencies.md", "dependencies/full.md", "dependencies/chapters/roadmap.md"):
         page = (out / name).read_text(encoding="utf-8")
         assert "```mermaid" not in page, name
-        assert page.count('<div class="mermaid bp-graph">graph LR\n') == 1, name
-        published = site_converter().convert(page)
-        start = published.index('<div class="mermaid bp-graph">graph LR\n')
-        assert "click n0 " in published[start : published.index("</div>", start)], name
-    page = (out / "dependencies/nodes/top.md").read_text(encoding="utf-8")
-    assert "  n0 --&gt; n1" in page
+        assert 'class="mermaid' not in page, name
+        assert 'class="bp-dag-viewer"' in page, name
 
 
 _MERMAID_HARNESS = r"""
