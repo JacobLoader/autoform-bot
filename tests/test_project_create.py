@@ -612,6 +612,8 @@ def test_rejects_conflicting_or_incomplete_version_options_before_writing(
         "4.30.0",
         "v4.30",
         "v04.30.0",
+        "v4.030.0",
+        "v4.30.00",
         "V4.30.0",
         "v4.30.0\n",
         " v4.30.0",
