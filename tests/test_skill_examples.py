@@ -400,6 +400,18 @@ def test_setup_asset_static_site_contract(repo_root: Path, tmp_path: Path) -> No
     assert "[Infimum Loss milestone](roadmap/infimum-loss/README.md)" in summary
     workflow = (example / ".github/workflows/blueprint-pages.yml").read_text(encoding="utf-8")
     verify = (example / ".github/workflows/autoform-verify.yml").read_text(encoding="utf-8")
+    # The generated workflows' safety steps. The example mirrors the templates
+    # (test_example_workflows_match_the_scaffold_templates), so these hold for both.
+    assert "github.ref == 'refs/heads/main'" in workflow
+    assert 'lake clean "$root_package"' in verify
+    assert "Reject kernel-check bypass options" in verify
+    assert 'forbidden="skip""KernelTC"' in verify
+    assert 'git grep -n -I "$forbidden" -- .' in verify
+    assert "Audit every root-package declaration" in verify
+    assert "python3 .github/autoform_audit.py" in verify
+    assert "elan/releases/download/v4.2.3" in verify
+    assert "df0b2b3a439961ffcbb3985214365ffe40f49bc871df04dff268c7d8e21ca8b2" in verify
+    assert "@main" not in workflow and "@main" not in verify
 
     for contents in (workflow, verify):
         action_refs = re.findall(r"uses:\s+[^@\s]+@([^\s]+)", contents)
