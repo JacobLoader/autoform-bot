@@ -451,6 +451,8 @@ def _scope_breadcrumbs(
         (group_title(graph, "roadmap"), _published_link(project_page, page)),
     ]
     for node_id in reversed(lineage):
+        if node_id != scope and graph.nodes[node_id].navigation in {"collection", "transparent"}:
+            continue
         target = scope_pages.get(node_id)
         label = graph.nodes[node_id].title if node_id in graph.nodes else node_id
         items.append((label, _published_link(target, page) if target and target != page else None))
