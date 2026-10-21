@@ -909,12 +909,14 @@ def test_list_of_keys_that_differ_only_in_case_drops_a_claim_released_after_nami
 ) -> None:
     oids = _plant_packed_leases(board_repo, ["lean/Foo", "lean/foo", "other"])
     reader = _board(tmp_path, board_repo, "worker-b")
-    reader._ensure_scratch()
-    reader._git(["config", "core.ignorecase", "true"])
     git = reader._git
     named: list[bool] = []
 
     def released_after_ls_remote(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "fetch" and "--stdin" not in args:
+            # What a case-insensitive scratch answers; a case-sensitive one would store both names.
+            stderr = "error: the remote has references that only differ in casing\n"
+            return subprocess.CompletedProcess(["git", *args], 1, "", stderr)
         proc = git(args, **kwargs)
         if args[0] == "ls-remote" and not named:
             named.append(True)
