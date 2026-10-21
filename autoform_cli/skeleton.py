@@ -1776,13 +1776,24 @@ def _check_artifacts_fresh(
             [
                 f"cannot verify Lean build freshness: `lake --rehash --no-build build` exited with status "
                 f"{result.returncode}; the check rewrites `.hash` files under `.lake`, which must be writable"
-                f"\n{detail}"
+                f"\n{_first_lines(detail)}"
             ]
         )
 
 
 STALE_BUILD = "Lean build artifacts are stale; run `lake build "
 _LAKE_SAID = 200
+# A freshness check over thousands of modules can fail with a line for each.
+_LAKE_LINES = 20
+
+
+def _first_lines(detail: str) -> str:
+    """Lake's first lines, with a count of the rest."""
+
+    lines = detail.splitlines()
+    if len(lines) <= _LAKE_LINES:
+        return detail
+    return "\n".join([*lines[:_LAKE_LINES], f"({len(lines) - _LAKE_LINES} more lines from Lake)"])
 
 
 def stale_build_said(error: SkeletonError) -> str | None:

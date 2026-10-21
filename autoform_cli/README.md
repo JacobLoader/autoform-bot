@@ -898,7 +898,8 @@ records. The probe imports project modules, so run it only in a trusted checkout
 or sandbox. It imports every root library, so a missing or stale build exits 2
 with the `lake build` command for those libraries and the first module Lake
 found unbuilt, as `work import-impact` does. Freshness is Lake's rehash of this
-checkout's `.lake`: a build made in another clone or worktree does not count.
+checkout's `.lake` against this checkout's sources, so a build in another clone
+or worktree does not make this one fresh.
 It compares elaborated types and values; changes to notation,
 attributes, instance priority, or unreported generated declarations still
 require human review.

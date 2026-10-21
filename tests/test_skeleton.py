@@ -430,6 +430,26 @@ def test_probe_reports_a_failed_freshness_check_apart_from_stale_artifacts(
     assert "permission denied" in str(refused.value)
 
 
+def test_a_failed_freshness_check_keeps_only_the_start_of_lake_output(
+    tmp_path: Path, monkeypatch, probe: str
+) -> None:
+    lake = "\n".join(f"error: .lake/build/lib/lean/Skel/M{number}.hash: permission denied" for number in range(5000))
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr=lake)
+
+    monkeypatch.setattr("autoform_cli.skeleton._run_bounded_command", fake_run)
+
+    with pytest.raises(SkeletonError) as refused:
+        run_probe(probe, tmp_path)
+
+    [message] = refused.value.issues
+    lines = message.splitlines()
+    assert lines[1] == "error: .lake/build/lib/lean/Skel/M0.hash: permission denied"
+    assert lines[-1] == "(4980 more lines from Lake)"
+    assert len(lines) == 22
+
+
 def test_probe_semantic_schema_matches_the_python_reader() -> None:
     helper = _render_probe_helper()
 

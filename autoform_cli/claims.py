@@ -171,6 +171,19 @@ def _validate_keys(keys: Sequence[str]) -> tuple[str, ...]:
     return batch
 
 
+def _claims_by_key(refs: Mapping[str, str], namespace: str) -> dict[str, str]:
+    """Return the object ID of every ref under ``namespace`` whose rest is a valid claim key, by key."""
+    claims: dict[str, str] = {}
+    for ref, oid in refs.items():
+        key = ref[len(namespace) :]
+        try:
+            _validate_key(key)
+        except ValueError:
+            continue
+        claims[key] = oid
+    return claims
+
+
 def _rejected_keys(detail: str, keys_by_ref: Mapping[str, str], markers: Sequence[str]) -> tuple[str, ...]:
     """Return the keys a refused push reports as stale or contended, in push order."""
     refs = set(_LOCK_FAILURE_RE.findall(detail))
@@ -728,7 +741,7 @@ class ClaimBoard:
         """
         self._ensure_scratch()
         namespace = f"{_LIST_REF_PREFIX}{uuid.uuid4().hex}/"
-        listed: dict[str, str] = {}
+        refs: dict[str, str] | None = None
         try:
             for attempt in range(_LIST_FETCH_ATTEMPTS):
                 fetch = self._git(
@@ -739,28 +752,34 @@ class ClaimBoard:
                     break
                 if _MOVED_WANT not in fetch.stderr or attempt + 1 == _LIST_FETCH_ATTEMPTS:
                     raise ClaimTransportError(f"cannot fetch the claim board: {fetch.stderr.strip()[:300]}")
-            listed = self._fetched_claims(namespace)
-            return self._read_listed(listed)
+            refs = self._refs_in(namespace)
+            return self._read_listed(_claims_by_key(refs, namespace))
         finally:
-            if listed:
-                deletions = "".join(f"delete {namespace}{key}\n" for key in listed)
-                self._git(["update-ref", "--stdin"], input_text=deletions)
+            self._delete_refs(namespace, refs)
 
-    def _fetched_claims(self, namespace: str) -> dict[str, str]:
-        """Return the object ID of every validly named claim ref fetched into ``namespace``, by key."""
+    def _refs_in(self, namespace: str) -> dict[str, str]:
+        """Return the object ID of every ref under ``namespace``, by ref name."""
         proc = self._git(["for-each-ref", "--format=%(objectname)%09%(refname)", namespace])
-        fetched: dict[str, str] = {}
+        refs: dict[str, str] = {}
         for line in proc.stdout.splitlines():
             oid, separator, ref = line.partition("\t")
-            if not separator or not ref.startswith(namespace):
-                continue
-            key = ref[len(namespace) :]
-            try:
-                _validate_key(key)
-            except ValueError:
-                continue
-            fetched[key] = oid
-        return fetched
+            if separator and ref.startswith(namespace):
+                refs[ref] = oid
+        return refs
+
+    def _delete_refs(self, namespace: str, refs: Mapping[str, str] | None) -> None:
+        """Delete a listing's private refs, reading them again if the listing never did.
+
+        A ref left behind only keeps its objects in the scratch, so a failure
+        here never replaces the listing's own result or error.
+        """
+        try:
+            if refs is None:
+                refs = self._refs_in(namespace)
+            if refs:
+                self._git(["update-ref", "--stdin"], input_text="".join(f"delete {ref}\n" for ref in refs))
+        except ClaimTransportError:
+            pass
 
     def _read_commits(self, oids: Sequence[str]) -> dict[str, bytes | None]:
         """Read every object with one ``cat-file --batch``: its raw commit, or None if missing or not a commit.

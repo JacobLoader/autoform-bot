@@ -690,6 +690,39 @@ def test_list_runs_as_many_git_commands_for_many_claims_as_for_one(
     )
 
 
+def test_list_leaves_no_refs_behind_for_a_claim_ref_with_an_invalid_key(tmp_path: Path, board_repo: Path) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire("a", ttl=600)
+    oid = _refs(board_repo)[claims.CLAIM_REF_PREFIX + "a"]
+    _git("update-ref", claims.CLAIM_REF_PREFIX + "not+a+key", oid, cwd=board_repo)
+    reader = _board(tmp_path, board_repo, "worker-b")
+
+    assert [lease["_key"] for lease in reader.list()] == ["a"]
+    assert reader._git(["for-each-ref", "refs/"]).stdout == ""
+
+
+def test_list_leaves_no_refs_behind_when_reading_them_fails(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire("a", ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+    failed: list[bool] = []
+
+    def first_listing_fails(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "for-each-ref" and not failed:
+            failed.append(True)
+            raise claims.ClaimTransportError("simulated for-each-ref failure")
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(reader, "_git", first_listing_fails)
+    with pytest.raises(claims.ClaimTransportError, match="simulated for-each-ref failure"):
+        reader.list()
+
+    assert git(["for-each-ref", "refs/"]).stdout == ""
+
+
 def test_list_ignores_claim_refs_another_process_writes_into_the_shared_scratch(
     tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
