@@ -111,6 +111,25 @@ mathematical areas such as `Foundations` or `Geometry & Topology`, never
 repository or workflow buckets such as `MathlibExt` or `catalog-01`. Autoform
 does not guess areas from paths, imports, or titles.
 
+Mathematical topics and repository organization are different hierarchies.
+An optional container-only `navigation` role makes the difference explicit:
+
+- `topic` (the default): a mathematical subject or coherent group of results.
+- `collection`: a library or other organizational collection. Its parent's
+  overview shows the collection's children in its place.
+- `transparent`: a generated pagination or range container. It is flattened
+  the same way and left out of the outline and ancestor breadcrumbs.
+- `source`: a book or other source corpus, shown as itself.
+- `module`: a container that mirrors one Lean source module and holds its
+  declarations. It is shown like a topic, and its size is the module's (see
+  [Structure](#structure)).
+
+An overview, a page with a collection, pagination or source child, draws what
+remains after collections and pagination are replaced by their contents.
+These roles never change article identity, containment, proof readiness, or
+dependency edges; a relation that mentions a collection itself stays attached
+to the collection.
+
 For a taxonomy maintained separately from article files, `blueprint/atlas.json`
 may assign the same areas without moving pages:
 
@@ -192,6 +211,7 @@ An article asserts only facts a human or agent verified:
 | Key | Meaning |
 | --- | --- |
 | `area: Geometry & Topology` | Authored mathematical region for atlas grouping. CI's `autoform check` at an older `AUTOFORM_REF` rejects the key, so move the pin first, or assign the area in `blueprint/atlas.json`, which older refs ignore. |
+| `navigation: collection` | Presentation-only container role: `topic`, `collection`, `transparent`, `source`, or `module` (see above). CI's `autoform check` at an older `AUTOFORM_REF` rejects the key, so move the pin first. |
 | `catalog: module` | A non-dispatchable leaf cataloging one existing Lean module. Its `lean:` lists the module's public keyword-declared names, and it links its declaration ledger under `blueprint/sources/` from `## Sources`; cannot be combined with `declaration` or the `mathlib*` keys. CI's `autoform check` at an older `AUTOFORM_REF` rejects the key, so move the pin first. |
 | `statement: formalized` | The Lean statement exists and compiles. Requires `lean:`. |
 | `statement: retracted` | A revision retracted the statement while `lean:` still names the old declaration, which stays in the build until Formalize restates the article and records `statement: formalized` in its place. Requires `lean:`; invalid with `proof: formalized` or `mathlib: true`. CI's `autoform check` at an older `AUTOFORM_REF` rejects the marker, so move the pin first; until then, retract by removing `statement` and `proof` and keeping `lean:`. |
@@ -1635,6 +1655,8 @@ example uses) are a filing convention inside a chapter and are not checked.
 children, which is a table of contents rather than a chapter. A roadmap root
 whose direct children are all chapter pages is a repository-wide subject index
 and may hold 64; one root-level leaf returns the root to the 24-article limit.
+A `navigation: module` page lists one Lean module's declarations, so it may
+hold as many as the dependency explorer draws as a map, 120.
 Both defects leave a valid graph, which is why they need their own checks
 rather than falling out of `autoform check`.
 

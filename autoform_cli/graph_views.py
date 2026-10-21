@@ -46,6 +46,8 @@ class ViewNode:
     lean: str | None = None
     area: str | None = None
     internal_dependency_count: int = 0
+    navigation: str | None = None
+    examples: tuple[str, ...] = ()
 
     @property
     def item_count(self) -> int:
@@ -76,6 +78,8 @@ class GraphView:
     edges: tuple[ViewEdge, ...]
     scope: str | None = None
     summary: str | None = None
+    overview: bool = False
+    total_count: int | None = None
 
     @property
     def member_ids(self) -> tuple[str, ...]:
@@ -300,10 +304,16 @@ def _scope_view(
     top_scope: Callable[[str], str],
     include_external: bool,
 ) -> GraphView:
-    direct = children[scope]
-    members = {child: _leaf_descendants(children, child) for child in direct}
+    # A library or pagination range is organization, not a mathematical
+    # concept. Authored roles let every producer expose topics without a
+    # renderer guessing from directory names. Source books remain available
+    # as provenance, separate from the mathematical overview.
+    direct, collections, owners = _navigation_children(graph, scope, children)
+    overview = any(graph.nodes[child].navigation in {"collection", "source", "transparent"} for child in children[scope])
+    entries = (*direct, *collections)
+    members = {child: _leaf_descendants(children, child) for child in entries}
     nodes: list[ViewNode] = []
-    for child in direct:
+    for child in entries:
         article = graph.nodes[child]
         if child in children:
             nodes.append(
@@ -316,6 +326,7 @@ def _scope_view(
                     summary=article.summary,
                     area=article.area,
                     internal_dependency_count=internal_counts.get(child, 0),
+                    navigation=article.navigation,
                 )
             )
         else:
@@ -332,6 +343,8 @@ def _scope_view(
         return _scope_node_id(child) if child in children else child
 
     for source, target, proof_only, source_child, target_child in relations:
+        source_child = owners.get(source) if source_child is not None else None
+        target_child = owners.get(target) if target_child is not None else None
         if source_child == target_child:  # both outside the scope, or both under one child
             continue
         if (source_child is None or target_child is None) and not include_external:
@@ -356,7 +369,48 @@ def _scope_view(
         edges=_edges(edge_counts),
         scope=scope,
         summary=graph.nodes[scope].summary,
+        overview=overview,
+        total_count=sum(count for _, count in _status_counts(graph, _leaf_descendants(children, scope), statuses)),
     )
+
+
+def _navigation_children(
+    graph: Graph, scope: str, children: dict[str, tuple[str, ...]]
+) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, str]]:
+    """Flatten only explicitly transparent collections, never mathematical scopes.
+
+    Every original endpoint keeps an owner. Edges mentioning a collection
+    itself remain attached to that collection, rather than being attributed
+    to a mathematical child without evidence.
+    """
+    visible: list[str] = []
+    collections: list[str] = []
+    owners: dict[str, str] = {}
+
+    def own_subtree(node_id: str, owner: str) -> None:
+        pending = [node_id]
+        while pending:
+            current = pending.pop()
+            owners[current] = owner
+            pending.extend(reversed(children.get(current, ())))
+
+    # _containment_children has checked that this is a forest. Explicit stacks
+    # keep both role flattening and ownership finite beyond Python's call-depth
+    # limit, while reversed pushes preserve the authored sibling order.
+    pending: list[tuple[str, str | None]] = [(child, None) for child in reversed(children[scope])]
+    while pending:
+        node_id, collection = pending.pop()
+        if graph.nodes[node_id].navigation in {"collection", "transparent"} and node_id in children:
+            owner = collection or node_id
+            if collection is None:
+                collections.append(node_id)
+            owners[node_id] = owner
+            pending.extend((child, owner) for child in reversed(children[node_id]))
+        else:
+            visible.append(node_id)
+            own_subtree(node_id, node_id)
+
+    return tuple(visible), tuple(collections), owners
 
 
 def full_view(graph: Graph, statuses: dict[str, NodeStatus]) -> GraphView:
@@ -562,6 +616,7 @@ def _scope_node(
     summary: str | None = None,
     area: str | None = None,
     internal_dependency_count: int = 0,
+    navigation: str | None = None,
 ) -> ViewNode:
     """Summarize a container by the formalization targets beneath it.
 
@@ -584,6 +639,8 @@ def _scope_node(
         summary=summary,
         area=area,
         internal_dependency_count=internal_dependency_count,
+        navigation=navigation,
+        examples=tuple(graph.nodes[node_id].title for node_id in targets[:3]),
     )
 
 
@@ -602,6 +659,7 @@ def container_nodes(graph: Graph, statuses: dict[str, NodeStatus]) -> dict[str, 
             summary=graph.nodes[node_id].summary,
             area=graph.nodes[node_id].area,
             internal_dependency_count=internal_counts.get(node_id, 0),
+            navigation=graph.nodes[node_id].navigation,
         )
         for node_id in children
         if node_id in graph.nodes
