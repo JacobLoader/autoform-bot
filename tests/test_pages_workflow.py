@@ -20,6 +20,7 @@ from autoform_cli.scaffold import _destination
 _ROOT = Path(__file__).resolve().parents[1]
 _TEMPLATES = _ROOT / "autoform_cli/templates/github/workflows"
 _VERIFY_PATH = ".github/workflows/autoform-verify.yml"
+_MOVES_HEAD = re.compile(r"\bgit\s+(checkout|switch|reset|pull|fetch)\b")
 _TOKEN = re.compile(r"\s*(?:(?P<string>'(?:[^']|'')*')|(?P<op>==|!=|&&|\|\||!|\(|\)|,)|(?P<name>[A-Za-z_][\w.-]*))")
 
 
@@ -149,9 +150,12 @@ def test_only_a_verified_push_to_main_deploys(pages: dict, event: str) -> None:
     build = pages["jobs"]["build"]
     builds = bool(_evaluate(build["if"], context))
     upload = next(step for step in build["steps"] if step["name"] == "Upload Pages artifact")
-    deploys = builds and bool(_evaluate(upload["if"], context)) and bool(_evaluate(pages["jobs"]["deploy"]["if"], context))
+    uploads = bool(_evaluate(upload["if"], context))
+    deploy_runs = bool(_evaluate(pages["jobs"]["deploy"]["if"], context))
 
-    assert (builds, deploys) == (event in _BUILDS, event in _DEPLOYS)
+    assert (builds, builds and uploads and deploy_runs) == (event in _BUILDS, event in _DEPLOYS)
+    # Neither later gate leans on the other: each turns away every run that is not a verify run.
+    assert uploads == deploy_runs == (_EVENTS[event]["event_name"] == "workflow_run")
 
 
 @pytest.mark.parametrize("event", _EVENTS)
@@ -183,9 +187,18 @@ def test_the_deploy_group_and_the_build_share_one_condition(pages: dict) -> None
 def test_a_deploy_renders_and_checks_out_exactly_the_verified_commit(pages: dict) -> None:
     """A workflow_run's GITHUB_SHA is main's newest commit, not the verified
     one, so a deploy checks out the run's head_sha, fails unless that is what
-    it checked out, and names it to render for the site's code links."""
+    it checked out, and names it to render for the site's code links. Both
+    checkouts come before that check, and no step's script moves HEAD."""
 
-    steps = {step["name"]: step for step in pages["jobs"]["build"]["steps"]}
+    in_order = pages["jobs"]["build"]["steps"]
+    names = [step["name"] for step in in_order]
+    checkouts = [at for at, step in enumerate(in_order) if step.get("uses", "").startswith("actions/checkout@")]
+    moves_head = [step["name"] for step in in_order if _MOVES_HEAD.search(step.get("run", ""))]
+    confirm_at = names.index("Confirm the checked-out commit is the verified one")
+    assert len(checkouts) == 2 and max(checkouts) < confirm_at < names.index("Render the blueprint")
+    assert not moves_head
+
+    steps = dict(zip(names, in_order))
     deploy = {"github": _EVENTS["verified push to main"]}
     head_sha = deploy["github"]["event"]["workflow_run"]["head_sha"]
 
