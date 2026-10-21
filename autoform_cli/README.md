@@ -852,6 +852,83 @@ does not survive a change of meaning that leaves the packet text unchanged. All
 three are advisory provenance checksums when candidate code controls the
 checkout.
 
+A read-back is an independent agent's mathematical-English account of one
+declaration packet. The coordinator gives that agent only an opaque packet and
+the read-back instructions, then records the returned testimony.
+Cards live at `blueprint/readbacks/<article_id>/<encoded-declaration>.md`;
+the durable `article_id` keeps testimony attached when an article moves, while
+the encoded filename avoids platform-specific Lean-name collisions, and before
+its first dot never spells a name Windows keeps for a device, as `Aux.lemma`
+would. Each versioned card contains the exact packet in a Lean block, its
+evidence hash under `packet:`, the declaration's statement hash under
+`statement:`, which a proof edit leaves unchanged, a model label, and the
+testimony in a text block. A card testifies about its packet: the statement
+hash is kept as a record only, since it covers the Lean version, which a bump
+can change while the packet stays the same.
+The loader rejects missing or unknown fields, altered packets, identity
+mismatches, cards not in canonical form, and malformed or empty testimony.
+`model:` remains a label supplied by the coordinator, not authenticated
+provenance.
+
+Testimony is plain text with TeX formulas between dollar signs. GitHub and a
+Markdown viewer of the vault show it as typed, in the card's text block, and
+render copies nothing under `readbacks/` to the site. Its formulas are the
+pieces `readback.split_testimony` finds, so `\$` is a dollar sign that opens
+nothing. The rules are in the read-back guide
+`skills/human-review/references/readback.md`, and `readback.py` applies them.
+Testimony must show a reader everything it says, so invisible and reordering
+characters, and combining marks stacked over the lines around or with nothing
+to sit on, are refused by name. A write also refuses code points its Python's
+Unicode data leaves unassigned; loading does not, so a filed card loads the
+same under every Python. Testimony must show at least one letter or digit, and
+fit in 32 KiB and 500 lines, so every check is a linear scan of a bounded text.
+A formula never makes testimony invalid. `readback.formula_problems` says
+whether one can be typeset: it must use TeX from a flat allowlist, the notation
+statements need out of MathJax 3.2.2's base and ams packages, with no spacing,
+phantom, colour, box, size, or macro command, and hold nothing that shows as a
+blank, such as a run of spaces in `\text`, an empty `\frac` or script, or two
+empty cells one after the other. `readback.typesetting_warnings` names each
+formula that cannot be, which a site shows as typed.
+
+Cards are read without following links, so a linked card or directory is
+skipped. A card file holds at most 4 MiB, no file is read more than one byte
+past that, and a card's frontmatter is read from its first 32 lines. A file at
+a card path that is larger, is not UTF-8, or cannot be read, and a directory or
+FIFO there, is reported as an invalid card, not skipped, even when the
+declaration's name is too long for the filename to spell. A card is attributed
+to the declaration its path names, so one that records another declaration, or
+whose `.md` is in another case, is reported as that declaration's invalid card.
+A directory under `readbacks/` that cannot be listed stops loading with an
+error naming it. Writes name a card by the hash of its bytes, so a card that is
+not UTF-8 is replaced like any other; one over the limit must be removed by
+hand.
+
+A write refuses a link on the way to the card directory and takes the
+directory's `flock`, so Autoform's writes to one directory happen one at a
+time; a write that cannot get the lock within ten seconds gives up, and a
+writer that dies releases it. An optional expected-card hash makes updates
+compare-and-swap: different content replaces a card only when it names that
+card's hash, and a card that names a hash conflicts with a missing card.
+Filing content identical to the current card writes nothing in its directory,
+so it succeeds even in a read-only one. Otherwise the write stages the card in a
+`.autoform-readback-*.tmp` file beside it, flushes it, and renames it over the
+card in one step, so the card's name holds either the old complete card
+(nothing, for a first card) or the new one. A failure or interrupt before the
+rename removes the staging file; a crash, SIGTERM, or SIGKILL can leave it.
+The loader never reads it as a card, and the blueprint `.gitignore` that
+`autoform init` writes for a new project ignores it. The card committed to Git
+is the durable copy: a crash just after a write can lose it, and filing it
+again restores it.
+The contract covers Autoform's writers only: an editor's save, or a directory
+moved, during a write is not detected, so edit cards while no write is
+running. A write also gives `readbacks/` a `.gitattributes` of `* -text` if
+it has none, so Git leaves card line ends alone: Git for Windows checks text out
+with CRLF line ends by default, and a card with them is invalid. Writing needs
+`flock`, which Linux and macOS provide; elsewhere, including Windows, a write
+is refused before anything is created, and cards can still be loaded. Git for
+Windows checks out a path over 260 characters, which a long declaration name
+makes, only with `core.longpaths` set.
+
 `--packets DIR` writes one comment-stripped packet per skeleton, with a
 manifest mapping packets to articles and hashes. The destination must be empty
 or carry Autoform's packet manifest; each run replaces the complete managed
