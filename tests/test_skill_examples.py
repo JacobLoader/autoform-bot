@@ -71,14 +71,16 @@ def test_the_example_uses_nothing_newer_than_its_autoform_pin(repo_root: Path) -
     """The example's CI runs its pinned AUTOFORM_REF, 0288506b, which predates catalogs.
 
     That check rejects `catalog:` and `area:` and that render rejects
-    INVENTORIED, while it ignores atlas.json, and its render draws Mermaid maps.
-    Move the pin, here and in the workflow equivalence test, before relaxing this.
+    INVENTORIED, while it ignores atlas.json, and its render draws Mermaid maps
+    through the global Mermaid script, so mkdocs.yml keeps that line. Move the
+    pin, here and in the workflow equivalence test, before relaxing this.
     """
     example = repo_root / _EXAMPLE
     for page in (example / "blueprint/roadmap").rglob("*.md"):
         text = page.read_text(encoding="utf-8")
         frontmatter = text[4:].split("\n---", 1)[0] if text.startswith("---\n") else ""
         assert not re.search(r"^(?:area|catalog):", frontmatter, re.MULTILINE), page
+    assert "mermaid@11.4.1/dist/mermaid.min.js" in (example / "mkdocs.yml").read_text(encoding="utf-8")
     assert "INVENTORIED" not in (example / "blueprint/coverage/README.md").read_text(encoding="utf-8")
     assert "dependency maps of the project and each chapter" in " ".join(
         (example / "README.md").read_text(encoding="utf-8").split()
@@ -722,8 +724,12 @@ def test_the_example_site_config_matches_what_setup_would_write(repo_root) -> No
     writes, or the example stops demonstrating the product. It already drifted
     once: the template moved to Plus Jakarta Sans and the example kept
     requesting Merriweather, so the built demo showed the old typeface.
+
+    The example also keeps the Mermaid script its pinned render needs, which
+    the template no longer lists because the site script loads Mermaid itself.
     """
     substituted = {"site_name", "repo_url"}
+    pinned_mermaid = "  - https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"
 
     def significant(text: str) -> list[str]:
         return [
@@ -739,7 +745,8 @@ def test_the_example_site_config_matches_what_setup_would_write(repo_root) -> No
         repo_root / "skills/setup/assets/cabannes-thesis-project/mkdocs.yml"
     ).read_text(encoding="utf-8")
 
-    assert significant(example) == significant(template)
+    assert pinned_mermaid not in template.splitlines()
+    assert [line for line in significant(example) if line != pinned_mermaid] == significant(template)
 
 
 def _tracked_markdown(repo_root: Path) -> list[Path]:
@@ -914,8 +921,8 @@ def test_repl_import_allowlist_is_documented(repo_root: Path) -> None:
 _SAFETY_RULES = [
     ("skills/setup/SKILL.md", "Creating a remote, pushing, or enabling Pages are separate outward-facing actions; "
      "perform them only when the user requests them."),
-    ("skills/roadmap/SKILL.md", "Commit the vault and refreshed graph only after this final validation; "
-     "pushing is outward-facing and requires a user request."),
+    ("skills/roadmap/SKILL.md",
+     "only after this final validation; pushing is outward-facing and requires a user request."),
     ("skills/formalize/references/claims.md", "Claims write refs to that board's remote, which is outward-facing: "
      "make sure the request covers it before the first claim."),
     ("skills/setup/references/zulip.md", "Send, edit, or otherwise mutate Zulip only after explicit user approval."),
