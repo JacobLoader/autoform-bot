@@ -242,10 +242,11 @@ prerequisite, a catalog linked under `## Depends on` or `## Proof depends on`
 holds its dependents back until its whole-module assertion is recorded, so a
 dependent that needs one result links the declaration article that expounds it.
 
-When the project's CI pins an older `AUTOFORM_REF`, it rejects what that ref
-predates, such as `catalog:`, `area:`, `INVENTORIED`, `statement: retracted`,
-or a `rolled-up dependency cycle`. Move the pin, or report it, before relying
-on one. Until it moves, leave out the edge that closes such a cycle, and
+When the project's CI pins an older `AUTOFORM_REF`, it rejects the keys and
+markers that ref predates, such as `catalog:`, `area:`, `INVENTORIED` and
+`statement: retracted`, and still rejects a rolled-up dependency cycle that
+newer refs allow. Move the pin, or report it, before relying on one. Until it
+moves, leave out the edge that closes such a cycle, and
 retract by removing `statement` and `proof` and keeping `lean:`; report the old
 pin and each change it held back.
 

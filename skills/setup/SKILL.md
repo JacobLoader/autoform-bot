@@ -88,7 +88,8 @@ project, as the
 shows: report the entry's `git` and pinned commit when it lists the library as
 usable, otherwise its reason, without claiming the library works. If a fetch
 fails, report the error and that the project builds once the fetch succeeds,
-and give the retry: resume validation from the failed step. Never run a bare `lake update` in such a project.
+and give the retry: resume validation from the failed step. Never run a bare
+`lake update` in such a project.
 
 For a library outside the catalog, create the project on the Lean toolchain and
 Mathlib `rev` that the library's `lean-toolchain` and `lake-manifest.json` lock

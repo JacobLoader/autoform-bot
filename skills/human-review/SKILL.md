@@ -64,10 +64,11 @@ records the decision and retracts the affected article so Formalize takes it up
 under the [revision contract](../../autoform_cli/README.md#revision-contract),
 and autonomous rubric scoring to Agent Review.
 
-Treat the landing page's `Scoped roadmap` percentage as completion among
-formalizable leaf targets only, as the
+Treat the landing page's `Scoped roadmap` percentage as the share of
+formalizable leaf targets that are fully proved, as the
 [derived status](../../autoform_cli/README.md#assertions-and-derived-status)
-defines it, never as whole-source completion. A
+defines it; catalogs have their own neutral metric. Never read it as
+whole-source completion. A
 target marked `mathlib: true` follows the authored status contract; the marker
 is an author assertion, not audit verification that the declaration is in
 Mathlib. Read the
