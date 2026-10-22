@@ -1334,13 +1334,19 @@ earlier site.
 configuration, on every build; `mkdocs.yml` lists it before the MathJax
 bundle, as `autoform init` writes both. It expects MathJax 3.2.2, loads it
 itself when no bundle is listed, and leaves formulas as typed under any other
-release. The project's macros go in `blueprint/tex-macros.json`, written as
-MathJax's `tex.macros` is: a name maps to a body, `[body, arguments]`, or
+release. Formulas get the TeX packages base, ams, noundefined, boldsymbol,
+mathtools, braket, mhchem, and amscd (`CD` diagrams); the other packages
+MathJax would load on demand stay off: cancel, bbox, enclose, color, html,
+unicode, action, newcommand, extpfeil, verb, and bussproofs. The project's
+macros go in `blueprint/tex-macros.json`, written as MathJax's `tex.macros`
+is: a name maps to a body, `[body, arguments]`, or
 `[body, arguments, default]`. A formula cannot define, color, link, or label:
-`\newcommand`, `\def`, `\DeclareMathOperator`, `\label`, `\color`, `\href`,
-mathtools' paired-delimiter and tag-form commands, and the other commands of
-packages the site leaves off show in red and do nothing, however a formula or a macro reaches them. A macro may not take one of
-their names; `check` and `render` warn about a macro they leave out. Only the
+`\newcommand`, `\def`, `\DeclareMathOperator`, `\label`, `\mmlToken`,
+`\color`, `\href`, mathtools' paired-delimiter and tag-form commands and
+`\mathtoolsset`, and the other commands of packages the site leaves off show
+in red and do nothing, however a formula or a macro reaches them. A macro may
+not take one of their names; `check` and `render` warn about a macro they
+leave out. Only the
 formulas the site's Markdown marks, such as `$...$` or `$$...$$` in an
 article, are typeset; a statement's title in its heading, a `discussion:`
 value, the home page's lead, the navigation, and a table of contents show TeX
