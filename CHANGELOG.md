@@ -14,6 +14,32 @@ date when the release is tagged.
 What has landed since 0.5.0, across 236 merged pull requests, grouped by
 theme. Each group names the pull requests to read for detail.
 
+### Upgrading from 0.5.0
+
+- **Site.** Render refuses to replace the `autoform-publication/v1` site 0.5.0
+  wrote, and the dashboard reports it as stale: delete that output directory,
+  such as a local `site-src`, once by hand (#165, #90).
+- **Check.** A repository that passed 0.5.0's `check` can fail this one's; see
+  **Checks that fail** below.
+- **TeX.** Formulas can no longer define notation: `\newcommand`, `\def`,
+  `\DeclareMathOperator`, `\label`, `\color`, `\cancel`, `\href` and the like
+  show in red, and `check` warns about a formula that defines a command. Put
+  the project's macros in `blueprint/tex-macros.json`; render replaces an
+  edited `blueprint/javascripts/mathjax.js`, with a warning (#215).
+- **Debrief.** Setup, Roadmap and Formalize now debrief their lead agent
+  before the final report, on by default; `AUTOFORM_DEBRIEF=0` turns it off.
+  Subagent debriefs run only with `AUTOFORM_SUBAGENT_DEBRIEF=1` (#195).
+- **REPL.** `run_lean_code` starts a fresh Lean process for each call, so
+  nothing carries over between calls and each pays for its imports. The
+  default `LEAN_REPL_CMD` is now `lake exe @repl/repl`, which finds the REPL
+  only through a require named `repl` (#105).
+- **CI.** A project scaffolded by 0.5.0 keeps its workflows when it moves
+  `AUTOFORM_REF`, since `init` writes only missing files. To deploy Pages only
+  from verified commits, delete `.github/workflows/blueprint-pages.yml` and
+  rerun `autoform init` (#399). For the new CI audit, delete
+  `.github/workflows/autoform-verify.yml` and `.github/autoform_audit.py`
+  together before that run.
+
 ### Added
 
 - **Formalization frontier.** A Markdown roadmap now schedules the work:
@@ -23,6 +49,8 @@ theme. Each group names the pull requests to read for detail.
   reports unused statement dependencies (#150), works beside Lean files whose
   names are not identifiers (#182), and on a stale build names the root
   libraries to build instead of printing Lake's whole output (#427).
+- **Formalize skill.** New since 0.5.0: it proves a Markdown roadmap's ready
+  leaves in Lean and records verified progress in the roadmap (#92).
 - **Skeletons.** `autoform skeleton` extracts what a reader must trust for each
   formalized statement, from elaborated terms, one Lean probe per root module,
   run in parallel (#12, #213, #214).
@@ -32,24 +60,31 @@ theme. Each group names the pull requests to read for detail.
   the index a library publishes, ATLAS among them; `autoform search --library`
   searches that index, and the skills reuse its results: Roadmap searches each
   intermediate result a proof uses, and records a reused library declaration
-  in the implementation note, leaving `lean:` unset (#204, #278, #311, #343,
-  #366, #373, #379, #400, #408). `autoform library index` runs its probe on
-  Lean v4.34.1 and v4.35.0 (#440).
+  in the implementation note, leaving `lean:` unset (#204, #311, #343, #366,
+  #373, #408). `autoform library index` runs its probe on Lean v4.34.1 and
+  v4.35.0 (#440). `check --lean-root` warns about a library declaration whose
+  docstring cites a paper that unproved articles cite, when nothing in the
+  project names it (#379, #400).
 - **Dependency explorer.** One explorer replaces the site's generated Mermaid
   dependency maps, the full theorem DAG page among them. It runs on the landing
   page and on every project, chapter and scope page. It opens on chapter cards
   and drills through authored scopes, with search, status filters, a details
-  drawer and addressable `#node=` focus. Old `/dependencies/full.html#node=`
-  links still resolve. Authored `area:` values or `blueprint/atlas.json` group
-  topic cards into regions, and overview containers can set a `navigation:`
-  role. Authored Mermaid diagrams still render (#90). A design pass gave it one
-  type scale and quieter chrome (#411).
+  drawer and addressable `#node=` focus. 0.5.0's per-statement
+  `dependencies/nodes/<id>.html` pages are gone, and links to them no longer
+  resolve. A statement's dependency link is now `<scope>.html#node=<id>`, and a
+  `dependencies/full.html#node=<id>` link redirects to the smallest scope
+  holding the node. Authored `area:` values or `blueprint/atlas.json` group
+  topic cards into regions, and any container can set a `navigation:` role.
+  Authored Mermaid diagrams still render (#90). A design pass gave it one type
+  scale and quieter chrome (#411).
 - **Module catalogs.** A `catalog: module` leaf inventories an existing Lean
   module. It lists the module's public names in `lean:` and links a
   declaration ledger under `blueprint/sources/`. It is never dispatched, and it
   counts in its own inventory metric rather than in the roadmap's completion.
-  `audit` reports catalog and coverage-role problems, and `audit --json` gains
-  a `warnings` list that leaves `clean` and the exit status alone (#90).
+  Coverage gains `INVENTORIED`, the terminal disposition for a row that links
+  module catalogs. `audit` reports catalog and coverage-role problems, and
+  `audit --json` gains a `warnings` list that leaves `clean` and the exit
+  status alone (#90).
 - **Site check.** `autoform site check SITE_DIR [--source DOCS_DIR]` reads a
   built site and warns about dead internal links and assets, anchors that
   match no id and malformed links; the explorer's `#node=` routes are not
@@ -57,8 +92,10 @@ theme. Each group names the pull requests to read for detail.
   cards the build dropped. It exits 0 whatever it finds (#401, #438).
 - **Projects.** `autoform project new`, `inspect` and `versions` create and
   inspect Lean projects from a pinned release catalog (#14, #96, #211).
-- **Article ids.** `autoform migrate article-ids --write` writes each planned
-  id into its article's frontmatter (#191).
+  `project new --library atlas` also requires a shared library at a pinned
+  commit, and Setup offers it for a new project (#311).
+- **Article ids.** `autoform migrate article-ids BLUEPRINT --write` writes each
+  planned id into its article's frontmatter (#191).
 - **Dashboard.** `autoform dashboard` serves the built site on a loopback port,
   with a read-only overlay of current claims (#91).
 - **Implementation notes.** Each article's implementation handoff is a hidden
@@ -66,17 +103,21 @@ theme. Each group names the pull requests to read for detail.
   frontmatter and informal mathematics. Every command that loads the graph
   rejects a malformed, empty, symlinked or orphaned note, and `audit` reports
   one left behind after its article is proved (#172, #296).
-- **Unpublished folders.** A folder's `README.md` can say `published: false`:
-  `check` and `audit` still validate the folder, and render leaves it out
-  (#381).
+- **Unpublished folders.** The `README.md` of a folder below `roadmap/` can
+  say `published: false`: `check` and `audit` still validate the folder, and
+  render leaves it out. Elsewhere, as in `blueprint/sources/README.md`, the key
+  has no effect. A link from a published article into the folder fails
+  `check`, so remove those links, the parent's included, first (#381).
 - **CI audit.** The generated verify workflow checks `lean:` targets,
-  non-root axioms, a kernel replay and elaboration limits, without running
-  project code in its probe (#156, #190, #247, #264). It accepts a Batteries
-  wanted target (`theorem_wanted` and its kin) whose article is not yet proved
+  non-root axioms and a kernel replay, without running project code in its
+  probe (#156, #190, #247). `check --lean-root` and `audit` index Batteries'
+  wanted commands (`theorem_wanted` and its kin) as unproved (#278), and the
+  verify workflow accepts one as the target of an article not yet proved
   (#395).
 - **Roadmap audit report.** The generated Pages workflow runs `autoform audit`
-  after `check` and lists its findings in the step's log, without failing the
-  build or stopping a deploy (#437).
+  after `check` and lists its findings in the step's log, among them unbounded
+  and file-wide elaboration limits (#264), without failing the build or
+  stopping a deploy (#437).
 - **Statement status.** Open statements and conditional proofs (#138). Under
   `open_statements: allowed`, the skills state a cited open prerequisite as a
   `theorem` with a `sorry` proof, not with `theorem_wanted` (#398).
@@ -93,38 +134,50 @@ theme. Each group names the pull requests to read for detail.
 
 ### Changed
 
-- **Commands inform; they do not break a codebase.** A new check warns and
-  keeps the exit status instead of failing a repository that passed before
-  (#325, #335, #361), a rule AGENTS.md now states (#394).
+- **Commands inform; they do not break a codebase.** Since #325, a new check
+  that a repository could fail warns and keeps the exit status (#335, #361), a
+  rule AGENTS.md now states (#394). The rule is not retroactive and has
+  exceptions, which **Checks that fail** lists.
 - **Claims are optional.** A single Formalize run keeps its own workers apart,
-  and builds take no claim (#298, #324, #420). `claim acquire`, `renew` and
-  `release` take several targets, all or nothing (#135). A stale lock file in
-  the board is reported as one, not as a lost race (#291). `claim list` reads
-  the board with one fetch, so a large or busy board lists quickly, and it no
-  longer fails while peers renew (#427).
+  and builds take no claim (#298, #324). The README says how to run several
+  sessions on one project (#420). `claim acquire`, `renew` and `release` take
+  several targets, all or nothing (#135). A stale lock file in the board is
+  reported as one, not as a lost race (#291). `claim list` reads the board
+  with one fetch, so a large or busy board lists quickly, and it no longer
+  fails while peers renew (#427).
+- **Diagnostics.** `lean_diagnostic_messages` runs one `lake --no-build lean`
+  per call, so it reports unbuilt or stale imports instead of building them as
+  0.5.0 did (#283, #364).
 - **Publication.** Render publishes a site transactionally (#165), scales
   linearly (#289, #339), checks the site it replaces without reading it into
   memory (#365), and links files by the spelling Git committed (#301, #333).
   The generated Pages workflow deploys only the commit whose `autoform verify`
-  run passed on `main`; pull requests and manual runs still build the site
-  without deploying it (#399). The homepage metric counts progress within the
-  scoped roadmap from proof semantics, and a finished scope shows as complete
-  (#45, #196).
-- **Checks.** The graph loader rejects formalized work the Lean cannot back
-  (#158). `check` rejects Sources links that name no file (#287) or a hidden
-  path (#321), and container articles that set a declaration (#328); since
-  #361, hidden source notes and declaring containers pass with a warning.
-  `check` and `audit` now read the blueprint render publishes: hidden paths are
-  no part of it, and a dependency on a hidden page, a link that steps through a
-  hidden folder, or a link to a generated view fails (#380, #409). Only the
-  article graph must be acyclic: a cycle that appears only when articles
-  collapse into chapters or scopes passes, and views keep every authored
-  dependency (#358, #372). `work` and `search` resolve Sources links as
-  `check` does, and `audit` resolves the blueprint as the graph loader does
-  (#369). A Sources link with a scheme other than http(s), or a
-  `mathlib_file` that is not a portable relative path, passes `check` with a
-  warning, and the runtime projection leaves it out (#314, #325). `audit`
-  reports an unclosed code fence (#202).
+  run passed on `main` (#399). Pull requests build the site without deploying
+  it, as before, and now so do manual runs, which deployed in 0.5.0. The
+  homepage metric counts progress within the scoped roadmap from proof
+  semantics, and a finished scope shows as complete (#45, #196).
+- **Checks that fail.** Where 0.5.0 passed, these fail `check`, and so both
+  generated workflows once CI's `AUTOFORM_REF` moves:
+  - `proof: formalized` without `statement: formalized`, or either without a
+    `lean:` name (#158);
+  - a `## Sources` link that names no file (#287), a hidden path outside
+    `sources/` (#321), or a generated view such as `../structure.md` (#380);
+  - a dependency on a hidden page, or a dependency or Sources link that steps
+    through a hidden folder and back out (#380, #409);
+  - with `--lean-root`, which the Pages workflow passes, a name declared with a
+    universe binder (`def f.{u}`) in one file and plainly in another (#90).
+- **Checks.** `check` and `audit` now read the blueprint render publishes, so
+  hidden files and folders under `roadmap/` are no part of the roadmap (#380).
+  Only the article graph must be acyclic: a cycle that appears only when
+  articles collapse into chapters or scopes passes, and views keep every
+  authored dependency (#358, #372). `work` and `search` resolve Sources links
+  as `check` does, and `audit` resolves the blueprint as the graph loader does
+  (#369). A container article that sets a declaration, or a `## Sources` link
+  to a hidden note under `sources/`, passes `check` with a warning (#321, #328,
+  #361). So does a Sources link with a scheme other than http(s), or a
+  `mathlib_file` that is not a portable relative path, which the runtime
+  projection leaves out (#314, #325). `audit` reports an unclosed code fence
+  (#202).
 - **Vault dependency page.** `autoform-visualize` writes
   `blueprint/dependencies.md` as a Markdown summary of the explorer's project
   map instead of a Mermaid graph: statuses, one row per chapter with its
@@ -135,12 +188,13 @@ theme. Each group names the pull requests to read for detail.
 - **Skills.** Every skill that runs the CLI says how to launch it (#319). A
   direct Roadmap run finishes one complete planning pass (#44). Before a
   revision lands, Roadmap re-checks retraction on the branch Formalize works
-  from (#407).
+  from (#407). Formalize and Agent Review run Batteries' `unusedArguments`
+  linter on finished proofs (#352).
 
 ### Removed
 
-- `autoform unused-hypotheses`, in favor of Batteries' `unusedArguments`
-  linter (#198, #352).
+- 0.5.0's per-statement dependency pages, `dependencies/nodes/<id>.html`,
+  which the explorer replaces (#90).
 - `autoform-visualize --link-extension`, since the vault's dependency page is
   read in the vault (#378).
 - The language server's diagnostics path (#306), the project routers and
@@ -148,9 +202,10 @@ theme. Each group names the pull requests to read for detail.
 
 ### Fixed and hardened
 
-- **Lean runtime, REPL and LSP:** bounded transport, isolated public REPL
-  calls, diagnostics barriers, and cleanup of leftover Lean processes (#13,
-  #105, #106, #107, #111, #256, #283, #288, #322, #331, #338, #354, #360, #382).
+- **Lean runtime, REPL and LSP:** bounded transport, a fresh, import-checked
+  Lean process for each public REPL call, and cleanup of leftover Lean
+  processes (#13, #105, #106, #107, #111, #288, #322, #331, #338, #354, #360,
+  #382).
 - **Process control:** verified descendant cleanup and real exit statuses when
   SIGCHLD is ignored (#118, #168, #315, #334, #370).
 - **Lean source capture and indexing:** filesystem-generation snapshots,
@@ -159,10 +214,10 @@ theme. Each group names the pull requests to read for detail.
   foreign `publication.json` that no longer crashes capture (#95, #148, #231,
   #257, #308, #312, #340, #345, #348, #357, #363, #364, #371).
 - **Render:** statement and proof bodies keep their compact inequalities,
-  math, code fences, raw HTML and autolinks (#362). Render publishes without
-  code links where Lean sources cannot be captured (native Windows), keeps code
-  links when the blueprint lies outside the Lean repository or is uncommitted,
-  and handles a link to the page's own folder (#163, #235, #300).
+  math, code fences and autolinks (#362). Render publishes without code links
+  where Lean sources cannot be captured (native Windows), keeps code links
+  when the blueprint lies outside the Lean repository or is uncommitted, and
+  handles a link to the page's own folder (#163, #235, #300).
 - **Links:** malformed, angle-bracket and query links, code-only labels, links
   that leave the blueprint, the structure page's links, and code links when
   the Lean root is a subdirectory of its repository (#318, #320, #326, #327,
@@ -181,14 +236,21 @@ theme. Each group names the pull requests to read for detail.
 
 ### Contracts
 
-Public CLI and JSON shapes are contracts. The JSON schema identifiers on main
-include `autoform-skeleton/v5`, `autoform-work/v2`, `autoform-runtime/v4`,
-`autoform-search/v2`, `autoform-publication/v3` and `autoform-impact/v1`; #90
-moved the runtime and publication schemas, and render still replaces a v2
-site.
+Public CLI and JSON shapes are contracts. Since 0.5.0, `autoform-runtime` has
+moved from v1 to v4 (#92, #138, #90), `autoform-publication` from v1 to v3
+(#165, #90), and `autoform-coverage` from v1 to v2 (#90). Coverage, which
+`publication.json` and `audit --json` carry, adds the `INVENTORIED`
+disposition, and its `counts` always holds that key. New commands bring
+`autoform-skeleton/v5`, `autoform-work/v2`, `autoform-search/v1` (and
+`autoform-search/v2` for `search --library` output only) and
+`autoform-impact/v1`.
 
 ### Dependencies
 
+- `markdown` and `pymdown-extensions` are pinned to the Pages workflow's
+  3.10.3 and 11.0.1, a major version up from 10.x, and that workflow moves to
+  mkdocs-material 9.7.7 (#212). `tomli` is a new runtime dependency, pinned
+  below 2.4 on every Python version (#12, #79).
 - `cryptography` bounded on both sides of the Intel Mac split (#56, #57);
   `pyjwt`, `urllib3`, `mcp` and `certifi` bumped (#50, #51, #353, #436). An
   optional `browser` extra (Playwright) runs the explorer's browser tests
