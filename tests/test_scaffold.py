@@ -1120,6 +1120,18 @@ def test_a_fetched_tag_is_credited_only_to_the_remote_that_fetched_it(
     assert scaffold_module.plugin_pin() == expected
 
 
+def test_a_remote_with_an_unread_name_keeps_a_fetched_tag_from_counting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A remote whose name pinning does not read might fetch the same tag, so the tag counts for nobody."""
+    clone, _ = _tag_clone(tmp_path)
+    _git_output(clone, "config", "remote._x.url", "https://example.test/other.git")
+    _git_output(clone, "config", "--add", "remote._x.fetch", "+refs/tags/v0.6.0:refs/tags/v0.6.0")
+    _run_from(monkeypatch, clone)
+
+    assert scaffold_module.plugin_pin() == ("", "")
+
+
 @pytest.mark.parametrize(
     "changed",
     [

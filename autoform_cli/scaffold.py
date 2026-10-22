@@ -309,13 +309,15 @@ def _select_remote_source(root: Path, ref: str) -> str | None:
         names = encoded.decode("utf-8").splitlines()
     except UnicodeError:
         return None
-    names = [name for name in names if _REMOTE_NAME.fullmatch(name) is not None]
+    valid = [name for name in names if _REMOTE_NAME.fullmatch(name) is not None]
     # `git clone --depth 1 --branch <tag>` (Claude Code, Muse Code) leaves no
     # refs/remotes/ at all, only the tag and a refspec naming it. Count the tag
     # as evidence for the one remote whose refspec fetches it by exact name; a
     # tag several remotes claim, or one created without such a refspec, counts
-    # for none of them.
-    tags = {name: _exact_tag_destinations(root, name) for name in names}
+    # for none of them. A remote whose name is not read might claim it too, so
+    # with one present no tag counts.
+    tags = {name: _exact_tag_destinations(root, name) if len(valid) == len(names) else set() for name in valid}
+    names = valid
     claimed = Counter(tag for destinations in tags.values() for tag in destinations)
     candidates: dict[str, str] = {}
     for name in names:
@@ -447,8 +449,8 @@ def plugin_pin(
     repository answers questions about that repository.
 
     Tracked checkout files must be clean, a cached tracking ref or fetched tag
-    for the selected remote must contain HEAD, and the committed renderer plus template paths,
-    bytes, and executable-bit classifications must match both the retained
+    for the selected remote must contain HEAD, and the committed renderer plus
+    template paths, bytes, and executable-bit classifications must match both the retained
     template bytes and any installed plugin copy. Otherwise the source and
     commit do not describe fetchable scaffold behavior, so no pin is returned.
     Every Git identity and tree query ignores local replacement objects.
