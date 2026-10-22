@@ -220,6 +220,8 @@ An article asserts only facts a human or agent verified:
 | `statement: retracted` | A revision retracted the statement while `lean:` still names the old declaration, which stays in the build until Formalize restates the article and records `statement: formalized` in its place. Requires `lean:`; invalid with `proof: formalized` or `mathlib: true`. CI's `autoform check` at an older `AUTOFORM_REF` rejects the marker, so move the pin first; until then, retract by removing `statement` and `proof` and keeping `lean:`. |
 | `proof: formalized` | The Lean proof compiles. Requires `statement: formalized` and `lean:`. Under the open policy it may rest on open statements, and the article is then conditional; only the derived `fully_proved` means complete and `sorry`-free. |
 | `mathlib: true` | The result is upstreamed into Mathlib. |
+| `mathlib_declaration: add_comm` | Mathlib name(s) the article restates; `audit` requires one on a `mathlib: true` article. Render shows each on the article's page as text, without a link, since nothing checks it against the pinned Mathlib. |
+| `mathlib_file: Mathlib/Algebra/Group/Defs.lean` | The Mathlib file that declares it, as a portable relative path; `search` reports it. |
 | `not_ready: true` | Needs more blueprint work before it can be attempted. |
 | `lean: Ns.decl` | Declaration name(s) that discharge the article. |
 | `discussion: 42` | Issue number or URL where the article is being discussed. |
