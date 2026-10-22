@@ -347,9 +347,12 @@ Its errors name a code and what to do:
   sticky directory owned by you or root; `chmod g-w,o-w` on the parent fixes it.
 - `project-parent-busy`: another creation in the same parent held its lock for
   30 seconds; retry once it is done.
-- `project-parent-changed`: the parent path stopped naming the same directory
-  during publication; the error says where the project was published, so locate
-  it before retrying.
+- `project-parent-changed`: the parent path stopped naming the locked directory
+  before publication. Nothing was published, but an `.autoform-new-*` stage may
+  remain in the original directory; inspect it before removing it.
+- `project-create-commit-uncertain`: publication started but its outcome could
+  not be confirmed, for example because the parent path changed after the
+  project was published; locate the project before retrying.
 
 Creation fails closed where POSIX descriptor traversal, advisory locking,
 directory sync, or atomic no-replace rename is unavailable, including on
@@ -664,16 +667,17 @@ The closure is computed from elaborated terms, which is why this is the one
 command that runs Lean: for each module that declares a selected `lean:`
 target it runs a small probe with `lake env lean` against the built project.
 A declaration's packet reads as it does to a file that imports its module:
-it has the module's global notation, instances, and attributes, but not its
-`local notation`, local instances, or the `open` and `set_option` commands in
-effect at the declaration. Before any probe, Lake must confirm, without
+it has the module's global notation, instances, and attributes, including any
+the module declares after the declaration, but not its `local notation`, local
+instances, or the `open` and `set_option` commands in effect at the
+declaration. Before any probe, Lake must confirm, without
 rebuilding, that every probed module matches its exact source inputs; a
 missing `lake-manifest.json`, stale artifacts, or a source tree that changes
 during extraction makes the command fail. That check rewrites Lake's `.hash`
 files, so the project's `.lake` directory must be writable. The probe's helper
 module `autoform-skeleton-helper` and its `AutoformSkeleton` namespace are
-reserved: a project or dependency module that takes one makes the probes that
-import it fail.
+reserved: a project or dependency module, or one on `LEAN_PATH`, that takes
+one makes the probes that import it fail.
 
 Names outside the project are the trusted base and are not expanded.
 Generated companions, such as constructors, projections, recursors, and
@@ -1307,8 +1311,8 @@ release. The project's macros go in `blueprint/tex-macros.json`, written as
 MathJax's `tex.macros` is: a name maps to a body, `[body, arguments]`, or
 `[body, arguments, default]`. A formula cannot define, color, link, or label:
 `\newcommand`, `\def`, `\DeclareMathOperator`, `\label`, `\color`, `\href`,
-and the other commands of packages the site leaves off show in red and do
-nothing, however a formula or a macro reaches them. A macro may not take one of
+mathtools' paired-delimiter and tag-form commands, and the other commands of
+packages the site leaves off show in red and do nothing, however a formula or a macro reaches them. A macro may not take one of
 their names; `check` and `render` warn about a macro they leave out. Only the
 formulas the site's Markdown marks, such as `$...$` or `$$...$$` in an
 article, are typeset; a statement's title in its heading, a `discussion:`
@@ -1455,9 +1459,10 @@ These pass `check` with a warning:
   and search leave out; only `audit` checks fragments and fails such links.
 - A `mathlib_file` that is not a portable relative path, which search reports
   as null.
-- A byte-order mark at the start of an article, which hides whatever opens its
-  first line: frontmatter there is read as text, so its keys are ignored, and
-  an H1 title there is missed, so `check` fails the article as missing one.
+- A byte-order mark at the start of an article that otherwise loads. It hides
+  whatever opens the first line: frontmatter there is read as text, so its keys
+  are ignored. An H1 title behind the mark is missed, and then `check` fails the
+  article as missing one.
 - A `declaration` on a container article, since nothing counts or schedules a
   container's own declaration; `audit` reports it as `formalizable-container`.
 
@@ -1741,8 +1746,10 @@ Other frontmatter and the sections after the statement are not searched. There
 is no phrase, synonym, or prefix search, and one absent term means no hit:
 `map` matches `roadmap`, `unambiguous` does not match `non-ambiguous`, and a
 one-letter term matches nearly every article. Only the query is shortened, so
-`indices` does not find `index`, and `S^1` and `S¹`, or `H_0` and `H₀`, do not
-find each other. Query with a few distinctive words or one exact Lean name,
+`indices` does not find `index`. Superscript and subscript digits fold to the
+digit while `^` and `_` stay, so `S^1` and `S¹`, or `H_0` and `H₀`, do not find
+each other. A name with a dot, underscore, or digit is searched exactly. Query
+with a few distinctive words or one exact Lean name,
 search each spelling, and retry with fewer words before treating a result as
 new. Hits sort by the best field any term matched, and last by node ID.
 

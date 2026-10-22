@@ -28,11 +28,13 @@ publication tests on Windows, and run `tests/test_real_repl.py` against the
 pinned upstream REPL, are listed with the tests each runs in
 [`tests.yml`](.github/workflows/tests.yml). Locally, tests that need Lean skip
 when `lake` is not on `PATH`, and most also skip when elan is installed but the
-toolchain pinned in `tests/fixtures/skeleton-project/lean-toolchain` is
-missing; `AUTOFORM_REQUIRE_REAL_LEAN_TESTS=1`, which CI sets, makes that a
-failure instead. The `tests/test_library_generate.py` tests that run Lean clone
-Batteries from GitHub, so they run only with
-`AUTOFORM_REQUIRE_REAL_LIBRARY_TESTS=1`. Run
+toolchain pinned in `tests/fixtures/skeleton-project/lean-toolchain` is missing;
+only the real-Lake test in `tests/test_project_inspect.py` lets elan download
+it. `AUTOFORM_REQUIRE_REAL_LEAN_TESTS=1`, which CI sets, makes a missing
+toolchain a failure instead. The `tests/test_library_generate.py` tests that run
+Lean clone Batteries from GitHub, so they run only with
+`AUTOFORM_REQUIRE_REAL_LIBRARY_TESTS=1`, and then a missing toolchain or a
+failed download fails them. Run
 `lake build` in `skills/setup/assets/cabannes-thesis-project` when you change
 the example's Lean sources or declarations.
 
