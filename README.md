@@ -30,14 +30,16 @@ muse plugins marketplace add autoform 'https://github.com/facebookresearch/autof
 muse plugins install autoform@autoform
 ```
 
-These commands install release 0.6.0. Claude Code reads the `@v0.6.0` form from
-version 2.1.71; older versions take `'facebookresearch/autoform-bot#v0.6.0'`,
-quoted for shells that read `#`. To move an install that follows `main` onto the
-release, remove the `autoform` marketplace first, with `claude plugin
-marketplace remove autoform`, `codex plugin marketplace remove autoform`, or
-`muse plugins remove autoform` and then `muse plugins marketplace remove
-autoform`, and run the commands again. To follow `main` instead, drop the
-`@v0.6.0` or `#v0.6.0` suffix, and give Codex `--ref main`.
+These commands install release 0.6.0.
+
+- Claude Code before 2.1.71 takes `'facebookresearch/autoform-bot#v0.6.0'`
+  instead of the `@v0.6.0` form, quoted for shells that read `#`.
+- To move an install that follows `main` onto the release, remove the `autoform`
+  marketplace first (`claude plugin marketplace remove autoform`, `codex plugin
+  marketplace remove autoform`, or `muse plugins remove autoform` and then
+  `muse plugins marketplace remove autoform`), then run the commands again.
+- To follow `main` instead, drop the `@v0.6.0` or `#v0.6.0` suffix, and give
+  Codex `--ref main`.
 
 After installing, start a new session in the repository you want to inspect or
 set up.
@@ -103,23 +105,11 @@ Autoform keeps the roadmap and dependency graph as Markdown under
 format and command contracts, or browse the
 [Cabannes thesis example](skills/setup/assets/cabannes-thesis-project/README.md).
 
-The browser publication presents large roadmaps as a full-page mathematics
-atlas: authored areas and bounded hierarchy preserve readable context, while
-dependency edges remain distinct from containment and repository provenance.
-
 ## Development
 
-```bash
-git clone https://github.com/facebookresearch/autoform-bot.git
-cd autoform-bot
-make setup
-make lint
-make test
-make check-example
-make test-browser  # the dependency explorer in WebKit
-```
-
-Lean server architecture and operations are documented in
+Clone with `git clone https://github.com/facebookresearch/autoform-bot.git`,
+then follow [CONTRIBUTING.md](CONTRIBUTING.md) to set up, lint, and test.
+Lean server architecture and operations are in
 [`servers/README.md`](servers/README.md).
 
 ## License
