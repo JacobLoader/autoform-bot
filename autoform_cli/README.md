@@ -846,20 +846,27 @@ Report the coordination and review scope of an import edit without forbidding
 the edit:
 
 ```bash
-autoform work import-impact SELECTOR MODULE [TARGET] --lean-root PATH [--json] [--timeout SECONDS] [--module-scope SCOPE]
+autoform work import-impact SELECTOR [MODULE] [TARGET] --lean-root PATH [--json] [--timeout SECONDS] [--module-scope SCOPE]
 ```
 
 `import-impact` is advisory and edits no authored roadmap or Lean source, though
-its Lake freshness check may refresh build hash sidecars. By default the probe
-imports every module of the root libraries, so each must be built in this
-checkout (a build in another clone or worktree does not count): a missing or
-stale build exits 2 with the `lake build` command for those libraries, how many
-modules were checked, and the first one Lake found unbuilt. `affected_modules`
-is `MODULE` and every loaded module that imports it, transitively, complete over
-the root libraries' Lake roots and globs. Modules that removing an import drops
-from the build are not listed. Like `work impact`, the probe refuses a
-root-package module the captured inventory lacks, and one whose loaded source
-or artifact is not the captured root one, so a dependency cannot shadow it.
+its Lake freshness check may refresh build hash sidecars. `SELECTOR` identifies
+the working article and `MODULE` the project module whose effective header would
+change: the file that gains or loses the import, not the module it imports, so
+adding a Mathlib import is reported for the project file that adds it. Without
+`MODULE`, it is the one module that holds the article's declarations; a path in
+its place is taken as `TARGET`. A `MODULE` that is not a project module is
+refused, naming the article's module, before the freshness check and the probe.
+By default the probe imports every module of the root libraries, so each must be
+built in this checkout (a build in another clone or worktree does not count): a
+missing or stale build exits 2 with the `lake build` command for those
+libraries, how many modules were checked, and the first one Lake found unbuilt.
+`affected_modules` is `MODULE` and every loaded module that imports it,
+transitively, complete over the root libraries' Lake roots and globs. Modules
+that removing an import drops from the build are not listed. Like `work impact`,
+the probe refuses a root-package module the captured inventory lacks, and one
+whose loaded source or artifact is not the captured root one, so a dependency
+cannot shadow it.
 
 Under `--module-scope import-closure` the candidates are `MODULE` and every
 root-package module whose source contains each component of a candidate's name,
