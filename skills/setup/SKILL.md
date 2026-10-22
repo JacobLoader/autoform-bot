@@ -141,6 +141,14 @@ Name the require `repl`, as that example does: the runtime runs
 Then run `lake update repl` so an existing manifest locks it without moving
 Mathlib, commit the manifest, and verify `lake build @repl/repl`.
 
+`project new` turns on Lake's artifact cache with `enableArtifactCache = true`
+and `restoreAllArtifacts = true` in `lakefile.toml`, so checkouts and worktrees
+on the same toolchain reuse each other's builds instead of rebuilding them.
+For an existing project whose lakefile lacks them, offer to add both; a
+`lakefile.lean` takes them in its `package` declaration. Never enable the cache
+without `restoreAllArtifacts`: Autoform's probes load each module's `.olean`
+from `.lake/build`, where only a restore puts it.
+
 `autoform init` is the whole vault: `blueprint/` with its landing page,
 `roadmap/README.md`, `coverage/`, and `sources/`, plus `mkdocs.yml`, the theme
 override, both workflows, and ignore rules. Do not hand-build any of it and do

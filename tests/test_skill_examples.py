@@ -263,6 +263,7 @@ def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
     assert "so capture a fresh baseline of that article on the shared branch" in formalize
     assert "If the rerun fails too, ask the user before creating worktrees" in formalize
     assert "dispatch no more at once than its memory can build for" in formalize
+    assert "a worktree can reuse the modules another checkout already built" in formalize
     assert "Before choosing none, run `autoform claim list` once" in formalize
     assert "an unexpired claim on the board means another session uses them" in formalize
     assert "if the command fails, as it does in a checkout without an `origin`, tell the user" in formalize
@@ -598,6 +599,8 @@ def test_setup_guidance_uses_the_offline_atomic_project_creator(repo_root: Path)
     ) in setup
     assert "never overwrites an existing target" in normalized
     assert "without running Lake, Lean, or network operations" in normalized
+    assert "`enableArtifactCache = true` and `restoreAllArtifacts = true` in `lakefile.toml`" in normalized
+    assert "Never enable the cache without `restoreAllArtifacts`" in normalized
     assert "complete Autoform vault, site, ignore rules, and pinnable CI" in normalized
     assert "no later `init` is needed" in normalized
     assert "Every component of the target parent must be a real directory, not a symlink" in normalized

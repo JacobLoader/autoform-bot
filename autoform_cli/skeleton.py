@@ -80,6 +80,9 @@ _SHADOWED_CORE_MODULE = re.compile(
 #: The impact probe's refusal of a loaded or glob-built module the source
 #: inventory lacks; the project is built, so the refusal gets no `lake build` hint.
 _UNCAPTURED_ROOT_MODULE = re.compile(r"the impact probe (?:loaded|found) root-package module .*")
+#: A module Lake reports built whose .olean is missing, as when its artifact
+#: cache is enabled without restoring artifacts into .lake/build.
+_MISSING_OBJECT_FILE = re.compile(r"object file '[^']*' of module (\S+) does not exist")
 
 #: Bounds each probe process; extraction runs one per root module.
 DEFAULT_PROBE_TIMEOUT = 600.0
@@ -1980,6 +1983,15 @@ def run_probe(
         uncaptured = _UNCAPTURED_ROOT_MODULE.search(raw)
         if uncaptured:
             raise SkeletonError([uncaptured.group()])
+        missing = _MISSING_OBJECT_FILE.search(raw)
+        if missing:
+            raise SkeletonError(
+                [
+                    f"the {label} found no .olean for {missing.group(1)}; if Lake's artifact cache "
+                    "is enabled, set `restoreAllArtifacts = true` in the lakefile, otherwise run `lake build`"
+                    f"\n{detail}"
+                ]
+            )
         if result.returncode < 0:
             # Most likely the out-of-memory killer, which leaves no output to explain it.
             raise SkeletonError([f"the {label} was killed by signal {-result.returncode}\n{detail}".rstrip()])
