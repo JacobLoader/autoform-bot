@@ -31,12 +31,9 @@ workflow and cross-file maintenance.
   files under `blueprint/.implementation-notes/`; they are not mathematics or
   graph state. Rendered sites, the vault's dependency summary, dashboards, and
   runtime projections are derived views, not another durable scheduler or graph.
-- In consumer formalization work, Lean imports are allowed. Follow Formalize's
-  `autoform work import-impact` policy: baseline the affected articles and
-  repeat that evidence after rebuilding, check them for active conflicts, and
-  expand ownership only for validated downstream changes; when using claims,
-  also claim the article/module and check reported claim keys. Never replace
-  that evidence boundary with a blanket import ban.
+- In consumer formalization work, Lean imports are allowed;
+  [Formalize](skills/formalize/SKILL.md#import-edits) owns that policy. Never
+  replace it with a blanket import ban.
 - Public CLI and JSON shapes are contracts. Lean server work requires an
   explicit project root, bounded time and output, verified descendant cleanup,
   and no retry after dispatch with an unknown outcome. A project root is not an
