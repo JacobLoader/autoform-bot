@@ -29,6 +29,7 @@ from autoform_cli.impact import (
     format_impact,
     format_module_import_impact,
     import_closure,
+    module_import_impact,
     parse_impact_output,
     parse_module_evidence,
     project_modules,
@@ -1726,6 +1727,77 @@ def test_cli_writes_the_impact_report_as_canonical_json(tmp_path: Path, monkeypa
     assert call["timeout"] == 30
     assert call["lean_root"] == lean_root.resolve()
     assert str(call["probe"]).startswith("import Demo\n-- Autoform impact probe.")
+
+
+def _closure_lean_root(tmp_path: Path) -> Path:
+    root = tmp_path / "lean"
+    (root / "Demo").mkdir(parents=True)
+    (root / "lakefile.toml").write_text(
+        'name = "Demo"\n\n[[lean_lib]]\nname = "Demo"\nglobs = ["Demo.+"]\n', encoding="utf-8"
+    )
+    (root / "Demo" / "A.lean").write_text("def Demo.base (n : Nat) : Nat := n\n", encoding="utf-8")
+    (root / "Demo" / "B.lean").write_text("import Demo.A\n", encoding="utf-8")
+    (root / "Demo" / "Apart.lean").write_text("def Demo.apart : Nat := 0\n", encoding="utf-8")
+    return root
+
+
+def test_import_closure_scope_imports_only_candidate_importers(tmp_path: Path, monkeypatch) -> None:
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _closure_lean_root(tmp_path)
+    calls = _stub_probe(
+        monkeypatch,
+        records=[_payload("Demo.base", kind="def", module="Demo.A")],
+        modules=(
+            ModuleEvidence("Demo.A", str((lean_root / "Demo/A.lean").resolve())),
+            ModuleEvidence("Demo.B", str((lean_root / "Demo/B.lean").resolve()), ("Demo.A",)),
+        ),
+    )
+
+    report = module_import_impact(project, _BASE_ID, "Demo.A", lean_root=lean_root, module_scope="import-closure")
+
+    imports = [line for line in calls[0]["probe"].splitlines() if line.startswith("import Demo")]
+    assert imports == ["import Demo.A", "import Demo.B"]
+    assert report.module_scope == "import-closure"
+    assert report.affected_modules == ("Demo.A", "Demo.B")
+
+
+def test_import_closure_scope_names_only_its_modules_when_stale(tmp_path: Path, monkeypatch) -> None:
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _closure_lean_root(tmp_path)
+    _stub_probe(
+        monkeypatch,
+        error=SkeletonError([f"{skeleton.STALE_BUILD}Demo.A Demo.B` before running the impact probe\n✖ Demo.B"]),
+    )
+
+    with pytest.raises(SkeletonError) as caught:
+        module_import_impact(project, _BASE_ID, "Demo.A", lean_root=lean_root, module_scope="import-closure")
+
+    message = str(caught.value.issues[0])
+    assert message.startswith(f"{skeleton.STALE_BUILD}Demo.A Demo.B` ")
+    assert "(2 modules" in message
+
+
+def test_import_closure_scope_rejects_a_module_no_library_selects(tmp_path: Path, monkeypatch) -> None:
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _closure_lean_root(tmp_path)
+    _stub_probe(monkeypatch)
+
+    with pytest.raises(ImpactError, match="not a project module: Demo.Nope"):
+        module_import_impact(project, _BASE_ID, "Demo.Nope", lean_root=lean_root, module_scope="import-closure")
+
+
+def test_import_closure_scope_refuses_a_package_file_that_may_import_the_closure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _closure_lean_root(tmp_path)
+    package = lean_root / ".lake" / "packages" / "D" / "D"
+    package.mkdir(parents=True)
+    (package / "X.lean").write_text("import Demo.B\n", encoding="utf-8")
+    _stub_probe(monkeypatch)
+
+    with pytest.raises(ImpactError, match=r"\.lake/packages/D/D/X\.lean may import Demo\.B"):
+        module_import_impact(project, _BASE_ID, "Demo.A", lean_root=lean_root, module_scope="import-closure")
 
 
 def test_cli_reports_import_impact_without_refusing_the_edit(tmp_path: Path, monkeypatch, capsys) -> None:

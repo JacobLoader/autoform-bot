@@ -17,7 +17,7 @@ import os
 import re
 import shlex
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from . import skeleton
@@ -31,6 +31,7 @@ from .work import select_work_item
 IMPACT_SCHEMA = "autoform-impact/v1"
 MODULE_IMPORT_IMPACT_SCHEMA = "autoform-module-import-impact/v1"
 MODULE_IMPORT_SCOPE = "loaded-root-library-graph"
+IMPORT_CLOSURE_SCOPE = "import-closure"
 
 #: Every line the impact probe wants read back starts with this marker.
 IMPACT_MARKER = "AUTOFORM_IMPACT "
@@ -451,6 +452,24 @@ def import_closure(
     return closure
 
 
+def _outside_sources(root: Path, inventoried: Collection[Path]) -> Iterator[tuple[str, bytes]]:
+    """Every ``.lean`` file under ``root`` the captured inventory lacks, dependency packages included."""
+
+    seen: set[str] = set()
+    for directory, names, files in os.walk(root, followlinks=True):
+        real = os.path.realpath(directory)
+        if real in seen:
+            names[:] = []
+            continue
+        seen.add(real)
+        names[:] = [name for name in names if name != ".git"]
+        for file in files:
+            path = Path(directory, file)
+            relative = path.relative_to(root)
+            if file.endswith(".lean") and relative not in inventoried:
+                yield relative.as_posix(), path.read_bytes()
+
+
 def _validated_module_evidence(
     text: str,
     *,
@@ -838,6 +857,7 @@ class ModuleImportImpactReport:
     affected_unowned_helpers: tuple[ModuleImpactedHelper, ...]
     affected_claim_targets: tuple[str, ...]
     claim_targets: tuple[str, ...]
+    module_scope: str = MODULE_IMPORT_SCOPE
 
     @property
     def selected_affected(self) -> bool:
@@ -878,7 +898,7 @@ class ModuleImportImpactReport:
             "lean_source_revision": self.lean_source_revision,
             "build_revision": self.build_revision,
             "module_graph_revision": self.module_graph_revision,
-            "module_scope": MODULE_IMPORT_SCOPE,
+            "module_scope": self.module_scope,
             "article": {
                 "id": self.article.id,
                 "article_id": self.article.article_id,
@@ -1376,6 +1396,8 @@ def _load_impact_evidence(
     timeout: float | None,
     require_modules: bool,
     require_default_declarations: bool,
+    module: str | None = None,
+    module_scope: str = MODULE_IMPORT_SCOPE,
 ) -> _ImpactEvidence:
     """Load one freshness-bound roadmap, source, module, and Lean environment."""
 
@@ -1415,12 +1437,24 @@ def _load_impact_evidence(
             source_snapshot,
             strict_module_ownership=require_modules,
         )
+        selected_modules = imports
+        if module_scope == IMPORT_CLOSURE_SCOPE:
+            if module not in imports:
+                raise ImpactError(f"not a project module: {module}")
+            captured = dict(source_snapshot.source_files)
+            sources = {
+                name: captured[path]
+                for library in libraries
+                for name, path in _source_modules(library, source_snapshot)[0].items()
+            }
+            closure = import_closure(module, sources, _outside_sources(root, set(captured)))
+            imports = tuple(name for name in imports if name in closure)
         try:
             output = skeleton.run_probe(
                 render_impact_probe(
                     imports=imports,
                     project_modules=local_modules,
-                    selected_modules=imports,
+                    selected_modules=selected_modules,
                     artifact_dir=_root_artifact_dir(libraries),
                     glob_directories=_glob_directories(libraries),
                     emit_module_evidence=require_modules,
@@ -1433,8 +1467,11 @@ def _load_impact_evidence(
             said = skeleton.stale_build_said(error)
             if said is None:
                 raise
-            # The probe imports every root library's modules, which can be thousands; the libraries say the same.
-            names = shlex.join(sorted({library.name for library in libraries}))
+            if module_scope == IMPORT_CLOSURE_SCOPE:
+                names = shlex.join(imports)
+            else:
+                # The probe imports every root library's modules, which can be thousands; the libraries say the same.
+                names = shlex.join(sorted({library.name for library in libraries}))
             checked = f"{len(imports)} module{'' if len(imports) == 1 else 's'}"
             raise SkeletonError(
                 [
@@ -1525,6 +1562,7 @@ def module_import_impact(
     *,
     lean_root: str | Path,
     timeout: float | None = None,
+    module_scope: str = MODULE_IMPORT_SCOPE,
 ) -> ModuleImportImpactReport:
     """Report, without blocking it, the reverse-import scope of an import edit."""
 
@@ -1535,8 +1573,10 @@ def module_import_impact(
         timeout=timeout,
         require_modules=True,
         require_default_declarations=False,
+        module=module,
+        module_scope=module_scope,
     )
-    return compute_module_import_impact(
+    report = compute_module_import_impact(
         evidence.records,
         evidence.modules,
         evidence.articles,
@@ -1545,6 +1585,7 @@ def module_import_impact(
         source_revision=evidence.source_revision,
         lean_source_revision=evidence.lean_source_revision,
     )
+    return replace(report, module_scope=module_scope)
 
 
 def _locator(
