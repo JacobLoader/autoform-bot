@@ -226,7 +226,7 @@ An article asserts only facts a human or agent verified:
 | `article_id: af_...` | Durable identity, `af_` plus 24 lowercase hex digits; `autoform work` requires it on unfinished formalizable leaves, `review record` on the article it records, and `review prepare` and `review check` on every Lean-mapped article. |
 | `review_approved: sha256:<64 hex>` | The hash of the complete review surface someone approved for this article. It shows that surface is unchanged, not who approved it. |
 | `open_statements: allowed` | Project policy, valid only in `roadmap/README.md`: a theorem's statement may land with a `sorry` proof (see [Open statements](#open-statements)). Absent or `forbidden` keeps the strict policy. |
-| `published: false` | Folder setting, valid only in the `README.md` of a folder below `roadmap/`: `check` and `audit` validate the folder and everything in it, but render leaves it out of the site and of the publication hash. No link on a published page may point into it, whether a dependency, a source or prose, and `audit` and render reject coverage evidence that does. A folder inside an unpublished one is unpublished too, whatever its own README says. |
+| `published: false` | Folder setting, valid only in the `README.md` of a folder below `roadmap/`: `check` and `audit` validate the folder and everything in it, but render leaves it out of the site and of the publication hash. No link on a published roadmap article may point into it, whether a dependency, a source or prose; a link from any other page keeps only its text, with a warning. `audit` and render reject coverage evidence that points into it. A folder inside an unpublished one is unpublished too, whatever its own README says. |
 
 Everything a reader thinks of as progress is *derived* from the DAG on every
 run, so it cannot go stale. Readiness depends on the project's policy: under
@@ -645,6 +645,30 @@ catalog is fully proved, which records inspection rather than a completed
 result, and `inventory pending` until then, whatever its derived state. Neither
 status changes a scope's rolled-up status or completion, though a target that
 depends on a catalog waits for it like any prerequisite.
+
+The generated `blueprint-pages.yml` deploys only a commit that the generated
+`autoform verify` workflow passed on a push to `main`. It runs when that
+workflow completes, checks that the run is the project's own
+`.github/workflows/autoform-verify.yml` by file, not a workflow that only shares
+its name, checks out the run's exact commit, and renders code links at it with
+`--ref`. A failed verification deploys nothing, so the last verified site stays
+up while `main` is red. Pull requests and manual runs build the site to check
+it and never deploy, and they cannot cancel a deploy waiting in its
+concurrency group.
+
+Projects scaffolded before this rule keep a workflow that deploys every push to
+`main`, since `init` leaves existing files alone and `--force` also rewrites
+`README.md`, `mkdocs.yml` and the blueprint READMEs. To switch, delete
+`.github/workflows/blueprint-pages.yml` and run `autoform init` again, which
+writes only missing files. No pin has to move: `render --ref` exists at every
+pin since 0.5.0, so the new file's `AUTOFORM_REF` may be set back to the
+project's own.
+
+Since a manual run never deploys, redeploy by re-running the Pages run that the
+newest successful verify run on `main` started. A re-run keeps its original
+event and so deploys the same commit. By the same rule, re-running an older
+verify run, or its Pages run, deploys that older commit, which stays up until
+the next deploy.
 
 Publication and audit are deliberately different gates. The generated
 `blueprint-pages.yml` runs `check` and `render`; it does not run `audit`. An
@@ -1524,6 +1548,10 @@ site leaves it out, and `check` and `render` warn about it by its path: write
 it as Markdown, save it as an image, a PDF, or plain text, or keep it outside
 `blueprint/`. An Obsidian `.canvas` file is left out without a warning, as
 `.obsidian` is. A Markdown page that is not UTF-8 is left out with a warning too.
+A link to anything the site leaves out keeps only its text, so the strict
+build finds nothing missing: such a file, a hidden path outside `sources/`, or
+a page in a `published: false` folder. `check` and `render` warn about each
+such link to a hidden path or an unpublished folder, naming the page.
 A copy of one of the files render writes, listed above, is not published;
 render's own is.
 
@@ -1806,10 +1834,15 @@ through an alias, by an article that records `proof: formalized`, or by a
 definition that records `statement: formalized`, since a stated definition
 counts as proved. A wanted command
 without a body elaborates to a placeholder that carries no `sorry`, so no
-`sorry` check catches one. The kernel-trust audit of the generated verify
-workflow does not resolve wanted targets yet: Batteries declares every
-placeholder `private`, so that audit reports a `lean:` name naming one as not a
-declaration of the Lean build, as it does for any `private` declaration.
+`sorry` check catches one. Batteries declares every placeholder `private`, so
+the kernel-trust audit of the generated verify workflow looks a `lean:` name up
+among the root package's placeholders when the build has no declaration of that
+name. A target that resolves to a placeholder, or to a public alias of one,
+passes as wanted only when the assumption contract records its article as
+`stated`, `can_prove`, `can_state`, `planned` or `not_ready`. Any other state
+fails it, as `lean-target-wanted` fails proved and defined articles, and so do a
+`mathlib` state and a state the helper does not know. The audit still reports
+any other `private` declaration as not a declaration of the Lean build.
 
 ### Warnings
 
@@ -2214,6 +2247,14 @@ the two, since a Lean reach the Markdown does not declare fails. The policy lets
 dependents be stated and proved against a faithful statement before its proof
 exists; the price is conditional
 results that stay incomplete until every open statement they rest on is proved.
+A dependent's proof can cite an open statement because its `sorry` proof
+compiles, but not the placeholder a Batteries wanted command declares:
+`theorem_wanted foo : T` declares a private `def` of type `ProofWanted T`, not a
+theorem of `T`. Readiness still counts a prerequisite that records `statement:
+formalized` against a wanted target like any other stated prerequisite. So under
+this policy, state every theorem as a `theorem` with a `sorry` proof, not with
+`theorem_wanted` or `proof_wanted`, and before a dependent cites an existing
+wanted prerequisite, restate it that way or prove it.
 
 A retracted theorem, one recording `statement: retracted` as a revision leaves
 it, stays an open statement: the Lean its `lean:` names,
@@ -2715,3 +2756,22 @@ swap without a lock, and reads the Lean sources only for an explicit
 `--lean-root`, which then fails closed. Without one it publishes no code
 links; when a published statement names a `lean:` declaration it warns, and
 `--require-declarations` makes it exit 1.
+
+Check the site MkDocs builds from render's output for what the build broke:
+
+```bash
+autoform site check site --source site-src
+```
+
+`mkdocs build --strict` never checks a link written as raw HTML, as render
+writes card references, the structure page and the landing page's Next up card,
+and it logs a broken Markdown anchor only at info level. `site check` reads
+every HTML page of the built site and reports, as warnings, an internal link or
+asset whose target the site does not contain, a fragment that matches no `id`
+on its target page, a link that is not a valid URL, and, with `--source`, each
+statement card that render wrote into a source page but the page built from it
+lacks. A link with a scheme or a network location, or a path from the site
+root, depends on where the site is served and is not checked, and neither is a
+fragment of `name=value` pairs, such as the dependency explorer's `#node=`,
+which the page's script reads. The exit status is 0 whatever it finds; it is 1
+only when the site or the source is not a directory.
