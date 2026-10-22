@@ -18,7 +18,8 @@ CI (`.github/workflows/tests.yml`) runs the same four steps on Python 3.10 and
 3.13 for every pull request, for pushes to `main`, and for pushes to `scratch/`
 branches, which run CI on a branch with no pull request; a newer commit on a
 pull request cancels the older run. Six more jobs run beside it. `WebKit
-dependency explorer regressions` installs the `browser` extra and WebKit and
+dependency explorer regressions` runs in Playwright's image, which ships WebKit,
+installs the `browser` extra, and
 runs `tests/test_dag_viewer_browser.py` with `AUTOFORM_REQUIRE_BROWSER_TESTS=1`,
 so a missing browser fails the job instead of skipping its tests; locally they
 skip without the extra, and `make test-browser` installs both and runs them as
