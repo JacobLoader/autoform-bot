@@ -180,8 +180,8 @@ dependent that needs one result links the declaration article that expounds it.
 `check --lean-root` and `audit --lean-root` resolve every name the catalog
 lists, and say for a catalog name they do not find that a generated name
 belongs in the ledger. They cannot prove that the list omitted no newly added
-public declaration; completeness remains an authored assertion pending
-repository-inventory reconciliation. `audit --lean-root` also reads the
+public declaration; completeness remains an authored assertion.
+`audit --lean-root` also reads the
 [elaboration limits](#elaboration-limits) of the declarations a catalog
 resolves and reports them as warnings, which never fail the audit. A catalog
 that records `proof: formalized` also gets `lean-target-wanted` for a wanted
@@ -202,10 +202,9 @@ deleting the orphan. When the article still exists but lost its `article_id`
 line, restore the line instead.
 Delete the file once its article is proved; for a container, delete it once
 every formalizable descendant, and every leaf marked `not_ready` beneath it,
-is proved and there is at least one; a module catalog never counts. The
-directory is hidden, so current and older renderers omit it from the site and
-publication hash without requiring an `AUTOFORM_REF` migration; `autoform
-audit` reports a note left behind after that point.
+is proved and there is at least one; a module catalog never counts. `autoform
+audit` reports a note left behind after that point. The directory is hidden, so
+render omits it from the site and the publication hash.
 
 ## Assertions and derived status
 
@@ -261,8 +260,8 @@ graph reads the same way as the Lean community's LaTeX blueprints.
 ## Commands
 
 This section is the single source of truth for the command line. Skills
-describe what to achieve and link here; they do not restate flags, so a change
-to the CLI lands in one place.
+describe what to achieve and link here, and every `autoform` invocation shown
+here or in a skill is parse-checked against the real parser.
 
 The commands below are written as they appear on `PATH` once this Python
 package is installed. Inside a consumer project the package is not installed,
@@ -288,16 +287,16 @@ autoform init . --title "Finite Flat Group Schemes" \
 
 Pass `--autoform-ref <sha>` to pin the generated workflows at an immutable
 commit, `--force` to overwrite, and `--json` for machine-readable output.
-An existing root `.gitignore` must be a bounded single-link regular file;
-missing Autoform rules are appended through one retained descriptor. If an
-append cannot be fully reverified, the error says it may be partial and the
-file must be inspected before retrying. Before writing anything, even with
-`--force`, `init` refuses an existing entry that differs from a path it manages
-only in letter case or Unicode form, such as a `Blueprint/` Lean library or
-`MkDocs.yml`: Git and Linux CI see only the exact spelling, while a
-case-insensitive filesystem resolves the managed path to the variant. `init`
-also refuses when it cannot list a directory on a path it manages. A root
-`Readme.md` or `readme.md` is refused, not skipped like an existing `README.md`.
+An existing root `.gitignore` must be a regular file with one link; `init`
+appends the missing Autoform rules to it. If an append cannot be verified, the
+error says it may be partial: inspect the file before retrying. Before writing
+anything, even with `--force`, `init` refuses an existing entry that differs
+from a path it manages only in letter case or Unicode form, such as a
+`Blueprint/` Lean library or `MkDocs.yml`: Git and Linux CI see only the
+exact spelling, while a case-insensitive filesystem resolves the managed path
+to the variant. `init` also refuses when it cannot list a directory on a path
+it manages. A root `Readme.md` or `readme.md` is refused, not skipped like an
+existing `README.md`.
 The vault is always `blueprint/`, so a Lean library named `Blueprint` needs a
 different library name (its lakefile `lean_lib`, root module and imports), not
 a lowercase rename.
@@ -315,49 +314,46 @@ autoform project versions --json
 ```
 
 `project new` requires an absent target and uses the catalog's recommended
-release unless `--release` names another listed one. It builds a
-complete Lean shell with the release's Lake-generated resolved dependency
-manifest, blueprint, and site in a private sibling directory, validates the
-staged project, then publishes the directory with an atomic no-replace rename.
-It never overwrites an existing path. Failed and concurrent creations leave no
-partial target, and exactly one concurrent creator can win. A failure or
-interrupt after staging can leave a hidden `.autoform-new-*` directory in the
-parent, and the error says so; inspect it before removing it. The published
-tree has fixed modes, 0755 for directories and 0644 for files (0755 for
-executables), whatever the umask.
-A private creation bundle adds generated production-module roots, so package
-names cannot shadow Mathlib libraries such as `Archive` or `Counterexamples`.
-Its release identity is cross-checked with the public catalog and its complete
-Lake manifest before any filesystem state is created.
+release unless `--release` names another listed one. It builds a complete Lean
+shell, with the release's Lake-generated resolved dependency manifest,
+blueprint, and site, in a private sibling directory, validates it, and
+publishes it with an atomic no-replace rename: it never overwrites an existing
+path, a failed or concurrent creation leaves no partial target, and exactly one
+concurrent creator wins. A failure or interrupt after staging can leave a
+hidden `.autoform-new-*` directory in the parent, and the error says so;
+inspect it before removing it. The published tree has modes 0755 for
+directories and executables and 0644 for other files, whatever the umask.
+Package names cannot shadow Mathlib libraries such as `Archive` or
+`Counterexamples`.
 Generated workflows are pinned as `init` pins them: `--autoform-ref` must be a
 full commit SHA, an explicit `--autoform-source` carries its own ref or none,
 and without flags the workflows pin the HEAD commit of the Autoform checkout
 running the command, or of the marketplace checkout an installed plugin was
-copied from, read with local Git. Source selection prefers Autoform's canonical
-repository, then `origin`, then `upstream`, then a unique remaining safe remote,
-but only when one of its cached tracking refs contains HEAD. An inferred pin is
-used only when tracked files are clean and the scaffold renderer and the
-bounded, link-free template files it lists match that commit in paths, bytes,
-and executable-bit classification; other files in the templates folder are
-ignored, and an installed copy must match the checkout too.
-Local Git replacement objects are ignored. Apart from those reads, the command
-runs no subprocesses, Lake, Lean, or network operations. Without a ref the local
-project is complete but the workflows are omitted.
-It fails closed where POSIX descriptor traversal, advisory locking, directory
-sync, or atomic no-replace rename is unavailable, including on Windows.
-The parent and each of its ancestors must be readable real directories, because
-each caller-supplied path component is opened without following links
-(`project-parent-inaccessible` or `project-path-is-symlink` otherwise). On
-macOS, use the canonical `/private/tmp` path rather than the `/tmp` symlink. The
-parent must not be group- or world-writable unless it is a sticky directory
-owned by you or root; otherwise creation fails with
-`project-parent-unsafe`, which `chmod g-w,o-w` on the parent fixes. Creations in
-one parent are serialized with an advisory lock, and a lock held elsewhere for
-30 seconds fails with `project-parent-busy`.
-Immediately before publication and after syncing it, Autoform reopens the
-requested parent without following links and rechecks its device, inode, and
-owner. A pre-publication mismatch preserves the stage; a later mismatch reports
-where publication was observed and tells the caller not to retry blindly.
+copied from. That pin is inferred only when a safe remote (Autoform's canonical
+repository, then `origin`, then `upstream`, then a unique remaining one) has a
+cached tracking ref containing HEAD, tracked files are clean, and the scaffold
+renderer and templates match that commit; an installed copy must match the
+checkout too. Without a ref the local project is complete but the workflows are
+omitted. Apart from local Git reads, the command runs no subprocesses, Lake,
+Lean, or network operations.
+
+Its errors name a code and what to do:
+
+- `project-parent-inaccessible` or `project-path-is-symlink`: the parent and
+  each of its ancestors must be readable real directories, since no path
+  component is followed through a link. On macOS, use the canonical
+  `/private/tmp` path rather than the `/tmp` symlink.
+- `project-parent-unsafe`: the parent is group- or world-writable and not a
+  sticky directory owned by you or root; `chmod g-w,o-w` on the parent fixes it.
+- `project-parent-busy`: another creation in the same parent held its lock for
+  30 seconds; retry once it is done.
+- `project-parent-changed`: the parent path stopped naming the same directory
+  during publication; the error says where the project was published, so locate
+  it before retrying.
+
+Creation fails closed where POSIX descriptor traversal, advisory locking,
+directory sync, or atomic no-replace rename is unavailable, including on
+Windows.
 
 `--lean-toolchain` takes a Lean release tag (`v4.30.0`, `v4.30.0-rc1`, or
 `leanprover/lean4:v4.30.0`) and `--mathlib-rev` a Mathlib tag, branch, or
@@ -480,8 +476,11 @@ module, which naming the module, or in full one of its declarations citing that
 source, silences; a Lean file that imports the module names it, but one that
 imports only an umbrella module above it does not. Such a declaration usually
 proves part of the source being formalized: reuse it and name it in the
-implementation note of the article that uses it, or name it on the source's page
-under `blueprint/sources/` with why it does not apply.
+implementation note of each article that uses it, or, when it does not apply or
+no article concerns it, name it on the source's page under `blueprint/sources/`
+with why. That record outlasts the implementation notes, which audit asks to
+delete once their article is proved, and covers every article that reaches the
+source, including ones added later.
 
 Identifiers match across their usual forms: versions; `abs`, `pdf`, `html`,
 `e-print` and `src` URLs, with or without a trailing slash; old-style
@@ -1033,8 +1032,7 @@ This is failure atomicity, not simultaneous visibility across paths: each
 rename is atomic, but a reader opening several outputs during publication can
 briefly observe different generations.
 
-Inspect the current Markdown-derived formalization frontier without creating a
-queue or scheduler state:
+Inspect the current Markdown-derived formalization frontier:
 
 ```bash
 autoform work list . --lean-root .
@@ -1239,8 +1237,7 @@ changes nothing else. It writes an article only while its bytes still have
 the planned hash, checks every article before writing the first, and refuses
 an article that changed or became a symlink after planning; after such a
 refusal, running it again completes the plan. The runtime and
-`autoform work` expose assigned IDs immediately; preserving publication routes
-across path moves remains a follow-up change.
+`autoform work` expose assigned IDs immediately.
 
 Coordinate temporary cross-machine ownership without modifying the book:
 
@@ -2597,10 +2594,8 @@ intentionally exits nonzero while its declared coverage still holds `MAPPED`
 rows.
 
 This command is strictly read-only and local. It does not invoke Git, GitHub,
-subprocesses, network services, claims, queues, reviews, recovery state,
-providers, workers, renderers, or dashboards, and it creates no cache, scratch
-repository, service, state directory, or `graph.json`. It is a project/runtime
-doctor, separate from any future worker fleet or machine-capability preflight.
+subprocesses, network services, claims, renderers, or dashboards, and it writes
+no file.
 
 ## Runtime contract
 

@@ -264,18 +264,12 @@ After the final edit, use the CLI reference to run `autoform check` with
 `--lean-root .` and `autoform audit`, refresh the dependency summary with
 `autoform-visualize`, and resolve every finding introduced by this work or
 inside the adopted boundary. A `check` warning that a shared library
-declaration's docstring cites one of the blueprint's sources usually means a
-library search was skipped. Reuse the declaration as the library search rules
-say, and name it in the implementation note of each article that uses it. If it
-does not apply, or no article concerns it, name it on the source's page under
-`blueprint/sources/` with the reason; that record outlasts the implementation
-notes, which audit asks to delete once their article is proved. It covers every
-article that reaches the source, including ones added later, so give a reason
-that holds for each, and revisit it when the adopted boundary changes. A warning
-about a module's docstring is a library hit for each declaration it counts:
-naming the module on the source's page records them all, and importing the
-module, or naming one of them, silences the rest, so review the module when its
-warning first appears. Report unrelated
+declaration's docstring, or its module's, cites one of the blueprint's sources
+usually means a library search was skipped: reuse or record the declaration as
+the [CLI reference](../../autoform_cli/README.md#commands) says for that
+warning, give a recorded reason that holds for every article that reaches the
+source, revisit it when the adopted boundary changes, and review a module when
+its warning first appears. Report unrelated
 pre-existing findings instead of silently widening scope. A
 `catalog-unbounded-limit` or `catalog-unscoped-limit` warning describes
 existing Lean code and never fails the audit: report it, and change that code
