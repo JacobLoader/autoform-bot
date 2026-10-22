@@ -2681,7 +2681,7 @@ def test_lake_freshness_is_checked_once_before_one_probe_per_module(tmp_path: Pa
     assert sorted(command[4:] for command in calls[2:]) == [["Skel.Main"], ["Skel.Uses"]]
 
 
-@pytest.mark.parametrize("failure", ["exit", "killed", "timeout", "malformed"])
+@pytest.mark.parametrize("failure", ["exit", "killed", "timeout", "malformed", "uncached"])
 def test_a_failed_module_probe_leaves_only_its_roots_unresolved(
     tmp_path: Path, monkeypatch, failure: str
 ) -> None:
@@ -2699,6 +2699,10 @@ def test_a_failed_module_probe_leaves_only_its_roots_unresolved(
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         if failure == "killed":
             return subprocess.CompletedProcess(command, -9, stdout="", stderr="")
+        if failure == "uncached":
+            # Lake's artifact cache without restore leaves the .olean only in the cache.
+            missing = "error: object file '.lake/build/lib/lean/Skel/Uses.olean' of module Skel.Uses does not exist"
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr=missing)
         return subprocess.CompletedProcess(command, 1, stdout="", stderr="error: Skel.Uses broke")
 
     _fake_lake(monkeypatch, project, answer)
@@ -2716,6 +2720,8 @@ def test_a_failed_module_probe_leaves_only_its_roots_unresolved(
         "killed": "the skeleton probe was killed by signal 9",
         "timeout": "rerun with --timeout <seconds>",
         "malformed": "duplicate records for Skel.heavy_of_notation",
+        "uncached": "the skeleton probe found no .olean for Skel.Uses; if Lake's artifact cache "
+        "is enabled, set `restoreAllArtifacts = true` in the lakefile, otherwise run `lake build`",
     }[failure] in issue.reason
 
 

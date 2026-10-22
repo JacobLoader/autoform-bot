@@ -325,6 +325,10 @@ interrupt after staging can leave a hidden `.autoform-new-*` directory in the
 parent, and the error says so; inspect it before removing it. The published
 tree has fixed modes, 0755 for directories and 0644 for files (0755 for
 executables), whatever the umask.
+Its `lakefile.toml` sets `enableArtifactCache = true` and
+`restoreAllArtifacts = true`, so checkouts on the same toolchain share builds
+through Lake's artifact cache while each module's `.olean` stays in
+`.lake/build`, where Autoform's probes load it.
 A private creation bundle adds generated production-module roots, so package
 names cannot shadow Mathlib libraries such as `Archive` or `Counterexamples`.
 Its release identity is cross-checked with the public catalog and its complete
