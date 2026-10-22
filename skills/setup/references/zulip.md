@@ -18,19 +18,13 @@ request is for a new topic or an existing discussion.
 ## Draft a coordination message
 
 Ground the wording in the actual project state. Present ongoing work as
-underway, and invite people who have already thought about the design to sync so
-the project does not duplicate or scoop existing efforts or step on
-contributors' toes. Avoid language that accidentally claims an area or suggests
-that established work has not begun.
-
-Include only what helps coordination:
-
-- the purpose and current status;
-- the repository and overlapping work, with exact contributor mentions;
-- the proposed scope, architecture, and compatibility goals;
-- genuine open design, placement, or contribution questions;
-- the principal sources; and
-- any authorship or AI-polishing disclosure the user requests.
+underway and invite people who have already thought about the design to sync,
+without claiming an area or suggesting that established work has not begun.
+Include only what helps coordination: the purpose and current status; the
+repository and overlapping work, with exact contributor mentions; the proposed
+scope, architecture, and compatibility goals; genuine open design, placement,
+or contribution questions; the principal sources; and any authorship or
+AI-polishing disclosure the user requests.
 
 ## Send and verify
 
