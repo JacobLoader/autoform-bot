@@ -50,8 +50,9 @@ theme. Each group names the pull requests to read for detail.
   a `warnings` list that leaves `clean` and the exit status alone (#90).
 - **Site check.** `autoform site check SITE_DIR [--source DOCS_DIR]` reads a
   built site and warns about dead internal links and assets, anchors that
-  match no id and malformed links. With `--source`, it also warns about
-  statement cards the build dropped. It exits 0 whatever it finds (#401).
+  match no id and malformed links; the explorer's `#node=` routes are not
+  anchors and are skipped. With `--source`, it also warns about statement
+  cards the build dropped. It exits 0 whatever it finds (#401, #438).
 - **Projects.** `autoform project new`, `inspect` and `versions` create and
   inspect Lean projects from a pinned release catalog (#14, #96, #211).
 - **Article ids.** `autoform migrate article-ids --write` writes each planned
