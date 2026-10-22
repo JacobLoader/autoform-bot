@@ -1934,6 +1934,28 @@ def test_import_closure_scope_refuses_a_path_dependency_file_outside_the_lean_ro
         module_import_impact(project, _BASE_ID, "Demo.A", lean_root=lean_root, module_scope="import-closure")
 
 
+def test_import_closure_scope_names_an_outside_path_it_cannot_read(tmp_path: Path, monkeypatch) -> None:
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _closure_lean_root(tmp_path)
+    _stub_probe(monkeypatch)
+    (lean_root / "lake-manifest.json").write_text("{", encoding="utf-8")
+
+    with pytest.raises(ImpactError, match=r"cannot read .*lake-manifest\.json; rerun with the default --module-scope"):
+        module_import_impact(project, _BASE_ID, "Demo.A", lean_root=lean_root, module_scope="import-closure")
+
+    (lean_root / "lake-manifest.json").unlink()
+    package = lean_root / ".lake" / "packages" / "D"
+    package.mkdir(parents=True)
+    (package / "Gone.lean").symlink_to(package / "missing.lean")
+    with pytest.raises(ImpactError, match=r"cannot read .*Gone\.lean; rerun with the default --module-scope"):
+        module_import_impact(project, _BASE_ID, "Demo.A", lean_root=lean_root, module_scope="import-closure")
+
+
+def test_import_impact_rejects_an_unknown_module_scope(tmp_path: Path) -> None:
+    with pytest.raises(ImpactError, match="unknown module scope: closure"):
+        module_import_impact(tmp_path, _BASE_ID, "Demo.A", lean_root=tmp_path, module_scope="closure")
+
+
 def test_cli_reports_import_impact_without_refusing_the_edit(tmp_path: Path, monkeypatch, capsys) -> None:
     project = _blueprint_project(tmp_path, "Demo")
     lean_root = _stub_lean_root(tmp_path)

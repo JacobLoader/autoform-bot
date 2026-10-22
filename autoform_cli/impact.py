@@ -455,8 +455,11 @@ def import_closure(
     return closure
 
 
+_RERUN_DEFAULT_SCOPE = "; rerun with the default --module-scope"
+
+
 def _raise(error: OSError) -> None:
-    raise error
+    raise ImpactError(f"cannot read {error.filename}{_RERUN_DEFAULT_SCOPE}") from error
 
 
 def _outside_sources(root: Path, inventoried: Collection[Path]) -> Iterator[tuple[str, bytes]]:
@@ -464,7 +467,10 @@ def _outside_sources(root: Path, inventoried: Collection[Path]) -> Iterator[tupl
 
     tops = [root]
     manifest_path = root / "lake-manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+    except (OSError, ValueError) as error:
+        raise ImpactError(f"cannot read {manifest_path}{_RERUN_DEFAULT_SCOPE}") from error
     if isinstance(manifest, dict):
         dirs = [manifest.get("packagesDir")]
         packages = manifest.get("packages")
@@ -494,7 +500,11 @@ def _outside_sources(root: Path, inventoried: Collection[Path]) -> Iterator[tupl
                 path = Path(directory, file)
                 relative = path.relative_to(root) if top == root else path
                 if file.endswith(".lean") and relative not in inventoried:
-                    yield relative.as_posix(), path.read_bytes()
+                    try:
+                        data = path.read_bytes()
+                    except OSError as error:
+                        raise ImpactError(f"cannot read {path}{_RERUN_DEFAULT_SCOPE}") from error
+                    yield relative.as_posix(), data
 
 
 def _validated_module_evidence(
@@ -1632,6 +1642,8 @@ def module_import_impact(
 ) -> ModuleImportImpactReport:
     """Report, without blocking it, the reverse-import scope of an import edit."""
 
+    if module_scope not in (MODULE_IMPORT_SCOPE, IMPORT_CLOSURE_SCOPE):
+        raise ImpactError(f"unknown module scope: {module_scope}")
     evidence = _load_impact_evidence(
         project_or_blueprint,
         selector,

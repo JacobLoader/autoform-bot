@@ -160,9 +160,9 @@ run_cmd do
     -- A root-package module the inventory missed gets no records, so what it
     -- uses and imports would silently drop out of the scope. Lake builds every
     -- module an `M.*` or `M.+` glob finds by this same walk of the live tree,
-    -- imported or not, so one the libraries' globs do not select from the
-    -- inventory is refused even when the probe imports only some modules
-    -- (even if another srcDir holds a file of that name).
+    -- imported or not. A module this walk finds that the libraries' selection
+    -- lacks is one the inventory missed, so it is refused even when the probe
+    -- imports only some modules (even if another srcDir holds a file of that name).
     if {check_inventory} then
       let artifactDir := (← IO.FS.realPath {artifact_dir}).components
       for (dir, base, glob) in (← AutoformImpact.globDirectories {glob_directories}) do
