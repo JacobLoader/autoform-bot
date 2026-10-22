@@ -1822,6 +1822,30 @@ def test_import_closure_scope_reaches_a_roots_library_module_through_its_root(tm
     assert report.affected_modules == ("Demo", "Demo.A")
 
 
+def test_import_closure_scope_leaves_out_unresolved_names_the_index_places_outside_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _closure_lean_root(tmp_path)
+    (lean_root / "Demo" / "Apart.lean").write_text("theorem Demo.loose : True := trivial\n", encoding="utf-8")
+    _stub_probe(
+        monkeypatch,
+        records=[_payload("Demo.base", kind="def", module="Demo.A")],
+        modules=(
+            ModuleEvidence("Demo.A", str((lean_root / "Demo/A.lean").resolve())),
+            ModuleEvidence("Demo.B", str((lean_root / "Demo/B.lean").resolve()), ("Demo.A",)),
+        ),
+    )
+
+    report = module_import_impact(project, _BASE_ID, "Demo.A", lean_root=lean_root, module_scope="import-closure")
+
+    # Demo.loose is in the unaffected Demo.Apart; Demo.uses and Demo.inlines are declared nowhere.
+    assert [names for article in report.unresolved_articles for names in article.declarations] == [
+        "Demo.inlines",
+        "Demo.uses",
+    ]
+
+
 def test_import_closure_scope_names_only_its_modules_when_stale(tmp_path: Path, monkeypatch) -> None:
     project = _blueprint_project(tmp_path, "Demo")
     lean_root = _closure_lean_root(tmp_path)

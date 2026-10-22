@@ -1123,6 +1123,7 @@ def compute_module_import_impact(
     source_revision: str,
     lean_source_revision: str = "",
     module_scope: str = MODULE_IMPORT_SCOPE,
+    declaration_modules: Mapping[str, str] | None = None,
 ) -> ModuleImportImpactReport:
     """Return the reverse-import scope of changing ``module`` imports.
 
@@ -1131,7 +1132,9 @@ def compute_module_import_impact(
     can affect. Removing an import can also drop modules from the build,
     transitively, when only imports bring them in, as under a library's
     roots; this scope does not list them. It never refuses the edit merely
-    because the scope is larger than one article.
+    because the scope is larger than one article. ``declaration_modules`` maps
+    a name to the module whose source declares it; an unresolved name it places
+    in an unaffected module is not reported.
     """
 
     if module not in modules:
@@ -1153,7 +1156,8 @@ def compute_module_import_impact(
         for declaration in article.declarations:
             resolved = resolve(declaration, f"{article.id}: lean: ")
             if resolved is None:
-                if not article.mathlib:
+                place = (declaration_modules or {}).get(declaration)
+                if not article.mathlib and (place is None or place in affected_set):
                     unresolved_names.append(declaration)
             else:
                 resolved_names.append(resolved)
@@ -1431,6 +1435,7 @@ class _ImpactEvidence:
     records: Mapping[str, ConstantRecord]
     modules: Mapping[str, ModuleEvidence]
     locate: Locator
+    declaration_modules: Mapping[str, str] | None = None
 
 
 def _load_impact_evidence(
@@ -1483,6 +1488,7 @@ def _load_impact_evidence(
             strict_module_ownership=require_modules,
         )
         selected_modules = imports
+        declaration_modules = None
         if module_scope == IMPORT_CLOSURE_SCOPE:
             if module not in local_modules:
                 raise ImpactError(f"not a project module: {module}")
@@ -1493,6 +1499,15 @@ def _load_impact_evidence(
                 for name, path in _source_modules(library, source_snapshot)[0].items()
             }
             closure = import_closure(module, sources, _outside_sources(root, set(captured)))
+            paths = {path: name for name, path in _module_source_paths(libraries, source_snapshot, strict=True).items()}
+            index = source_snapshot.index
+            # A name the narrowed probe did not load is unresolved; the index
+            # says whether its source lies in a module the edit can affect.
+            declaration_modules = {
+                name: paths[declaration.path.as_posix()]
+                for name, declaration in index.declarations.items()
+                if name not in index.duplicates and declaration.path.as_posix() in paths
+            }
             imports = tuple(name for name in imports if name in closure)
             if not imports:
                 raise ImpactError(f"not a loaded project module: {module}")
@@ -1563,6 +1578,7 @@ def _load_impact_evidence(
         records=records,
         modules=module_evidence,
         locate=_locator(libraries, source_snapshot),
+        declaration_modules=declaration_modules,
     )
 
 
@@ -1632,6 +1648,7 @@ def module_import_impact(
         source_revision=evidence.source_revision,
         lean_source_revision=evidence.lean_source_revision,
         module_scope=module_scope,
+        declaration_modules=evidence.declaration_modules,
     )
 
 

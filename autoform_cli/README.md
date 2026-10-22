@@ -1191,8 +1191,9 @@ the candidates import. Only those modules must be built, and stale-build advice
 names them. `affected_modules` is still exact. An article owns an affected
 declaration when one of its `lean:` names equals the declaration or is a dotted
 prefix of it, so `affected_articles` may list more articles than the default
-scope does, and `article_local` is always `false`. Articles outside the closure
-appear in `unresolved_articles`. A `.lean` file outside the captured sources,
+scope does, and `article_local` is always `false`. `unresolved_articles` leaves
+out a name the probe did not load when the Lean source index places it in a
+module outside `affected_modules`. A `.lean` file outside the captured sources,
 such as one in `.lake/packages`, that may import a candidate makes the command
 exit 2 and asks for the default scope.
 The import edit's `claim_targets` contain only the selected article and a stable
