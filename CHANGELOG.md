@@ -37,16 +37,46 @@ theme. Each group names the pull requests to read for detail.
 
 ### Upgrading from 0.5.0
 
+- **Pin.** CI at an older `AUTOFORM_REF` rejects `area:`, `navigation:`,
+  `catalog:` and `statement: retracted` in `check` and `INVENTORIED` in
+  `render`, so move the pin before using them; until then, retract by removing
+  `statement` and `proof` and keeping `lean:`. Older refs assign no areas from
+  `blueprint/atlas.json` but publish it with every id it names, so a project
+  with unpublished folders moves the pin before adding it (#90).
 - **Site.** Render refuses to replace the `autoform-publication/v1` site 0.5.0
   wrote, and the dashboard reports it as stale: delete that output directory,
-  such as a local `site-src`, once by hand (#165, #90).
+  such as a local `site-src`, once by hand (#165, #90). A v2 site is replaced
+  by the first render and reported as stale until then.
 - **Check.** A repository that passed 0.5.0's `check` can fail this one's; see
-  **Checks that fail** below.
+  **Checks that fail** below. `check`'s status line counts only leaves that
+  carry `declaration`, and with `--lean-root` the distinct `lean:` names it
+  resolved. A `blueprint/atlas.json` that is not `autoform-atlas/v1` draws a
+  warning from `check`, `render` and `audit`.
+- **Universe binders.** `def f.{u}` is read as `f`, so a `lean:` name for it
+  resolves and an alias of one is read through its target. A name declared
+  that way in one file and plainly in another is `defined more than once` in
+  `check` and `lean-target-ambiguous` in `audit` (#348, #90).
+- **Coverage and audit.** `audit`'s coverage line always shows an inventoried
+  count, and its text output adds `warning:` lines. A `DECOMPOSED` link that
+  reaches only prose or `not_ready` leaves that declare nothing yet is a
+  `decomposed-without-declaration` warning, which `render` also prints;
+  neither fails (#90).
+- **JSON consumers.** Runtime nodes and every `autoform search --json` hit
+  carry a nullable `catalog` (`module` for a module catalog); search stays
+  `autoform-search/v1`, so a consumer that rejects unknown keys must accept it
+  (#90).
 - **TeX.** Formulas can no longer define notation: `\newcommand`, `\def`,
   `\DeclareMathOperator`, `\label`, `\color`, `\cancel`, `\href` and the like
   show in red, and `check` warns about a formula that defines a command. Put
   the project's macros in `blueprint/tex-macros.json`; render replaces an
-  edited `blueprint/javascripts/mathjax.js`, with a warning (#215).
+  edited `blueprint/javascripts/mathjax.js`, with a warning, and its edits are
+  lost, so move its macros to `tex-macros.json` and delete it (#215).
+- **Mermaid.** Authored diagrams lose click callbacks, HTML labels and the
+  status palette's `classDef` colours, such as `A:::fully_proved`. A
+  `mkdocs.yml` that loads Mermaid from the CDN may drop that line once CI's
+  `AUTOFORM_REF` includes #378; a render pinned before it needs the line.
+- **MkDocs.** Setup leaves an existing `mkdocs.yml` alone; a large site can add
+  Material's `navigation.prune` feature by hand, as the scaffold does.
 - **Debrief.** Setup, Roadmap and Formalize now debrief their lead agent
   before the final report, on by default; `AUTOFORM_DEBRIEF=0` turns it off.
   Subagent debriefs run only with `AUTOFORM_SUBAGENT_DEBRIEF=1` (#195).
