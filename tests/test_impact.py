@@ -1530,20 +1530,20 @@ def test_project_modules_fail_closed(tmp_path: Path, glob: str, message: str) ->
 
 
 def test_import_closure_over_approximates_every_spelling_of_an_import() -> None:
-    sources = {
-        "Q.M": b"def m := 1\n",
-        "Q.Guillemets": "import «Q».«M»\n".encode(),
-        "Q.Unicode": "import Q.MΣ\n".encode(),
-        "Q.DocComment": b"/-- header -/\nimport Q.M\n",
-        "Q.Later": b"import Q.Unicode\n",
-        "Q.Apart": b"import Q.Other\n",
-    }
+    sources = [
+        ("Q.M", b"def m := 1\n"),
+        ("Q.Guillemets", "import «Q».«M»\n".encode()),
+        ("Q.Unicode", "import Q.MΣ\n".encode()),
+        ("Q.DocComment", b"/-- header -/\nimport Q.M\n"),
+        ("Q.Later", b"import Q.Unicode\n"),
+        ("Q.Apart", b"import Q.Other\n"),
+    ]
 
     assert import_closure("Q.M", sources, ()) == {"Q.M", "Q.Guillemets", "Q.Unicode", "Q.DocComment", "Q.Later"}
 
 
 def test_import_closure_refuses_a_file_outside_the_inventory_that_may_import_it() -> None:
-    sources = {"Q.M": b"", "Q.U": b"import Q.M\n"}
+    sources = [("Q.M", b""), ("Q.U", b"import Q.M\n")]
     outside = [(".lake/packages/D/D/X.lean", b"import Q.U\n")]
 
     with pytest.raises(ImpactError, match=r"\.lake/packages/D/D/X\.lean may import Q\.U"):
@@ -1825,6 +1825,29 @@ def test_import_closure_scope_reaches_a_roots_library_module_through_its_root(tm
     imports = [line for line in calls[0]["probe"].splitlines() if line.startswith("import Demo")]
     assert imports == ["import Demo"]
     assert report.affected_modules == ("Demo", "Demo.A")
+
+
+def test_import_closure_scope_keeps_an_importer_another_library_spells_the_same(tmp_path: Path, monkeypatch) -> None:
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _closure_lean_root(tmp_path)
+    with (lean_root / "lakefile.toml").open("a", encoding="utf-8") as lakefile:
+        lakefile.write('\n[[lean_lib]]\nname = "Extra"\nsrcDir = "extra"\nroots = ["Extra"]\n')
+    (lean_root / "extra" / "Demo").mkdir(parents=True)
+    (lean_root / "extra" / "Extra.lean").write_text("def Extra.x : Nat := 0\n", encoding="utf-8")
+    # A dormant file Extra's srcDir also spells Demo.B must not hide the real importer.
+    (lean_root / "extra" / "Demo" / "B.lean").write_text("def Demo.dormant : Nat := 0\n", encoding="utf-8")
+    calls = _stub_probe(
+        monkeypatch,
+        records=[_payload("Demo.base", kind="def", module="Demo.A")],
+        modules=(
+            ModuleEvidence("Demo.A", str((lean_root / "Demo/A.lean").resolve())),
+            ModuleEvidence("Demo.B", str((lean_root / "Demo/B.lean").resolve()), ("Demo.A",)),
+        ),
+    )
+
+    module_import_impact(project, _BASE_ID, "Demo.A", lean_root=lean_root, module_scope="import-closure")
+
+    assert "import Demo.B" in calls[0]["probe"].splitlines()
 
 
 def test_import_closure_scope_leaves_out_unresolved_names_the_index_places_outside_it(

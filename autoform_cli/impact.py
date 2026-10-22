@@ -421,22 +421,25 @@ def _may_import(data: bytes, module: str) -> bool:
 
 def import_closure(
     module: str,
-    sources: Mapping[str, bytes],
+    sources: Iterable[tuple[str, bytes]],
     outside: Iterable[tuple[str, bytes]],
 ) -> set[str]:
     """``module`` and every root-package module that may import it, transitively.
 
+    ``sources`` pairs each module name with one file's bytes; a name two
+    libraries' files share joins when any of them may import the closure.
     The test is textual, so it can admit a module that does not import one in
     the closure but never misses one that does. A file outside the captured
     inventory that may import the closure has no module name to load, so the
     narrowed scope is refused rather than incomplete.
     """
 
+    sources = list(sources)
     closure = {module}
     work = [module]
     while work:
         target = work.pop()
-        for name, data in sources.items():
+        for name, data in sources:
             if name not in closure and _may_import(data, target):
                 closure.add(name)
                 work.append(name)
@@ -1495,11 +1498,11 @@ def _load_impact_evidence(
             if module not in local_modules:
                 raise ImpactError(f"not a project module: {module}")
             captured = dict(source_snapshot.source_files)
-            sources = {
-                name: captured[path]
+            sources = [
+                (name, captured[path])
                 for library in libraries
                 for name, path in _source_modules(library, source_snapshot)[0].items()
-            }
+            ]
             closure = import_closure(module, sources, _outside_sources(root, set(captured)))
             paths = {path: name for name, path in _module_source_paths(libraries, source_snapshot, strict=True).items()}
             index = source_snapshot.index
