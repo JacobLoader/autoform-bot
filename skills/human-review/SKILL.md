@@ -61,7 +61,7 @@ individual node and Lean-source links. Record each human decision as `approve`, 
 from the person's judgment. Do not silently apply requested revisions: hand
 mathematical-plan changes and Lean implementation changes to Roadmap, which
 records the decision and retracts the affected article so Formalize takes it up
-under the [revision contract](../../autoform_cli/README.md#revision-contract),
+under the [revision contract](../../autoform_cli/reference/claims-and-revisions.md#revision-contract),
 and autonomous rubric scoring to Agent Review.
 
 Treat the landing page's `Scoped roadmap` percentage as the share of

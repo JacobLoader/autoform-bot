@@ -3,7 +3,7 @@
 Follow these rules when a [Formalize](../SKILL.md) run uses claims. They replace
 asking the lead before editing beyond what a worker holds and before an import
 edit lands, because a refused acquire or a recheck conflict gives the same
-answer. The [claim contract](../../../autoform_cli/README.md#claim-contract)
+answer. The [claim contract](../../../autoform_cli/reference/claims-and-revisions.md#claim-contract)
 defines the board.
 
 ## Worker IDs and the board
@@ -46,7 +46,7 @@ import claim set together.
 
 Renew the complete claim set before integrating, and if a revision's claim set
 grew, acquire the whole larger set in one command under the [no-hold-and-wait
-rule](../../../autoform_cli/README.md#claim-contract) before repairing the new
+rule](../../../autoform_cli/reference/claims-and-revisions.md#claim-contract) before repairing the new
 targets. Keep the complete acquired set until every checkout on the claim board
 can see the verified commit: on the shared branch and, for an `origin` board,
 pushed, since other clones read their frontier from the remote. For a handoff,

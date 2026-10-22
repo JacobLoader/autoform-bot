@@ -97,7 +97,7 @@ scope, not proof they are unaffected. Disclosure alone is not a conflict or
 failed validation. After rebuilding, repeat the skeleton evidence and use Agent
 Review to judge semantic changes. If any article actually needs changes, then
 repair each under the review gates of the [revision
-contract](../../autoform_cli/README.md#revision-contract). Stop for an active
+contract](../../autoform_cli/reference/claims-and-revisions.md#revision-contract). Stop for an active
 conflict (an affected target another worker holds, or another owner's live claim
 on one) or failed validation, not for a blanket import rule.
 
@@ -118,7 +118,7 @@ orphaned ones, as this skill describes, repairing another article's Lean that an
 [import edit](#import-edits) breaks, and revising a declaration other
 articles' Lean uses: start from
 `autoform work impact` and make only the edits the
-[revision contract](../../autoform_cli/README.md#revision-contract) requires,
+[revision contract](../../autoform_cli/reference/claims-and-revisions.md#revision-contract) requires,
 under the claims it requires. A work item flagged `revision`, whose article
 records `statement: retracted`, is such a revision; restating it replaces
 `statement: retracted` with `statement: formalized`. Never add a new use of a
@@ -134,7 +134,7 @@ except as the open-statement policy below allows.
 Before stating an article's result and before adding a helper, also run
 `autoform search` over the blueprint of `<PROJECT>` and its usable shared
 libraries for it, as the
-[search contract](../../autoform_cli/README.md#search-contract) describes. The
+[search contract](../../autoform_cli/reference/search.md#search-contract) describes. The
 [library search rules](references/library-search.md) say how to use a library
 hit and what to do with a refusal that names a library.
 
@@ -176,7 +176,7 @@ the exact `allowed_open_declarations`. The article then shows as conditionally
 proved, and `#print axioms` lists the `sorryAx` it inherits without saying from
 where. Before landing, record `proof: formalized` in the worktree (until then
 the audit treats the article as open), reproduce the CI audit as the [open
-statements reference](../../autoform_cli/README.md#open-statements) shows, and
+statements reference](../../autoform_cli/reference/open-statements.md#open-statements) shows, and
 require a `conditional` or `sorry-free` line for each recorded declaration and
 a passing summary. An open statement the Markdown does not declare as a
 dependency fails CI: send the missing dependency to Roadmap or stop using it.

@@ -96,7 +96,7 @@ Zulip work.
 
 Before adding a formalizable article, run `autoform search` over the blueprint
 for its result and for each intermediate result its proof proves or cites; the
-[search contract](../../autoform_cli/README.md#search-contract) says what is
+[search contract](../../autoform_cli/reference/search.md#search-contract) says what is
 matched.
 
 - Search by a few distinctive words of each statement, and by a Lean name when
@@ -200,7 +200,7 @@ Review, record the decision in the article's
 `blueprint/.implementation-notes/<article_id>.md` and retract the
 article the same way, so it returns to the frontier as a statement phase flagged
 as a revision, and leave the Lean change to Formalize, which follows the
-[revision contract](../../autoform_cli/README.md#revision-contract); this skill
+[revision contract](../../autoform_cli/reference/claims-and-revisions.md#revision-contract); this skill
 edits only Markdown.
 
 `open_statements` in `roadmap/README.md` is a project policy; absent means
@@ -208,7 +208,7 @@ strict. `allowed` lets a theorem's statement land with a `sorry` proof, so
 dependents can be stated and proved before it is; the cost is conditionally
 proved results that stay incomplete until those proofs land. Change it only on
 the user's request and only once CI meets the
-[open statements](../../autoform_cli/README.md#open-statements) requirements.
+[open statements](../../autoform_cli/reference/open-statements.md#open-statements) requirements.
 Turn it back off only once no open statement remains: the strict audit rejects
 every `sorry`, and strict status shows a proof resting on one as proved.
 

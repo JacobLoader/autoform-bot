@@ -68,7 +68,7 @@ bare fence line. A fence that never closes is read as plain text when its
 article is inspected alone, so it hides no heading or dependency link there,
 but on a chapter page it can pair with a later article's closing fence and hide
 everything between them, so `check` warns about one at the margin and the site
-shows that page as typed (see [Validation](#validation)). The audit reports a
+shows that page as typed (see [Validation](reference/validation-and-audit.md#validation)). The audit reports a
 fence with no closing line as `unclosed-code-fence`. A later bare fence line of
 the same character and at
 least the opener's length closes it here, though the page asks for the opener's
@@ -123,7 +123,7 @@ An optional container-only `navigation` role makes the difference explicit:
 - `source`: a book or other source corpus, shown as itself.
 - `module`: a container that mirrors one Lean source module and holds its
   declarations. It is shown like a topic, and its size is the module's (see
-  [Structure](#structure)).
+  [Structure](reference/validation-and-audit.md#structure)).
 
 An overview, a page with a collection, pagination or source child, draws what
 remains after collections and pagination are replaced by their contents.
@@ -145,7 +145,7 @@ lists it, and an `area:` authored on the node wins over the file. The file only
 assigns areas, so it never stops a command: `check` and `render`
 warn about each entry they ignore, or about the whole file when it is not
 readable `autoform-atlas/v1` JSON, and `audit` reports each as an
-`atlas-omission` [warning](#warnings). An older `AUTOFORM_REF` assigns no areas
+`atlas-omission` [warning](reference/validation-and-audit.md#warnings). An older `AUTOFORM_REF` assigns no areas
 from the file but publishes it as a static file, with every id it names.
 Render reads it for the explorer's areas and leaves the file itself out of the
 site, since it may name articles in unpublished folders; a page's link to it
@@ -160,10 +160,10 @@ articles as `catalog-container`. Every catalog links a declaration ledger under
 catalog that links none and `audit` reports it as `catalog-missing-ledger`,
 while a link to a missing ledger fails both, as such a source link does for any
 article. A hidden ledger under `sources/` draws a `check` warning and fails only
-`audit`, as [Validation](#validation) explains. A completed catalog also
+`audit`, as [Validation](reference/validation-and-audit.md#validation) explains. A completed catalog also
 records in `lean:` the full name of every public declaration the module writes
 with a declaration keyword, which is what the Lean source index records (see
-[Validation](#validation)). Names Lean generates, such as constructors,
+[Validation](reference/validation-and-audit.md#validation)). Names Lean generates, such as constructors,
 structure fields, derived or unnamed instances, and `@[ext]`, `@[simps]`, or
 `@[to_additive]` results, and declarations the index cannot see yet, behind
 `nonrec` or `meta` or written `class inductive`, go in the ledger as
@@ -182,7 +182,7 @@ lists, and say for a catalog name they do not find that a generated name
 belongs in the ledger. They cannot prove that the list omitted no newly added
 public declaration; completeness remains an authored assertion.
 `audit --lean-root` also reads the
-[elaboration limits](#elaboration-limits) of the declarations a catalog
+[elaboration limits](reference/validation-and-audit.md#elaboration-limits) of the declarations a catalog
 resolves and reports them as warnings, which never fail the audit. A catalog
 that records `proof: formalized` also gets `lean-target-wanted` for a wanted
 target it names; the deprecation, declaration-kind, and node-size checks apply
@@ -224,7 +224,7 @@ An article asserts only facts a human or agent verified:
 | `discussion: 42` | Issue number or URL where the article is being discussed. |
 | `article_id: af_...` | Durable identity, `af_` plus 24 lowercase hex digits; `autoform work` requires it on unfinished formalizable leaves, `review record` on the article it records, and `review prepare`, `review check`, and `render --review` on every Lean-mapped article but a module catalog. |
 | `review_approved: sha256:<64 hex>` | The hash of the complete review surface someone approved for this article. It shows that surface is unchanged, not who approved it. |
-| `open_statements: allowed` | Project policy, valid only in `roadmap/README.md`: a theorem's statement may land with a `sorry` proof (see [Open statements](#open-statements)). Absent or `forbidden` keeps the strict policy. |
+| `open_statements: allowed` | Project policy, valid only in `roadmap/README.md`: a theorem's statement may land with a `sorry` proof (see [Open statements](reference/open-statements.md#open-statements)). Absent or `forbidden` keeps the strict policy. |
 | `published: false` | Folder setting, valid only in the `README.md` of a folder below `roadmap/`: `check` and `audit` validate the folder and everything in it, but render leaves it out of the site and of the publication hash. No link on a published roadmap article may point into it, whether a dependency, a source or prose; a link from any other page keeps only its text, with a warning. `audit` and render reject coverage evidence that points into it. A folder inside an unpublished one is unpublished too, whatever its own README says. |
 
 Everything a reader thinks of as progress is *derived* from the DAG on every
@@ -247,7 +247,7 @@ compiles but which rests on unfinished work is green, not dark green.
 `conditional`, labelled "conditionally proved", is the open policy's case of
 that: the article is proved, but it reaches an open statement, a theorem that
 is stated or retracted but not proved
-(see [Open statements](#open-statements)), through its dependencies. An open
+(see [Open statements](reference/open-statements.md#open-statements)), through its dependencies. An open
 dependency counts together with whatever its statement prerequisites reach, and
 a proved dependency passes on
 everything it reaches. The site colours it violet, never green, and lists those
@@ -506,7 +506,7 @@ source.
 provenance, coverage, checked-fact, and optional Lean-target checks. It is local
 and read-only: it neither contacts network services nor writes findings back
 into the blueprint. Pass `--json` for stable machine-readable output. A nonzero
-exit status means the audit found at least one finding; [warnings](#warnings)
+exit status means the audit found at least one finding; [warnings](reference/validation-and-audit.md#warnings)
 never change it. The machine-checkable
 `coverage/README.md` contract contains one `Area | Coverage | Evidence` table
 with `MAPPED`, `INVENTORIED`, `DECOMPOSED`, `DEFERRED`, or `OUT` dispositions.
@@ -520,7 +520,7 @@ source-grounded declaration articles and links to them, directly or through a
 containing roadmap scope. A row whose links reach nothing but catalogs is a
 `coverage-role-mismatch`. Any other link that reaches no declaration leaf, such
 as one to prose or to leaves marked `not_ready` that declare nothing yet, is a
-`decomposed-without-declaration` [warning](#warnings), since earlier versions
+`decomposed-without-declaration` [warning](reference/validation-and-audit.md#warnings), since earlier versions
 accepted it. `DEFERRED` and `OUT` record an explicit later milestone or
 exclusion. Audit JSON includes canonical rows, counts, and the
 exact coverage source hash, while `publication.json` records aggregate counts
@@ -695,7 +695,7 @@ one a metaprogram adds under an existing name. A `lean:` name is unresolved
 when it is absent from the sources or from the built environment, when Lean
 declares it in another module than the one whose source the lexical index
 finds it in, when the sources define it more than once with no single
-declaration chosen by the rules under [Validation](#validation), when it
+declaration chosen by the rules under [Validation](reference/validation-and-audit.md#validation), when it
 reaches a refused declaration, or when its probe fails on its own (a nonzero
 exit, a signal, a timeout, or malformed or ambiguous records), in which case
 the reason quotes Lean's output. An unresolved name affects only its article: other articles still
@@ -1072,7 +1072,7 @@ report the migration blocker. An item whose article records `statement:
 retracted` is a revision: it carries `revision` true in JSON, and the text of
 `work list` adds a `revision:` line and `work context` a `Revision:` line saying
 to start from `autoform work impact` (see the [revision
-contract](#revision-contract)). Both commands are read-only projections of
+contract](reference/claims-and-revisions.md#revision-contract)). Both commands are read-only projections of
 Markdown.
 
 Under the open policy the text output of `work list` starts with an `Open
@@ -1243,7 +1243,7 @@ autoform library index . --lib MathlibExt
 
 `search` takes the project or blueprint directory, then one quoted query; both
 are required. A query that starts with `-` goes last, after `--`. It exits 0
-with or without hits. See the [search contract](#search-contract).
+with or without hits. See the [search contract](reference/search.md#search-contract).
 
 Plan durable article identity metadata, and add it:
 
@@ -1288,7 +1288,7 @@ state does not persist between commands, as in agent tool calls, pass it with
 Leases expire after 1500 seconds unless `--ttl` sets another length. Renew well
 within that, and confirm a claim is still held with `renew`, not `acquire`,
 which also succeeds once a lease has expired or been released. Several targets
-in one command change all-or-nothing; see the [claim contract](#claim-contract).
+in one command change all-or-nothing; see the [claim contract](reference/claims-and-revisions.md#claim-contract).
 
 Pass several targets to `acquire`, `renew`, or `release` when one change needs
 shared ownership. The board reads the set once and sends one atomic push with a
@@ -1445,7 +1445,7 @@ pages of earlier sites: a statement's dependency link is now
 `<scope>.html#node=<id>`, and an old focus-page link no longer resolves. Only a
 legacy `dependencies/full.html#node=<id>` link redirects, through the global
 index, to the smallest bounded scope containing that node. The [publication
-contract](#publication-contract) gives the schema and when render replaces an
+contract](reference/runtime-and-publication.md#publication-contract) gives the schema and when render replaces an
 earlier site.
 
 `render` also writes `javascripts/mathjax.js`, the site's MathJax
@@ -1544,7 +1544,7 @@ What an existing repository meets when it moves to this version:
    coverage line always shows an inventoried count.
 4. `publication.json` is `autoform-publication/v3`. The first render replaces a
    v2 site and refuses a v1 one, and the dashboard reports an older site as
-   stale until then; the [publication contract](#publication-contract) gives
+   stale until then; the [publication contract](reference/runtime-and-publication.md#publication-contract) gives
    the rules.
 5. The runtime is `autoform-runtime/v4`, which gives each node a nullable
    `catalog`.
@@ -1587,1072 +1587,12 @@ What an existing repository meets when it moves to this version:
     `AUTOFORM_REF` includes this change: a render pinned before it needs the
     line to draw any diagram.
 
-## Validation
-
-`autoform check` rejects cycles between authored articles, missing targets,
-escaping paths, symbolic links under `roadmap/`, self-dependencies,
-missing or multiple H1 titles, unsupported frontmatter keys, assertion values
-it does not recognize, and assertions the Lean cannot back: `proof: formalized`
-without `statement: formalized`, or either without a `lean:` name, even beside
-`mathlib: true`. With `--lean-root`, `check` also fails on a `lean:` name that
-is absent from the sources (as `leanblueprint checkdecls` does for LaTeX
-blueprints) or defined more than once in them (see below). It validates
-structure and leaves mathematical correctness to the agent and the Lean
-kernel. Only the article graph must be acyclic, so project, chapter, and scope
-maps can relate two containers in both directions.
-
-Render omits hidden paths, those with a part starting with `.`, so:
-
-- Hidden files and folders under `roadmap/` are no part of the roadmap: they
-  hold no articles, need no chapter page, and may be symbolic links, such as
-  an editor's lock file. A dependency on a hidden page fails, naming the hidden
-  path, as does one that steps through a hidden folder and back out, and so
-  does an `.implementation-notes` folder under `roadmap/`.
-- A `## Sources` link to a local path must name a file inside the blueprint
-  that opens as written, as `audit` also requires: a missing file or a missing
-  folder on its path, a directory, an invalid path or URL, a symbolic link
-  loop, a target outside the blueprint, or a path with a hidden part, even one
-  its `..` steps leave again, fails. Under `sources/`, a hidden note passes
-  `check` with a warning instead and `audit` still reports it: only a
-  repository link reaches it, so it must be committed.
-- A `## Sources` link to a view generated at the blueprint root, such as
-  `dependencies.md` or `structure.md`, fails too, and `audit` and render reject
-  coverage evidence that names one.
-
-These pass `check` with a warning:
-
-- A `## Sources` link with another scheme or a network location, which work
-  and search leave out; only `audit` checks fragments and fails such links.
-- A `mathlib_file` that is not a portable relative path, which search reports
-  as null.
-- A byte-order mark at the start of an article that otherwise loads. It hides
-  whatever opens the first line: frontmatter there is read as text, so its keys
-  are ignored.
-- A `declaration` on a container article, since nothing counts or schedules a
-  container's own declaration; `audit` reports it as `formalizable-container`.
-
-A byte-order mark that hides an article's H1 title fails `check`, as a missing
-title.
-
-`check` also warns, naming the file and the line, about what a published page
-could use to run script or pass for the site's own markup. None of it fails
-`check` or stops `render`: `render` publishes such a page, or such a statement
-in its box, as typed, every character escaped in one preformatted block under
-a note, until the warning is fixed. The page keeps the title its H1 gives, in
-its header and in the navigation, and a statement shown as typed stays in its
-section with the chapter's other statements. A flagged landing page shows
-only its title and opening sentence, as text, above the dashboard.
-
-- Raw HTML: a tag, a character reference, an unclosed comment, or anything the
-  site's Markdown would pass through as HTML. Write it in Markdown, or in code
-  to show it as typed; in a formula, put a space after `<`. A complete
-  `<!-- ... -->` comment outside code is left out of the page, and one in code
-  is shown as typed. A reference a browser shows as typed, such as the `&D;`
-  in `R&D;`, is fine.
-- A link, an image, or a link definition, used or not, to anything but the
-  site's own pages or an `http:`, `https:`, or `mailto:` address, in any case:
-  a `javascript:` or `data:` one would run or show what it holds on the site's
-  origin. An address shown in code is fine.
-- An attribute list, which could give text an id, a class, or a style that
-  makes it look like the site's own markup, such as a status mark; a heading's
-  id comes from its title. The braces of a code fence may only name its
-  language, as in ```` ```{.lean} ````, and options such as `title` or
-  `linenums`.
-- A code fence at the margin left open where an article, a statement, its
-  notes, or a stretch of a chapter ends. The site reads fences over a whole
-  page, so it would run on through what `render` puts after it, status marks
-  included, to the next fence on the page; close it.
-- A list nested deeper than the site's Markdown converter can read, hundreds
-  of levels down; flatten it.
-
-`check` also warns about a formula that defines a command, such as
-`\newcommand`, `\def`, or `\DeclareMathOperator`, or uses one the site turns
-off, such as `\label`. The site's MathJax ignores notation an article defines
-(see above), so such a formula shows an error in red and the rest of the page
-is published as written; put the project's notation in
-`blueprint/tex-macros.json`.
-`check` reads every Markdown page the site publishes as `render` publishes
-it, the landing page, `coverage/README.md`, and source notes included, so the
-site never publishes markup that an article's reviewer read as text and the
-owners of its theme never saw.
-
-`--lean-root` inspection needs directory-descriptor traversal, so platforms
-without it, including Windows, fail closed. A detected Git permalink is emitted
-only for a file whose bytes equal its blob at the detected commit; dirty,
-untracked, or missing files keep local declaration locations but get no URL.
-An explicitly supplied ref is the caller's attestation.
-
-Lean indexing reads the whole Lean root or nothing. It stops with an error,
-rather than indexing what it could, when an entry it must read cannot be read
-safely: a `.lean` file that cannot be read, a folder that cannot be listed or
-searched, a `.lean` entry that is a symbolic link or a special file (editor
-lock links named `.#*.lean` are skipped), or an unreadable `manifest.json`
-below the root, which is read to recognize skeleton and review packet output
-folders, or an unreadable `publication.json` below the root, which is read to
-recognize rendered sites. These stops apply in every folder the walk
-enters, so an unreadable folder of unrelated files inside the Lean root stops
-indexing too; other files are never read. `render` without `--lean-root` uses
-the blueprint's parent folder as the Lean root. To clear a stop, fix the
-permissions, or move the entry out of the Lean root or into a folder the walk
-skips: `.direnv`, `.git`, `.lake`, `.obsidian`, `.trash`, `.venv`,
-`build`, a folder below the root that holds a `.git` entry, a
-recognized skeleton or review packet output folder, or a folder below the
-root that holds a complete `publication.json`, such as a rendered site or the
-`mkdocs` copy of one. Every command skips these folders, so `render` and the
-other commands index the same files. `render` marks the site it is writing
-before it copies any file into it, so a command that indexes during a render
-skips it too.
-`mkdocs build` empties `site/` and then copies files in name order, so `site/`
-can hold copies before its `publication.json`; a command that indexes during
-the build can read them, so run it again once the build is done. There is no
-command-line option to exclude other folders. The skipped folder names and the
-`manifest.json`, `publication.json` and `.git` names match in any letter case,
-except `build`, which must be lowercase. The `.lean` suffix must match
-exactly, so `A.LEAN` is not indexed.
-
-A capture that sees Lean inputs change while it indexes is retried; when every
-attempt changes, the error names the changed paths it can attribute, relative
-to the Lean root, for example `Lean sources kept changing while they were
-indexed; changed: Proj/A.lean`. Folders the walk skips, such as a generated
-site or a nested Git checkout, and files other than `.lean` sources may change
-during a capture.
-
-Within each file, up to an `#exit` line, the index records the declarations
-written with `theorem`, `lemma`, `def`, `abbrev`, `instance`, `structure`,
-`class`, `inductive`, `opaque`, `axiom`, `irreducible_def`, Batteries' `alias`,
-and Batteries' wanted commands `theorem_wanted`, `proof_wanted`, `def_wanted`,
-and `instance_wanted`, which state a result whose proof or construction is
-deferred. The command may follow `@[...]` attribute lists and the modifiers
-`public`, `private`, `protected`, `noncomputable`, `partial`, `unsafe`,
-`scoped`, and `local`; a declaration behind any other modifier, such as `meta`
-or `nonrec`, is not indexed, and neither is an unnamed `instance` or
-`instance_wanted`. `_root_.X` is recorded as `X`. `alias b := a` records `b`,
-and `alias ⟨mp, mpr⟩ := a_iff` each of its names that is not `_`; the `:=` must
-be on the alias's line, and the target on that line or the next nonblank one.
-
-A name declared once has that declaration, even a private one. A name declared
-more than once has the one declaration that is neither `private` nor a wanted
-command (Batteries elaborates each into a private placeholder), since every other module
-sees the public one. With two or more public declarations (a file no library
-builds counts too), or only private and wanted ones, the name has none:
-`check --lean-root` fails with `declaration defined more than once`, `render`
-warns (`--require-declarations` exits 1), `audit` reports
-`lean-target-ambiguous`, `skeleton` leaves it unresolved, and work and search
-report no `source_file`; each diagnostic lists the `path:line` of every
-declaration of the name. `work impact` locates a compiled constant in its own
-module's file. The rule sees only indexed declarations: a public one behind an
-unindexed prefix such as `open X in`, or written `«main»` where the article
-writes `main`, leaves a private one as the name's only declaration. In a file
-that starts with `module`, a declaration outside a `public section` and
-without `public` is private to Lean but public to the index, so such a name may
-be reported as defined more than once where Lean accepts it, or selected where
-Lean binds it nowhere outside its file.
-
-The Markdown files are the source of truth. Graphs and sites are derived views
-that may be regenerated at any time.
-
-## Audit contract
-
-`autoform audit` reports structured findings at blueprint-relative paths. It
-checks that no article leaves a code fence open, that formalizable articles are
-declaration-sized leaves with statement text and an explicit dependency
-section, that asserted Mathlib facts are
-internally consistent, and that cited work resolves to local source
-material without escaping the blueprint. Coverage files are checked for broken
-links and explicitly declared gaps. With `--lean-root`, local declaration names
-and declaration kinds are checked against the Lean source index, along with the
-elaboration limits each target runs under. It leaves `review_approved` to
-`review check`, since judging it needs a Lean extraction.
-
-An alias has its target's kind, size, and elaboration limits when the index
-can be sure what the target is, by the rules in `lean.py`'s `alias_target`;
-otherwise it matches any intent and is measured, like any other declaration,
-by its own span and limits. Each name of `alias ⟨mp, mpr⟩`, and any alias of
-one, is a theorem whatever its target is.
-
-A wanted target matches the intent its command mirrors: `theorem_wanted` and
-`proof_wanted` a `theorem`, `lemma`, `proposition`, or `corollary`,
-`def_wanted` a `def` or `definition`, and `instance_wanted` an `instance`. A
-theorem's wanted target can back `statement: formalized`, but no wanted target
-backs a proved article: `lean-target-wanted` reports one named, directly or
-through an alias, by an article that records `proof: formalized`, or by a
-definition that records `statement: formalized`, since a stated definition
-counts as proved. A wanted command
-without a body elaborates to a placeholder that carries no `sorry`, so no
-`sorry` check catches one. Batteries declares every placeholder `private`, so
-the kernel-trust audit of the generated verify workflow looks a `lean:` name up
-among the root package's placeholders when the build has no declaration of that
-name. A target that resolves to a placeholder, or to a public alias of one,
-passes as wanted only when the assumption contract records its article as
-`stated`, `can_prove`, `can_state`, `planned` or `not_ready`. Any other state
-fails it, as `lean-target-wanted` fails proved and defined articles, and so do a
-`mathlib` state and a state the helper does not know. The audit still reports
-any other `private` declaration as not a declaration of the Lean build.
-
-### Warnings
-
-A finding is a problem the audit fails on. A warning never fails the audit:
-`clean` and the exit status depend on findings alone, so a repository that
-passes keeps passing when a warning appears. The text output prints a
-`warning: <path>: <code>: <message>` line for each, after the error lines.
-`--json` lists them after `findings` as `warnings`, sorted by `article_path`
-and `code`. Each also carries a `message` and `declarations`, one object per
-affected declaration and setting with its `name`, `option`, `value`,
-`location` (the `set_option` as `path:line` relative to the Lean root), and
-`scope` (`file`, `section`, `declaration`, or `proof`), sorted by name. The
-catalog limit warnings under [Elaboration limits](#elaboration-limits) fill
-`declarations`. Two warnings leave it empty: `atlas-omission`, at `atlas.json`,
-names what loading ignored in that file, and `decomposed-without-declaration`,
-at `coverage/README.md`, names a `DECOMPOSED` row's links that reach no
-declaration leaf.
-
-### Structure
-
-Containment is inferred from nested `README.md` articles, so a chapter
-directory without one is invisible to the hierarchy: its pages attach to the
-roadmap root and the book loses a level. `missing-chapter-article` reports a
-directory directly under `roadmap/` that holds articles but names no chapter.
-Deeper directories (the `definitions/` and `theorems/` buckets the bundled
-example uses) are a filing convention inside a chapter and are not checked.
-`overfull-container` reports a mathematical article with more than 24 direct
-children, which is a table of contents rather than a chapter. A roadmap root
-whose direct children are all chapter pages is a repository-wide subject index
-and may hold 64; one root-level leaf returns the root to the 24-article limit.
-A `navigation: module` page lists one Lean module's declarations, so it may
-hold as many as the dependency explorer draws as a map, 120.
-
-### Node size
-
-`node-too-large` is retrospective and needs `--lean-root`: it measures the
-source span of a node's resolved `lean:` declarations, from each declaration's
-first line to the line before the next one. A node is reported only once it
-clears both 200 lines and four times this project's own median, so a project
-whose units are uniformly long is measured against itself rather than gated on
-an imported norm, and a project with too few finished nodes to have a
-meaningful median cannot clear the multiple at all. Every measurement appears
-in the finding's reason.
-
-### Elaboration limits
-
-With `--lean-root`, the audit reads the `maxHeartbeats`,
-`synthInstance.maxHeartbeats`, and `maxRecDepth` settings each resolved `lean:`
-target is elaborated under, including a catalog's. For a declaration article,
-`lean-target-unbounded-limit` reports a target with no heartbeat limit: a
-`set_option maxHeartbeats 0` or
-`set_option synthInstance.maxHeartbeats 0` in force at the declaration or inside
-its proof, which lets elaboration run indefinitely instead of failing.
-`lean-target-unscoped-limit` reports a target whose raised limit comes from a
-file- or section-wide `set_option`, which also covers every later declaration
-whether or not it needs one; Mathlib's `linter.style.setOption` rejects
-unscoped heartbeat limits for the same reason. A raised limit put on the
-declaration itself with `set_option ... in` is accepted Mathlib practice and is
-not reported. The pass is lexical: it follows `namespace`, `mutual`, `end`, and
-`section` nesting, including `noncomputable section` and the module system's
-`@[expose] public section`, and treats an indented `set_option` as part of the
-proof above it.
-
-A catalog inventories code that already exists, so its declarations get the
-same two checks as [warnings](#warnings), at most one per catalog and code:
-`catalog-unbounded-limit` and `catalog-unscoped-limit`. As for a declaration
-article, an alias is read as the declaration it reaches. The message counts the
-affected declarations against all those the catalog's resolved names reach (an
-alias listed beside its target counts once), names the options involved, and
-locates the `set_option` of the first by name, for
-example `2 of 40 catalogued declarations have no maxHeartbeats limit
-(Inv.alpha at Inv.lean:1 and 1 more); existing code: change it only on request,
-and a finite limit must pass a rebuild`. A name that does not resolve is a
-`lean-target-not-found` or `lean-target-ambiguous` finding and is not counted.
-
-### Statement text
-
-A formalizable article must state its result in prose a reader sees. At most
-one of three findings reports a statement that does not, checked in this order:
-
-- `missing-statement-text`: the statement has no prose outside code blocks, HTML
-  comments, and lines that hold only a heading written with `#` marks, such as
-  `### Setting`.
-- `empty-statement-text`: the published prose has no letter or digit, as with a
-  hidden element, a horizontal rule, an image, a link with no text, or a heading
-  that is underlined, quoted, or in a list item.
-- `placeholder-statement-text`: every word is one of `pending`, `placeholder`,
-  `todo`, `tbd`, `unknown`, or the statement opens with one of them followed by
-  a colon or a dash, as in `TODO: state it`. A single hyphen or en dash counts
-  only with a space after it, so `Unknown-variance` is a word.
-
-The prose is read as the site publishes it, without headings, code blocks, and
-diagrams; inline code and mathematics count. A status word that begins a
-sentence passes ("Pending Mathlib PR 1234 ..."), and so does a marker written
-without punctuation; both are left to review. A real statement that opens
-`Unknown: ...` or `Pending: ...` is reported and needs rewording, and so does
-one written in symbols alone, such as `⊥ ≠ ⊤.`, which has no letter or digit.
-A reference-style link is read
-without its definition when that sits in a later section. Coverage evidence is
-held to the same placeholder rule.
-
-## Search contract
-
-`autoform search` is a read-only projection of Markdown: it writes nothing,
-builds no index, and starts no process. The contract is the JSON shape, the
-exit codes, and the rule that an article is a hit only when every term of the
-query occurs in it, as a substring of one of its fields; terms may sit in
-different fields. How the query is cut into terms, folded, shortened, and
-ranked may change, and `search.py` describes it; `terms` in the JSON shows what was
-searched. Case, width, accents, typographic dashes and quotes, and invisible
-characters do not matter. The fields, best first:
-
-- `title`, without its Markdown markup;
-- `lean`, the last component of each `lean:` and `mathlib_declaration` name, or
-  a term that is the whole name or its last components;
-- `node_id`, the last component of the path ID;
-- `statement_text`, as the site publishes it, without headings, code blocks,
-  diagrams, comments, and hidden elements; inline code and mathematics count,
-  and published mathematics is delimited `\(...\)`, so search for a formula's
-  content;
-- `ancestors`, the titles of containing articles below the roadmap root;
-- `qualified_names`, the path ID and Lean names in full, which is where a
-  namespace alone matches.
-
-Other frontmatter and the sections after the statement are not searched. There
-is no phrase, synonym, or prefix search, and one absent term means no hit:
-`map` matches `roadmap`, `unambiguous` does not match `non-ambiguous`, a symbol
-such as `ℝ` folds to its plain letter, and a one-letter term matches nearly
-every article. Only the query is shortened, so
-`indices` does not find `index`. Superscript and subscript digits fold to the
-digit while `^` and `_` stay, so `S^1` and `S¹`, or `H_0` and `H₀`, do not find
-each other. A name with a dot, underscore, or digit is searched exactly. Query
-with a few distinctive words or one exact Lean name,
-search each spelling, and retry with fewer words before treating a result as
-new. Hits sort by the best field any term matched, and last by node ID.
-
-`--state` takes exact derived state keys, which `autoform search --help` lists
-(`proved` does not include `fully_proved`), and `--declaration` frontmatter
-`declaration` kinds, each repeatable; they apply before `total_matches` is
-counted and `--limit` (default 20) after. `--declaration def` also keeps
-`noncomputable def`, but not `definition`. When no article in the blueprint
-declares any of the requested kinds, the search is refused with exit code 2 and
-the kinds in use, rather than answered with no hits. A requested kind that no
-article declares, beside one that some article does, adds nothing, and a note
-on standard error names it.
-
-`--json` writes `autoform-search/v1`: `schema`, `source_revision`,
-`open_statements`, `query`, `terms`, `filters` (`declaration` and `state`,
-each a list), `limit`, `total_matches`, and
-`hits`, with no timestamp and no path outside the project. A hit carries
-`node_id`, `article_id`, `article_path`, `article_revision`, `title`,
-`declaration`, `catalog` (`module` for a module inventory), `state`,
-`statement_text` (the authored Markdown),
-`lean_targets` (all of them), `mathlib`, `mathlib_declarations`,
-`mathlib_file`, `source_targets` (as the article writes them, once each, minus
-any that is neither an http(s) link nor a path inside the blueprint), `used_by`,
-`used_by_count`, `shared_title`, and `matched_fields`; `article_id`,
-`declaration`, `catalog`, and `mathlib_file` may be null. A Lean target has
-`declaration`, `source_file` (relative to `--lean-root`), and `line`; the last
-two are null without `--lean-root`, when the lexical scan does not find the
-name, or when it finds several with none chosen (see Validation).
-`used_by` holds the first ten dependents by node ID, through statement or
-proof; `used_by_count` counts all. `shared_title` marks a title another article
-repeats and is advisory. `matched_fields` lists, best first and once each, the
-fields in which some term found its best match; it does not say which term.
-No hit is `"hits":[]` with exit 0. Human output shortens the statement, omits
-sources and dependent names, and is not a contract. It opens with how many
-matches each list shows, the blueprint's and each library's, and puts each
-hit's statement, or a library hit's signature, on the hit's first line, so
-output cut short still gives every list's count and, for each hit it shows,
-the statement or signature.
-
-Search rereads each article it matches against and refuses, with exit 2, bytes
-other than those the graph was built from, as it refuses a symlinked roadmap
-entry. Each call reads every such article and renders its statement, so its
-cost grows with the blueprint.
-
-### Searching a library the project depends on
-
-`--library NAME` (repeatable) also searches the index a locked Lake package
-publishes, and needs `--lean-root`, which names the Lake project.
-For example,
-`autoform search . "separating hyperplane" --lean-root . --library atlas`.
-`autoform library list ROOT` reports each package in `lake-manifest.json`
-with its type, locked revision, and whether search would accept it, and for a
-package it would not, why. Text shows one row per package: name, type, the
-first 12 characters of the revision, and `usable` or `not usable: REASON`.
-`--json` emits `autoform-library-list/v1`, `schema` and `packages`, each with
-`name`, `type`, `revision`, `index` (whether the checkout holds an index
-file), `usable`, and `reason` (`null` when usable).
-Neither command starts a process or writes a file.
-A search without `--library` whose project locks a package with an index file
-adds one `note:` line on stderr naming the package and the flags that search
-it; stdout, the JSON and the exit status are unchanged. The note only checks
-that the file exists, so `library list` still decides whether it is usable.
-
-The index is the file `autoform-library-index.jsonl` at the package root, or
-the file given as `--library NAME=PATH`. Its format,
-`autoform-library-index/v0`, is provisional and may change without notice
-until it is promoted to `v1`.
-
-Before an index is used, search checks by reading files that the checkout is
-at the locked revision, that the index's toolchain and direct dependencies are
-the ones the checkout pins, that the Lean files under the indexed directories
-are exactly the indexed modules with the recorded digests, and that the index
-as a whole is one generation. A package that is not locked, not checked out, a
-path dependency, replaced by `.lake/package-overrides.json`, without an index,
-or failing a check is refused, as is any library of a project whose `.lake` or
-packages directory is a symbolic link, with exit 2 and a message that begins
-`library NAME:`. One refused library refuses the whole call, blueprint hits
-included, since a partial answer would read as "this result is new". A
-package replaced with `lake --packages=` is not detected. Neither is an edit
-to the index file that leaves each module's `name`, `source_file`, and `sha256`
-and the header's toolchain, dependencies, and source directories alone: a
-declaration record, a module's `module_doc` or `module_system`, or the
-header's `generator`, `probe`, or `package`.
-
-A declaration matches when every term occurs in its last name component
-(`lean`), docstring, module header (`module_doc`), full name (also without
-`_root_.` and `«»`) or module (`qualified_names`), the constants in its type
-(`mentions`), or its keyword (`kind`), ranked in that order, with `complete`
-before `wanted` among otherwise equal hits. `--state` and `--declaration` apply
-to articles only; `--limit` applies to each list.
-
-With `--library` the JSON schema is `autoform-search/v2`: every
-`autoform-search/v1` key keeps its meaning, and `libraries` lists, in the
-order given, `name`, `revision`, `index_schema`, `generator`, `probe`,
-`differences`, `total_matches`, and `hits`. A hit carries the declaration's
-`name`, `kind`, `status`, `module`, `source_file`, `line`, `signature`,
-`statement`, `docstring`, `mentions`, `auto_named`, `module_system`,
-`matched_fields`, `module_doc` (the module header when it matched, otherwise
-`null`), and `import`, the line that makes a `complete` declaration available
-(`null` for a `wanted` one, which carries no proof). `module_system: false`
-marks a file a Lean module file cannot import. `differences` lists the
-library's toolchain and each direct dependency whose locked revision is not
-the project's, as objects with `what` (`lean_toolchain` or `dependency`),
-`name` (`null` for the toolchain), `library`, and `project` (`null` when the
-project locks no such dependency or either side is a path dependency); it does
-not say the library fails to build. Without
-`--library` the output stays `autoform-search/v1`, byte for byte.
-
-#### Publishing an index
-
-`autoform library index ROOT` writes `autoform-library-index.jsonl` at the
-package root of a built library. `--lib NAME` (repeatable) limits it to those
-`lean_lib` targets; the default is every `lean_lib` of the package. The format
-is `autoform-library-index/v0`. Only the source directories of those targets
-are read. A target's `globs` select its modules as Lake does: `M` is one
-module, `M.*` the module and its submodules, `M.+` its submodules only.
-
-It is the only library command that runs Lean and Lake. It imports the
-library's modules, so run it on a trusted checkout or in a sandbox. It does
-not build: a missing or stale build exits 2 with the `lake build` command
-for the indexed targets and the first module Lake found unbuilt, and the
-freshness check rewrites Lake's `.hash` files, so `.lake` must be writable.
-`--timeout SECONDS`, a positive number, bounds the probe. The index records
-the Autoform version that wrote it, so the command refuses to run from an
-Autoform that is not installed. The index is written whole or not at all; a
-failed write says why and whether the previous index is unchanged.
-
-A declaration is indexed when it is one a user wrote with a declaration
-keyword, not a generated companion, an internal detail, or a `where` or
-`let rec` helper; `library/declarations.py` gives the exact selection, the
-`line`, and where a record's `statement` is cut, which never includes part of
-the body. A declaration that rests on `sorry` or on an axiom other than
-`propext`, `Quot.sound` and `Classical.choice` is left out, and the count is
-written to standard error. A result declared with `theorem_wanted`,
-`proof_wanted`, `def_wanted` or `instance_wanted` is indexed with status
-`wanted`. A range the probe reports that is not in the source file means the
-source is not the one the library was built from: the command exits 2 and
-names the declaration and its module.
-
-`--check` writes nothing. It exits 0 when the index at the root is current, 1
-when it is stale, with the reason on standard error, and 2 when it cannot
-tell. A package with no index is stale. A package root that does not exist,
-an index that exists but cannot be read, and a missing or stale build are
-cases where it cannot tell. Changed, new and missing source files are found
-without running Lean.
-Run it in the library's CI after the build, with the same `--lib` flags, and
-pin the Autoform revision: the bytes of an index depend on it.
-
-The generator is tested on Lean 4.34.1 and 4.35.0 only and is not supported on
-Windows: it exits 2, before it runs Lean, when the package's `lean-toolchain` is
-neither `leanprover/lean4:v4.34.1` nor `leanprover/lean4:v4.35.0`, nor a spelling
-elan resolves to one of them, such as `v4.35.0`.
-The index's `package` is the name in the package's `lake-manifest.json`, else in its
-`lakefile.toml`, and the command exits 2 when neither gives one; the folder it
-is checked out in never matters.
-Module names must be ASCII identifiers. A Lean file under an indexed
-directory that no indexed library builds is refused. So are two modules that
-declare the same public name in two ways: Lean refuses to import both. A
-theorem two modules state the same way is indexed once, under the first of
-its modules in name order, with a warning on standard error naming the
-modules; a wanted name is private to its module, so each module's copy is
-indexed, and a record is identified by its name and module together.
-
-## Open statements
-
-By default a project runs the strict policy: CI rejects every `sorry`, so a
-theorem's statement lands only together with its proof, and a statement waits
-until the proof's prerequisites are proved. `open_statements: allowed` in
-`roadmap/README.md` lets a theorem's statement land with a `sorry` proof. Such
-an article, a theorem whose statement is formalized and whose proof is not, is
-an open statement; CI audits it only through the declarations its `lean:`
-names. A proof that uses open statements is conditional:
-it compiles and records `proof: formalized`, but is reported as conditionally
-proved, never as fully proved. Status, `work`, and the site derive that from
-the Markdown dependencies and CI from what the Lean uses, so CI can print
-`sorry-free` for an article the site shows as conditional, when its Markdown
-depends on an open statement its Lean does not use. CI is never the looser of
-the two, since a Lean reach the Markdown does not declare fails. The policy lets
-dependents be stated and proved against a faithful statement before its proof
-exists; the price is conditional
-results that stay incomplete until every open statement they rest on is proved.
-A dependent's proof can cite an open statement because its `sorry` proof
-compiles, but not the placeholder a Batteries wanted command declares:
-`theorem_wanted foo : T` declares a private `def` of type `ProofWanted T`, not a
-theorem of `T`. Readiness still counts a prerequisite that records `statement:
-formalized` against a wanted target like any other stated prerequisite. So under
-this policy, state every theorem as a `theorem` with a `sorry` proof, not with
-`theorem_wanted` or `proof_wanted`, and before a dependent cites an existing
-wanted prerequisite, restate it that way or prove it.
-
-A retracted theorem, one recording `statement: retracted` as a revision leaves
-it, stays an open statement: the Lean its `lean:` names,
-`sorry` or not, still compiles into whatever uses it. The audit keeps accepting
-its `sorry`, and what rests on it stays conditional, until Formalize restates
-and proves it, or the marker and `lean:` are removed. A theorem that was never
-stated is not open even when it has `lean:`: a draft name does not become an
-assumption, and CI rejects its `sorry`. A definition is never open: its body
-is its proof, CI rejects a `sorry` in it, and its statement phase waits until
-its proof prerequisites are stated. A retracted definition is not open either,
-but what rests on it still assumes the open statements its body reaches. A
-module catalog is never open, even while pending: it records inspection of
-existing Lean, not a statement to assume, so CI rejects a `sorry` in a
-declaration only it lists, and nothing that rests on it assumes it, though what
-rests on one with `lean:` still assumes the open statements its own
-dependencies reach. Turn
-the policy back off only once no open statement remains, since the strict audit
-rejects every `sorry` and strict
-status shows a proof resting on one as proved, not conditional.
-
-Write an open statement's proof as exactly `sorry`. The audit accepts a `sorry`
-only inside the proof of a theorem that an open article's `lean:` names: never
-in its type, a helper, a definition, or a `where` clause, and never inherited
-from a declaration outside the root package. Lean-generated auxiliaries count as
-helpers: a `where` clause becomes `T.aux`, well-founded recursion over two or
-more arguments moves the `decreasing_by` proof into `T._unary`, and structural
-recursion through a `mutual` block compiles the bodies into `T._f`, so all three
-fail. Recursion can move a `sorry` case into such an auxiliary, so write the
-whole proof as `sorry`, never one case of it. `lake build --wfail` and
-`warningAsError` turn Lean's "declaration uses `sorry`" warning into an error,
-so they cannot be combined with open statements; the generated workflow runs
-plain `lake build`.
-
-The generated `autoform-verify.yml` reads the policy with `python3
-.github/autoform_audit.py --policy blueprint`, which prints `allowed` or
-`forbidden` from `roadmap/README.md` (`forbidden` when the file or key is
-absent) and exits 1 with `error: ...` on malformed frontmatter. Under either
-policy the workflow then writes the `autoform work assumptions blueprint --json`
-contract. Under `forbidden` it runs the strict audit with `--targets`: any
-`sorryAx` fails with `NAME depends on unexpected axiom sorryAx` and
-`root-package declarations failed the kernel-trust audit`. So does a `lean:`
-name the build did not compile, with `NAME [ID] is not a declaration of the
-Lean build; fix the article's lean: name or build the module that declares
-it`: a theorem in a file no target imports or inside a string
-passes the lexical `autoform check --lean-root` but not this. The strict audit
-refuses a contract that allows open statements, records an article as open, or
-lets one assume an open statement. Under `allowed` the workflow audits every
-root-package declaration against the contract. The audit accepts a `sorry` in a
-declared open statement's own proof and a proof that reaches only the open
-statements its article's Markdown dependencies reach. It rejects a `sorry` in a
-statement, a `sorry` anywhere else in the root package, a dependency outside the
-root package that depends on `sorry`, an article declaration that reaches an
-open statement its Markdown dependencies do not reach (so a fully proved
-article, which assumes nothing, may reach none), a `lean:` name missing from the
-build, and an open statement that its article records as proved. Each article
-declaration gets at most one of these status lines, with `NAME` the declaration
-and `ID` the article's node ID. A declaration with an error, or one that
-reaches a failed declaration, gets none of them, and no declaration gets one
-when the kernel replay fails:
-
-```text
-open statement (proof is sorry): NAME [ID]
-open statement (proof depends on sorry elsewhere): NAME [ID]
-open statement (proof is sorry-free; restate it if retracted, then record proof: formalized): NAME [ID]
-conditional: NAME [ID] rests on open statement(s) A, B
-sorry-free: NAME [ID]
-```
-
-A passing audit ends with `kernel trust clean except declared open statements
-(N root-package declaration(s) audited; K open statement(s), C conditional
-declaration(s))`; a failing one logs each error, naming the declaration and
-what to change, and ends with `root-package declarations failed the
-open-statement audit`.
-
-Both audits check two more things. A `lean:` name outside the root package, as
-a Mathlib article's is, must be neither unsafe nor partial (a `partial def`
-counts as partial) and use no axiom beyond `propext`,
-`Classical.choice`, and `Quot.sound`; otherwise it fails with `NAME [ID] is
-outside the root package and is unsafe or partial` or `NAME [ID] is outside the
-root package and depends on unexpected axiom AX`. The open-statement audit
-reports `sorryAx` there as `NAME [ID] is outside the root package and depends
-on sorry`. And both replay every root-package declaration through the kernel
-on top of a fresh import of the modules outside the root package, because the
-build's `.olean` files can hold anything and a root `run_cmd` can add a
-declaration with kernel checking off. The replay runs only once every other
-check has passed: replaying a declaration that reaches `Lean.reduceBool` or
-`Lean.reduceNat` runs compiled project code, and the axiom check rejects every
-such declaration, since both depend on `Lean.trustCompiler`. Until then the
-audit logs `kernel replay of the root package skipped: it runs once every other
-check passes`. A declaration the kernel rejects fails with `kernel replay of the
-root package failed: ...`, which names the first one; the workflow's scan for
-the kernel-check bypass option is only lexical.
-
-Both audits refuse an unsafe or partial root-package declaration with `unsafe
-or partial declaration: NAME`, and report a `partial def` under its own name.
-For every computable recursive definition, structural, well-founded, or
-`partial`, Lean adds a partial copy `NAME._unsafe_rec` for the compiler to run.
-The audits skip these copies: the kernel refuses a safe declaration that refers
-to one, and the kernel replay skips them too, so it refuses such a declaration
-added with kernel checking off. A `lean:` name that is one still fails, with
-`NAME [ID] is Lean's compiled copy of a recursive definition; name the
-definition itself`.
-
-The probe runs no project code. Its header imports only the toolchain's Lean,
-and the workflow runs it with plain `lean`, not `lake env lean`, passing the
-project's search path in `AUTOFORM_AUDIT_LEAN_PATH`. The probe refuses to run
-when that variable is unset or when `LEAN_PATH` is set. It loads the
-root-package modules as data, with the toolchain's library first on the search
-path and no environment extensions, so no `initialize` block runs and no project
-instance, macro, or elaborator applies to the probe's own code. It finds each
-declaration's axioms by walking types and values itself, not from the axiom
-tables the `.olean` files store, and counts a name that no module declares as an
-axiom, which fails with `NAME depends on X, which no module of the build
-declares`, or for a `lean:` name outside the root package with `NAME [ID] is
-outside the root package and depends on X, which no module of the build
-declares`. The walk takes a mutual inductive block as one node, so each type and
-constructor of the block gets the axioms of the whole block. It imports the
-toolchain's `Init` along with the build, so a core name that the build declares
-itself, such as `propext`, cannot pass the axiom allowlist, which compares
-names: a differing declaration fails to load with `environment already contains
-'propext'`, and an identical copy of a theorem or of a Prop-valued axiom is
-merged with the toolchain's own constant. Lean does let a
-theorem stand in for another module's axiom of the same name and type, which the
-module system relies on, so a theorem restating an axiom such as
-`Lean.trustCompiler`, whose type is `True`, fails with `M declares a theorem N
-in place of the axiom K declares; rename one of them so the audit can run`. A
-root module whose first component names an entry of the toolchain's library,
-such as `Lean.Hack`, would be looked up in the toolchain's library, where it
-fails to load or a toolchain module of the same name stands in for it, so the
-audit refuses it with `root module M shares its first component R with the
-toolchain's library; rename the module so the audit can run`. Lean loads a
-module from the first search-path entry that holds its first component, and Lake
-lists dependency libraries before the root package's, so a dependency library
-that also provides a root module's first component could stand in for the root
-package's files. The audit refuses that with `root module M shares its first
-component R with another library on the search path (DIRS); rename the module so
-the audit can run`, where DIRS lists the library directories that hold R. The
-workflow runs the probe with `LEAN_ABORT_ON_PANIC=1`, so a panic stops it
-instead of letting it continue with a default value. It also requires the
-probe's success line as its last line, so a probe that stops early fails the
-step even when it exits 0.
-
-The audit does not cover build-time IO. `lake build` runs root and dependency
-code, and the Lake configuration, on the same runner before the audit, so that
-code can rewrite the audit script, the toolchain, the workflow's inputs, or the
-blueprint before the audit reads them. The audit also does not defend against a
-malicious dependency at build time, edits to the workflow, or crafted `.olean`
-bytes. Closing those needs a separate audit job that runs no project code; the
-generated workflow does not have one. The project's `lean-toolchain` chooses
-the Lean that builds the project and runs the probe: the workflow installs elan
-with `--default-toolchain none`, and elan installs any toolchain the file names,
-including a fork on GitHub, so the audit trusts that toolchain too.
-
-`autoform init` writes `.github/CODEOWNERS.autoform.example`. GitHub ignores
-that filename, so the example cannot mask or replace a repository's active
-owners. Two of its suggested rules cover Autoform's control paths: the roadmap's
-`open_statements` policy and `.github/` CI. To activate them, find the first
-existing CODEOWNERS file in GitHub's order (`.github/CODEOWNERS`, `CODEOWNERS`,
-then `docs/CODEOWNERS`), or choose `.github/CODEOWNERS` when none exists; copy
-the rules there, replace `@OWNER`, and uncomment them. Consider rules for the
-Lean build controls too: the Lake configuration, `lean-toolchain`, and
-`lake-manifest.json` decide what CI compiles.
-
-GitHub reads CODEOWNERS from a pull request's base branch, so new rules cannot
-protect their own activation unless equivalent coverage already exists there.
-Review that change explicitly. Then require pull requests and code-owner
-review, dismiss stale approvals after new commits, and audit every
-branch-protection or ruleset bypass. These rules put changes in front of an
-owner; they do not stop project code from changing files on the CI runner.
-
-The step runs `autoform work assumptions` from `AUTOFORM_REF`, and the earlier
-`autoform check` step validates the frontmatter with that same pin. Scaffolded
-workflows pin `AUTOFORM_REF` to the Autoform checkout that scaffolded them, so a
-project scaffolded before open statements existed must, before opting in, move
-`AUTOFORM_REF` to a commit that has `work assumptions` and replace
-`.github/workflows/autoform-verify.yml` and `.github/autoform_audit.py` with the
-versions `autoform init` writes at that commit. An opted-in project with an
-older pin fails closed: `autoform check` stops with `unsupported frontmatter key
-'open_statements'`, and the audit step fails without `work assumptions`. Under
-the strict policy that missing command, which argparse reports as `invalid
-choice: 'assumptions'`, is the one failure the step tolerates: it logs a warning
-that `AUTOFORM_REF` predates `autoform work assumptions` and runs the strict
-audit without the `lean:` name check, as earlier workflows did. Any other
-failure there, such as a failed fetch, fails the step. An older workflow runs
-the strict audit, which rejects every `sorry`. A newer
-`.github/autoform_audit.py` keeps the older workflow's three-argument form,
-which runs the strict audit without the `lean:` name check. Its probe refuses
-to run under an older workflow's `lake env lean`, so replace the two files
-together.
-
-To reproduce the CI audit locally after a build, with `ROOT_PACKAGE` the Lake
-package name the workflow reads from `lake translate-config toml`, and
-`--targets` in place of `--open-statements` under the strict policy:
-
-```bash
-lake build
-lake pack /tmp/autoform-root.tgz
-autoform work assumptions blueprint --json > /tmp/autoform-assumptions.json
-python3 .github/autoform_audit.py --open-statements /tmp/autoform-assumptions.json \
-  ROOT_PACKAGE /tmp/autoform-root.tgz /tmp/autoform-probe.lean
-AUTOFORM_AUDIT_LEAN_PATH="$(lake env printenv LEAN_PATH)" LEAN_ABORT_ON_PANIC=1 \
-  lean /tmp/autoform-probe.lean
-```
-
-The audit passes only when `lean` exits 0 and the last line it prints is the
-`kernel trust clean ...` line; the workflow checks both.
-
-## Claim contract
-
-Claims use canonical `autoform-claim/v1` JSON in orphan commit messages and
-exact observed object IDs as update preconditions. Absent and verifiably expired
-leases may be acquired; live peer leases are refused. Malformed or unreadable
-refs are unverifiable and may not be acquired, renewed, released, or removed by
-cleanup. A heartbeat verifies ownership on entry and permanently records any
-later refusal or transport uncertainty as lost ownership.
-
-A claim key is a slug and digest of any string, not a validated node id, so a
-shared resource is locked the same way a node is, as is a Lean helper no
-article owns under the `lean/<slug>-<digest>` key `work impact` reports.
-Parallel agents get one Git worktree each, and builds take no claim. Worktrees
-on one machine share its elan toolchain and Mathlib cache, so Formalize fills
-the cache once before creating them.
-
-`acquire`, `renew`, and `release` accept several targets. The board reads
-every ref once, applies the single-key ownership checks to each, and sends one
-atomic push with a lease per ref, so either every claim changes or none does;
-a board that cannot push atomically is refused. Success prints the usual line
-per target. A refusal exits 1 with one line such as `error: could not acquire
-af_y, af_z; no claim was acquired: held by another worker: af_y`, naming the
-blocking targets when known, and leaves no claim behind; a duplicate target
-exits 2. Workers that need several
-claims follow a no-hold-and-wait rule: acquire the whole set in one command and,
-when it is refused, release everything already held and retry with the whole
-set, never holding some claims while waiting for others. The CLI does not
-enforce the rule; it is what keeps two multi-article revisions from
-deadlocking.
-
-`claim list` copies the whole board with one fetch and reads every lease at
-once, so its cost hardly grows with the number of claims. Each lease it prints
-is the one its ref named when the board answered. The listing is not a proven
-consistent snapshot of the whole board: Git can read the refs it advertises one
-by one, so a peer's multi-claim acquire or release made while the board answers
-can show some of its claims changed and others not. A peer's renewal meanwhile
-changes nothing, except that a server speaking Git's older stateless HTTP
-protocol may refuse the fetch, which is then repeated up to three times. A
-board with claim keys that differ only in case, which a case-insensitive
-scratch cannot store under their names, is listed with one more command that
-names its claims first. A listing is a report, not a lock: every acquire,
-renew, and release checks ownership again.
-
-`claim list TARGET...` lists only those targets' claims, in the same JSON; a
-target without a claim is left out, and a duplicate target exits 2. It names
-the targets' refs, fetches only those and reads their leases, so changes to
-other claims never make it retry and no other claim's lease is copied, and a
-target released meanwhile has the targets named again, never the whole board.
-Naming the targets still downloads the board's list of refs, branches
-included, so over a network its cost grows with that list. `--timeout SECONDS`,
-120 by default, bounds the whole listing, however long it is set, and a step
-still running after five seconds is named on stderr as `claim list: <step>...`. A listing
-that fails exits 1 with nothing on stdout and one line on stderr: `error:
-timeout:` when the board did not answer in time, naming the step; `error:
-contention:` when the board refused every fetch because claims kept moving; or
-`error: transport:` for any other failure to reach or read the board. Every
-claim command runs Git with `GIT_TERMINAL_PROMPT=0` and no input, so Git itself
-never waits for a password, though a credential helper or `GIT_ASKPASS` program
-it is configured to use still can, until the time limit. `claim list` also
-runs Git in its own process group, without a terminal on Linux and macOS so
-`ssh` cannot prompt either, and stops a Git command that runs out of time or is
-interrupted together with everything it started. The other claim commands run
-Git in the caller's process group, so a terminal's interrupt reaches Git, which
-then removes the ref lock it holds.
-
-A Git process that stops while updating a claim ref leaves a lock file in the
-board, and Git then refuses the updates it guards:
-`refs/autoform-claims/<key>.lock` blocks that claim, `packed-refs.lock` blocks
-every release, and on a board in the reftable ref format
-`reftable/tables.list.lock` blocks every claim update. On a board given as a
-local path, or as a `file://` URL except on Windows, a command whose push such
-a file still blocks two seconds later exits 1 naming the file and when it was
-modified; a lock that goes away within those two seconds counts as a lost race.
-On such a board, `claim cleanup` leaves a lease whose release a lock file
-blocks in place and still exits 0, and `claim list` and `claim cleanup` warn on
-stderr about each lock file not modified within two seconds of the current
-time. Git records no owner for a lock file, so Autoform never deletes one: once
-no Git process is using the board, delete the file and retry. Over any other
-transport the board's files are not visible, so a lock file there shows up as a
-lost race or as Git's own error, depending on the file, the operation and the
-server's Git version, and Git's error also stops `claim cleanup`.
-
-Claims are temporary operational state, never article frontmatter.
-
-## Revision contract
-
-Revising a declaration X of article R that other articles' Lean uses touches
-work R's claim does not cover. This contract makes that work claimable and
-keeps the default build passing. Roadmap records a requested revision in the
-Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
-
-1. On a fresh build, run `autoform work impact R . --lean-root .`, with
-   `--declaration` when only some of R's declarations, or a helper, change.
-2. Choose the route:
-   - **Contained** (`contained: true`): revise X in place, under R's claim when
-     using claims. `contained` ignores R's own declarations, so re-check R's
-     other declarations that use X as well.
-   - **Expand, migrate, contract**, the default whenever anything uses X: add
-     X' with the revised statement, leave X unchanged and mark it
-     `@[deprecated X' (since := "YYYY-MM-DD")]`, and point R's `lean:` at X'.
-     Under the open policy, while X's proof is still `sorry`, R's `lean:`
-     names X beside X', so the audit keeps accepting that `sorry` as an open
-     statement, and R records `proof` only after step 4 deletes X.
-     Statement-impacted articles replace `statement: formalized` with
-     `statement: retracted`, lose `proof`, and keep `lean:`, so they return to
-     the frontier as revisions; under the open policy a statement-impacted
-     theorem stays an open statement meanwhile (see [open
-     statements](#open-statements)). When X's proof is sorry-free,
-     proof-impacted articles keep everything, since their proofs still use the
-     valid old X; migrating them to X' is later work. While it is still
-     `sorry`, proof-impacted theorems lose `proof: formalized` but keep
-     `statement` and `lean:`, so they return to the frontier as proof phases
-     and migrate to X'. A stated definition counts as proved whatever its
-     `proof:` says, so a proof-impacted definition is migrated to X' in the
-     same commit or, when that is not possible, retracted like a
-     statement-impacted article. Otherwise they would keep resting on the
-     deprecated, `sorry`'d X, show "conditional, assumes R" although R's text
-     now describes X', and keep X out of `deprecated_unused`, so R could never
-     record its proof. The claim set is every article whose frontmatter or
-     Lean changes: R, the statement-impacted articles, the unused statement
-     dependencies, and, in that case, the proof-impacted ones.
-   - **In place**, only when X and X' cannot coexist, for example an instance
-     or a structure change: the claim set is every `claim_targets` entry.
-     Repair every impacted declaration in one commit whose default build
-     passes. A change `work impact` cannot see, to an instance's priority or
-     scope, an attribute, or notation, also takes this route whatever
-     `contained` says, and its `claim_targets` are incomplete: add every stated
-     article whose Lean imports the changed module and treat it as
-     statement-impacted. A statement-impacted article keeps `statement` only
-     after an Agent Review of its source faithfulness under X's new meaning;
-     otherwise it records `statement: retracted`, loses `proof`, and keeps
-     `lean:`. A repaired dependent proof keeps `proof: formalized` only after
-     an Agent Review of the repair; otherwise it loses `proof`. A theorem's
-     proof that cannot be repaired becomes exactly `sorry` under the open
-     policy; otherwise delete the declaration and remove its article's
-     `lean:`, `statement`, and `proof`, which works only when nothing else
-     uses it. When neither applies, the revision is blocked: release any claims
-     and report it. Record what happened in the revision commit and report. Use
-     an implementation note only until [its deletion
-     rule](#articles-and-containment) applies.
-
-   An unused statement dependency, which rules out the contained route, is
-   re-reviewed under the revised meaning, X' on the expand route and X's new
-   meaning in place: it keeps `statement` only after an Agent Review of its
-   source faithfulness; otherwise it records `statement: retracted`, loses
-   `proof`, and keeps `lean:`.
-3. When using claims, claim the route's claim set with one
-   `autoform claim acquire`. When it is refused, release everything and report
-   the held claim as the blocker. After acquiring, re-run `work impact`; if the
-   set grew, release and start over with the larger set. Without claims, a
-   Formalize subagent has its lead confirm the set instead. With or without
-   claims, after rebasing onto the current shared branch and rebuilding, re-run
-   `work impact` once more; if the set grew, repair the new targets before
-   landing, after acquiring the whole larger set in one command under the
-   no-hold-and-wait rule of the [claim contract](#claim-contract) or, without
-   claims, after the lead confirms them. Under the open policy, reproduce the CI
-   audit as [open statements](#open-statements) shows before landing. Land one
-   commit, then release any claims.
-4. Contract: delete a deprecated X once it appears in `deprecated_unused` of
-   `work impact R . --lean-root .`, meaning no declaration uses it and no
-   other article's `lean:` names it, and drop it from R's `lean:` in the same
-   commit. `contained` is not enough: it ignores R's own declarations, such as
-   an X' built from X.
-5. `autoform audit --lean-root` reports `lean-target-deprecated` for a
-   declaration article whose `lean:` names a declaration with `deprecated` in
-   its own `@[...]` attribute list; point it at the replacement. The check is
-   lexical, so it misses a later `attribute [deprecated] X`, which the
-   deprecated list of `work impact` does see. Under the open policy the finding
-   is expected for a superseded X that step 2 keeps in R's `lean:` until step 4,
-   so `autoform audit --lean-root` and `autoform doctor --lean-root` fail in
-   that window by design, while CI, which runs neither, passes.
-6. When Roadmap revises an article, its statement text or only its Lean, it
-   records the decision and retracts the article: it replaces `statement:
-   formalized` with `statement: retracted`, removes `proof: formalized`, and
-   keeps `lean:`, which `work impact` needs, so the article returns to the
-   frontier as a revision. It retracts only that article and the dependents
-   whose Markdown text the revision rewrites; the Lean-side impact decides
-   every other dependent. Roadmap edits only Markdown: it releases any claims
-   and leaves the Lean revision to Formalize.
-
-With the review marker, a commit that drops a declaration from an article's
-`lean:` also deletes that declaration's read-back cards under
-`blueprint/readbacks/<article_id>/`, which `review check` otherwise reports as
-orphaned, and one that removes `lean:` also removes `review_approved`.
-
-## Local runtime doctor
-
-Use the runtime projection and roadmap audit together without contacting any
-external service:
-
-```bash
-autoform doctor . --lean-root .
-autoform doctor blueprint --json
-```
-
-The doctor reports six ordered checks: blueprint resolution, runtime schema,
-graph counts, reference invariants, roadmap audit, and optional local Lean
-targets. It exits zero only when every required check passes. Omitting
-`--lean-root` records an explicit advisory pass; supplying it performs only a
-lexical local-source check, not a Lean build, kernel check, or proof-honesty
-review. Only the `lean targets` check reads Lean sources, once. It holds every
-finding that needs the Lean root, including `node-too-large`, and an unusable
-Lean root or unreadable source fails only that check. The bundled example
-intentionally exits nonzero while its declared coverage still holds `MAPPED`
-rows.
-
-This command is strictly read-only and local. It does not invoke Git, GitHub,
-subprocesses, network services, claims, renderers, or dashboards, and it writes
-no file.
-
-## Runtime contract
-
-`autoform_cli.runtime` projects the canonical Markdown graph into the versioned,
-deeply immutable in-memory schema `autoform-runtime/v4`. Its declared authority
-is `markdown-articles`: the adapter copies hierarchy, typed statement and proof
-dependencies, authored assertions, derived progress, provenance, and optional
-local Lean source locations, but it provides no persistence or write API. A
-source target that is neither an http(s) link nor a path inside the blueprint,
-and a `mathlib_file` that is not a portable relative path, are left out rather
-than refused. `check` fails on a local path outside the blueprint and warns
-about the rest.
-`RuntimeGraph.as_dict()` and `to_json()` are deterministic compatibility
-snapshots for consumers, not an authored or generated graph file. Autoform never
-creates, synchronizes, or treats `graph.json` as an authority.
-
-Every article remains in the runtime view so consumers can preserve the book's
-arbitrary containment hierarchy. A node is dispatchable only when it is both a
-formalizable article and a leaf; narrative containers and prose-only leaves are
-never proof work units. Module inventories are likewise non-formalizable,
-non-dispatchable source records. The source revision hashes exact roadmap
-article paths and bytes, excluding timestamps, absolute paths, Git state, and
-operational state. Optional Lean locations come from a local lexical scan and do
-not by themselves establish compilation or proof correctness.
-
-Schema v4 adds a nullable catalog discriminator for non-dispatchable module
-inventories. It retains v3's optional durable `article_id` metadata beside the
-graph's path-derived `id`, project `open_statements` policy,
-`statement_retracted` assertions, and each status's `assumes` and `waiting_on`
-fields. Temporary claims and local dashboard hooks may fall back to the path ID,
-but durable execution records and routes must require `article_id` until the
-path-move migration is complete. Operational state remains private and excluded
-from runtime snapshots and publication.
-
-Projection fails when an article's bytes no longer match the digest recorded
-when the graph was loaded, so a source revision never labels node data parsed
-from older bytes. A hand-built node without a digest makes no snapshot claim:
-its `source_sha256` stays null and the revision covers whatever bytes its
-article holds at projection time.
-
-## Publication contract
-
-`autoform render` publishes the book, derived progress, and one dependency
-explorer as bounded project, chapter, and nested-scope projections. The legacy
-full route is a project-scale compatibility shell backed by a layout-free global
-search index, never an all-repository node cloud. Rendering never reads a
-`graph.json` or an operational queue. Hidden files and directories, including
-`.implementation-notes`, are omitted, while a `.autoform` directory and
-symlinks, credentials, logs, provider state, and agent/task state outside hidden
-directories cause the render to fail rather than silently leak them. Source and
-output directories must be disjoint. A blueprint path that differs only in case
-from one render writes (`SUMMARY.md`, `dependencies.json`, `dependencies.md`,
-`structure.md`, `publication.json`, `assets/`, `dependencies/`, `javascripts/`,
-`stylesheets/`, and the generated stylesheet, scripts and logo inside them) is
-refused, as are two blueprint paths that differ only in case or Unicode form,
-because they would collide on a case-insensitive filesystem. A blueprint file at
-exactly `dependencies.json` or `javascripts/blueprint-dag.js` is left out of the
-site with a warning, because the explorer writes its own file there.
-
-Every render writes `publication.json` with blueprint and Lean-source hashes
-(the Lean-source hash is empty when render reads no Lean sources, as on native
-Windows), Git ref, article and dependency counts, the site's file inventory, and
-available views. It contains no timestamp or absolute path, so identical inputs
-produce identical output files. Render reads the blueprint and the Lean sources
-once each and derives every page, link and hash from those bytes; an edit saved
-during a render waits for the next one, and until then the dashboard reports the
-built site as stale. Under `--review`, the extraction reads both again, and an
-article or cited passage edited between the capture and the end of the
-extraction fails the render instead (see `render --review` under statement
-review); a later edit waits for the next one. The vault's hidden implementation notes are read in place
-only to validate them. Repository links appear only when the Lean bytes match
-one locally available Git commit, recorded by its full object ID; a clean
-checkout that Git converts on checkout still matches. Otherwise the render stays
-local, keeps source notes in the site, records no Git ref, and warns with the
-first mismatch. Links into the blueprint (an article's Markdown source, a source
-note) also need the blueprint's bytes in that commit. When they differ, render
-keeps the code links, keeps source notes in the site instead of linking to them,
-and warns with the first mismatch; a blueprint outside the repository, or in a
-submodule or other checkout nested in it, gets the same result without a
-warning. When render reads no Lean file (native Windows, or a project with no
-`.lean` file yet), it records the Git ref only if the blueprint matches it.
-
-The manifest's schema is `autoform-publication/v3`. It records what v2
-records, but the site holds the shared explorer's JSON projections and script
-in place of v2's Mermaid dependency maps, and the blueprint hash is taken under
-a label of its own, so no v2 `source_revision` equals a v3 one. The dashboard
-accepts only a v3 site and reports an older one as stale until render replaces
-it.
-
-The site is built and synced in a hidden `.autoform-publication-*` directory
-beside the output, then swapped in with one atomic exchange (`renamex_np` on
-macOS, `renameat2` on Linux); renders committing into the same parent directory
-take turns when it can be locked. On filesystems without the exchange (NFS, SMB,
-9p or WSL2 `/mnt/c`, exFAT, sshfs) the previous site is first renamed to
-`.autoform-publication-backup-<name>`; if render dies between the two renames,
-the next render moves it back before anything else. Render replaces only an
-empty directory or a complete `autoform-publication/v2` or v3 site whose files
-match its inventory (macOS metadata files, `.DS_Store` and `._*`, are ignored
-in both), and refuses anything else, including a legacy v1 output, which you
-remove once by hand. A failed or refused render leaves the output as it was. A
-render killed mid-way can leave a `.autoform-publication-*` directory beside the
-output (the repository root for `--output site-src`); render never indexes it
-as Lean source and the setup ignore rules cover it, but it may hold the previous
-site, so inspect it before deleting it. (On macOS `fsync` does not flush the
-drive's cache, so a power loss can still lose the newest site.) Native Windows
-has no directory-descriptor traversal. There render reads the blueprint and the
-output as two pathname captures that must agree, commits through the backup
-swap without a lock, and reads the Lean sources only for an explicit
-`--lean-root`, which then fails closed. Without one it publishes no code
-links; when a published statement names a `lean:` declaration it warns, and
-`--require-declarations` makes it exit 1.
-
-Check the site MkDocs builds from render's output for what the build broke:
-
-```bash
-autoform site check site --source site-src
-```
-
-`mkdocs build --strict` never checks a link written as raw HTML, as render
-writes card references, the structure page and the landing page's Next up card,
-and it logs a broken Markdown anchor only at info level. `site check` reads
-every HTML page of the built site and reports, as warnings, an internal link or
-asset whose target the site does not contain, a fragment that matches no `id`
-on its target page, a link that is not a valid URL, and, with `--source`, each
-statement card that render wrote into a source page but the page built from it
-lacks. A link with a scheme or a network location, or a path from the site
-root, depends on where the site is served and is not checked, and neither is a
-fragment of `name=value` pairs, such as the dependency explorer's `#node=`,
-which the page's script reads. The exit status is 0 whatever it finds; it is 1
-only when the site or the source is not a directory.
+## Contracts
+
+Each area's contract has its own page:
+
+- [Validation and audit](reference/validation-and-audit.md): what `check` and `audit` refuse or warn about.
+- [Search](reference/search.md): `autoform search`, and searching a library the project depends on.
+- [Open statements](reference/open-statements.md): conditional results and the open-statement policy.
+- [Claims and revisions](reference/claims-and-revisions.md): leases and revising a published statement.
+- [Runtime and publication](reference/runtime-and-publication.md): `doctor`, the runtime file and the published site.

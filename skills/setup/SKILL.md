@@ -84,7 +84,7 @@ in a headless run.
 On a yes, run `project new` with `--library <NAME>`, the entry's `name`, and no
 version flags, then validate as below. Run `autoform library list` on the
 project, as the
-[CLI reference](../../autoform_cli/README.md#searching-a-library-the-project-depends-on)
+[CLI reference](../../autoform_cli/reference/search.md#searching-a-library-the-project-depends-on)
 shows: report the entry's `git` and pinned commit when it lists the library as
 usable, otherwise its reason, without claiming the library works. If a fetch
 fails, report the error and that the project builds once the fetch succeeds,

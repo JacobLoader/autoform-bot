@@ -17,7 +17,7 @@ scope against the sources, then inspect the fine DAG and its coarse roadmap.
    its hidden `blueprint/.implementation-notes/<article_id>.md` when present.
 4. Distinguish statement prerequisites from proof-only prerequisites.
 5. Run `autoform search`, described in the
-   [search contract](../../../autoform_cli/README.md#search-contract), for each
+   [search contract](../../../autoform_cli/reference/search.md#search-contract), for each
    main result in scope and each intermediate result its proof proves or cites,
    by a few distinctive words and by its Lean name when it has one, over the
    blueprint and the project's usable shared libraries, as the

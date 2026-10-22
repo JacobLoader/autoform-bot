@@ -2,7 +2,7 @@
 
 A project may depend on a shared Lean library, such as ATLAS, that publishes a
 search index. Search it in the same call as the blueprint, as the
-[library search reference](../../../autoform_cli/README.md#searching-a-library-the-project-depends-on)
+[library search reference](../../../autoform_cli/reference/search.md#searching-a-library-the-project-depends-on)
 describes, so a result the library already has is reused, not proved again.
 Wherever these rules say to tell the user, a subagent puts it in its report to
 the lead instead.

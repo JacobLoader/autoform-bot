@@ -16,7 +16,7 @@ is insufficient when its dependencies are hollow.
    discharge policy in addition to this rubric.
 6. If `roadmap/README.md` sets `open_statements: allowed`, list the open statements the reviewed
    article may assume (`autoform work assumptions`) and trace each `sorryAx` to its source, for
-   example with the CI audit the [open statements reference](../../../autoform_cli/README.md#open-statements)
+   example with the CI audit the [open statements reference](../../../autoform_cli/reference/open-statements.md#open-statements)
    reproduces, which logs each declaration as open, conditional, or sorry-free.
 
 ## Open statements
