@@ -17,7 +17,7 @@ import os
 import re
 import shlex
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from . import skeleton
@@ -882,11 +882,13 @@ class ModuleImportImpactReport:
         It holds when the selected article is affected, nothing else is a claim
         target (no other article names or owns an affected declaration, and no
         unowned helper is affected), and no other article has unresolved
-        declarations whose scope is unknown.
+        declarations whose scope is unknown, and the scope is not
+        ``import-closure``, whose ownership over-reports.
         """
 
         return (
-            self.selected_affected
+            self.module_scope != IMPORT_CLOSURE_SCOPE
+            and self.selected_affected
             and not self.affected_claim_targets
             and all(article.id == self.article.id for article in self.unresolved_articles)
         )
@@ -1096,6 +1098,7 @@ def compute_module_import_impact(
     *,
     source_revision: str,
     lean_source_revision: str = "",
+    module_scope: str = MODULE_IMPORT_SCOPE,
 ) -> ModuleImportImpactReport:
     """Return the reverse-import scope of changing ``module`` imports.
 
@@ -1142,11 +1145,28 @@ def compute_module_import_impact(
         for resolved in resolved_names:
             named.setdefault(resolved, []).append(article.id)
         touched[article.id] = {records[resolved].module for resolved in resolved_names} & affected_set
+    def owners(record: ConstantRecord) -> tuple[str, ...]:
+        if module_scope != IMPORT_CLOSURE_SCOPE:
+            return _owners(record, records, named)
+        # A parent declared in a module this scope did not load is missing from
+        # the chain, so every article naming a prefix owns the record.
+        key = _name_key(record.user_name or record.name)
+        return tuple(
+            sorted(
+                {
+                    article.id
+                    for article in articles
+                    for declaration in article.declarations
+                    if key[: len(_name_key(declaration))] == _name_key(declaration)
+                }
+            )
+        )
+
     # An article also owns, through the parent chain, the helpers it names no
     # declaration for, such as a structure's API lemmas in a later module.
     for record in records.values():
         if record.module in affected_set and record.name not in named:
-            for owner in _owners(record, records, named):
+            for owner in owners(record):
                 touched[owner].add(record.module)
     affected_articles = tuple(
         ModuleImpactedArticle(article.id, article.article_id, article.claim_target, tuple(sorted(touched[article.id])))
@@ -1162,7 +1182,7 @@ def compute_module_import_impact(
         if record.module in affected_set
         and not record.internal
         and record.name not in named
-        and not _owners(record, records, named)
+        and not owners(record)
     )
     affected_claim_targets = tuple(
         sorted(
@@ -1194,6 +1214,7 @@ def compute_module_import_impact(
         affected_unowned_helpers=affected_helpers,
         affected_claim_targets=affected_claim_targets,
         claim_targets=claim_targets,
+        module_scope=module_scope,
     )
 
 
@@ -1576,7 +1597,7 @@ def module_import_impact(
         module=module,
         module_scope=module_scope,
     )
-    report = compute_module_import_impact(
+    return compute_module_import_impact(
         evidence.records,
         evidence.modules,
         evidence.articles,
@@ -1584,8 +1605,8 @@ def module_import_impact(
         module,
         source_revision=evidence.source_revision,
         lean_source_revision=evidence.lean_source_revision,
+        module_scope=module_scope,
     )
-    return replace(report, module_scope=module_scope)
 
 
 def _locator(
@@ -1681,7 +1702,7 @@ def format_module_import_impact(report: ModuleImportImpactReport) -> list[str]:
         f"Lean source revision: {report.lean_source_revision or 'unbound'}",
         f"Lean build revision: {report.build_revision}",
         f"Module graph revision: {report.module_graph_revision}",
-        f"Module scope: {MODULE_IMPORT_SCOPE}",
+        f"Module scope: {report.module_scope}",
         f"Module claim target: {report.module_claim_target} (key {report.module_claim_key})",
         "Affected project modules: " + ", ".join(report.affected_modules),
         "Removing an import can also drop modules that only imports bring into the build; "

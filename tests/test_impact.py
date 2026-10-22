@@ -317,6 +317,42 @@ def test_module_import_impact_is_not_article_local_with_an_unowned_helper() -> N
     )
 
 
+def test_import_closure_scope_owns_records_by_name_prefix_even_without_the_parent_loaded() -> None:
+    # Demo.Foo is declared in a module the narrowed probe did not load, so the
+    # lemma's loaded parent is missing; the article naming Demo.Foo still owns it.
+    records = {
+        "Demo.Foo.lemma": _rec("Demo.Foo.lemma", module="Demo.B"),
+        "Demo.B.main": _rec("Demo.B.main", module="Demo.B"),
+    }
+    modules = {"Demo.B": ModuleEvidence("Demo.B", "/project/Demo/B.lean")}
+    articles = (
+        ImpactArticle("chapter/sel", None, ("Demo.B.main",)),
+        ImpactArticle("chapter/x", "af_x", ("Demo.Foo",)),
+    )
+
+    report = compute_module_import_impact(
+        records, modules, articles, articles[0], "Demo.B", source_revision="rev", module_scope="import-closure"
+    )
+
+    assert [article.id for article in report.affected_articles] == ["chapter/sel", "chapter/x"]
+    assert report.affected_unowned_helpers == ()
+    assert report.as_dict()["module_scope"] == "import-closure"
+    assert "Module scope: import-closure" in format_module_import_impact(report)
+
+
+def test_import_closure_scope_is_never_article_local() -> None:
+    records = {"Demo.main": _rec("Demo.main")}
+    modules = {"Demo": ModuleEvidence("Demo", "/project/Demo.lean")}
+    selected = ImpactArticle("chapter/sel", None, ("Demo.main",))
+
+    report = compute_module_import_impact(
+        records, modules, (selected,), selected, "Demo", source_revision="rev", module_scope="import-closure"
+    )
+
+    assert report.selected_affected is True
+    assert report.article_local is False
+
+
 def test_constructor_edges_carry_an_inductive_s_meaning() -> None:
     records = _records(
         _rec("A.Size", "def"),
