@@ -449,7 +449,9 @@ def test_what_an_article_may_still_say_is_published_as_written(article: str) -> 
 def test_a_formula_that_defines_notation_is_reported_apart(article: str, named: str, line: int) -> None:
     """The site ignores notation an article defines, so such a formula shows
     an error in red; the page itself is published as written. Prose that
-    names a command, outside a formula, is not reported."""
+    names a command no formula uses is not reported; prose naming one a
+    formula uses is reported on its own line too, so the prose here names
+    another."""
 
     _page, errors, notation = publishable_article(f"# Top\n\n{article}\n\nProse names \\gdef.\n")
 
@@ -902,6 +904,10 @@ def test_a_page_that_is_not_an_article_is_held_to_the_same_rules(
     lines = len(before.rstrip().splitlines()) + 2
     assert f"warning: {relative}: line {lines}: raw HTML is not allowed: <script>, </script>" in out
     assert f"warning: {relative}: line {lines + 3}: attribute list {{: .bp-mark .bp-thmcontent }}" in out
+    shown = "the landing page shows only its title and lead, as text" if relative == "README.md" else (
+        "the site shows it as typed until these are fixed"
+    )
+    assert f"warning: {relative}: {shown}" in out
     published = (_render(blueprint) / relative).read_text(encoding="utf-8")
     assert "<script>" not in published
     if relative != "README.md":
@@ -914,6 +920,39 @@ def test_a_page_that_is_not_an_article_is_held_to_the_same_rules(
         assert get_data(published)[1]["title"] == "Overview"
         assert "Text {: .bp-mark .bp-thmcontent }." in published
         assert "pre&gt;" not in published
+
+
+def test_a_link_to_what_capture_leaves_out_keeps_only_its_text(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #415: a page outside roadmap/ that linked into an unpublished folder,
+    or to a hidden file, published a link the strict build could not resolve,
+    and check, whose graph holds the folder's articles, said nothing."""
+
+    blueprint = _vault(tmp_path)
+    drafts = blueprint / "roadmap/drafts"
+    drafts.mkdir()
+    (drafts / "README.md").write_text("---\npublished: false\n---\n\n# Drafts\n", encoding="utf-8")
+    (blueprint / ".private").mkdir()
+    (blueprint / ".private/plan.md").write_text("# Plan\n", encoding="utf-8")
+    targets = ("roadmap/drafts/README.md", ".private/plan.md", "roadmap/drafts/figure.png")
+    (blueprint / "notes.md").write_text(
+        f"# Notes\n\nSee [the drafts]({targets[0]}), [the plan]({targets[1]}) and ![a figure]({targets[2]}).\n",
+        encoding="utf-8",
+    )
+    expected = {
+        f"notes.md: links to {target!r}, which is hidden or in an unpublished folder, so the site keeps only "
+        "the link's text"
+        for target in targets
+    }
+
+    assert main(["check", str(blueprint)]) == 0
+    warned = {line.removeprefix("warning: ") for line in capsys.readouterr().out.splitlines() if "links to" in line}
+    assert warned == expected
+    out = blueprint.parents[1] / "out"
+    report = render_site(blueprint, out, lean_root=blueprint.parent)
+    assert {warning for warning in report.warnings if "links to" in warning} == expected
+    assert "See the drafts, the plan and a figure." in (out / "notes.md").read_text(encoding="utf-8")
 
 
 def test_the_landing_page_is_checked_without_the_dashboard_render_adds(tmp_path: Path) -> None:
@@ -1448,6 +1487,26 @@ def test_no_title_on_the_built_site_is_markup(tmp_path: Path) -> None:
     assert [path.name for path in pages if "<svg onload" in path.read_text(encoding="utf-8")] == []
     index = json.loads((built / "search/search_index.json").read_text(encoding="utf-8"))
     assert [doc["title"] for doc in index["docs"] if "<svg" in doc["title"]] == []
+
+
+def test_a_link_to_a_read_back_card_keeps_only_its_text(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A read-back card is never a page of its own, so a link to one keeps
+    only its text, as a link to any other file the site leaves out does."""
+
+    blueprint = _vault(tmp_path)
+    card = blueprint / "readbacks/af_000000000000000000000000/Main.md"
+    card.parent.mkdir(parents=True)
+    card.write_text("A read-back.\n", encoding="utf-8")
+    _with_article(blueprint, "The main result, [as read back](../readbacks/af_000000000000000000000000/Main.md).")
+
+    assert main(["check", str(blueprint)]) == 0, capsys.readouterr().out
+    site = _render(blueprint)
+    chapter = (site / "roadmap/README.md").read_text(encoding="utf-8")
+    assert "readbacks" not in chapter
+    assert "The main result, as read back." in chapter
+    assert not (site / "readbacks").exists()
+    # Nor is a card a row of the vault's structure page.
+    assert "Main.md" not in (site / "structure.md").read_text(encoding="utf-8")
 
 
 def test_a_chapter_shown_as_typed_keeps_its_statements_outside_the_block(

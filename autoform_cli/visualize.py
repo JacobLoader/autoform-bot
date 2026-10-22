@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Sequence
 from . import graph_views, status
 from .graph import GraphValidationError, load_graph
 from .markdown import blueprint_root, relative_link
+from .readback import READBACKS_DIR
 
 if TYPE_CHECKING:
     from .graph import Graph
@@ -295,6 +296,8 @@ def export_structure(blueprint_dir: Path, output: Path | None = None) -> Path:
         for path in sorted(blueprint_dir.rglob("*.md"))
         if not any(part.startswith(".") for part in path.relative_to(blueprint_dir).parts)
         and path.name not in {"dependencies.md", destination.name}
+        # A read-back card is not a page, and may be for an article the site leaves out.
+        and path.relative_to(blueprint_dir).parts[:1] != (READBACKS_DIR,)
     ]
     directories: set[Path] = set()
     for path in files:
