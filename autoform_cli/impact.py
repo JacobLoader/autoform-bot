@@ -1178,22 +1178,18 @@ def compute_module_import_impact(
             named.setdefault(resolved, []).append(article.id)
         touched[article.id] = {records[resolved].module for resolved in resolved_names} & affected_set
 
+    by_key: dict[tuple[object, ...], set[str]] = {}
+    for article in articles:
+        for declaration in article.declarations:
+            by_key.setdefault(_name_key(declaration), set()).add(article.id)
+
     def owners(record: ConstantRecord) -> tuple[str, ...]:
         if module_scope != IMPORT_CLOSURE_SCOPE:
             return _owners(record, records, named)
         # A parent declared in a module this scope did not load is missing from
         # the chain, so every article naming a prefix owns the record.
         key = _name_key(record.user_name or record.name)
-        return tuple(
-            sorted(
-                {
-                    article.id
-                    for article in articles
-                    for declaration in article.declarations
-                    if key[: len(_name_key(declaration))] == _name_key(declaration)
-                }
-            )
-        )
+        return tuple(sorted(set().union(*(by_key.get(key[:length], ()) for length in range(1, len(key) + 1)))))
 
     # An article also owns, through the parent chain, the helpers it names no
     # declaration for, such as a structure's API lemmas in a later module.
