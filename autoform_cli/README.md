@@ -721,66 +721,38 @@ rather than a homemade one.
 
 The closure is computed from elaborated terms, which is why this is the one
 command that runs Lean: for each module that declares a selected `lean:`
-target it writes a small probe that imports that module and the probe's
-helper module and makes one fully qualified call, with no `open` or
-`set_option`, and runs it with `lake env lean` against the built project. The
-helpers are compiled with the project's toolchain and no project module in
-scope into a module named `autoform-skeleton-helper`, whose constants are all
-in the `AutoformSkeleton` namespace. Both names are reserved: a module of the
-project, a dependency, or `LEAN_PATH` that takes one makes each probe that
-imports it fail, and that probe's targets are unresolved with Lean's error. A
-declaration's packet reads as it does to a file that imports its module,
-whichever other articles are extracted with it.
-That environment has the module's global notation, instances, and
-attributes, including any the module declares after the declaration; it lacks
-the module's `local notation` and local instances, and the `open` and
-`set_option` commands in effect at the declaration. The probe adds exactly two
-printing options, `pp.funBinderTypes` and `pp.coercions.types`, so a reader
-sees what each binder ranges over and where each cast lands; signatures
-otherwise print as `#check` prints them in a file whose only import is the
-module.
-Before any probe, Lake must confirm once, without rebuilding, that every
-probed module (only those need to be built) matches its exact source inputs;
-a missing `lake-manifest.json`, stale artifacts, or a source tree that
-changes during extraction makes the command fail. That check rehashes every
-input and rewrites Lake's `.hash` files, so the project's `.lake` directory
-must be writable. When the check fails other than as stale, the error keeps
-the first 20 lines of Lake's standard output and error and counts the rest.
-A lexical closure would miss what
-`open`, notation, implicit instances, and auto-bound variables bring in, and
-every miss silently shrinks the surface a reader is told to trust. Constructors,
-projections, recursors, `noConfusion` helpers, and matchers are folded onto the
-declaration the reader sees in the source, so a structure appears once, as its
-`structure` block. Only companions that Lean's environment records as generated
-are folded; an internal-looking name alone is not proof of provenance. Names
-outside the project are the trusted base and are not expanded. Rangeless
-internal-detail declarations, including helpers such as `f._unary`, `f._f`,
-and `S.x._default`, are bound by their elaborated material and marked
-`-- source not shown` rather than being passed off as their parent's source.
-An ordinary declaration without its own source, such as one a metaprogram adds
-under an existing name, is refused. A `partial def`
-anywhere in a declaration's trusted closure is refused, as recorded by the Lean
-environment rather than by the source text: its kernel face is an opaque
-constant, so the body a reader would see is not what Lean checks. The command
-exits nonzero when a `lean:` name is absent from the sources or from the built
-environment, or reaches a refused declaration; that name is unresolved for its article only, other articles still extract, and it writes nothing into the vault.
-Each name is probed in the module whose source the lexical index finds it in;
-a name Lean declares in another module is unresolved too. A name the sources
-define more than once, with no single declaration chosen by the rules under
-Validation, is unresolved without a probe; the reason lists the `path:line` of
-each of its declarations. A name with one public declaration beside private
-ones is probed in the public one's module.
-A probe that fails on its own (a nonzero exit, a kill by a signal, a timeout,
-or malformed or ambiguous records) likewise leaves only its module's targets
-unresolved, with the reason, and an error the probe meets while reading one
-declaration leaves only that declaration unresolved. A reason quotes at most
-2,000 characters of Lean's output, shows the probe's temporary directory as
-`<scratch>` and project paths relative to the project, and so reads the same
-on every run.
-The output and material limits apply to a whole probe, so a module whose
-selected declarations together pass one fails as a whole: a declaration that
+target it runs a small probe with `lake env lean` against the built project.
+A declaration's packet reads as it does to a file that imports its module:
+it has the module's global notation, instances, and attributes, but not its
+`local notation`, local instances, or the `open` and `set_option` commands in
+effect at the declaration. Before any probe, Lake must confirm, without
+rebuilding, that every probed module matches its exact source inputs; a
+missing `lake-manifest.json`, stale artifacts, or a source tree that changes
+during extraction makes the command fail. That check rewrites Lake's `.hash`
+files, so the project's `.lake` directory must be writable. The probe's helper
+module `autoform-skeleton-helper` and its `AutoformSkeleton` namespace are
+reserved: a project or dependency module that takes one makes the probes that
+import it fail.
+
+Names outside the project are the trusted base and are not expanded.
+Generated companions, such as constructors, projections, recursors, and
+matchers, are folded onto the declaration the reader sees, so a structure
+appears once, as its `structure` block; internal helpers with no source of
+their own are marked `-- source not shown`. A `partial def` anywhere in a
+declaration's trusted closure is refused, because its kernel face is an opaque
+constant, and so is an ordinary declaration without its own source, such as
+one a metaprogram adds under an existing name. A `lean:` name is unresolved
+when it is absent from the sources or from the built environment, when Lean
+declares it in another module than the one whose source the lexical index
+finds it in, when the sources define it more than once with no single
+declaration chosen by the rules under [Validation](#validation), when it
+reaches a refused declaration, or when its probe fails on its own (a nonzero
+exit, a signal, a timeout, or malformed records); the reason quotes Lean's
+output. An unresolved name affects only its article: other articles still
+extract, the command exits nonzero, and it writes nothing into the vault. The
+output and material limits apply to a whole probe, so a declaration that
 resolves when selected alone can be unresolved beside its module's other
-targets. A declaration that resolves has the same hash under any selection.
+targets; a declaration that resolves has the same hash under any selection.
 A missing `lake`, a failed freshness check or helper build, a dependency that
 hides a toolchain library, or a blueprint or source tree that changes during
 extraction still stops the whole command.
@@ -793,18 +765,6 @@ neither built nor loaded.
 It quotes each trusted definition's source and records theorem
 dependencies by elaborated signature, so it stands on its own without ever
 copying a theorem proof.
-Declarations in one project share most of what they trust, so the report states
-each boundary module's identity once, in the top-level `boundary_modules` table,
-and each trusted declaration and each external constant's semantic material once
-per root module that reaches it, in the top-level `trusted` and `semantics`
-tables, keyed by root module, then name: a name means what the root module's
-environment declares under it. A report therefore grows with the number of root
-modules times the material they share. Each declaration names the entries it
-uses; the probe's own output is shared the same way. Two probes that disagree
-about one module's files stop the command.
-The probe also states each elaborated subterm of 256 bytes or more
-once, since proof terms repeat large subterms heavily; the report keeps each
-material's full text.
 
 Run skeleton extraction only in a trusted checkout or an operating-system
 sandbox. Lake evaluates `lakefile.lean`, and the generated probe imports project
@@ -814,35 +774,23 @@ command; on POSIX, Autoform also terminates its process group, for every
 probe, on every failure and on interruption. The Lake freshness check, the
 helper's build, and each probe have their own 600-second budget;
 `--timeout SECONDS` sets the helper's and each probe's, which a large
-project may need. Probes run in parallel, one per CPU available to the
-process and at most eight; on Python 3.13 and later, `PYTHON_CPU_COUNT` sets
-that CPU count. Each probe's budget is its own rather than a share of one
-deadline, so its result does not depend on which probes ran before it, and an
-extraction can run for one probe budget per round of parallel probes. The
-parsed records, at most 512 Mi characters of semantic
-material per probed module, stay in memory until the report is built. These
+project may need. Probes run in parallel, at most eight at a time. These
 limits are resource controls, not a security or authenticity boundary.
 
-Every skeleton carries a full SHA-256 **drift hash**. It is derived from
-canonical elaborated expressions for the root, every trusted declaration, each
-direct external assumption, and each axiom, together with the dependency edges,
-Lean version, and compiled `.olean` identities (every part a module-system
-build writes) for the transitive external boundary. Local source spelling and
-comments do not enter the hash, while macro expansion, synthesized instance
-bodies, types, and definition bodies do. Proof axioms, toolchain changes, and
-unrelated edits in an external module or its imports may also rotate it.
-Only modules whose `.olean` lies in the toolchain's own `lib/lean` count as
-core and stay outside the boundary; a dependency module named `Lake.Foo` is
-external like any other. A dependency library rooted at `Init`, `Lean`, or
-`Std` hides the toolchain's copy from the probe, so extraction stops with an
-error.
-Compiler-generated matcher and recursor bodies stay in the hash even though
-they are folded out of the human reading list.
-An article with several `lean:` names has one hash over all of them, printed as
-the article skeleton. If any of those names is unresolved, the report records
-the article's hash and review hash as null rather than hashing the rest. It
-compares reports across builds; it is not a stable statement identifier,
-reviewer authentication, or an approval key.
+Every skeleton carries a full SHA-256 **drift hash** over the canonical
+elaborated expressions of the root, every trusted declaration, each direct
+external assumption, and each axiom, together with the dependency edges, the
+Lean version, and the compiled `.olean` identities of the external boundary.
+Local source spelling and comments do not enter it, while macro expansion,
+synthesized instance bodies, types, and definition bodies do; proof axioms,
+toolchain changes, and unrelated edits in an external module may also rotate
+it. A dependency library rooted at `Init`, `Lean`, or `Std` hides the
+toolchain's copy from the probe, so extraction stops with an error. An article
+with several `lean:` names has one hash over all of them, printed as the
+article skeleton; if any of those names is unresolved, the report records the
+article's hash and review hash as null. It compares reports across builds; it
+is not a stable statement identifier, reviewer authentication, or an approval
+key.
 
 Each skeleton also carries a **statement hash** over the same material without
 the axioms and what only they reach. The probe closes over the statement first
@@ -965,26 +913,14 @@ signature printed in Lean's raw expression form, the canonical kernel material,
 the statement as written, and the source of every project definition its statement
 rests on, with every comment and docstring the probe can identify removed, so that a
 reader who is asked what the Lean literally asserts cannot read the author's
-intent into it. Lean's parser, not a separate lexer, locates those comments.
-The probe parses each source in its root module's environment, with the tokens
-of a file that imports that module and the scoped notation of the namespaces
-the declaration sits in and the file opens above it, but not the file's
-`local` notation.
-A source it cannot parse there (a body that uses `local notation`) is withheld
-if it may hold a comment. Source containing a known non-builtin token with
-`--` or `/-` is also withheld unless that token was globally active through an
-import of the source's own module, since the probe cannot reconstruct when a
-same-module token was declared or where a scoped token was active. A withheld
-source leaves the declaration's signatures and kernel material in the packet
-and does not make the article unresolved. What the probe cannot see, and so
-can get wrong (showing code as a comment or a comment as code): a `local`
-token; a token without `--` or `/-` that still moves where a comment or a
-string starts (with `++"` a token, `x ++" -- y "` holds a comment, and without
-it a string), when the probe has it and the file did not have it there, as for
-one declared later in the same module, or the reverse, as for a scoped token
-the file activated in a way the probe does not reconstruct; and, under the
-module system, a token that only a private import's imports declare, which
-Lean does not load for the file.
+intent into it. Lean's parser locates those comments, parsing each source in
+its root module's environment. A source it cannot parse there, such as a body
+that uses `local notation`, is withheld if it may hold a comment, and so is one
+holding a non-builtin token with `--` or `/-` that no import of its own module
+made globally active; the declaration's signatures and kernel material stay in
+the packet, and the article is not unresolved. A `local` token, or a token the
+file had in scope differently from the probe, can make the probe show code as a
+comment or a comment as code; `skeleton.py` lists these cases.
 
 Every item's signature is also printed raw, bypassing project notation,
 unexpanders, and custom delaborators, so an `infixl " + " => HMul.hMul` cannot
