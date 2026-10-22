@@ -162,8 +162,10 @@ branch, a tag, or an abbreviated sha, because CI would silently reinstall a
 different Autoform later and break a project that was passing.
 
 The two workflows it writes are `autoform-verify.yml`, which validates the
-Markdown DAG, builds Lean, rejects unfinished or unsafe proofs, and audits
-theorem axioms on pull requests, and `blueprint-pages.yml`, which validates the
+Markdown DAG, builds Lean, rejects unfinished or unsafe proofs, audits theorem
+axioms on pull requests, and runs the statement-review gate where the project
+has opted in with `blueprint/.autoform-review` (`init` never writes that
+marker; see the CLI reference), and `blueprint-pages.yml`, which validates the
 DAG and its `lean:` declarations, renders the blueprint, builds MkDocs, and
 deploys GitHub Pages only for a commit `autoform verify` passed on main. Pass
 `--autoform-ref` to pin them at an immutable commit.

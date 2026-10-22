@@ -951,3 +951,13 @@ _SAFETY_RULES = [
 def test_safety_rules_stay_in_their_skill(repo_root: Path, relative: str, sentence: str) -> None:
     """The only wording this module pins: rules that keep agents from acting outward or trusting data."""
     assert sentence in " ".join((repo_root / relative).read_text(encoding="utf-8").split())
+
+
+def test_review_skills_route_statement_review_through_the_cli_reference(repo_root: Path) -> None:
+    """Skills say what to achieve and link the CLI reference; flags live in one place."""
+
+    human = (repo_root / "skills/human-review/SKILL.md").read_text(encoding="utf-8")
+
+    assert "../../autoform_cli/README.md#commands" in human
+    assert "(references/readback.md)" in human
+    assert (repo_root / "skills/human-review/references/readback.md").is_file()

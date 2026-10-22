@@ -17,15 +17,18 @@ make check-example  # validate, render, and build the bundled example site
 CI (`.github/workflows/tests.yml`) runs the same four steps on Python 3.10 and
 3.13 for every pull request, for pushes to `main`, and for pushes to `scratch/`
 branches, which run CI on a branch with no pull request; a newer commit on a
-pull request cancels the older run. Five more jobs run beside it. `WebKit
+pull request cancels the older run. Six more jobs run beside it. `WebKit
 dependency explorer regressions` installs the `browser` extra and WebKit and
 runs `tests/test_dag_viewer_browser.py` with `AUTOFORM_REQUIRE_BROWSER_TESTS=1`,
 so a missing browser fails the job instead of skipping its tests; locally they
 skip without the extra, and `make test-browser` installs both and runs them as
-CI does. The other jobs, which build and audit a project from the bundled
-Mathlib release, run the real-Lean suites, run the inspection, subprocess, and
-publication tests on Windows, and run `tests/test_real_repl.py` against the
-pinned upstream REPL, are listed with the tests each runs in
+CI does. The `MathJax read-back cards (Node)` tests skip locally unless `node`
+is on `PATH` and `AUTOFORM_MATHJAX_DIR` names an unpacked MathJax 3.2.2 package;
+`AUTOFORM_REQUIRE_MATHJAX_TESTS=1`, which CI sets, makes that a failure. The
+other jobs, which build and audit a project from the bundled Mathlib release,
+run the real-Lean suites, run the inspection, subprocess, and publication tests
+on Windows, and run `tests/test_real_repl.py` against the pinned upstream REPL,
+are listed with the tests each runs in
 [`tests.yml`](.github/workflows/tests.yml). Locally, tests that need Lean skip
 when `lake` is not on `PATH`, and most also skip when elan is installed but the
 toolchain pinned in `tests/fixtures/skeleton-project/lean-toolchain` is missing;

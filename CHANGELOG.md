@@ -9,6 +9,8 @@ date when the release is tagged.
 
 ## Unreleased
 
+### Changed
+
 - **Claims.** `claim list TARGET...` lists only those claims, without
   fetching or reading any other claim. `--timeout` (120 seconds by default)
   bounds a listing, a slow step is named on stderr, and a failure goes to
@@ -22,6 +24,11 @@ date when the release is tagged.
   on one toolchain reuse each other's builds; Setup offers the same two lines
   to an existing project. A probe that finds no `.olean` for a module Lake
   calls built now names the cache-without-restore cause (#431).
+- **Library results in Roadmap.** When a shared library already proves a
+  result, Roadmap lists under the article's `## Proof depends on` only the
+  articles that proof uses, and keeps the source's route in the proof sketch,
+  so the article is not blocked on steps its proof never needs; Agent Review
+  checks the same (#443).
 
 ## 0.6.0 (2026-10-22)
 
