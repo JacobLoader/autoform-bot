@@ -9,6 +9,14 @@ date when the release is tagged.
 
 ## Unreleased
 
+### Changed
+
+- **Library results in Roadmap.** When a shared library already proves a
+  result, Roadmap lists under the article's `## Proof depends on` only the
+  articles that proof uses, and keeps the source's route in the proof sketch,
+  so the article is not blocked on steps its proof never needs; Agent Review
+  checks the same (#443).
+
 ## 0.6.0 (2026-10-22)
 
 What has landed since 0.5.0, across 236 merged pull requests, grouped by
