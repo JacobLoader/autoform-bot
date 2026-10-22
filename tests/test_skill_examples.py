@@ -831,9 +831,17 @@ def test_documented_autoform_commands_parse(repo_root: Path, monkeypatch: pytest
     def commands(node):
         return next((a.choices for a in node._actions if isinstance(a, argparse._SubParsersAction)), {})
 
+    # Inline `autoform verify` names the generated workflow, not a command.
+    workflows = {
+        name.strip()
+        for template in sorted((repo_root / "autoform_cli/templates/github/workflows").glob("*.yml"))
+        for name in re.findall(r"^name:(.+)$", template.read_text(encoding="utf-8"), re.MULTILINE)
+    }
     failures, checked = [], 0
     for page in [repo_root / "autoform_cli/README.md", *sorted((repo_root / "skills").rglob("*.md"))]:
         for command, fenced in _documented_commands(page.read_text(encoding="utf-8")):
+            if not fenced and f"autoform {command}" in workflows:
+                continue
             where, checked = f"{page.relative_to(repo_root)}: autoform {command}", checked + 1
             words = shlex.split(re.sub(r"[\[\]]", "", command), comments=True)
             words = words[: next((i for i, word in enumerate(words) if word in {"<", ">", "|", "&&"}), None)]
