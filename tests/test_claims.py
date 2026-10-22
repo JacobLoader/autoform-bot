@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
+import sys
 import threading
 import time
 import urllib.parse
@@ -2156,3 +2158,26 @@ def test_list_of_targets_stops_at_its_timeout_while_naming_them(tmp_path: Path, 
         reader.list(["a"], timeout=1)
 
     assert timed_out.value.step == "naming the claim refs"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups and SIGTERM are POSIX")
+def test_git_ends_with_its_caller_when_the_caller_is_terminated(tmp_path: Path) -> None:
+    pid_file = tmp_path / "pid"
+    script = (
+        "import pathlib\n"
+        "from autoform_cli import claims\n"
+        f"board = claims.ClaimBoard(pathlib.Path({str(tmp_path / 'unused.git')!r}), 'w', "
+        f"pathlib.Path({str(tmp_path / 'scratch')!r}))\n"
+        "board._ensure_scratch()\n"
+        f"board._git({_alias('spawn', f'sleep 30 & echo $! > {pid_file}; wait')!r})\n"
+    )
+    caller = subprocess.Popen([sys.executable, "-c", script], cwd=Path(claims.__file__).parents[1])
+    started_by = time.monotonic() + 10
+    while not (pid_file.exists() and pid_file.read_text().strip()):
+        assert time.monotonic() < started_by, "git never started its command"
+        time.sleep(0.05)
+
+    caller.send_signal(signal.SIGTERM)
+
+    assert caller.wait(timeout=10) == -signal.SIGTERM
+    _assert_gone(int(pid_file.read_text()))

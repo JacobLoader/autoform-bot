@@ -306,6 +306,51 @@ def _repository_is_remote(value: str, *, windows: bool | None = None) -> bool:
     )
 
 
+class _Terminated(BaseException):
+    """SIGTERM or SIGHUP arrived while a claim git command was running."""
+
+    def __init__(self, signum: int) -> None:
+        super().__init__(signum)
+        self.signum = signum
+
+
+@contextlib.contextmanager
+def _git_ends_with_its_caller():
+    """Let SIGTERM and SIGHUP end a running claim git command along with its caller.
+
+    The command leads its own session, so a signal sent to the caller's process
+    group no longer reaches it. In the main thread, such a signal is raised as
+    an exception, which ``ClaimBoard._git`` answers by killing the command's
+    group; the signal is then delivered again to the handler it replaced.
+    """
+    if os.name != "posix" or threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous: dict[int, Any] = {}
+
+    def terminate(signum: int, frame: object) -> None:
+        raise _Terminated(signum)
+
+    for name in ("SIGTERM", "SIGHUP"):
+        signum = getattr(signal, name)
+        handler = signal.getsignal(signum)
+        if handler in (signal.SIG_IGN, None):
+            continue
+        previous[signum] = handler
+        signal.signal(signum, terminate)
+    try:
+        yield
+    except _Terminated as exc:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+        previous.clear()
+        signal.raise_signal(exc.signum)
+        raise
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
 def _communicate(
     process: subprocess.Popen[Any],
     data: str | bytes | None,
@@ -380,6 +425,19 @@ class ClaimBoard:
             if limit <= 0:
                 raise ClaimTimeoutError(step)
         data = input_text if input_bytes is None else input_bytes
+        with _git_ends_with_its_caller():
+            return self._run_git(args, data, check, input_bytes is None, limit, step, progress)
+
+    def _run_git(
+        self,
+        args: list[str],
+        data: str | bytes | None,
+        check: bool,
+        text: bool,
+        limit: float,
+        step: str,
+        progress: Callable[[str], None] | None,
+    ) -> subprocess.CompletedProcess[Any]:
         try:
             process = subprocess.Popen(
                 ["git", *args],
@@ -387,7 +445,7 @@ class ClaimBoard:
                 stdin=subprocess.DEVNULL if data is None else subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=input_bytes is None,
+                text=text,
                 env={**os.environ, **_GIT_ENV},
                 **_NEW_PROCESS_GROUP,
             )
