@@ -9,6 +9,7 @@ copies the helper to the bundled example, which mirrors it byte for byte.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -22,11 +23,18 @@ _END = '"""'
 def main() -> int:
     probe = _SOURCE.read_text(encoding="utf-8")
     if _END in probe or not probe.endswith("\n"):
-        print(f"error: {_SOURCE} must end with a newline and hold no {_END}, so a raw string can carry it")
+        print(
+            f"error: {_SOURCE} must end with a newline and hold no {_END}, so a raw string can carry it",
+            file=sys.stderr,
+        )
         return 1
     helper = _HELPER.read_text(encoding="utf-8")
-    start = helper.index(_START) + len(_START)
-    end = helper.index(_END, start)
+    start = helper.find(_START)
+    end = helper.find(_END, start + len(_START))
+    if start < 0 or end < 0:
+        print(f"error: {_HELPER} holds no {_START}...{_END} block to rewrite", file=sys.stderr)
+        return 1
+    start += len(_START)
     # Rewriting the files in place keeps their executable mode.
     with _HELPER.open("w", encoding="utf-8", newline="\n") as stream:
         stream.write(helper[:start] + probe + helper[end:])

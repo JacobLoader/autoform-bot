@@ -172,8 +172,9 @@ def test_both_probes_spell_module_names_outside_the_basic_multilingual_plane(hel
 def _arguments(probe: str) -> tuple[str, object, object]:
     """The audit a rendered probe's last line runs, and the module list and table it passes."""
 
-    call = re.fullmatch(r'run_cmd (\w+) ("(?:[^"\\]|\\.)*") ("(?:[^"\\]|\\.)*")', probe.splitlines()[-1])
-    assert call is not None
+    last = probe.rstrip("\n").rpartition("\n")[2]
+    call = re.fullmatch(r'run_cmd (\w+) ("(?:[^"\\]|\\.)*") ("(?:[^"\\]|\\.)*")', last)
+    assert call is not None and probe.endswith(f"{last}\n")
     entry, modules, table = call.groups()
     return entry, json.loads(json.loads(modules)), json.loads(json.loads(table))
 
@@ -199,9 +200,13 @@ def test_the_helper_carries_the_probe_source_verbatim(helper: ModuleType, repo_r
 
 
 def _toolchain_installed(pinned: str) -> bool:
+    """Whether `lean`, run in a directory pinned to *pinned*, runs that toolchain without a download."""
+
     elan = shutil.which("elan")
     if elan is None:
-        return True
+        # Without elan, `lean` ignores lean-toolchain files.
+        version = subprocess.run(["lean", "--version"], capture_output=True, text=True, timeout=30, check=False)
+        return f"version {pinned.rpartition(':v')[2]}," in version.stdout
     listed = subprocess.run([elan, "toolchain", "list"], capture_output=True, text=True, timeout=30, check=False)
     return any(line.split()[:1] == [pinned] for line in listed.stdout.splitlines())
 
@@ -942,22 +947,26 @@ def test_strict_probe_embeds_its_targets_and_imports_the_build_itself(helper: Mo
         [["Fixture", "a.b c"], 'odd "id"', "proved", False],
         [["Fixture", "x", 1], 'odd "id"', "proved", False],
     ]
-    assert "is not a declaration of the Lean build" in probe
     old_form = helper.render_probe(("Fixture",))
     assert _arguments(old_form) == ("autoformAuditStrict", [["Fixture"]], [])
+    # Every render is the probe source and one line that runs an audit.
     for text in (probe, old_form, helper.render_open_probe(("Fixture",), ())):
-        assert "Lean.Environment.replay rootConstants base" in text
-        assert "kernel replay of the root package failed" in text
-        assert "kernel replay of the root package skipped" in text
-        assert "searchPathRef.set (libDir :: projectEntries)" in text
-        assert "with another library on the search path" in text
-        assert "(loadExts := false)" in text
-        assert "({ module := `Init } : Import)" in text
-        assert "is declared by an imported module" not in text
-    # The replay runs compiled code, so each audit calls it after every check.
+        assert text.startswith(helper._PROBE) and text.count("\n", len(helper._PROBE)) == 2
+    source = helper._PROBE
+    assert "is not a declaration of the Lean build" in source
+    assert "Lean.Environment.replay rootConstants base" in source
+    assert "kernel replay of the root package failed" in source
+    assert "searchPathRef.set (libDir :: projectEntries)" in source
+    assert "with another library on the search path" in source
+    assert "(loadExts := false)" in source
+    assert "({ module := `Init } : Import)" in source
+    assert "is declared by an imported module" not in source
+    # The replay runs compiled code, so each audit calls it once every other check has passed.
     for entry in ("autoformAuditStrict", "autoformAuditOpen"):
-        body = _definition(helper._PROBE, entry)
-        assert body.rindex("depends on unexpected axiom") < body.index("autoformAuditKernelReplay env")
+        body = _definition(source, entry)
+        replay = body.index("autoformAuditKernelReplay env")
+        assert body.rindex("depends on unexpected axiom") < replay
+        assert body.index("kernel replay of the root package skipped") < replay
 
 
 def test_open_probe_spells_names_as_components(helper: ModuleType, tmp_path: Path) -> None:
@@ -1818,7 +1827,11 @@ def test_both_probes_refuse_a_target_that_names_one_of_their_own_helpers(
     # The probe declares its helpers itself, so the build never compiled them.
     # A lean: name that matched one once passed as a clean declaration outside
     # the root package.
-    names = re.findall(r"^(?:partial )?def (\w+)", helper._PROBE, re.MULTILINE)
+    names = re.findall(
+        r"^(?:(?:private|protected|partial|unsafe|noncomputable) )*(?:def|abbrev|theorem|instance|opaque) (\w+)",
+        helper._PROBE,
+        re.MULTILINE,
+    )
     assert {"autoformAuditStrict", "autoformAuditOpen", "autoformAuditKernelReplay"} <= set(names)
     for audited in (
         _strict_audit(helper, open_projects["strict"], [_article("helper", names)]),
