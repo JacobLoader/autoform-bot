@@ -86,6 +86,7 @@ from .markdown import (
     NOTES_BOX,
     PAGE_HEADER,
     PAGE_SUFFIXES,
+    RETIRED_VIEWS,
     STATEMENT_BOX,
     _blank,
     blueprint_root,
@@ -107,6 +108,7 @@ from .markdown import content_lines as _content_lines
 from .markdown import outside_fences as _outside_fences
 from .mathjax import MATHJAX_SCRIPT, TEX_MACROS, mathjax_script
 from .publishable import publishable_article, shown_as_typed
+from .readback import READBACKS_DIR
 from .status import is_definition
 
 _HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
@@ -153,8 +155,6 @@ _REFUSED_COMMITS = {
 }
 #: How long a render waits for another render committing into the same parent.
 _PUBLICATION_LOCK_WAIT_SECONDS = 30.0
-#: Views earlier renders wrote at the vault's root, which this one keeps out of the site.
-_STALE_VIEWS = frozenset({"dependencies.html", "graph.html", "progress.md"})
 #: Derived views this command rewrites; stale copies must not leak into the site.
 _GENERATED_FILES = GENERATED_VIEWS | {graph_pages.PROJECT_PAYLOAD, PUBLICATION_MANIFEST}
 #: The files a vault may publish as they are, besides its Markdown pages: a
@@ -409,7 +409,14 @@ def publication_issues(graph: Graph, blueprint: Path) -> list[str]:
     except PublicationError as exc:
         return [f"{issue}; autoform render stops until this is fixed" for issue in exc.issues]
     files = _captured_files(snapshot, blueprint)
-    site = _publication(graph, blueprint, files, destination=blueprint, sources_base=None)
+    site = _publication(
+        graph,
+        blueprint,
+        files,
+        destination=blueprint,
+        sources_base=None,
+        unpublished=_unpublished_folders(snapshot, blueprint),
+    )
     stops = _in_the_way(blueprint, graph, files)
     return [*site.warnings, *(f"{issue}; autoform render stops until this is fixed" for issue in stops)]
 
@@ -418,6 +425,12 @@ def _captured_files(snapshot: TreeSnapshot, root: Path) -> dict[Path, bytes]:
     """The captured blueprint's files, keyed by their path below ``root``."""
 
     return {root / name: data for name, data in snapshot.files}
+
+
+def _unpublished_folders(snapshot: TreeSnapshot, root: Path) -> tuple[Path, ...]:
+    """The folders capture left out because their README says ``published: false``, below ``root``."""
+
+    return tuple(root / name for name, kind in snapshot.omitted if kind == "unpublished")
 
 
 @dataclass(frozen=True, slots=True)
@@ -451,6 +464,7 @@ def _publication(
     *,
     destination: Path,
     sources_base: "_SourceBase | None",
+    unpublished: tuple[Path, ...] = (),
 ) -> _Publication:
     """The pages and files the site for ``graph`` gets from ``snapshot``, the
     bytes render captured by path, and the warnings about them: each page's,
@@ -503,7 +517,8 @@ def _publication(
         for source in snapshot
         if source.relative_to(blueprint).as_posix() not in written_over
         and (
-            source.suffix.lower() not in (*PAGE_SUFFIXES, *_STATIC_SUFFIXES)
+            source.relative_to(blueprint).parts[:1] == (READBACKS_DIR,)
+            or source.suffix.lower() not in (*PAGE_SUFFIXES, *_STATIC_SUFFIXES)
             or (source.suffix.lower() in PAGE_SUFFIXES and not _is_utf8(snapshot[source]))
         )
     )
@@ -515,6 +530,7 @@ def _publication(
         its lines, so each stretch between is read too, as it sits there. Its
         notation goes straight to the warnings."""
 
+        dropped: list[str] = []
         page_text, found, notation = _read_page(
             _rewrite_links(
                 text,
@@ -526,6 +542,8 @@ def _publication(
                 targets=targets,
                 sources_base=sources_base,
                 left_out=left_out,
+                unpublished=unpublished,
+                dropped=dropped,
             )
         )
         group = chapters.get(page) if whole else None
@@ -546,7 +564,15 @@ def _publication(
         found = tuple(dict.fromkeys(found))
         label = node_sources.get(source.resolve()) or source.relative_to(blueprint).as_posix()
         warnings.extend(f"{label}: {issue}" for issue in (*found, *notation))
-        if found:
+        warnings.extend(
+            f"{label}: links to {target!r}, which is hidden or in an unpublished folder, so the site keeps only "
+            "the link's text"
+            for target in dict.fromkeys(dropped)
+        )
+        if found and source.parent == blueprint and source.name.lower() == "readme.md":
+            # The landing page takes only the title and the lead, and escapes both.
+            warnings.append(f"{label}: the landing page shows only its title and lead, as text")
+        elif found:
             warnings.append(f"{label}: the site shows it as typed until these are fixed")
             # A leaf's part of its chapter is its box; the chapter itself is not typed.
             if whole:
@@ -557,7 +583,8 @@ def _publication(
     statements: dict[str, tuple[str, str]] = {}
     for node_id, node in graph.nodes.items():
         # The captured bytes, the state the graph describes once capture checks
-        # it. Capture skips a hidden article, which render never publishes.
+        # it. Check's graph also holds the articles in unpublished folders, which
+        # capture leaves out.
         captured = snapshot.get(node.path)
         if captured is None:
             continue
@@ -578,6 +605,10 @@ def _publication(
         # Source notes leave the site entirely once readers can reach them in
         # the repository, so the book has one reference surface rather than two.
         if sources_base is not None and relative.parts[:1] == (SOURCES_DIR,):
+            continue
+        # Read-back cards are testimony about a statement, never pages of
+        # their own.
+        if relative.parts[:1] == (READBACKS_DIR,):
             continue
         # The graph has read atlas.json, and nothing on the site reads it. It may
         # name articles in unpublished folders, so it stays out of the site.
@@ -684,7 +715,7 @@ def _site_paths(graph: Graph) -> tuple[str, ...]:
     return tuple(
         sorted(
             {
-                *(_GENERATED_FILES - _STALE_VIEWS),
+                *(_GENERATED_FILES - RETIRED_VIEWS),
                 STRUCTURE_PAGE,
                 "SUMMARY.md",
                 *(_group_page(group).as_posix() for group in _group_nodes(graph)),
@@ -856,6 +887,7 @@ def render_site(
                 sources=sources,
                 source_revision=source_revision,
                 lean_source_revision=lean.revision,
+                unpublished=_unpublished_folders(snapshot, copy),
                 unpublished_nodes=unpublished_nodes,
                 files=_captured_files(snapshot, copy),
             ),
@@ -891,6 +923,7 @@ def _render_pages(
     sources: bool,
     source_revision: str,
     lean_source_revision: str,
+    unpublished: tuple[Path, ...] = (),
     unpublished_nodes: frozenset[str],
     files: dict[Path, bytes],
 ) -> RenderReport:
@@ -915,7 +948,9 @@ def _render_pages(
     stops = _in_the_way(blueprint, graph, files)
     if stops:
         raise PublicationError(stops)
-    site = _publication(graph, blueprint, files, destination=destination, sources_base=sources_base)
+    site = _publication(
+        graph, blueprint, files, destination=destination, sources_base=sources_base, unpublished=unpublished
+    )
     revisions = {"source_revision": source_revision, "lean_source_revision": lean_source_revision}
     # Written first, so a Lean walk by a concurrent render skips this stage;
     # rewritten with the file inventory once every page exists.
@@ -1074,9 +1109,13 @@ def _capture_blueprint(blueprint: Path) -> tuple[TreeSnapshot, frozenset[str], f
     snapshot = replace(
         snapshot,
         directories=tuple(filter(kept, snapshot.directories)),
+        # Each folder stays on record as left out, so a link into one keeps only its text.
+        omitted=tuple(
+            sorted([*(entry for entry in snapshot.omitted if kept(entry[0])), *((f, "unpublished") for f in folders)])
+        ),
         **{
             field: tuple(entry for entry in getattr(snapshot, field) if kept(entry[0]))
-            for field in ("files", "symlinks", "special", "omitted", "identities")
+            for field in ("files", "symlinks", "special", "identities")
         },
     )
     omitted, symlinks = dict(snapshot.omitted), dict(snapshot.symlinks)
@@ -2375,6 +2414,8 @@ def _rewrite_links(
     targets: dict[str, tuple[Path, str]],
     sources_base: "_SourceBase | None" = None,
     left_out: frozenset[Path] = frozenset(),
+    unpublished: tuple[Path, ...] = (),
+    dropped: list[str] | None = None,
 ) -> str:
     """Resolve a page's relative links against where it is being published.
 
@@ -2407,6 +2448,18 @@ def _rewrite_links(
             # An unbalanced IPv6 bracket or a decoded NUL names no file to
             # point at, so the link is published as written, like a URL.
             return None
+        # Capture leaves out hidden paths and unpublished folders, so the site has
+        # no page there, though check's graph knows the articles in such a folder.
+        # A hidden source note is reached through the repository instead.
+        inside = candidate.relative_to(blueprint) if _is_within(candidate, blueprint) else None
+        if inside is not None and (
+            any(_is_within(candidate, folder) for folder in unpublished)
+            or (_is_hidden(inside) and inside.parts[:1] != (SOURCES_DIR,))
+        ):
+            unlinked.add(raw)
+            if dropped is not None:
+                dropped.append(raw)
+            return ""
         node_id = node_sources.get(candidate)
         if node_id is not None:
             href = links[node_id]
