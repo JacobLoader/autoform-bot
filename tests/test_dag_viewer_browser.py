@@ -2211,7 +2211,7 @@ def test_the_explorer_typesets_the_math_it_draws_in_its_rail_and_details(desktop
     playwright.expect(page.locator(".bp-dag-sheet-handle mjx-container")).to_have_count(1)
     # Map cards are not typeset, and MathJax's own document, which MathJax.typesetPromise reads, holds nothing.
     assert page.locator(".bp-dag-node mjx-container").count() == 0
-    assert page.evaluate("MathJax.startup.document.math.length") == 0
+    assert page.evaluate("Array.from(MathJax.startup.document.math).length") == 0
 
     def many_dependents(route: object) -> None:
         payload = route.fetch().json()
