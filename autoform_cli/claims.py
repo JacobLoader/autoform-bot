@@ -8,11 +8,13 @@ overwrite one another.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import math
 import os
 import re
+import signal
 import socket
 import subprocess
 import threading
@@ -21,7 +23,7 @@ import urllib.parse
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 CLAIM_REF_PREFIX = "refs/autoform-claims/"
 CLAIM_SCHEMA = "autoform-claim/v1"
@@ -54,6 +56,19 @@ _NEGOTIATION_TIP_WARNING = "warning: ignoring --negotiation-tip="
 # this grace after a failed push is reported as blocking the claim.
 _LOCK_GRACE_S = 2.0
 _LOCK_POLL_S = 0.05
+# One git command's time limit, whatever deadline its caller has.
+_GIT_CALL_TIMEOUT_S = 120.0
+# A step still running after this long is named to a progress callback.
+_PROGRESS_AFTER_S = 5.0
+# How long a killed git command gets to be reaped.
+_KILL_GRACE_S = 5.0
+# Each git command leads its own process group, without a controlling
+# terminal, so ssh cannot prompt and a timeout also ends git's transport.
+_NEW_PROCESS_GROUP: dict[str, Any] = (
+    {"start_new_session": True}
+    if os.name == "posix"
+    else {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+)
 # What `git rev-parse --local-env-vars` prints: variables that point Git at
 # another repository than the one the working directory names.
 _LOCAL_GIT_ENV = frozenset(
@@ -81,6 +96,8 @@ _GIT_ENV = {
     "GIT_AUTHOR_EMAIL": "autoform@localhost",
     "GIT_COMMITTER_NAME": "autoform",
     "GIT_COMMITTER_EMAIL": "autoform@localhost",
+    # A missing credential fails at once instead of waiting for a prompt.
+    "GIT_TERMINAL_PROMPT": "0",
 }
 _CAS_REJECTIONS = (
     "stale info",
@@ -109,6 +126,18 @@ class ClaimTransportError(RuntimeError):
 
 class MalformedLeaseError(ClaimTransportError):
     """A claim ref exists, but its lease cannot be verified safely."""
+
+
+class ClaimTimeoutError(ClaimTransportError):
+    """The claim board did not answer before the caller's deadline."""
+
+    def __init__(self, step: str) -> None:
+        super().__init__(f"no answer from the claim board while {step}")
+        self.step = step
+
+
+class ClaimContentionError(ClaimTransportError):
+    """The board refused every attempt to fetch claims because claim refs kept moving."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,6 +297,42 @@ def _repository_is_remote(value: str, *, windows: bool | None = None) -> bool:
     )
 
 
+def _communicate(
+    process: subprocess.Popen[Any],
+    data: str | bytes | None,
+    limit: float,
+    step: str,
+    progress: Callable[[str], None] | None,
+) -> tuple[Any, Any]:
+    """Wait up to ``limit`` seconds for ``process``, naming a slow ``step`` to ``progress`` once."""
+    if progress is not None and limit > _PROGRESS_AFTER_S:
+        try:
+            return process.communicate(data, timeout=_PROGRESS_AFTER_S)
+        except subprocess.TimeoutExpired:
+            progress(step)
+        # communicate keeps the input it was given and never sends it twice.
+        return process.communicate(timeout=limit - _PROGRESS_AFTER_S)
+    return process.communicate(data, timeout=limit)
+
+
+def _kill_group(process: subprocess.Popen[Any]) -> None:
+    """Kill a git command and everything it started, then reap it."""
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
+        if os.name == "posix":
+            # git is not reaped yet, so its pid still names its process group.
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                capture_output=True,
+                timeout=_KILL_GRACE_S,
+            )
+    with contextlib.suppress(OSError):
+        process.kill()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        process.communicate(timeout=_KILL_GRACE_S)
+
+
 class ClaimBoard:
     """Lease operations against a Git repository via a local bare object store."""
 
@@ -288,20 +353,48 @@ class ClaimBoard:
         check: bool = True,
         input_text: str | None = None,
         input_bytes: bytes | None = None,
+        deadline: float | None = None,
+        step: str = "running git",
+        progress: Callable[[str], None] | None = None,
     ) -> subprocess.CompletedProcess[Any]:
-        """Run git in the scratch board; with ``input_bytes``, input and output are bytes."""
+        """Run git in the scratch board; with ``input_bytes``, input and output are bytes.
+
+        A command gets at most 120 seconds and, with ``deadline`` (a
+        ``time.monotonic()`` value), no time past it, which raises
+        ``ClaimTimeoutError`` naming ``step``. Running out kills the command's
+        whole process group. ``progress`` hears ``step`` once if the command
+        is still running after five seconds.
+        """
+        limit = _GIT_CALL_TIMEOUT_S
+        if deadline is not None:
+            limit = min(limit, deadline - time.monotonic())
+            if limit <= 0:
+                raise ClaimTimeoutError(step)
+        data = input_text if input_bytes is None else input_bytes
         try:
-            proc = subprocess.run(
+            process = subprocess.Popen(
                 ["git", *args],
                 cwd=self.scratch,
-                capture_output=True,
+                stdin=subprocess.DEVNULL if data is None else subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=input_bytes is None,
-                input=input_text if input_bytes is None else input_bytes,
-                timeout=120,
                 env={**os.environ, **_GIT_ENV},
+                **_NEW_PROCESS_GROUP,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except OSError as exc:
             raise ClaimTransportError(f"git claim-board operation failed: {exc}") from exc
+        try:
+            stdout, stderr = _communicate(process, data, limit, step, progress)
+        except subprocess.TimeoutExpired as exc:
+            _kill_group(process)
+            if limit < _GIT_CALL_TIMEOUT_S:
+                raise ClaimTimeoutError(step) from exc
+            raise ClaimTransportError(f"git claim-board operation failed: {exc}") from exc
+        except BaseException:
+            _kill_group(process)
+            raise
+        proc = subprocess.CompletedProcess(["git", *args], process.returncode, stdout, stderr)
         if check and proc.returncode != 0:
             output = proc.stderr or proc.stdout
             detail = (output if isinstance(output, str) else os.fsdecode(output)).strip()[:300]
@@ -992,8 +1085,10 @@ __all__ = [
     "CLAIM_TTL_S",
     "ClaimBatchResult",
     "ClaimBoard",
+    "ClaimContentionError",
     "ClaimRefLock",
     "ClaimRefLockedError",
+    "ClaimTimeoutError",
     "ClaimTransportError",
     "Heartbeat",
     "MalformedLeaseError",

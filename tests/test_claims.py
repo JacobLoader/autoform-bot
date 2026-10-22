@@ -1766,3 +1766,129 @@ def test_ref_locks_lists_the_lock_files_that_can_block_claims(
     # Git reads "file:/path" as SSH to a host named "file".
     for remote in ("https://example.invalid/claims.git", f"file:{board_repo}"):
         assert claims.ClaimBoard(remote, "worker-a", tmp_path / "remote").ref_locks() == []
+
+
+def _alias(name: str, command: str) -> list[str]:
+    """Git arguments that run ``command`` through sh as git alias ``name``."""
+    return ["-c", f"alias.{name}=!{command}", name]
+
+
+def _scratch_board(tmp_path: Path) -> claims.ClaimBoard:
+    board = claims.ClaimBoard(tmp_path / "unused.git", "worker", tmp_path / "scratch")
+    board._ensure_scratch()
+    return board
+
+
+def _assert_gone(pid: int) -> None:
+    gone_by = time.monotonic() + 5
+    while time.monotonic() < gone_by:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.05)
+    pytest.fail(f"process {pid} that git started is still running")
+
+
+def test_git_runs_without_terminal_prompts(tmp_path: Path) -> None:
+    board = _scratch_board(tmp_path)
+
+    assert board._git(_alias("env", "printenv GIT_TERMINAL_PROMPT")).stdout.strip() == "0"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="controlling terminals are POSIX")
+def test_git_runs_without_a_controlling_terminal(tmp_path: Path) -> None:
+    board = _scratch_board(tmp_path)
+
+    probe = _alias("tty", "(exec 3</dev/tty) 2>/dev/null && echo tty || echo none")
+    assert board._git(probe).stdout.strip() == "none"
+
+
+def test_git_reads_no_input_it_was_not_given(tmp_path: Path) -> None:
+    board = _scratch_board(tmp_path)
+
+    assert board._git(_alias("read", "cat"), deadline=time.monotonic() + 10).stdout == ""
+
+
+def test_git_stops_at_the_deadline_and_names_the_step(tmp_path: Path) -> None:
+    board = _scratch_board(tmp_path)
+    started = time.monotonic()
+
+    with pytest.raises(claims.ClaimTimeoutError) as timed_out:
+        board._git(_alias("hang", "sleep 30"), deadline=started + 0.5, step="hanging")
+
+    assert timed_out.value.step == "hanging"
+    assert str(timed_out.value) == "no answer from the claim board while hanging"
+    assert time.monotonic() - started < 10
+
+
+def test_git_does_not_start_once_the_deadline_has_passed(tmp_path: Path) -> None:
+    board = _scratch_board(tmp_path)
+    marker = tmp_path / "ran"
+
+    with pytest.raises(claims.ClaimTimeoutError):
+        board._git(_alias("touch", f"touch '{marker}'"), deadline=time.monotonic() - 1, step="late")
+
+    assert not marker.exists()
+
+
+def test_git_reports_its_own_time_limit_as_a_transport_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    board = _scratch_board(tmp_path)
+    monkeypatch.setattr(claims, "_GIT_CALL_TIMEOUT_S", 0.5)
+
+    with pytest.raises(claims.ClaimTransportError) as failed:
+        board._git(_alias("hang", "sleep 30"), deadline=time.monotonic() + 60)
+
+    assert not isinstance(failed.value, claims.ClaimTimeoutError)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX")
+def test_git_kills_what_it_started_when_it_times_out(tmp_path: Path) -> None:
+    board = _scratch_board(tmp_path)
+    pid_file = tmp_path / "pid"
+
+    with pytest.raises(claims.ClaimTimeoutError):
+        board._git(
+            _alias("spawn", f"sleep 30 & echo $! > '{pid_file}'; wait"),
+            deadline=time.monotonic() + 1,
+            step="spawning",
+        )
+
+    _assert_gone(int(pid_file.read_text()))
+
+
+def test_git_names_a_slow_step_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    board = _scratch_board(tmp_path)
+    monkeypatch.setattr(claims, "_PROGRESS_AFTER_S", 0.2)
+    steps: list[str] = []
+
+    board._git(_alias("slow", "sleep 1"), step="sleeping", progress=steps.append)
+
+    assert steps == ["sleeping"]
+
+
+def test_git_sends_its_input_once_to_a_slow_step(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    board = _scratch_board(tmp_path)
+    monkeypatch.setattr(claims, "_PROGRESS_AFTER_S", 0.2)
+
+    echoed = board._git(_alias("echo", "sleep 1; cat"), input_text="once\n", progress=lambda step: None)
+
+    assert echoed.stdout == "once\n"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX")
+def test_git_kills_its_command_when_progress_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    board = _scratch_board(tmp_path)
+    # Long enough for sh to write the pid file before the callback runs.
+    monkeypatch.setattr(claims, "_PROGRESS_AFTER_S", 0.5)
+    pid_file = tmp_path / "pid"
+
+    def broken(step: str) -> None:
+        raise BrokenPipeError("stderr closed")
+
+    with pytest.raises(BrokenPipeError):
+        board._git(_alias("spawn", f"sleep 30 & echo $! > '{pid_file}'; wait"), progress=broken)
+
+    _assert_gone(int(pid_file.read_text()))
