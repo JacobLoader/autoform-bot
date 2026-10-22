@@ -230,6 +230,11 @@ def _claims_by_key(refs: Mapping[str, str], namespace: str) -> dict[str, str]:
     return claims
 
 
+def _differ_only_in_case(keys: Sequence[str]) -> bool:
+    """Whether two of ``keys`` differ only in case."""
+    return len({key.lower() for key in keys}) < len(set(keys))
+
+
 def _fetch_failure(stderr: str) -> str:
     """Why a fetch failed, without the warning every listing's fetch prints."""
     lines = (line for line in stderr.splitlines() if not line.startswith(_NEGOTIATION_TIP_WARNING))
@@ -443,6 +448,9 @@ class ClaimBoard:
         controlling terminal, so stopping it ends everything it started.
         Otherwise it shares the caller's process group, as a push must: a
         terminal's interrupt then reaches git, which removes its ref locks.
+        Off the main thread an isolated command shares the caller's process
+        group too, since nothing there could stop it when the caller is
+        signalled.
         """
         if deadline is None:
             limit = _GIT_CALL_TIMEOUT_S
@@ -451,6 +459,7 @@ class ClaimBoard:
             if limit <= 0:
                 raise ClaimTimeoutError(step)
         data = input_text if input_bytes is None else input_bytes
+        isolated = isolated and threading.current_thread() is threading.main_thread()
         guard = _git_ends_with_its_caller() if isolated else contextlib.nullcontext()
         with guard:
             return self._run_git(args, data, check, input_bytes is None, limit, step, progress, deadline, isolated)
@@ -1003,7 +1012,10 @@ class ClaimBoard:
         Each fetch's namespace goes into ``written`` before it runs, with the refs
         it wrote once they are read. A private ref is named after its claim key,
         which a case-insensitive scratch cannot do for two keys that differ only
-        in case; the board's keys are then fetched again by name into numbered refs.
+        in case; the board's keys are then fetched again by name into numbered
+        refs. Git refuses such a fetch, except that some versions, such as
+        Apple's 2.50, keep one of the two refs without a word, so a
+        case-insensitive scratch names the board's keys after the fetch.
         With ``targets``, only the present targets are fetched by name, and a
         target released meanwhile has the targets named again, never the board.
         A board that refuses every attempt because claim refs moved raises
@@ -1047,6 +1059,11 @@ class ClaimBoard:
             if fetch.returncode == 0:
                 refs = written[namespace] = self._refs_in(namespace, git)
                 if keys is None:
+                    if self._scratch_ignores_case():
+                        named = name()
+                        if _differ_only_in_case(named):
+                            keys = named
+                            continue
                     return _claims_by_key(refs, namespace)
                 numbered = ((key, refs.get(f"{namespace}{index}")) for index, key in enumerate(keys))
                 return {key: oid for key, oid in numbered if oid is not None}
@@ -1065,6 +1082,13 @@ class ClaimBoard:
                 )
             if keys is not None:
                 keys = name()
+
+    def _scratch_ignores_case(self) -> bool:
+        """Whether the scratch's filesystem takes two names that differ only in case for one."""
+        try:
+            return os.path.samefile(self.scratch / "HEAD", self.scratch / "head")
+        except OSError:
+            return False
 
     def _remote_keys(self, git: _Git) -> list[str]:
         """Return every validly named claim key the board advertises."""

@@ -907,6 +907,40 @@ def test_list_lists_claim_keys_that_differ_only_in_case_on_any_filesystem(
     assert reader._git(["for-each-ref", "refs/"]).stdout == ""
 
 
+def test_list_on_a_case_insensitive_scratch_lists_both_keys_when_git_keeps_one_ref_silently(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    oids = _plant_packed_leases(board_repo, ["lean/Foo", "lean/foo"])
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+
+    def keeps_one_ref_without_a_word(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        proc = git(args, **kwargs)
+        if args[0] == "fetch" and "--stdin" not in args:
+            # What Apple's Git 2.50 leaves on a case-insensitive filesystem: exit 0, one ref, the other's lease.
+            namespace = args[-1].rpartition(":")[2].removesuffix("*")
+            git(["update-ref", f"{namespace}lean/Foo", oids["lean/foo"]])
+            if f"{namespace}lean/foo" in git(["for-each-ref", "--format=%(refname)", namespace]).stdout.split():
+                git(["update-ref", "-d", f"{namespace}lean/foo"])
+        return proc
+
+    monkeypatch.setattr(reader, "_git", keeps_one_ref_without_a_word)
+    monkeypatch.setattr(reader, "_scratch_ignores_case", lambda: True)
+
+    assert [(item["_key"], item["_oid"], item["_malformed"]) for item in reader.list()] == [
+        ("lean/Foo", oids["lean/Foo"], False),
+        ("lean/foo", oids["lean/foo"], False),
+    ]
+    assert git(["for-each-ref", "refs/"]).stdout == ""
+
+
+def test_scratch_ignores_case_as_its_filesystem_does(tmp_path: Path) -> None:
+    board = _scratch_board(tmp_path)
+    (tmp_path / "Probe").touch()
+
+    assert board._scratch_ignores_case() is (tmp_path / "probe").exists()
+
+
 def test_list_of_keys_that_differ_only_in_case_drops_a_claim_released_after_naming_it(
     tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2206,6 +2240,51 @@ def test_git_shares_its_callers_process_group_unless_isolated(tmp_path: Path) ->
 
     assert int(board._git(probe).stdout) == os.getpgrp()
     assert int(board._git(probe, isolated=True).stdout) != os.getpgrp()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX")
+def test_git_off_the_main_thread_shares_its_callers_process_group_even_isolated(tmp_path: Path) -> None:
+    board = _scratch_board(tmp_path)
+    probe = _alias("pgid", "ps -o pgid= -p $$")
+    groups: list[int] = []
+    worker = threading.Thread(target=lambda: groups.append(int(board._git(probe, isolated=True).stdout)))
+    worker.start()
+    worker.join(timeout=30)
+
+    assert groups == [os.getpgrp()]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups and signals are POSIX")
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
+def test_git_ends_with_its_caller_when_a_worker_thread_runs_it(tmp_path: Path, signum: int) -> None:
+    # As in `autoform dashboard`, whose request threads list claims.
+    pid_file = tmp_path / "pid"
+    script = (
+        "import pathlib, threading\n"
+        "from autoform_cli import claims\n"
+        f"board = claims.ClaimBoard(pathlib.Path({str(tmp_path / 'unused.git')!r}), 'w', "
+        f"pathlib.Path({str(tmp_path / 'scratch')!r}))\n"
+        "board._ensure_scratch()\n"
+        f"run = lambda: board._git({_alias('spawn', f'echo $$ > {pid_file}; exec sleep 30')!r}, isolated=True)\n"
+        "worker = threading.Thread(target=run, daemon=True)\n"
+        "worker.start()\n"
+        "worker.join()\n"
+    )
+    caller = subprocess.Popen(
+        [sys.executable, "-c", script],
+        cwd=Path(claims.__file__).parents[1],
+        start_new_session=True,
+        stderr=subprocess.DEVNULL,
+    )
+    started_by = time.monotonic() + 10
+    while not (pid_file.exists() and pid_file.read_text().strip()):
+        assert time.monotonic() < started_by, "git never started its command"
+        time.sleep(0.05)
+
+    os.killpg(caller.pid, signum)
+
+    assert caller.wait(timeout=10) != 0
+    _assert_gone(int(pid_file.read_text()))
 
 
 def test_list_runs_every_git_command_isolated_except_cleanup(
