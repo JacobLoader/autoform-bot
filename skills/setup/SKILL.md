@@ -71,15 +71,15 @@ user's agreement, remove that write access with `chmod g-w,o-w`.
 Autoform's library catalog,
 `$AUTOFORM_PLUGIN_ROOT/autoform_cli/project/libraries.json`, lists shared Lean
 libraries that `project new --library <NAME>` adds, already required and locked.
-Offer an entry with `offered: true` only when Setup creates a new project, never
-when inspecting, repairing, or running `init`. Ask in the single round of
-questions and state the cost: the project moves to the library's `release`, its
-first build downloads the library and its dependencies (about 270 MB for
-ATLAS), and the library modules it imports build locally. A yes may come in the
-request itself; a request that names a catalog library uses it even when the
-entry is not offered, unless it names another repository or revision, which
-makes it a library outside the catalog. Without a yes, add no library,
-including in a headless run.
+Offer only entries with `offered: true`, and only when Setup creates a new
+project, never when inspecting, repairing, or running `init`. Ask in the single
+round of questions and state the cost: the project moves to the library's
+`release`, its first build downloads the library and its dependencies (about 270
+MB for ATLAS), and the library modules it imports build locally. A yes may come
+in the request itself; a request that names a catalog library uses it even when
+the entry is not offered, unless it names another repository or revision, which
+makes it a library outside the catalog. Without a yes, add no library, including
+in a headless run.
 
 On a yes, run `project new` with `--library <NAME>`, the entry's `name`, and no
 version flags, then validate as below. Run `autoform library list` on the

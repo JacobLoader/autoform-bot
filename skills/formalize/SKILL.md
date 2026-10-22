@@ -142,8 +142,10 @@ hit and what to do with a refusal that names a library.
   finds that article itself, which is not a duplicate.
 - Matching is literal, so no article states the helper only when retries with
   fewer words, and under other usual names, also show none.
-- A refusal (exit 2) is not an empty result. Retry one that asks for it;
-  otherwise add no helper and report it as the leaf's blocker.
+- A refusal (exit 2) is not an empty result. Retry one that asks for it. A
+  refusal that does not name a library otherwise blocks the leaf: add no helper
+  and report it as the blocker. One that names a library follows the
+  [library rules](references/library-search.md).
 - Use the declaration of a blueprint hit that states the helper only when the
   selected article's dependencies reach that hit's article, and as the
   open-statement policy below allows. A hit they do not reach is a missing

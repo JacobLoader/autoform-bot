@@ -696,8 +696,8 @@ declares it in another module than the one whose source the lexical index
 finds it in, when the sources define it more than once with no single
 declaration chosen by the rules under [Validation](#validation), when it
 reaches a refused declaration, or when its probe fails on its own (a nonzero
-exit, a signal, a timeout, or malformed records); the reason quotes Lean's
-output. An unresolved name affects only its article: other articles still
+exit, a signal, a timeout, or malformed or ambiguous records), in which case
+the reason quotes Lean's output. An unresolved name affects only its article: other articles still
 extract, the command exits nonzero, and it writes nothing into the vault. The
 output and material limits apply to a whole probe, so a declaration that
 resolves when selected alone can be unresolved beside its module's other
@@ -732,8 +732,8 @@ external assumption, and each axiom, together with the dependency edges, the
 Lean version, and the compiled `.olean` identities of the external boundary.
 Local source spelling and comments do not enter it, while macro expansion,
 synthesized instance bodies, types, and definition bodies do; proof axioms,
-toolchain changes, and unrelated edits in an external module may also rotate
-it. A dependency library rooted at `Init`, `Lean`, or `Std` hides the
+toolchain changes, and unrelated edits in an external module or its imports
+may also rotate it. A dependency library rooted at `Init`, `Lean`, or `Std` hides the
 toolchain's copy from the probe, so extraction stops with an error. An article
 with several `lean:` names has one hash over all of them, printed as the
 article skeleton; if any of those names is unresolved, the report records the
@@ -1494,10 +1494,12 @@ These pass `check` with a warning:
   as null.
 - A byte-order mark at the start of an article that otherwise loads. It hides
   whatever opens the first line: frontmatter there is read as text, so its keys
-  are ignored. An H1 title behind the mark is missed, and then `check` fails the
-  article as missing one.
+  are ignored.
 - A `declaration` on a container article, since nothing counts or schedules a
   container's own declaration; `audit` reports it as `formalizable-container`.
+
+A byte-order mark that hides an article's H1 title fails `check`, as a missing
+title.
 
 `check` also warns, naming the file and the line, about what a published page
 could use to run script or pass for the site's own markup. None of it fails
@@ -1596,7 +1598,7 @@ be on the alias's line, and the target on that line or the next nonblank one.
 
 A name declared once has that declaration, even a private one. A name declared
 more than once has the one declaration that is neither `private` nor a wanted
-command (Batteries makes those private placeholders), since every other module
+command (Batteries elaborates each into a private placeholder), since every other module
 sees the public one. With two or more public declarations (a file no library
 builds counts too), or only private and wanted ones, the name has none:
 `check --lean-root` fails with `declaration defined more than once`, `render`
@@ -1758,8 +1760,8 @@ held to the same placeholder rule.
 builds no index, and starts no process. The contract is the JSON shape, the
 exit codes, and the rule that an article is a hit only when every term of the
 query occurs in it, as a substring of one of its fields; terms may sit in
-different fields. How the query is cut into terms, shortened, and ranked may
-change, and `search.py` describes it; `terms` in the JSON shows what was
+different fields. How the query is cut into terms, folded, shortened, and
+ranked may change, and `search.py` describes it; `terms` in the JSON shows what was
 searched. Case, width, accents, typographic dashes and quotes, and invisible
 characters do not matter. The fields, best first:
 
@@ -1777,8 +1779,9 @@ characters do not matter. The fields, best first:
 
 Other frontmatter and the sections after the statement are not searched. There
 is no phrase, synonym, or prefix search, and one absent term means no hit:
-`map` matches `roadmap`, `unambiguous` does not match `non-ambiguous`, and a
-one-letter term matches nearly every article. Only the query is shortened, so
+`map` matches `roadmap`, `unambiguous` does not match `non-ambiguous`, a symbol
+such as `ℝ` folds to its plain letter, and a one-letter term matches nearly
+every article. Only the query is shortened, so
 `indices` does not find `index`. Superscript and subscript digits fold to the
 digit while `^` and `_` stay, so `S^1` and `S¹`, or `H_0` and `H₀`, do not find
 each other. A name with a dot, underscore, or digit is searched exactly. Query
