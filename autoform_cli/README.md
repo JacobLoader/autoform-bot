@@ -17,17 +17,12 @@ number of levels, from book to chapter to section to declaration. Ordinary
 files use their path without `.md` as a stable ID; `README.md` uses its
 directory path, with the root article named `roadmap`.
 
-The H1 is the article's human title. Container
-prose supplies the mathematical exposition, and a standalone list item linking
-to a formalizable leaf places that definition or result at the exact position in
-the published chapter. Leaves without a placement slot appear under an explicit
-“Additional formalization targets” section rather than disappearing; a module
-catalog without one appears under “Module inventories” instead.
-
-Keep the root roadmap article short: it is the book's preface and table of
-contents, not a dump of every planned milestone. Large planning inventories
-belong in coverage or progress views; detailed containers should introduce their
-mathematics in prose and place statements under meaningful section headings.
+The H1 is the article's human title. Container prose supplies the exposition,
+and a standalone list item linking to a formalizable leaf places it at that
+position in the published chapter. Leaves without a placement slot appear under
+an explicit “Additional formalization targets” section; a module catalog
+without one appears under “Module inventories” instead. Keep the root article a
+short preface and table of contents, not an inventory of every milestone.
 
 Frontmatter records checked facts:
 
@@ -59,30 +54,20 @@ State the intended result and proof sketch here.
 ```
 
 An article's statement is its body from the end of the frontmatter to the first
-`##` heading, without the H1 line. The article's first H1 (its title), if
-written below a `##` section, ends that section and resumes the statement; a
-later H1 stays in its section. No heading deeper than `##` ends it, and neither
-does a `##` line inside a fenced code block or an HTML comment. `autoform audit`
-and the published theorem box both read that span. A fence closes only on a
-bare fence line. A fence that never closes is read as plain text when its
-article is inspected alone, so it hides no heading or dependency link there,
-but on a chapter page it can pair with a later article's closing fence and hide
-everything between them, so `check` warns about one at the margin and the site
-shows that page as typed (see [Validation](reference/validation-and-audit.md#validation)). The audit reports a
-fence with no closing line as `unclosed-code-fence`. A later bare fence line of
-the same character and at
-least the opener's length closes it here, though the page asks for the opener's
-exact length and indent, so close each fence with its own line. The page can
-also pair an unclosed backtick fence line with a later backtick run in the same
-paragraph and show the text between them as inline code; a link there is not a
-link on the page but is still read as a dependency.
-
-An HTML comment that never closes, even one opened by a `<!--` in inline code
-or an indented code block, hides every heading and dependency link after it:
-the graph loses those edges, and the part of the article the comment opens in
-keeps the rest, so one opened in the statement puts the later sections,
-dependency list included, in the theorem box. Nothing reports the comment
-itself.
+`##` heading, without the H1 line; `autoform audit` and the published theorem
+box both read that span. The article's first H1 (its title), if written below a
+`##` section, ends that section and resumes the statement; a later H1 stays in
+its section. No heading deeper than `##` ends the statement, and neither does a
+`##` line inside a fenced code block or an HTML comment. Close each fence with
+its own bare line of the same character, length and indent: on a chapter page
+an unclosed fence can pair with a later article's fence and hide everything
+between them, so `check` warns about it, the site shows that page as typed (see
+[Validation](reference/validation-and-audit.md#validation)), and the audit
+reports `unclosed-code-fence`. An HTML comment that never closes, even one
+opened in inline code or an indented code block, hides every heading and
+dependency link after it: the graph loses those edges, one opened in the
+statement puts the rest of the article in the theorem box, and nothing reports
+it.
 
 `## Depends on` lists what the article needs in order to be *stated*;
 `## Proof depends on` lists what only its *proof* needs. Both are graph edges,
@@ -90,13 +75,12 @@ except a link in a code block, fenced or indented, or in an HTML comment. Links
 anywhere else are ordinary navigation or citations. Dependencies resolve
 relative to the current article and must point at another roadmap article.
 
-The optional `declaration` field marks a formalizable leaf and describes its
-intended Lean artifact, for example `def`, `theorem`, `lemma`, `structure`, or
-`instance`. Container and exposition articles omit it. Autoform records this
-hint but does not constrain the set of Lean declaration commands. Declarations
-that introduce data rather than a proposition carry no separate proof
-obligation; leading modifiers such as `noncomputable` do not change that, and an
-`axiom` does not get this shortcut.
+The optional `declaration` field marks a formalizable leaf and names its
+intended Lean declaration command, such as `def`, `theorem`, `structure`, or
+`instance`; Autoform does not constrain the set. Container and exposition
+articles omit it. Declarations that introduce data rather than a proposition
+carry no separate proof obligation, whatever leading modifiers such as
+`noncomputable` they have; an `axiom` does not get this shortcut.
 
 `origin` records provenance for formalizable work: `cited` for a direct source
 target, `bridged` for a result introduced between source targets, and
@@ -111,27 +95,22 @@ mathematical areas such as `Foundations` or `Geometry & Topology`, never
 repository or workflow buckets such as `MathlibExt` or `catalog-01`. Autoform
 does not guess areas from paths, imports, or titles.
 
-Mathematical topics and repository organization are different hierarchies.
-An optional container-only `navigation` role makes the difference explicit:
+An optional container-only `navigation` role separates mathematical topics
+from repository organization:
 
 - `topic` (the default): a mathematical subject or coherent group of results.
-- `collection`: a library or other organizational collection. Its parent's
-  overview shows the collection's children in its place.
+- `collection`: a library or other organizational collection; its parent's
+  overview shows its children in its place.
 - `transparent`: a generated pagination or range container, flattened the
-  same way; like a collection, it is left out of the outline and ancestor
-  breadcrumbs.
+  same way. Both are left out of the outline and ancestor breadcrumbs.
 - `source`: a book or other source corpus, shown as itself.
-- `module`: a container that mirrors one Lean source module and holds its
-  declarations. It is shown like a topic, and its size is the module's (see
+- `module`: mirrors one Lean source module and holds its declarations; shown
+  like a topic, sized as the module (see
   [Structure](reference/validation-and-audit.md#structure)).
 
-An overview, a page with a collection, pagination or source child, draws what
-remains after collections and pagination are replaced by their contents.
-These roles never change article identity, containment, proof readiness, or
-dependency edges. A relation that mentions a collection itself stays attached
-to the collection, so the overview that shows the collection's contents in its
-place does not draw it, while other pages draw it from the collection's
-boundary: depend on an article inside the collection instead.
+Roles never change identity, containment, readiness, or edges. An overview
+does not draw an edge to a collection it replaces by its contents, so depend on
+an article inside the collection instead.
 
 For a taxonomy maintained separately from article files, `blueprint/atlas.json`
 may assign the same areas without moving pages:
@@ -141,70 +120,58 @@ may assign the same areas without moving pages:
 ```
 
 Every listed value is a roadmap node id. A node takes the first area that
-lists it, and an `area:` authored on the node wins over the file. The file only
-assigns areas, so it never stops a command: `check` and `render`
-warn about each entry they ignore, or about the whole file when it is not
+lists it; an `area:` on the node wins. The file never stops a command: `check`
+and `render` warn about each ignored entry, or the whole file when it is not
 readable `autoform-atlas/v1` JSON, and `audit` reports each as an
-`atlas-omission` [warning](reference/validation-and-audit.md#warnings). An older `AUTOFORM_REF` assigns no areas
-from the file but publishes it as a static file, with every id it names.
-Render reads it for the explorer's areas and leaves the file itself out of the
-site, since it may name articles in unpublished folders; a page's link to it
-keeps only its text.
+`atlas-omission` [warning](reference/validation-and-audit.md#warnings). Render
+leaves the file out of the site; a page's link to it keeps only its text.
 
-A repository-wide inventory may use a narrative leaf to summarize an existing
-Lean module containing several declarations. Such a leaf sets
-`catalog: module` and omits `declaration`, so it is never dispatched as one
-proof task. A catalog must be a leaf: `audit` reports one with contained
-articles as `catalog-container`. Every catalog links a declaration ledger under
-`blueprint/sources/` from its `## Sources` section: `check` warns about a
-catalog that links none and `audit` reports it as `catalog-missing-ledger`,
-while a link to a missing ledger fails both, as such a source link does for any
-article. A hidden ledger under `sources/` draws a `check` warning and fails only
-`audit`, as [Validation](reference/validation-and-audit.md#validation) explains. A completed catalog also
-records in `lean:` the full name of every public declaration the module writes
-with a declaration keyword, which is what the Lean source index records (see
-[Validation](reference/validation-and-audit.md#validation)). Names Lean generates, such as constructors,
+A narrative leaf may summarize an existing Lean module by setting
+`catalog: module` and omitting `declaration`; it is never dispatched as a proof
+task. A catalog must be a leaf (`audit` reports `catalog-container`) and links
+a declaration ledger under `blueprint/sources/` from `## Sources`: `check`
+warns about a catalog that links none and `audit` reports
+`catalog-missing-ledger`; a link to a missing ledger fails both, and a hidden
+ledger under `sources/` draws a `check` warning and fails only `audit` (see
+[Validation](reference/validation-and-audit.md#validation)).
+
+A completed catalog records in `lean:` the full name of every public
+declaration the module writes with a declaration keyword, as the Lean source
+index records them. Names Lean generates, such as constructors,
 structure fields, derived or unnamed instances, and `@[ext]`, `@[simps]`, or
 `@[to_additive]` results, and declarations the index cannot see yet, behind
 `nonrec` or `meta` or written `class inductive`, go in the ledger as
 supporting entries, never in `lean:`; a `private` name never goes in `lean:`.
 A completed catalog may assert `statement: formalized` and `proof: formalized`
-when the complete module has been checked. It contributes to the neutral
-inventory metric and graph status while remaining a readable page in the vault
-and a section of its parent chapter on the site, but its own entry stays
-outside the mathematical `Scoped roadmap` completion percentage. Like any
-prerequisite, a catalog linked under `## Depends on` or `## Proof depends on`
-holds its dependents back until its whole-module assertion is recorded, so a
-dependent that needs one result links the declaration article that expounds it.
+when the complete module has been checked. Like any prerequisite, a catalog
+linked under `## Depends on` or `## Proof depends on` holds its dependents back
+until its whole-module assertion is recorded, so a dependent that needs one
+result links the declaration article that expounds it.
 
 `check --lean-root` and `audit --lean-root` resolve every name the catalog
 lists, and say for a catalog name they do not find that a generated name
 belongs in the ledger. They cannot prove that the list omitted no newly added
 public declaration; completeness remains an authored assertion.
-`audit --lean-root` also reads the
-[elaboration limits](reference/validation-and-audit.md#elaboration-limits) of the declarations a catalog
-resolves and reports them as warnings, which never fail the audit. A catalog
-that records `proof: formalized` also gets `lean-target-wanted` for a wanted
-target it names; the deprecation, declaration-kind, and node-size checks apply
-only to declaration articles.
+`audit --lean-root` reports the
+[elaboration limits](reference/validation-and-audit.md#elaboration-limits) of a
+catalog's declarations as warnings, and a catalog that records
+`proof: formalized` gets `lean-target-wanted` for a wanted target it names; the
+deprecation, declaration-kind, and node-size checks apply only to declaration
+articles.
 
-Versioned implementation notes live outside the mathematical roadmap at
-`blueprint/.implementation-notes/<article_id>.md`, one file per article. The
-durable ID survives article moves. Claims keep independent workers from editing
-the same leaf's note; containers have no claims, and any worker may delete a
-note that `autoform audit` reports as stale or repair an orphaned one. Every
-command that loads the graph, including `autoform check`, rejects malformed,
-empty, symlinked, or orphaned notes; assign the article ID before creating its
-note. Parallel branches can orphan a note without a Git conflict, when one
-deletes or merges an article while another writes its note; a worker repairs
-that by moving anything still useful into the surviving article's note and
-deleting the orphan. When the article still exists but lost its `article_id`
-line, restore the line instead.
-Delete the file once its article is proved; for a container, delete it once
-every formalizable descendant, and every leaf marked `not_ready` beneath it,
-is proved and there is at least one; a module catalog never counts. `autoform
-audit` reports a note left behind after that point. The directory is hidden, so
-render omits it from the site and the publication hash.
+Versioned implementation notes live at
+`blueprint/.implementation-notes/<article_id>.md`, one per article, and survive
+article moves. Claims keep workers from editing the same leaf's note;
+containers have no claims. Every command that loads the graph rejects
+malformed, empty, symlinked, or orphaned notes, so assign the article ID before
+creating its note. Any worker may delete a stale note or repair an orphan: move
+anything still useful into the surviving article's note and delete the orphan,
+or restore a lost `article_id` line if the article still exists. Delete a note
+once its article is proved; for a container, once every formalizable
+descendant and every `not_ready` leaf beneath it is proved and there is at
+least one (a module catalog never counts). `autoform audit` reports a note left
+after that point. Render omits the hidden directory from the site and the
+publication hash.
 
 ## Assertions and derived status
 
@@ -212,11 +179,11 @@ An article asserts only facts a human or agent verified:
 
 | Key | Meaning |
 | --- | --- |
-| `area: Geometry & Topology` | Authored mathematical region for atlas grouping. CI's `autoform check` at an older `AUTOFORM_REF` rejects the key, so move the pin first, or assign the area in `blueprint/atlas.json`, which older refs ignore. |
-| `navigation: collection` | Presentation-only container role: `topic`, `collection`, `transparent`, `source`, or `module` (see above). CI's `autoform check` at an older `AUTOFORM_REF` rejects the key, so move the pin first. |
-| `catalog: module` | A non-dispatchable leaf cataloging one existing Lean module. Its `lean:` lists the module's public keyword-declared names, and it links its declaration ledger under `blueprint/sources/` from `## Sources`; cannot be combined with `declaration` or the `mathlib*` keys. CI's `autoform check` at an older `AUTOFORM_REF` rejects the key, so move the pin first. |
+| `area: Geometry & Topology` | Authored mathematical region for atlas grouping. |
+| `navigation: collection` | Presentation-only container role: `topic`, `collection`, `transparent`, `source`, or `module` (see above). |
+| `catalog: module` | A non-dispatchable leaf cataloging one existing Lean module. Its `lean:` lists the module's public keyword-declared names, and it links its declaration ledger under `blueprint/sources/` from `## Sources`; cannot be combined with `declaration` or the `mathlib*` keys. |
 | `statement: formalized` | The Lean statement exists and compiles. Requires `lean:`. |
-| `statement: retracted` | A revision retracted the statement while `lean:` still names the old declaration, which stays in the build until Formalize restates the article and records `statement: formalized` in its place. Requires `lean:`; invalid with `proof: formalized` or `mathlib: true`. CI's `autoform check` at an older `AUTOFORM_REF` rejects the marker, so move the pin first; until then, retract by removing `statement` and `proof` and keeping `lean:`. |
+| `statement: retracted` | A revision retracted the statement while `lean:` still names the old declaration, which stays in the build until Formalize restates the article and records `statement: formalized` in its place. Requires `lean:`; invalid with `proof: formalized` or `mathlib: true`. |
 | `proof: formalized` | The Lean proof compiles. Requires `statement: formalized` and `lean:`. Under the open policy it may rest on open statements, and the article is then conditional; only the derived `fully_proved` means complete and `sorry`-free. |
 | `mathlib: true` | The result is upstreamed into Mathlib. |
 | `not_ready: true` | Needs more blueprint work before it can be attempted. |
@@ -227,11 +194,13 @@ An article asserts only facts a human or agent verified:
 | `open_statements: allowed` | Project policy, valid only in `roadmap/README.md`: a theorem's statement may land with a `sorry` proof (see [Open statements](reference/open-statements.md#open-statements)). Absent or `forbidden` keeps the strict policy. |
 | `published: false` | Folder setting, valid only in the `README.md` of a folder below `roadmap/`: `check` and `audit` validate the folder and everything in it, but render leaves it out of the site and of the publication hash. No link on a published roadmap article may point into it, whether a dependency, a source or prose; a link from any other page keeps only its text, with a warning. `audit` and render reject coverage evidence that points into it. A folder inside an unpublished one is unpublished too, whatever its own README says. |
 
-Everything a reader thinks of as progress is *derived* from the DAG on every
-run, so it cannot go stale. Readiness depends on the project's policy: under
-the default strict policy CI rejects every `sorry`, so a theorem's statement
-lands only with its proof; under `open_statements: allowed` it may land with a
-`sorry` proof.
+CI at an older `AUTOFORM_REF` rejects keys it predates, such as `area:`,
+`navigation:`, `catalog:` and `statement: retracted`; see
+[Upgrading](../CHANGELOG.md#upgrading-from-050).
+
+Progress is *derived* from the DAG on every run, so it cannot go stale.
+Readiness depends on the policy: under the default strict policy CI rejects
+every `sorry`, so a theorem's statement lands only with its proof.
 
 | Derived state | Holds when |
 | --- | --- |
@@ -242,21 +211,15 @@ lands only with its proof; under `open_statements: allowed` it may land with a
 | `fully_proved` | Proved, and every prerequisite is fully proved, recursively. |
 | `defined` | A definition is written but rests on unfinished work; one whose body rests on an open statement is `conditional` instead. |
 
-`proved` and `fully_proved` differ on purpose: a theorem whose own proof
-compiles but which rests on unfinished work is green, not dark green.
-`conditional`, labelled "conditionally proved", is the open policy's case of
-that: the article is proved, but it reaches an open statement, a theorem that
-is stated or retracted but not proved
-(see [Open statements](reference/open-statements.md#open-statements)), through its dependencies. An open
-dependency counts together with whatever its statement prerequisites reach, and
-a proved dependency passes on
-everything it reaches. The site colours it violet, never green, and lists those
-open statements in an `Assumes` row on the article page. It is never
-`fully_proved`, which keeps its meaning in both policies; a conditional result
-is complete only once every open statement it assumes is proved. The
-palette and state names follow
-[leanblueprint](https://pypi.org/project/leanblueprint/), so the published
-graph reads the same way as the Lean community's LaTeX blueprints.
+A proved theorem that rests on unfinished work is green, not the dark green of
+`fully_proved`. A `conditional` ("conditionally proved") article reaches an
+open statement, a theorem stated or retracted but not proved (see
+[Open statements](reference/open-statements.md#open-statements)), through its
+dependencies; an open dependency counts together with whatever its statement
+prerequisites reach, and a proved dependency passes on everything it reaches.
+The site colours it violet and lists those open statements in an `Assumes`
+row. It is never `fully_proved` until every open statement it assumes is
+proved.
 
 ## Commands
 
