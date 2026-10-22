@@ -1536,12 +1536,13 @@ const source = fs.readFileSync(process.argv[2], "utf8");
 function settle() { return new Promise((resolve) => setImmediate(resolve)); }
 
 async function run(blocks, preloaded) {
-  const calls = [], injected = [], observers = [], errors = [];
+  const calls = [], injected = [], observers = [], errors = [], selectors = [];
   let scheme = null, inFlight = 0, mostInFlight = 0;
   const elements = blocks.map((block) => ({className: block[0], textContent: block[1], innerHTML: ""}));
   const mermaid = {
     initialize: (config) => calls.push(
-      ["initialize", config.securityLevel, config.htmlLabels, config.flowchart.htmlLabels, config.theme]
+      ["initialize", config.securityLevel, config.htmlLabels, config.flowchart.htmlLabels, config.theme, config.secure,
+       config.startOnLoad]
     ),
     // A render settles on a later turn, so two drawn at once would overlap.
     render: (id, text) => {
@@ -1558,7 +1559,8 @@ async function run(blocks, preloaded) {
   const context = {
     console: {error: (message) => errors.push(message)},
     document: {
-      querySelectorAll: () => elements,
+      // Only the diagrams match, so a broader selector finds none.
+      querySelectorAll: (selector) => { selectors.push(selector); return selector === ".mermaid" ? elements : []; },
       body: {getAttribute: () => scheme},
       createElement: () => ({}),
       head: {appendChild: (element) => injected.push(element)},
@@ -1575,7 +1577,7 @@ async function run(blocks, preloaded) {
   observers.forEach((callback) => callback([{attributeName: "data-md-color-scheme"}]));
   for (let turn = 0; turn < 100; turn++) await settle();
   return {
-    calls, errors, mostInFlight,
+    calls, errors, mostInFlight, selectors,
     sources: injected.map((element) => element.src),
     drawn: elements.map((element) => element.innerHTML),
   };
@@ -1622,17 +1624,22 @@ def test_the_site_draws_authored_diagrams_locked_down_and_only_where_a_page_has_
         ).stdout
     )
 
-    assert result["none"] == {"calls": [], "errors": [], "mostInFlight": 0, "sources": [], "drawn": []}
+    assert result["none"] == {
+        "calls": [], "errors": [], "mostInFlight": 0, "selectors": [".mermaid"], "sources": [], "drawn": []
+    }
     loaded = result["loaded"]
+    assert loaded["selectors"] == [".mermaid"]
     assert loaded["sources"] == [render_module.MERMAID_LIBRARY]
     # Each diagram is drawn from its source as written, strictly and with
-    # plain-text labels, the whole light pass before the dark one.
+    # plain-text labels that no directive can turn back into HTML, the whole
+    # light pass before the dark one.
+    secure = ["secure", "securityLevel", "startOnLoad", "maxTextSize", "suppressErrorRendering", "maxEdges", "htmlLabels"]
     assert loaded["calls"] == [
         call
         for theme in ("neutral", "dark")
         for _classes, diagram in blocks
         for call in (
-            ["initialize", "strict", False, False, theme],
+            ["initialize", "strict", False, False, theme, secure, False],
             ["render", diagram],
             *([] if "broken" in diagram else [["bind"]]),
         )
@@ -1643,7 +1650,7 @@ def test_the_site_draws_authored_diagrams_locked_down_and_only_where_a_page_has_
     preloaded = result["preloaded"]
     assert preloaded["sources"] == []
     assert preloaded["calls"][:3] == [
-        ["initialize", "strict", False, False, "neutral"],
+        ["initialize", "strict", False, False, "neutral", secure, False],
         ["render", "graph TD\n  c --> d"],
         ["bind"],
     ]

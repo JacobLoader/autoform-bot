@@ -316,7 +316,7 @@ def test_a_roadmap_too_large_to_list_keeps_its_chapters(
 ) -> None:
     from autoform_cli import visualize
 
-    monkeypatch.setattr(visualize, "ARTICLE_LIST_LIMIT", 1)
+    monkeypatch.setattr(visualize, "MAX_MAP_NODES", 1)
     blueprint = tmp_path / "blueprint"
     for name in ("one", "two"):
         _write_node(blueprint / "roadmap" / f"{name}.md", name.title(), declaration="theorem")
@@ -326,7 +326,7 @@ def test_a_roadmap_too_large_to_list_keeps_its_chapters(
     assert "## Chapters" in document and "## Articles" not in document
     assert "more articles than the 1 this page lists" in document
     # A roadmap with exactly as many articles as the limit still lists them.
-    monkeypatch.setattr(visualize, "ARTICLE_LIST_LIMIT", 2)
+    monkeypatch.setattr(visualize, "MAX_MAP_NODES", 2)
     assert "## Articles" in export_graph(blueprint).read_text(encoding="utf-8")
 
 
@@ -511,18 +511,6 @@ def test_cli_writes_structure_only_when_requested(
     assert structure.is_file()
     assert structure.read_text(encoding="utf-8").startswith(GENERATED_STRUCTURE_MARKER)
     assert capsys.readouterr().out == f"{graph}\n"
-
-
-
-def test_cli_accepts_html_link_extension(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    blueprint = tmp_path / "blueprint"
-    _write_node(blueprint / "roadmap" / "only.md", "Only node", declaration="theorem")
-    output = blueprint / "dependencies.md"
-
-    assert main([str(blueprint), "--output", str(output), "--link-extension", ".html"]) == 0
-
-    assert str(output.resolve()) in capsys.readouterr().out
-    assert "[Only node](roadmap/only.html)" in output.read_text(encoding="utf-8")
 
 
 def test_cli_reports_invalid_blueprint(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

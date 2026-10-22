@@ -320,6 +320,10 @@ def _mermaid_script() -> str:
           securityLevel: "strict",
           htmlLabels: false,
           flowchart: {{ htmlLabels: false }},
+          // A diagram's %%{{init}}%% directive cannot change a secure key at any
+          // depth. The list is Mermaid's defaults plus htmlLabels, so labels stay text.
+          secure: ["secure", "securityLevel", "startOnLoad", "maxTextSize",
+                   "suppressErrorRendering", "maxEdges", "htmlLabels"],
           theme: mode === "dark" ? "dark" : "neutral",
           fontFamily: FONT,
           themeVariables: variables(mode)

@@ -1394,8 +1394,8 @@ link a `javascript:` URL; a Markdown link render moves keeps its decoded
 spelling and starts with `./` when its first segment, a folder's or a file's
 name, holds a colon, for the same reason. Point
 `mkdocs.yml` at `docs_dir: site-src` and enable `md_in_html` plus a
-`pymdownx.superfences` mermaid fence; see the [repository
-example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml). The
+`pymdownx.superfences` mermaid fence; see the [setup
+template](templates/mkdocs.yml). The
 generated `javascripts/blueprint-mermaid.js` loads Mermaid itself, so the
 configuration lists that script but not the Mermaid library.
 
@@ -1530,10 +1530,14 @@ What an existing repository meets when it moves to this version:
 12. `autoform-visualize` writes a plain-Markdown dependency summary to
     `blueprint/dependencies.md` in place of the Mermaid graph. It replaces a
     missing page, its own, or the Mermaid page earlier versions wrote, and
-    refuses any other page with exit status 2.
+    refuses any other page with exit status 2. Its `--link-extension` option
+    is gone: the summary is read in the vault, so its links name the Markdown
+    files.
 13. The site draws authored Mermaid diagrams in strict mode, with plain-text
     labels, and only on pages that have one, so click callbacks and HTML in
-    labels stop working; links to URLs still work. A `mkdocs.yml` that loads
+    labels stop working; links to URLs still work. The site no longer appends
+    the status palette's `classDef` lines, so a class such as
+    `A:::fully_proved` is no longer coloured. A `mkdocs.yml` that loads
     Mermaid from the CDN keeps working, and may drop that line once CI's
     `AUTOFORM_REF` includes this change: a render pinned before it needs the
     line to draw any diagram.

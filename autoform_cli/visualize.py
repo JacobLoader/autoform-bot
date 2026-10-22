@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Sequence
 
 from . import graph_views, status
+from .dag_viewer import MAX_MAP_NODES
 from .graph import GraphValidationError, load_graph
 from .markdown import blueprint_root, relative_link
 from .readback import READBACKS_DIR
@@ -22,9 +23,6 @@ if TYPE_CHECKING:
 
 GENERATED_STRUCTURE_MARKER = "---\nkind: structure\nautoform_generated: true\n---"
 GENERATED_GRAPH_MARKER = "---\nkind: graph\nautoform_generated: true\n---"
-#: A roadmap with more articles than the explorer draws on one map lists its
-#: chapters only; the explorer lists every article.
-ARTICLE_LIST_LIMIT = 120
 #: The sentence every page the Mermaid exporter wrote opened its diagram with.
 _MERMAID_PAGE_SENTENCE = (
     "Arrows point from a prerequisite to what depends on it; a dashed\n"
@@ -132,7 +130,6 @@ def summary_page(
     statuses: dict[str, status.NodeStatus],
     destination: Path,
     *,
-    link_extension: str = ".md",
     title: str = "Dependency summary",
 ) -> str:
     """The vault's dependency summary, from the projection the explorer's project map draws.
@@ -147,7 +144,7 @@ def summary_page(
     titles = {node.id: node.title for node in view.nodes}
 
     def link(text: str, target: Path) -> str:
-        return f"[{_label(text)}]({relative_link(target, destination, link_extension)})"
+        return f"[{_label(text)}]({relative_link(target, destination, '.md')})"
 
     def related(edges: list[ViewEdge], end: str) -> str:
         names = sorted(
@@ -216,7 +213,9 @@ def summary_page(
             )
         lines.append("")
 
-    if 0 < members <= ARTICLE_LIST_LIMIT:
+    # A roadmap with more articles than the explorer draws on one map lists its
+    # chapters only; the explorer lists every article.
+    if 0 < members <= MAX_MAP_NODES:
         lines.extend(["## Articles", ""])
         for node in view.nodes:
             if not articles.get(node.id):
@@ -230,7 +229,7 @@ def summary_page(
     elif members:
         lines.extend(
             [
-                f"The roadmap has more articles than the {ARTICLE_LIST_LIMIT} this page lists; "
+                f"The roadmap has more articles than the {MAX_MAP_NODES} this page lists; "
                 "the explorer shows every one.",
                 "",
             ]
@@ -245,7 +244,8 @@ def summary_page(
             "where `<AUTOFORM_PLUGIN_ROOT>` is the Autoform plugin's root:",
             "",
             "```bash",
-            'uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform render blueprint --output site-src',
+            'uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform render blueprint \\',
+            "  --output site-src --lean-root .",
             "uv run --with mkdocs --with mkdocs-material --with mkdocs-literate-nav \\",
             "  --with pymdown-extensions mkdocs build --strict",
             'uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform dashboard . --site-dir site',
@@ -259,7 +259,6 @@ def export_graph(
     blueprint_dir: Path,
     output: Path | None = None,
     *,
-    link_extension: str = ".md",
     title: str = "Dependency summary",
 ) -> Path:
     """Load ``blueprint_dir`` and write its dependency summary; return the written path."""
@@ -268,7 +267,7 @@ def export_graph(
     _preflight_graph(destination)
     graph = load_graph(blueprint_dir)
     statuses = status.derive(graph)
-    _atomic_write(destination, summary_page(graph, statuses, destination, link_extension=link_extension, title=title))
+    _atomic_write(destination, summary_page(graph, statuses, destination, title=title))
     return destination
 
 
@@ -352,12 +351,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=Path,
         help="output Markdown (default: <blueprint-dir>/dependencies.md)",
     )
-    parser.add_argument(
-        "--link-extension",
-        choices=(".md", ".html"),
-        default=".md",
-        help="node-link extension: .md for the vault or .html for a built site",
-    )
     parser.add_argument("--title", default="Dependency summary", help="page heading")
     parser.add_argument(
         "--structure",
@@ -377,12 +370,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"graph and structure outputs must be different paths: {structure}"
                 )
             _preflight_structure(structure)
-        output = export_graph(
-            args.blueprint_dir,
-            args.output,
-            link_extension=args.link_extension,
-            title=args.title,
-        )
+        output = export_graph(args.blueprint_dir, args.output, title=args.title)
         if structure is not None:
             structure = export_structure(args.blueprint_dir, structure)
     except (GraphValidationError, VisualizationError) as error:
