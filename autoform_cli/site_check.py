@@ -154,7 +154,8 @@ def _link_problem(
             return f"{link} names {joined}, which the site does not contain", joined
         target = found
     fragment = unquote(parts.fragment)
-    if fragment and target in pages and fragment not in pages[target].ids:
+    # A fragment of name=value pairs, such as the dependency explorer's #node=, is read by the page's script.
+    if fragment and "=" not in parts.fragment and target in pages and fragment not in pages[target].ids:
         return f"{link} names no anchor #{fragment} on {target}", None
     return None
 
