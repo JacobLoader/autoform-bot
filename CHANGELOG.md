@@ -19,6 +19,9 @@ date when the release is tagged.
   commands, and a listing that runs out of time or is interrupted no longer
   leaves its transport running. Formalize treats a labelled `claim list`
   failure as an unreadable board, not as a board without claims (#432).
+- **Render.** An article's page lists its `mathlib_declaration` names in a
+  Mathlib row, as text without a link, so a `mathlib: true` article names the
+  declaration it restates (#388).
 - **Builds.** `project new` turns on Lake's artifact cache with
   `enableArtifactCache` and `restoreAllArtifacts`, so checkouts and worktrees
   on one toolchain reuse each other's builds; Setup offers the same two lines

@@ -2996,6 +2996,10 @@ def _render_environment(
     context_link = _graph_context_link(node, page=page, destination=destination)
     source_link = _vault_source_link(node, repo_root=repo_root, linker=linker)
     meta_rows = implementation_rows
+    if mathlib_names := declaration_names(node.mathlib_declaration or ""):
+        # As text: render links only bytes it matched to a commit, and it never
+        # reads the pinned Mathlib.
+        meta_rows.append(("Mathlib", " · ".join(f"<code>{html.escape(name)}</code>" for name in mathlib_names)))
     if node_status.key == "conditional":
         # A conditional proof must never read as finished, so the open
         # statements it rests on are named on the statement itself.
