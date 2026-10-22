@@ -2006,6 +2006,7 @@ def _render_landing_page(
     body = _document_body(text)
     heading = _first_h1(text) or ""
     title = rendered_visible_text(heading) or "Blueprint"
+    scopes = graph_views.group_nodes(graph)
     hero = _render_hero(
         title,
         body,
@@ -2015,6 +2016,7 @@ def _render_landing_page(
         coverage_href=_as_published(
             relative_link(destination / coverage.source_path, page, ".html")
         ),
+        rail=bool(scopes),
     )
     next_up = _next_target(
         graph,
@@ -2036,7 +2038,6 @@ def _render_landing_page(
         "  - navigation",
         "  - toc",
     ]
-    scopes = graph_views.group_nodes(graph)
     if scopes:
         book = graph_pages.book_contents(graph, scopes)
         # Without a roadmap contents page the book starts here.
@@ -2108,13 +2109,16 @@ def _render_hero(
     *,
     coverage: CoverageSummary,
     coverage_href: str,
+    rail: bool = False,
 ) -> str:
     """Open with the project's name, its one-line claim, and where it stands.
 
     The dashboard this replaces was a paragraph of counts in a bordered box.
     The same numbers set as figures answer "how far along is this?" before the
     reader has finished the title, which is the only question the top of a
-    blueprint has to answer.
+    blueprint has to answer. In the explorer's narrow rail (*rail*) the
+    stylesheet keeps only the first two figures, so the chapter and inventory
+    counts also come as one plain line under them.
     """
     leaves = _countable(graph)
     selected = {node_id: statuses[node_id] for node_id in leaves}
@@ -2145,9 +2149,8 @@ def _render_hero(
                 True,
             )
         )
-    figures.append(
-        ("Chapters", str(len(graph_views.group_nodes(graph))), "top-level milestones", False)
-    )
+    chapters = len(graph_views.group_nodes(graph))
+    figures.append(("Chapters", str(chapters), "top-level milestones", False))
     stats = "".join(
         f'<div class="bp-figure{" bp-figure-neutral" if neutral else ""}">'
         f'<div class="bp-figure-value">{value}</div>'
@@ -2155,6 +2158,10 @@ def _render_hero(
         f'<div class="bp-figure-note">{html.escape(note)}</div></div>'
         for label, value, note, neutral in figures
     )
+    counts = [f"{chapters} {'chapter' if chapters == 1 else 'chapters'}"]
+    if inventory_count:
+        counts.append(f"{inventory_count} module {'inventory' if inventory_count == 1 else 'inventories'}")
+    counts_line = f'<p class="bp-hero-counts">{" · ".join(counts)}</p>' if rail else ""
     coverage_line = (
         '<div class="bp-hero-coverage">'
         '<span class="bp-hero-coverage-label">Declared source coverage:</span> '
@@ -2171,7 +2178,8 @@ def _render_hero(
         f'<h1 class="bp-hero-title">{html.escape(title)}</h1>'
         + (f'<p class="bp-hero-lead">{lead}</p>' if lead else "")
         + f'<div class="bp-hero-figures">{stats}</div>'
-        f'<div class="bp-hero-bar" aria-hidden="true">'
+        + counts_line
+        + f'<div class="bp-hero-bar" aria-hidden="true">'
         f'<span style="width: {share}%"></span></div>'
         + coverage_line
         + "</div>"
@@ -3382,54 +3390,80 @@ a:hover, a:visited:hover {{ color: var(--bp-link-hover); text-decoration: underl
 }}
 
 /* On the landing page the hero opens the explorer's hierarchy rail, or its
-   details sheet on phones, so it is set to the rail's width. Material's
-   typeset rules reach the hero's heading, paragraph and links there, so these
-   rules carry a doubled class; the explorer's own rules stay in its script. */
-.bp-landing-intro.bp-landing-intro {{ margin: 0 .35rem 1.1rem; }}
+   details sheet on phones, so it is set to the rail's width and, like the
+   rail, in px rather than Material's growing rem. Material's typeset rules
+   reach the hero's heading, paragraph and links there, so these rules carry
+   a doubled class; the explorer's own rules stay in its script. The narrow
+   hero keeps the gradient rule as its one accent and two plain figures,
+   the share complete and what is ready now; the chapter and inventory
+   counts become one muted line, and coverage its link. */
+.bp-landing-intro.bp-landing-intro {{ margin: 0 6px 18px; font-size: 13px; }}
 .bp-landing-intro.bp-landing-intro .bp-hero {{ margin: 0; }}
 .bp-landing-intro.bp-landing-intro .bp-hero-rule {{ width: 56px; height: 3px; }}
-.bp-landing-intro.bp-landing-intro .bp-hero-kicker {{ margin-top: 0.8rem; font-size: 0.6rem; }}
+.bp-landing-intro.bp-landing-intro :is(
+  .bp-hero-kicker,
+  .bp-figure:nth-child(n + 3),
+  .bp-figure-note,
+  .bp-hero-bar,
+  .bp-hero-coverage-label,
+  .bp-hero-coverage-counts
+) {{ display: none; }}
+.bp-landing-intro.bp-landing-intro .bp-next-kicker {{
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+}}
 .bp-landing-intro.bp-landing-intro .bp-hero-title {{
-  margin: 0.3rem 0 0;
+  margin: 12px 0 0;
   color: var(--bp-fg);
-  font-size: 1.5rem;
-  font-weight: 800;
-  letter-spacing: -0.025em;
-  line-height: 1.12;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
 }}
 .bp-landing-intro.bp-landing-intro .bp-hero-lead {{
   max-width: none;
-  margin: 0.6rem 0 0;
-  font-size: 0.8rem;
+  margin: 10px 0 0;
+  font-size: 13px;
   line-height: 1.5;
 }}
 .bp-landing-intro.bp-landing-intro .bp-hero-figures {{
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin-top: 0.9rem;
+  margin-top: 14px;
 }}
-.bp-landing-intro.bp-landing-intro .bp-figure {{ padding: 0.55rem 0.6rem; }}
-.bp-landing-intro.bp-landing-intro .bp-figure:last-child:nth-child(odd) {{ grid-column: 1 / -1; }}
-.bp-landing-intro.bp-landing-intro .bp-figure-value {{ font-size: 1.35rem; }}
-.bp-landing-intro.bp-landing-intro .bp-figure-label {{ margin-top: 0.3rem; font-size: 0.66rem; }}
-.bp-landing-intro.bp-landing-intro .bp-figure-note {{ font-size: 0.6rem; }}
-.bp-landing-intro.bp-landing-intro .bp-hero-bar {{ margin-top: 0.7rem; }}
-.bp-landing-intro.bp-landing-intro .bp-hero-coverage {{ margin-top: 0.6rem; font-size: 0.64rem; }}
+.bp-landing-intro.bp-landing-intro .bp-figure {{ padding: 9px 10px; }}
+.bp-landing-intro.bp-landing-intro .bp-figure-value {{
+  background: none;
+  color: var(--bp-fg);
+  font-size: 17px;
+  font-weight: 700;
+}}
+.bp-landing-intro.bp-landing-intro .bp-figure-label {{ margin-top: 5px; font-size: 12px; font-weight: 600; }}
+.bp-landing-intro.bp-landing-intro .bp-hero-counts {{
+  margin: 8px 0 0;
+  color: var(--bp-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}}
+.bp-landing-intro.bp-landing-intro .bp-hero-coverage {{ margin-top: 6px; font-size: 12px; }}
+.bp-landing-intro.bp-landing-intro .bp-hero-coverage-link {{ margin-left: 0; }}
 .bp-landing-intro.bp-landing-intro .bp-intro-book {{
   display: inline-block;
-  margin-top: 0.85rem;
+  margin-top: 14px;
   color: var(--bp-link);
-  font-size: 0.72rem;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
   text-decoration: none;
 }}
 .bp-intro-book::after {{ content: " →"; }}
-.bp-landing-intro.bp-landing-intro .bp-next-target {{ margin: 0.9rem 0 0; padding: 0.6rem 0.7rem; }}
-.bp-landing-intro.bp-landing-intro .bp-next-title {{ font-size: 0.95rem; }}
+.bp-landing-intro.bp-landing-intro .bp-next-target {{ margin: 14px 0 0; padding: 10px 12px; }}
+.bp-landing-intro.bp-landing-intro .bp-next-title {{ font-size: 14px; font-weight: 600; }}
 .bp-landing-intro.bp-landing-intro .bp-next-why,
 .bp-landing-intro.bp-landing-intro .bp-next-rests,
-.bp-landing-intro.bp-landing-intro .bp-next-actions {{ font-size: 0.7rem; }}
-.bp-landing-intro.bp-landing-intro .bp-live-activity {{ margin: 0.9rem 0 0; padding: 0.6rem 0.7rem; }}
-.bp-landing-intro.bp-landing-intro .bp-live-row {{ font-size: 0.7rem; }}
+.bp-landing-intro.bp-landing-intro .bp-next-actions {{ font-size: 12px; }}
+.bp-landing-intro.bp-landing-intro .bp-live-activity {{ margin: 14px 0 0; padding: 10px 12px; }}
+.bp-landing-intro.bp-landing-intro .bp-live-row {{ font-size: 12px; }}
 
 /* One grid for the whole legend. The cells are emitted in reading order with
    no row wrapper, so every swatch, label and count sits on the same axis

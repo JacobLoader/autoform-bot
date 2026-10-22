@@ -1392,11 +1392,13 @@ plain text, and loads Mermaid only on a page that has one: click callbacks and
 HTML in labels do not work there, while a link to a URL does, through
 Mermaid's URL sanitizer.
 A persistent hierarchy rail keeps the current ancestry and immediate contents
-visible, except on phones and, up to 1,200 px wide, under open details, while
+visible, except on phones and, up to 1,100 px wide, under open details, while
 the head shows the trail. The project overview groups readable topic cards by
 authored mathematical area and reveals only a selected topic's direct
 dependency neighborhood; its detail drawer overlays the map instead of
-shrinking it.
+shrinking it. Scope headings are named once, except on the compatibility
+`dependencies/full.html` route: its project-title breadcrumb repeats the
+heading because it is the only link back to the project map.
 Breadcrumbs return through the explorer hierarchy to the book (to the home page
 for a roadmap with neither a root article nor root leaves), and every formal
 statement links to the smallest explorer scope containing that item. Render

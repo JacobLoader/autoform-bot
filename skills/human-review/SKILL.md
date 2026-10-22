@@ -44,7 +44,7 @@ chapter, nested-scope, and statement-context links. Every generated site route
 uses the same Canvas plus semantic-DOM viewer. Open its full-page route and move
 from the project's topics to a chapter, a nested scope, then a searched
 statement and its immediate dependencies. Keep the hierarchy rail visible while
-drilling, in a window wider than 1,200 px, where open details do not cover it;
+drilling, in a window wider than 1,100 px, where open details do not cover it;
 at project scale, select one topic to reveal its direct dependency neighborhood
 instead of displaying every cross-topic edge at once. Global search enters the
 statement's smallest useful scope, while breadcrumbs and Back return to the
@@ -74,8 +74,8 @@ dependency recursively and requires proofs for theorems and bodies for definitio
 target marked `mathlib: true` follows the authored status contract; the marker
 is an author assertion, not audit verification that the declaration is in
 Mathlib. Treat the percentage never as whole-source completion. Read the
-adjacent declared source coverage and its linked coverage contract before
-making scope claims. A statement-only theorem remains incomplete whether it is
+declared source coverage in its linked coverage contract before making scope
+claims. A statement-only theorem remains incomplete whether it is
 blocked or ready to prove. In a project that allows open statements, a
 conditionally proved target, whose proof rests on an open statement without a
 recorded Lean proof, is not complete either: it is never fully proved, so it

@@ -371,7 +371,6 @@ def write_payload(
                 for label, url in breadcrumbs
             ],
             "book": book,
-            "kind": view.kind,
             "presentation": "atlas" if uses_atlas(view) else "dag",
             "summary": view.summary,
         },
@@ -492,28 +491,46 @@ def viewer_script() -> str:
 # would override carry a doubled .bp-dag-viewer class, and the status filter is
 # a button and popover because Material styles details and summary as an
 # admonition. The head stacks above the details drawer and the bottom sheet so
-# that neither of its popovers paints under them. At 1200px and below the
-# drawer opens over the hierarchy rail, so that a node centred beside it still
-# has room, and the covered rail leaves the tab order once the drawer has
-# slid over it, so it never goes blank first. Its h1 stays, in place and
-# transparent, so the page keeps a heading for assistive technology.
-# Above phone widths Contents then starts .8rem right of the drawer's 24.8rem
-# edge, so that no row starts under it. On phones the search box takes the
-# toolbar's first row, so the Status popover opens rightwards from the start
-# of the next. The explorer hides the page's own heading because the
-# hierarchy rail carries it; while phones hide the rail, the heading stays
-# for assistive technology as hidden text. Where the rail shows and draws
-# the trail, the head's breadcrumb is hidden so that the trail appears once.
+# that neither of its popovers paints under them. Sizes are in px, not rem:
+# Material sets its root font to 20px, 22px from 1600px and 24px from 2000px,
+# which grew the rail past 400px on a laptop. Beside the 288px rail the 384px
+# drawer and its 12px insets leave a node at least 405px, two cards, from
+# 1101px up; at 1100px and below, where the rail narrows, the drawer opens over
+# it instead, and the covered rail leaves the tab order once the drawer has
+# slid over it, so it never goes blank first; its h1 stays, in place and
+# transparent, so the page keeps a heading for assistive technology. Above
+# phone widths Contents then starts 12px right of the drawer's 396px edge, so
+# that no row starts under it. On phones the search box takes the toolbar's
+# first row, so the Status popover opens rightwards from the start of the next.
+# The explorer hides the page's own heading because the hierarchy rail carries
+# it; while phones hide the rail, the heading stays for assistive technology as
+# hidden text. Where the rail shows and draws the trail, the head's breadcrumb
+# is hidden so that the trail appears once. Above 1100px, where the rail always
+# shows, the head is one row of search, controls and the textbook link, which
+# comes last in the DOM so that Tab follows the row; at 1100px and below a grid
+# draws that link at the end of a first row that keeps the breadcrumb's place,
+# so the trail appears there while details cover the rail, and the runtime
+# moves the link before the toolbar, so that Tab reaches it after the trail and
+# before the controls under it. Above phone widths that row collapses while it
+# would be blank, with no link and the trail left to the rail, as on the
+# project page; there it opens with the details, and the runtime shifts the map
+# back by the row's height, so that the map, and the card just clicked, stay
+# where they were. The close button keeps the drawer's top-right corner, which
+# on phones lies in the sheet's handle; the handle names the selection there,
+# so the sheet keeps its own heading only as hidden text.
 _STYLE = r"""
 .bp-dag-viewer {
   --dag-border: var(--bp-rule, #d8dade); --dag-bg: var(--bp-surface, #fff);
-  --dag-panel: color-mix(in srgb, var(--dag-bg) 94%, #64748b 6%);
+  --dag-panel: color-mix(in srgb, var(--dag-bg) 94%, #64748b 6%); --dag-map: var(--bp-sunken, #f0f2f5); --dag-error: #b42318;
   --dag-fg: var(--bp-fg, #1c1e21); --dag-muted: var(--bp-muted, #65676b); --dag-link: var(--bp-link, #0064e0);
-  --dag-navigation-width: 18.5rem;
+  --dag-navigation-width: 288px;
+  --dag-mono: var(--md-code-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  --dag-radius-row: 6px; --dag-radius-control: 8px; --dag-radius-panel: var(--bp-radius, 12px);
+  --dag-e1: 0 1px 2px rgb(0 0 0 / .06); --dag-e2: 0 8px 24px rgb(0 0 0 / .16); --dag-overlay-border: transparent;
   position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); width: 100%;
-  height: clamp(38rem, calc(100svh - 7rem), 64rem); min-height: 38rem; overflow: hidden;
-  border: 1px solid var(--dag-border); border-radius: 14px; background: var(--dag-bg); color: var(--dag-fg);
-  box-shadow: 0 12px 36px rgba(15, 23, 42, .08); isolation: isolate;
+  height: clamp(608px, calc(100svh - 112px), 1024px); min-height: 608px; overflow: hidden;
+  border: 1px solid var(--dag-border); border-radius: var(--dag-radius-panel); background: var(--dag-bg); color: var(--dag-fg);
+  box-shadow: var(--dag-e1); isolation: isolate;
   font-family: var(--md-text-font-family, ui-sans-serif, system-ui, sans-serif);
 }
 body.bp-dag-app-page .bp-dag-viewer {
@@ -521,6 +538,7 @@ body.bp-dag-app-page .bp-dag-viewer {
   height: 100dvh !important; min-height: 0; margin: 0; border: 0; border-radius: 0; box-shadow: none;
 }
 body.bp-dag-app-page { overflow: hidden; }
+[data-md-color-scheme=slate] .bp-dag-viewer { --dag-overlay-border: var(--dag-border); --dag-map: #18191a; --dag-error: #ff7b72; }
 body.bp-dag-app-page .md-header, body.bp-dag-app-page .md-tabs,
 body.bp-dag-app-page .md-sidebar, body.bp-dag-app-page .md-footer { display: none; }
 body.bp-dag-app-page .md-main__inner { width: 100%; max-width: none; margin: 0; }
@@ -532,188 +550,201 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-viewer *, .bp-dag-viewer *::before, .bp-dag-viewer *::after { box-sizing: border-box; }
 .bp-dag-viewer [hidden] { display: none !important; }
 .bp-dag-head { z-index: 13; border-bottom: 1px solid var(--dag-border); background: var(--dag-bg); }
-.bp-dag-context { display: flex; align-items: center; gap: .7rem; min-height: 2.45rem; padding: .42rem 1rem .08rem; }
-.bp-dag-breadcrumb { min-width: 0; flex: 1; color: var(--dag-muted); font-size: .72rem; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-breadcrumb ol { display: flex; align-items: center; gap: .35rem; margin: 0; padding: 0; list-style: none; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-breadcrumb li { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bp-dag-breadcrumb li + li::before { content: "/"; margin-right: .35rem; color: var(--dag-border); }
-.bp-dag-breadcrumb li:not(:first-child, [aria-current]) { flex-shrink: 4; }
-.bp-dag-breadcrumb [aria-current=page] { color: var(--dag-fg); font-weight: 650; }
-@media (min-width: 681px) { .bp-dag-viewer:has(.bp-dag-navigation-path) .bp-dag-breadcrumb { visibility: hidden; } }
-.bp-dag-book { flex: none; color: var(--dag-link); font-size: .72rem; font-weight: 650; text-decoration: none; }
-.bp-dag-swatch { flex: none; width: .7rem; height: .7rem; border: 2px solid var(--dag-swatch-light-stroke); border-radius: 50%; background: var(--dag-swatch-light-fill); }
+.bp-dag-context { display: flex; align-items: center; min-height: 28px; padding: 0 16px; }
+.bp-dag-breadcrumb { min-width: 0; flex: 1; color: var(--dag-muted); font-size: 12px; }
+.bp-dag-viewer.bp-dag-viewer :is(.bp-dag-breadcrumb ol, .bp-dag-navigation-path) { display: flex; align-items: center; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.bp-dag-viewer.bp-dag-viewer :is(.bp-dag-breadcrumb, .bp-dag-navigation-path) li { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(.bp-dag-breadcrumb, .bp-dag-navigation-path) li + li::before { content: "/"; margin-right: 6px; color: var(--dag-border); }
+:is(.bp-dag-breadcrumb, .bp-dag-navigation-path) li:not(:first-child, [aria-current]) { flex-shrink: 4; }
+.bp-dag-breadcrumb [aria-current=page] { color: var(--dag-fg); font-weight: 600; }
+@media (min-width: 681px) and (max-width: 1100px) { .bp-dag-viewer:has(.bp-dag-navigation-path) .bp-dag-breadcrumb { visibility: hidden; } }
+.bp-dag-book { flex: none; color: var(--dag-link); font-size: 12px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.bp-dag-swatch { flex: none; width: 11px; height: 11px; border: 2px solid var(--dag-swatch-light-stroke); border-radius: 50%; background: var(--dag-swatch-light-fill); }
 [data-md-color-scheme=slate] .bp-dag-swatch { border-color: var(--dag-swatch-dark-stroke); background: var(--dag-swatch-dark-fill); }
-.bp-dag-view-kind { flex: none; padding: .18rem .45rem; border: 1px solid var(--dag-border); border-radius: 999px; color: var(--dag-muted); font-size: .64rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
-.bp-dag-toolbar { display: flex; align-items: center; gap: .42rem; min-height: 3.35rem; padding: .32rem 1rem .7rem; font-size: .76rem; }
-.bp-dag-search-wrap { position: relative; flex: 1 1 24rem; min-width: 10rem; max-width: 42rem; }
-.bp-dag-search { width: 100%; min-height: 2.35rem; margin: 0; padding: .48rem .7rem .48rem 2rem; border: 1px solid var(--dag-border); border-radius: 9px; outline: 0; background: var(--dag-panel); color: var(--dag-fg); font: inherit; }
-.bp-dag-search-wrap::before { content: "⌕"; position: absolute; z-index: 2; left: .7rem; top: .36rem; color: var(--dag-muted); font-size: 1rem; pointer-events: none; }
+.bp-dag-toolbar { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 4px 16px 12px; font-size: 13px; }
+@media (min-width: 1101px) {
+  .bp-dag-head { display: flex; align-items: center; gap: 12px; padding: 8px 16px; }
+  .bp-dag-context { display: contents; }
+  .bp-dag-breadcrumb { flex: 0 1 auto; max-width: 32%; }
+  .bp-dag-viewer:has(.bp-dag-navigation-path) .bp-dag-breadcrumb { display: none; }
+  .bp-dag-toolbar { flex: 1; min-width: 0; min-height: 36px; padding: 0; }
+}
+.bp-dag-search-wrap { position: relative; flex: 1 1 384px; min-width: 160px; max-width: 672px; }
+.bp-dag-search { display: block; width: 100%; min-height: 36px; margin: 0; padding: 7px 36px 7px 32px; border: 1px solid var(--dag-border); border-radius: var(--dag-radius-control); outline: 0; background: var(--dag-panel); color: var(--dag-fg); font: inherit; }
+.bp-dag-search-wrap::before {
+  content: ""; position: absolute; z-index: 2; left: 11px; top: 50%; width: 14px; height: 14px; margin-top: -7px; background: currentColor; color: var(--dag-muted); pointer-events: none;
+  --dag-magnifier: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.75' stroke-linecap='round'%3E%3Ccircle cx='7' cy='7' r='5'/%3E%3Cpath d='m11 11 3.5 3.5'/%3E%3C/svg%3E");
+  -webkit-mask: var(--dag-magnifier) center / 14px no-repeat; mask: var(--dag-magnifier) center / 14px no-repeat;
+}
+.bp-dag-search-wrap::after { content: "/"; position: absolute; z-index: 2; right: 8px; top: 50%; min-width: 20px; height: 20px; margin-top: -10px; padding: 0 5px; border: 1px solid var(--dag-border); border-radius: var(--dag-radius-row); background: var(--dag-bg); color: var(--dag-muted); font-family: var(--dag-mono); font-size: 11px; line-height: 18px; text-align: center; pointer-events: none; }
+.bp-dag-search-wrap:focus-within::after { display: none; }
+.bp-dag-search-wrap:has(.bp-dag-search:not(:placeholder-shown))::after { display: none; }
 .bp-dag-search:focus { border-color: var(--dag-link); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dag-link) 18%, transparent); }
-.bp-dag-search-results { position: absolute; z-index: 20; top: calc(100% + .35rem); left: 0; right: 0; max-height: min(27rem, 60vh); overflow: auto; padding: .35rem; border: 1px solid var(--dag-border); border-radius: 10px; background: var(--dag-bg); box-shadow: 0 16px 38px rgba(15, 23, 42, .2); }
+.bp-dag-search-results { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; right: 0; max-height: min(432px, 60vh); overflow: auto; padding: 6px; border: 1px solid var(--dag-overlay-border); border-radius: var(--dag-radius-panel); background: var(--dag-bg); box-shadow: var(--dag-e2); }
 .bp-dag-viewer.bp-dag-viewer :is(.bp-dag-results, .bp-dag-relation-list, .bp-dag-inventory-list) { display: block; margin: 0; padding: 0; list-style: none; }
 .bp-dag-viewer.bp-dag-viewer :is(.bp-dag-results, .bp-dag-relation-list, .bp-dag-inventory-list) > li { margin: 0; }
-.bp-dag-result { display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; gap: .15rem .6rem; padding: .52rem .55rem; border: 0; border-radius: 7px; background: transparent; color: var(--dag-fg); text-align: left; cursor: pointer; }
+.bp-dag-result { display: flex; align-items: baseline; width: 100%; gap: 10px; padding: 8px 9px; border: 0; border-radius: var(--dag-radius-row); background: transparent; color: var(--dag-fg); text-align: left; cursor: pointer; }
 .bp-dag-result:hover, .bp-dag-result:focus-visible { background: color-mix(in srgb, var(--dag-link) 9%, transparent); }
 .bp-dag-result:focus-visible, .bp-dag-inventory-row:focus-visible { outline: 3px solid color-mix(in srgb, var(--dag-link) 52%, transparent); outline-offset: -3px; }
-.bp-dag-result-title { overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.bp-dag-result-id, .bp-dag-result-reason { color: var(--dag-muted); font-size: .66rem; }
-.bp-dag-result-id { grid-column: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
-.bp-dag-result-reason { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
-.bp-dag-button, .bp-dag-filter-summary, .bp-dag-mode-button, .bp-dag-pivot, .bp-dag-hidden-button, .bp-dag-whole-search, .bp-dag-load-more { min-height: 2.25rem; padding: .38rem .58rem; border: 1px solid var(--dag-border); border-radius: 8px; background: var(--dag-bg); color: var(--dag-fg); font: inherit; font-weight: 650; cursor: pointer; }
-.bp-dag-button:hover, .bp-dag-filter-summary:hover, .bp-dag-mode-button:hover, .bp-dag-pivot:hover, .bp-dag-load-more:hover { border-color: var(--dag-link); color: var(--dag-link); }
+.bp-dag-result-title, .bp-dag-inventory-title { flex: 1 1 auto; min-width: 0; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.bp-dag-result-meta, .bp-dag-inventory-meta { min-width: 0; overflow: hidden; color: var(--dag-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.bp-dag-button, .bp-dag-filter-summary, .bp-dag-mode-button, .bp-dag-hidden-button, .bp-dag-whole-search, .bp-dag-load-more { min-height: 36px; padding: 6px 10px; border: 1px solid var(--dag-border); border-radius: var(--dag-radius-control); background: var(--dag-bg); color: var(--dag-fg); font: inherit; font-weight: 600; cursor: pointer; }
+.bp-dag-button:hover, .bp-dag-filter-summary:hover, .bp-dag-mode-button:hover, .bp-dag-load-more:hover { border-color: var(--dag-link); color: var(--dag-link); }
 .bp-dag-button:focus-visible, .bp-dag-filter-summary:focus-visible, .bp-dag-mode-button:focus-visible, .bp-dag-pivot:focus-visible, .bp-dag-node:focus-visible, .bp-dag-sheet-handle:focus-visible { outline: 3px solid color-mix(in srgb, var(--dag-link) 45%, transparent); outline-offset: 2px; }
-.bp-dag-zoom, .bp-dag-modes { display: inline-flex; flex: none; }
-.bp-dag-zoom .bp-dag-button, .bp-dag-modes .bp-dag-mode-button { border-radius: 0; margin-left: -1px; }
-.bp-dag-zoom :first-child, .bp-dag-modes :first-child { margin-left: 0; border-radius: 8px 0 0 8px; }
-.bp-dag-zoom :last-child, .bp-dag-modes :last-child { border-radius: 0 8px 8px 0; }
+.bp-dag-zoom, .bp-dag-modes { display: inline-flex; flex: none; gap: 2px; padding: 2px; border: 1px solid var(--dag-border); border-radius: var(--dag-radius-control); background: var(--dag-bg); }
+.bp-dag-zoom .bp-dag-button, .bp-dag-modes .bp-dag-mode-button { min-height: 30px; padding: 4px 10px; border: 0; border-radius: var(--dag-radius-row); background: transparent; color: var(--dag-muted); }
+.bp-dag-zoom .bp-dag-button:hover, .bp-dag-modes .bp-dag-mode-button:not([aria-pressed=true], :disabled):hover { background: var(--dag-panel); color: var(--dag-fg); }
 .bp-dag-mode-button[aria-pressed=true], .bp-dag-pivot[aria-pressed=true] { border-color: var(--dag-link); background: color-mix(in srgb, var(--dag-link) 10%, var(--dag-bg)); color: var(--dag-link); }
 .bp-dag-filters { position: relative; flex: none; }
 .bp-dag-filter-summary { display: flex; align-items: center; white-space: nowrap; }
-.bp-dag-filter-popover { position: absolute; z-index: 18; top: calc(100% + .35rem); right: 0; width: 15rem; max-height: 23rem; overflow: auto; padding: .65rem; border: 1px solid var(--dag-border); border-radius: 10px; background: var(--dag-bg); box-shadow: 0 14px 32px rgba(15, 23, 42, .18); }
-.bp-dag-filter-popover fieldset { display: grid; gap: .2rem; margin: 0; padding: 0; border: 0; }
-.bp-dag-filter-popover legend { margin-bottom: .35rem; color: var(--dag-muted); font-size: .68rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-.bp-dag-check { display: flex; align-items: center; gap: .45rem; min-height: 2rem; padding: .2rem .3rem; border-radius: 6px; }
+.bp-dag-filter-popover { position: absolute; z-index: 18; top: calc(100% + 6px); right: 0; width: 240px; max-height: 368px; overflow: auto; padding: 10px; border: 1px solid var(--dag-overlay-border); border-radius: var(--dag-radius-panel); background: var(--dag-bg); box-shadow: var(--dag-e2); }
+.bp-dag-filter-popover fieldset { display: grid; gap: 3px; margin: 0; padding: 0; border: 0; }
+.bp-dag-filter-popover fieldset + fieldset { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--dag-border); }
+.bp-dag-filter-popover legend { margin-bottom: 6px; }
+.bp-dag-filter-popover legend, .bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-group h2 { color: var(--dag-muted); font-size: 11px; font-weight: 600; letter-spacing: .06em; line-height: 1.3; text-transform: uppercase; }
+.bp-dag-check { display: flex; align-items: center; gap: 7px; min-height: 32px; padding: 3px 5px; border-radius: var(--dag-radius-row); }
 .bp-dag-check:hover { background: var(--dag-panel); }
 .bp-dag-check input { accent-color: var(--dag-link); }
-.bp-dag-check-count { margin-left: auto; color: var(--dag-muted); font-variant-numeric: tabular-nums; }
-.bp-dag-isolated { display: inline-flex; align-items: center; gap: .3rem; flex: none; white-space: nowrap; color: var(--dag-muted); }
-.bp-dag-stats { display: inline-flex; align-items: center; justify-content: flex-end; min-width: 9.5rem; margin-left: auto; color: var(--dag-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.bp-dag-hidden-button, .bp-dag-whole-search { min-height: 1.6rem; margin: 0; padding: .08rem .2rem; border: 0; background: transparent; color: var(--dag-link); }
+.bp-dag-check-count { margin-left: auto; color: var(--dag-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.bp-dag-hidden-button, .bp-dag-whole-search { min-height: 26px; margin: 0; padding: 1px 3px; border: 0; background: transparent; color: var(--dag-link); }
+.bp-dag-hidden-button { flex: none; margin-left: auto; white-space: nowrap; }
+.bp-dag-hidden-button:hover { text-decoration: underline; }
 .bp-dag-body { position: relative; display: grid; grid-template-columns: var(--dag-navigation-width) minmax(0, 1fr); min-height: 0; }
-.bp-dag-navigation { z-index: 6; min-width: 0; min-height: 0; overflow: auto; border-right: 1px solid var(--dag-border); background: var(--dag-panel); }
-.bp-dag-navigation-inner { display: grid; align-content: start; min-height: 100%; padding: 1.05rem .8rem 1.5rem; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-home { display: inline-flex; align-items: center; gap: .45rem; margin: 0 .35rem .9rem; color: var(--dag-link); font-size: .72rem; font-weight: 720; text-decoration: none !important; }
-.bp-dag-navigation-home::before { content: "←"; }
-.bp-dag-navigation-kicker { margin: 0 .35rem .35rem; color: var(--dag-muted); font-size: .62rem; font-weight: 760; letter-spacing: .08em; text-transform: uppercase; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-title { margin: 0 .35rem; color: var(--dag-fg); font-family: Georgia, "Iowan Old Style", serif; font-size: 1.35rem; font-weight: 650; letter-spacing: normal; line-height: 1.15; }
-.bp-dag-navigation-summary { display: -webkit-box; margin: .55rem .35rem .95rem; overflow: hidden; color: var(--dag-muted); font-family: Georgia, "Iowan Old Style", serif; font-size: .78rem; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-path { display: grid; gap: .18rem; margin: .65rem .35rem .85rem; padding: 0; list-style: none; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-path li { position: relative; min-width: 0; margin: 0; padding-left: .85rem; color: var(--dag-muted); font-size: .68rem; line-height: 1.35; }
-.bp-dag-navigation-path li::before { content: ""; position: absolute; top: .45rem; left: .1rem; width: .32rem; height: .32rem; border: 1.5px solid var(--dag-border); border-radius: 50%; background: var(--dag-panel); }
-.bp-dag-navigation-path li:not(:last-child)::after { content: ""; position: absolute; top: .78rem; bottom: -.35rem; left: .245rem; border-left: 1px solid var(--dag-border); }
+.bp-dag-navigation { z-index: 6; min-width: 0; min-height: 0; overflow: auto; border-right: 1px solid var(--dag-border); background: var(--dag-bg); }
+.bp-dag-navigation-inner { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; min-height: 100%; padding: 16px 12px 24px; }
+.bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-title { margin: 0 6px; color: var(--dag-fg); font-size: 22px; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
+.bp-dag-navigation-summary { display: -webkit-box; margin: 9px 6px 15px; overflow: hidden; color: var(--dag-muted); font-size: 13px; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+.bp-dag-viewer.bp-dag-viewer ol.bp-dag-navigation-path { margin: 0 6px 6px; color: var(--dag-muted); font-size: 12px; line-height: 1.4; }
 .bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-path a { color: inherit; text-decoration: none; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-path [aria-current=page] { color: var(--dag-fg); font-weight: 680; }
-.bp-dag-navigation-counts { margin: 0 .35rem 1rem; color: var(--dag-muted); font-size: .68rem; font-variant-numeric: tabular-nums; }
-.bp-dag-navigation-group { margin-top: .75rem; }
-.bp-dag-navigation-group h2 { margin: 0 .35rem .32rem; color: var(--dag-muted); font-size: .63rem; font-weight: 760; letter-spacing: .055em; text-transform: uppercase; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-list { display: grid; gap: .16rem; margin: 0; padding: 0; list-style: none; }
+.bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-path a:hover { color: var(--dag-link); }
+.bp-dag-navigation-counts { margin: 0 6px 16px; color: var(--dag-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.bp-dag-navigation-group { margin-top: 12px; }
+.bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-group h2 { margin: 0 6px 5px; }
+.bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-list { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; }
 .bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-list > li { margin: 0; }
-.bp-dag-navigation-link { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; width: 100%; gap: .55rem; min-height: 2.45rem; padding: .43rem .52rem; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--dag-fg) !important; font: inherit; font-size: .75rem; line-height: 1.25; text-align: left; text-decoration: none !important; cursor: pointer; }
+.bp-dag-navigation-link { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; width: 100%; gap: 8px; min-height: 36px; padding: 7px 8px; border: 1px solid transparent; border-radius: var(--dag-radius-row); background: transparent; color: var(--dag-fg) !important; font: inherit; font-size: 13px; line-height: 1.25; text-align: left; text-decoration: none !important; cursor: pointer; }
 .bp-dag-navigation-link > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bp-dag-navigation-link:hover, .bp-dag-navigation-link:focus-visible { border-color: var(--dag-border); background: var(--dag-bg); }
+.bp-dag-navigation-link:hover, .bp-dag-navigation-link:focus-visible { border-color: var(--dag-border); background: var(--dag-panel); }
 .bp-dag-navigation-link[aria-current=true] { border-color: color-mix(in srgb, var(--dag-link) 38%, var(--dag-border)); background: color-mix(in srgb, var(--dag-link) 9%, var(--dag-bg)); color: var(--dag-link) !important; }
-.bp-dag-navigation-meta { color: var(--dag-muted); font-size: .62rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.bp-dag-navigation-more { width: 100%; margin-top: .45rem; border: 0; background: transparent; color: var(--dag-link); font: inherit; font-size: .7rem; text-align: left; cursor: pointer; }
-.bp-dag-main { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--dag-bg); }
+.bp-dag-navigation-meta { color: var(--dag-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bp-dag-navigation-more { width: 100%; margin-top: 7px; border: 0; background: transparent; color: var(--dag-link); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.bp-dag-main { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--dag-map); }
 .bp-dag-stage { position: absolute; inset: 0; overflow: hidden; touch-action: none; cursor: grab; }
 .bp-dag-stage[data-dragging=true] { cursor: grabbing; }
 .bp-dag-canvas, .bp-dag-node-layer { position: absolute; inset: 0; width: 100%; height: 100%; }
 .bp-dag-canvas { display: block; min-height: 0; touch-action: auto; background: transparent; }
 .bp-dag-node-layer { overflow: hidden; pointer-events: none; }
-.bp-dag-node { position: absolute; top: 0; left: 0; display: grid; align-content: center; width: 196px; height: 56px; padding: 6px 10px; overflow: hidden; border: 1.5px solid var(--dag-node-stroke); border-radius: 8px; background: var(--dag-node-fill); color: var(--dag-node-text); box-shadow: 0 2px 5px rgba(15, 23, 42, .08); text-align: left; transform-origin: 0 0; pointer-events: auto; cursor: pointer; will-change: transform; }
-.bp-dag-node-title { overflow: hidden; font-size: 14px; font-weight: 680; line-height: 1.18; text-overflow: ellipsis; white-space: nowrap; }
-.bp-dag-node-meta { overflow: hidden; opacity: .75; font-size: 10px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
-.bp-dag-node[data-selected=true] { border-width: 3px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--dag-link) 24%, transparent), 0 5px 13px rgba(15, 23, 42, .18); }
+.bp-dag-node { position: absolute; top: 0; left: 0; display: grid; align-content: center; width: 196px; height: 56px; padding: 6px 10px; overflow: hidden; border: 1.5px solid var(--dag-node-stroke); border-radius: var(--dag-radius-control); background: var(--dag-node-fill); color: var(--dag-node-text); box-shadow: var(--dag-e1); text-align: left; transform-origin: 0 0; pointer-events: auto; cursor: pointer; will-change: transform; }
+.bp-dag-node-title { overflow: hidden; font-size: 14px; font-weight: 600; line-height: 1.18; text-overflow: ellipsis; white-space: nowrap; }
+.bp-dag-node-meta { overflow: hidden; color: color-mix(in srgb, var(--dag-node-text) 95%, var(--dag-node-fill)); font-size: 12px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.bp-dag-node[data-selected=true] { box-shadow: 0 0 0 2px var(--dag-link), var(--dag-e1); }
 .bp-dag-node[data-subdued=true] { opacity: .42; }
-.bp-dag-node[data-kind=scope] { border-radius: 13px; }
+.bp-dag-node[data-kind=scope] { border-radius: var(--dag-radius-panel); }
 .bp-dag-node[data-kind=boundary] { border-style: dashed; }
-.bp-dag-viewer.bp-dag-atlas .bp-dag-node[data-kind=scope] { display: block; padding: 3px; border: 0; border-radius: 14px; background: var(--dag-status-ring, var(--dag-node-stroke)); text-align: left; }
-.bp-dag-node-core { display: grid; align-content: center; width: 100%; height: 100%; padding: .8rem 1rem; border-radius: 11px; background: var(--dag-node-fill); color: var(--dag-node-text); }
+.bp-dag-viewer.bp-dag-atlas .bp-dag-node[data-kind=scope] { display: block; padding: 3px; border: 0; border-radius: var(--dag-radius-panel); background: var(--dag-status-ring, var(--dag-node-stroke)); text-align: left; }
+.bp-dag-node-core { display: grid; align-content: center; width: 100%; height: 100%; padding: 12px 16px; border-radius: calc(var(--dag-radius-panel) - 3px); background: var(--dag-node-fill); color: var(--dag-node-text); }
 .bp-dag-viewer.bp-dag-atlas .bp-dag-node[data-kind=scope] .bp-dag-node-title { display: -webkit-box; overflow: hidden; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.bp-dag-viewer.bp-dag-atlas .bp-dag-node[data-kind=scope] .bp-dag-node-meta { margin-top: .42rem; white-space: normal; }
-.bp-dag-viewer.bp-dag-atlas .bp-dag-node-title { font-size: 16px; }
-.bp-dag-viewer.bp-dag-atlas .bp-dag-node-meta { font-size: 11px; }
+.bp-dag-viewer.bp-dag-atlas .bp-dag-node[data-kind=scope] .bp-dag-node-meta { margin-top: 7px; white-space: normal; }
+.bp-dag-viewer.bp-dag-atlas .bp-dag-node-title { font-size: 17px; }
 .bp-dag-node-relation { display: none; }
 .bp-dag-viewer.bp-dag-atlas .bp-dag-node[data-relation=prerequisite],
-.bp-dag-viewer.bp-dag-atlas .bp-dag-node[data-relation=dependent] { box-shadow: 0 0 0 3px color-mix(in srgb, var(--dag-link) 18%, transparent), 0 7px 18px rgba(15, 23, 42, .14); }
+.bp-dag-viewer.bp-dag-atlas .bp-dag-node[data-relation=dependent] { box-shadow: 0 0 0 2px color-mix(in srgb, var(--dag-link) 40%, transparent), var(--dag-e1); }
 .bp-dag-viewer.bp-dag-atlas .bp-dag-node[data-relation=prerequisite] .bp-dag-node-relation,
-.bp-dag-viewer.bp-dag-atlas .bp-dag-node[data-relation=dependent] .bp-dag-node-relation { display: block; margin-top: .35rem; color: var(--dag-link); font-size: 10px; font-weight: 760; letter-spacing: .045em; text-transform: uppercase; }
-.bp-dag-density, .bp-dag-empty { position: absolute; z-index: 4; left: 50%; border: 1px solid var(--dag-border); border-radius: 999px; background: color-mix(in srgb, var(--dag-bg) 92%, transparent); color: var(--dag-muted); box-shadow: 0 3px 12px rgba(15, 23, 42, .08); pointer-events: none; }
-.bp-dag-guide { position: absolute; z-index: 4; top: .75rem; left: 50%; max-width: min(36rem, calc(100% - 2rem)); padding: .36rem .7rem; border: 1px solid var(--dag-border); border-radius: 999px; background: color-mix(in srgb, var(--dag-bg) 92%, transparent); color: var(--dag-muted); box-shadow: 0 3px 12px rgba(15, 23, 42, .08); font-size: .68rem; text-align: center; transform: translateX(-50%); pointer-events: none; backdrop-filter: blur(10px); }
-.bp-dag-density { bottom: .7rem; padding: .25rem .55rem; transform: translateX(-50%); font-size: .66rem; }
-.bp-dag-empty { top: 50%; padding: .55rem .8rem; transform: translate(-50%, -50%); font-size: .74rem; }
-.bp-dag-inventory { position: absolute; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; background: var(--dag-bg); }
-.bp-dag-inventory-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding: .75rem 1rem; border-bottom: 1px solid var(--dag-border); }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-inventory-head h2 { margin: 0; font-size: .95rem; font-weight: 700; letter-spacing: normal; line-height: 1.3; }
-.bp-dag-inventory-summary { color: var(--dag-muted); font-size: .7rem; }
-.bp-dag-inventory-scroll { overflow: auto; padding: .45rem; }
-.bp-dag-inventory-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; gap: .15rem .8rem; padding: .62rem .7rem; border: 0; border-bottom: 1px solid var(--dag-border); background: transparent; color: var(--dag-fg); text-align: left; cursor: pointer; }
+.bp-dag-viewer.bp-dag-atlas .bp-dag-node[data-relation=dependent] .bp-dag-node-relation { display: block; margin-top: 6px; opacity: .75; font-size: 12px; font-weight: 600; }
+.bp-dag-density { position: absolute; z-index: 4; left: 16px; bottom: 12px; max-width: calc(100% - 32px); color: var(--dag-muted); font-size: 12px; pointer-events: none; }
+.bp-dag-empty { position: absolute; z-index: 4; top: 50%; left: 50%; padding: 9px 13px; border: 1px solid var(--dag-border); border-radius: 999px; background: var(--dag-bg); color: var(--dag-muted); box-shadow: var(--dag-e1); font-size: 13px; transform: translate(-50%, -50%); pointer-events: none; }
+.bp-dag-inventory { position: absolute; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; background: var(--dag-bg); font-size: 13px; }
+.bp-dag-inventory-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--dag-border); }
+.bp-dag-viewer.bp-dag-viewer .bp-dag-inventory-head h2 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: normal; line-height: 1.3; }
+.bp-dag-inventory-summary { color: var(--dag-muted); font-size: 12px; }
+.bp-dag-inventory-scroll { overflow: auto; padding: 7px; }
+.bp-dag-inventory-row { display: flex; align-items: baseline; width: 100%; gap: 13px; padding: 10px 11px; border: 0; border-radius: var(--dag-radius-row); background: transparent; color: var(--dag-fg); text-align: left; cursor: pointer; }
 .bp-dag-inventory-row:hover, .bp-dag-inventory-row:focus-visible { background: var(--dag-panel); }
 .bp-dag-inventory-row[aria-current=true] { background: color-mix(in srgb, var(--dag-link) 10%, var(--dag-bg)); box-shadow: inset 3px 0 0 var(--dag-link); }
-.bp-dag-inventory-title { font-weight: 650; }
-.bp-dag-inventory-id { grid-row: 2; overflow: hidden; color: var(--dag-muted); font: .68rem ui-monospace, SFMono-Regular, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
-.bp-dag-inventory-meta { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--dag-muted); font-size: .68rem; }
-.bp-dag-load-more { justify-self: center; margin: .55rem; }
-.bp-dag-inspector { position: absolute; z-index: 10; top: .8rem; right: .8rem; bottom: .8rem; width: min(24rem, calc(100% - 1.6rem)); min-width: 0; overflow: auto; border: 1px solid var(--dag-border); border-radius: 14px; background: color-mix(in srgb, var(--dag-panel) 96%, transparent); box-shadow: 0 18px 50px rgba(15, 23, 42, .22); visibility: hidden; opacity: 0; transform: translateX(calc(100% + 1.4rem)); transition: opacity .16s ease, transform .2s ease, visibility 0s linear .2s; backdrop-filter: blur(14px); }
+.bp-dag-load-more { justify-self: center; margin: 9px; }
+.bp-dag-inspector { position: absolute; z-index: 10; top: 12px; right: 12px; bottom: 12px; width: min(384px, calc(100% - 24px)); min-width: 0; overflow: auto; border: 1px solid var(--dag-overlay-border); border-radius: var(--dag-radius-panel); font-size: 13px; background: var(--dag-bg); box-shadow: var(--dag-e2); visibility: hidden; opacity: 0; transform: translateX(calc(100% + 24px)); transition: opacity .16s ease, transform .2s ease, visibility 0s linear .2s; }
 .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-inspector { visibility: visible; opacity: 1; transform: translateX(0); transition-delay: 0s; }
-.bp-dag-inspector-inner { padding: 1rem; }
+.bp-dag-inspector-inner { padding: 16px; }
 .bp-dag-sheet-handle { display: none; }
-.bp-dag-inspector-header { display: flex; align-items: flex-start; gap: .5rem; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-inspector-header h2 { flex: 1; margin: 0; font-size: 1rem; font-weight: 700; letter-spacing: normal; line-height: 1.25; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-inspector-inner > h2 { margin: 0 0 .5rem; font-size: 1rem; font-weight: 700; letter-spacing: normal; line-height: 1.25; }
-.bp-dag-close { min-width: 2rem; min-height: 2rem; padding: .2rem; border: 0; background: transparent; color: var(--dag-muted); cursor: pointer; }
-.bp-dag-kicker { margin: 0 0 .35rem; color: var(--dag-muted); font-size: .64rem; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-node-id { display: block; margin: .45rem 0; padding: 0; overflow-wrap: anywhere; border-radius: 0; background: none; color: var(--dag-muted); font: .66rem ui-monospace, SFMono-Regular, Consolas, monospace; }
-.bp-dag-status-pill { display: inline-flex; align-items: center; gap: .35rem; margin: .3rem 0 .65rem; color: var(--dag-muted); font-size: .7rem; }
-.bp-dag-status-pill::before { content: ""; width: .58rem; height: .58rem; border: 2px solid var(--dag-pill-stroke); border-radius: 50%; background: var(--dag-pill-fill); }
-.bp-dag-open { display: inline-flex; align-items: center; justify-content: center; min-height: 2.2rem; padding: .4rem .65rem; border-radius: 8px; background: var(--dag-link); color: #fff !important; font-size: .74rem; font-weight: 700; text-decoration: none !important; }
-.bp-dag-overview { color: var(--dag-muted); font-size: .76rem; line-height: 1.55; }
+.bp-dag-inspector-header { padding-right: 32px; }
+.bp-dag-viewer.bp-dag-viewer .bp-dag-inspector-header h2 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: normal; line-height: 1.25; }
+.bp-dag-viewer.bp-dag-viewer .bp-dag-inspector-inner > h2 { margin: 0 0 8px; font-size: 17px; font-weight: 700; letter-spacing: normal; line-height: 1.25; }
+.bp-dag-close { position: absolute; z-index: 3; top: 10px; right: 10px; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--dag-radius-control); background: transparent; color: var(--dag-muted); font-size: 22px; line-height: 1; cursor: pointer; }
+.bp-dag-close:hover { background: var(--dag-panel); color: var(--dag-fg); }
+.bp-dag-kicker { margin: 0 0 6px; color: var(--dag-muted); font-size: 12px; font-weight: 600; }
+.bp-dag-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 10px 0 12px; }
+.bp-dag-status-pill { display: inline-flex; align-items: center; gap: 6px; color: var(--dag-muted); font-size: 12px; }
+.bp-dag-status-pill::before { content: ""; width: 9px; height: 9px; border: 2px solid var(--dag-pill-stroke); border-radius: 50%; background: var(--dag-pill-fill); }
+.bp-dag-open { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 6px 12px; border-radius: var(--dag-radius-control); background: var(--dag-link); color: #fff !important; font-size: 13px; font-weight: 600; text-decoration: none !important; }
+[data-md-color-scheme=slate] .bp-dag-open { background: #0064e0; }
+.bp-dag-overview { color: var(--dag-muted); font-size: 13px; line-height: 1.55; }
 .bp-dag-overview strong { color: var(--dag-fg); }
-.bp-dag-summary { margin: .8rem 0; color: var(--dag-fg); font-family: Georgia, "Iowan Old Style", serif; font-size: .88rem; line-height: 1.55; }
-.bp-dag-lean { margin: .6rem 0 0; overflow-wrap: anywhere; color: var(--dag-muted); font: .68rem ui-monospace, SFMono-Regular, Consolas, monospace; }
-.bp-dag-section { margin-top: 1rem; padding-top: .8rem; border-top: 1px solid var(--dag-border); }
-.bp-dag-viewer.bp-dag-viewer .bp-dag-section h3 { margin: 0 0 .45rem; font-size: .76rem; font-weight: 700; letter-spacing: normal; line-height: 1.3; }
-.bp-dag-pivots { display: grid; grid-template-columns: repeat(3, 1fr); gap: .3rem; }
-.bp-dag-pivot { min-height: 2.7rem; padding: .3rem; font-size: .66rem; }
-.bp-dag-relation-button { width: 100%; padding: .35rem .25rem; overflow: hidden; border: 0; background: transparent; color: var(--dag-link); font: inherit; font-size: .72rem; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.bp-dag-summary { margin: 13px 0; color: var(--dag-fg); font-size: 14px; line-height: 1.55; }
+.bp-dag-lean { margin: 10px 0 0; overflow-wrap: anywhere; color: var(--dag-muted); font-size: 12px; font-family: var(--dag-mono); }
+.bp-dag-section { margin-top: 20px; }
+.bp-dag-viewer.bp-dag-viewer .bp-dag-section h3 { margin: 0 0 7px; font-size: 13px; font-weight: 600; letter-spacing: normal; line-height: 1.3; }
+.bp-dag-pivots { display: flex; gap: 2px; margin-top: 16px; padding: 2px; border: 1px solid var(--dag-border); border-radius: var(--dag-radius-control); }
+.bp-dag-pivot { flex: 1 1 auto; min-width: 0; min-height: 30px; padding: 4px 8px; border: 0; border-radius: var(--dag-radius-row); background: transparent; color: var(--dag-muted); font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.bp-dag-pivot:not([aria-pressed=true], :disabled):hover { background: var(--dag-panel); color: var(--dag-fg); }
+.bp-dag-pivot:disabled { opacity: .45; cursor: default; }
+.bp-dag-relation-button { width: 100%; padding: 6px 4px; overflow: hidden; border: 0; background: transparent; color: var(--dag-link); font: inherit; font-size: 13px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .bp-dag-relation-button:hover { text-decoration: underline; }
-.bp-dag-distribution { display: grid; gap: .3rem; margin: .4rem 0 0; }
-.bp-dag-distribution-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .4rem; color: var(--dag-muted); font-size: .68rem; }
-.bp-dag-distribution-label { display: flex; align-items: center; gap: .4rem; min-width: 0; }
-.bp-dag-loading, .bp-dag-error { margin: 0; padding: 1rem; }
-.bp-dag-error { color: #b42318; }
-.bp-dag-fallback { min-height: 0; overflow: auto; padding: 0 1rem 1rem; color: var(--dag-muted); }
-.bp-dag-fallback p { max-width: 48rem; }
-.bp-dag-fallback-list { display: grid; gap: .3rem; margin: .8rem 0; padding-left: 1.4rem; }
+.bp-dag-distribution { display: grid; gap: 5px; margin: 6px 0 0; }
+.bp-dag-distribution-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; color: var(--dag-muted); font-size: 12px; }
+.bp-dag-distribution-label { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bp-dag-loading, .bp-dag-error { margin: 0; padding: 16px; }
+.bp-dag-error { color: var(--dag-error); }
+.bp-dag-fallback { min-height: 0; overflow: auto; padding: 0 16px 16px; color: var(--dag-muted); }
+.bp-dag-fallback p { max-width: 768px; }
+.bp-dag-fallback-list { display: grid; gap: 5px; margin: 13px 0; padding-left: 22px; }
 .bp-dag-viewer.bp-dag-enhancing .bp-dag-fallback { display: none; }
 .bp-dag-sr-only, body.bp-dag-app-page .md-content__inner > h1 { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
-@media (max-width: 1200px) {
-  .bp-dag-inspector { right: auto; left: .8rem; transform: translateX(calc(-100% - 1.4rem)); }
+@media (max-width: 1100px) {
+  .bp-dag-viewer { --dag-navigation-width: 248px; }
+  .bp-dag-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; padding-top: 8px; }
+  .bp-dag-book { grid-area: 1 / 2; align-self: center; margin-right: 16px; }
+  .bp-dag-toolbar { grid-column: 1 / -1; }
+  .bp-dag-inspector { right: auto; left: 12px; transform: translateX(calc(-100% - 24px)); }
   .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-breadcrumb { visibility: visible; }
   .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-navigation { visibility: hidden; transition: visibility 0s .2s; }
   .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-navigation h1 { visibility: visible; opacity: 0; transition: opacity 0s .2s; }
 }
-@media (min-width: 681px) and (max-width: 1200px) {
-  .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-inventory { left: calc(25.6rem - var(--dag-navigation-width)); }
-}
-@media (max-width: 1100px) {
-  .bp-dag-viewer { --dag-navigation-width: 15.5rem; }
+@media (min-width: 681px) and (max-width: 1100px) {
+  .bp-dag-viewer.bp-dag-has-selection.bp-dag-sheet-open .bp-dag-inventory { left: calc(408px - var(--dag-navigation-width)); }
+  .bp-dag-viewer:has(.bp-dag-navigation-path):not(.bp-dag-has-selection.bp-dag-sheet-open) .bp-dag-head:not(:has(.bp-dag-book)) .bp-dag-context { display: none; }
 }
 @media (max-width: 900px) {
-  .bp-dag-viewer { --dag-navigation-width: 13.5rem; }
+  .bp-dag-viewer { --dag-navigation-width: 216px; }
   .bp-dag-toolbar { flex-wrap: wrap; }
   .bp-dag-search-wrap { max-width: none; }
-  .bp-dag-stats { order: 8; width: 100%; min-height: 1.4rem; margin: 0; justify-content: flex-start; }
 }
 @media (max-width: 680px) {
-  .bp-dag-context { flex-wrap: wrap; row-gap: .25rem; padding-inline: .55rem; }
-  .bp-dag-breadcrumb { flex-basis: 100%; }
-  .bp-dag-toolbar { gap: .35rem; padding: .35rem .5rem .5rem; }
-  .bp-dag-search-wrap { flex-basis: calc(100% - .4rem); order: -2; }
-  .bp-dag-filter-popover { left: 0; right: auto; max-width: calc(100vw - 1rem); }
-  .bp-dag-search, .bp-dag-button, .bp-dag-filter-summary, .bp-dag-mode-button { min-height: 2.75rem; }
-  .bp-dag-isolated { min-height: 2.75rem; }
+  .bp-dag-context { padding-inline: 8px; }
+  .bp-dag-head { grid-template-columns: minmax(0, 1fr); }
+  .bp-dag-head:has(.bp-dag-book) .bp-dag-context { min-height: 0; }
+  .bp-dag-book { grid-area: 2 / 1; justify-self: start; margin: 4px 8px 0; }
+  .bp-dag-toolbar { gap: 6px; padding: 6px 8px 8px; }
+  .bp-dag-search-wrap { flex-basis: calc(100% - 6px); order: -2; }
+  .bp-dag-search-wrap::after { display: none; }
+  .bp-dag-search { padding-right: 12px; }
+  .bp-dag-filter-popover { left: 0; right: auto; max-width: calc(100vw - 16px); }
+  .bp-dag-search, .bp-dag-button, .bp-dag-filter-summary, .bp-dag-mode-button { min-height: 44px; }
+  .bp-dag-zoom, .bp-dag-modes { gap: 0; padding: 0; }
+  .bp-dag-zoom .bp-dag-button, .bp-dag-modes .bp-dag-mode-button { min-height: 42px; }
   .bp-dag-body { display: block; }
   .bp-dag-navigation { display: none; }
   body.bp-dag-app-page .md-content__inner > h1 { display: block; }
   .bp-dag-main { position: absolute; inset: 0; }
-  .bp-dag-inventory { padding-bottom: 3.65rem; }
-  .bp-dag-inspector { position: absolute; z-index: 12; top: auto; right: .45rem; bottom: .45rem; left: .45rem; width: auto; max-height: min(58%, 30rem); overflow: auto; border: 1px solid var(--dag-border); border-radius: 13px; box-shadow: 0 -8px 30px rgba(15, 23, 42, .2); visibility: visible; opacity: 1; transform: translateY(calc(100% - 3.2rem)); transition: transform .2s ease; }
+  .bp-dag-inventory { padding-bottom: 60px; }
+  .bp-dag-inspector { position: absolute; z-index: 12; top: auto; right: 8px; bottom: 8px; left: 8px; width: auto; max-height: min(58%, 480px); overflow: auto; border: 1px solid var(--dag-overlay-border); border-radius: var(--dag-radius-panel); box-shadow: var(--dag-e2); visibility: visible; opacity: 1; transform: translateY(calc(100% - 52px)); transition: transform .2s ease; }
   .bp-dag-viewer.bp-dag-sheet-open .bp-dag-inspector { transform: translateY(0); }
-  .bp-dag-sheet-handle { display: block; position: sticky; z-index: 2; top: 0; width: 100%; min-height: 3.1rem; padding: .6rem 2.2rem .45rem .7rem; overflow: hidden; border: 0; border-bottom: 1px solid var(--dag-border); background: var(--dag-panel); color: var(--dag-fg); font: inherit; font-size: .75rem; font-weight: 700; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-  .bp-dag-sheet-handle::before { content: ""; position: absolute; top: .35rem; left: 50%; width: 2rem; height: 3px; border-radius: 2px; background: var(--dag-border); transform: translateX(-50%); }
-  .bp-dag-inspector-inner { padding: .75rem; }
-  .bp-dag-density { bottom: 3.7rem; }
+  .bp-dag-sheet-handle { display: block; position: sticky; z-index: 2; top: 0; width: 100%; min-height: 50px; padding: 10px 48px 8px 12px; overflow: hidden; border: 0; border-bottom: 1px solid var(--dag-border); background: var(--dag-bg); color: var(--dag-fg); font: inherit; font-size: 13px; font-weight: 600; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  .bp-dag-sheet-handle::before { content: ""; position: absolute; top: 6px; left: 50%; width: 32px; height: 3px; border-radius: 2px; background: var(--dag-border); transform: translateX(-50%); }
+  .bp-dag-inspector-inner { padding: 12px; }
+  .bp-dag-viewer:not(.bp-dag-sheet-open) .bp-dag-close { display: none; }
+  .bp-dag-inspector-header { padding-right: 0; }
+  .bp-dag-viewer.bp-dag-viewer .bp-dag-inspector-header h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+  .bp-dag-density { bottom: 68px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .bp-dag-inspector { transition: none; }
@@ -731,7 +762,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
   var NODE_W = 196, NODE_H = 56, MAX_MAP_NODES = 120, LIST_PAGE = 100;
   var SEARCH_PAGE = 50, RELATION_PAGE = 50, MIN_SCALE = .002, MIN_READABLE_SCALE = .8, MIN_ATLAS_SCALE = .68, hostSequence = 0;
   var clamp = function (value, low, high) { return Math.max(low, Math.min(high, value)); };
-  var plural = function (count, one, many) { return count + " " + (count === 1 ? one : many); };
+  var plural = function (count, one, many) { return count.toLocaleString() + " " + (count === 1 ? one : many); };
 
   function element(tag, className, text) {
     var node = document.createElement(tag);
@@ -833,7 +864,8 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       transform: {x: 20, y: 20, scale: 1}
     };
     if (!mapAllowed) state.mode = "list";
-    var refs = {}, overlays = new Map(), scheduled = false, firstResize = true;
+    var refs = {}, overlays = new Map(), scheduled = false, firstResize = true, family;
+    var trail = Array.isArray(view.breadcrumbs) ? view.breadcrumbs : [];
 
     buildShell(); markIntro();
     bindEvents();
@@ -846,26 +878,14 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       var context = element("div", "bp-dag-context");
       var crumbs = element("nav", "bp-dag-breadcrumb");
       crumbs.setAttribute("aria-label", "Explorer context");
-      var crumbList = element("ol");
-      var trail = Array.isArray(view.breadcrumbs) && view.breadcrumbs.length ? view.breadcrumbs : [
-        {label: data.title || "Dependencies", url: null}
-      ];
-      trail.forEach(function (entry, index) {
-        var item = element("li"), href = safeHref(entry.url);
-        if (href) { var link = element("a", "", entry.label); link.href = href; item.appendChild(link); }
-        else { item.textContent = entry.label; if (index === trail.length - 1) item.setAttribute("aria-current", "page"); }
-        crumbList.appendChild(item);
-      });
-      crumbs.appendChild(crumbList); context.appendChild(crumbs);
-      var book = safeHref(view.book);
-      if (book) { var bookLink = element("a", "bp-dag-book", "Open the textbook page"); bookLink.href = book; context.appendChild(bookLink); }
-      context.appendChild(element("span", "bp-dag-view-kind", atlas ? "knowledge atlas" : view.kind || "graph")); head.appendChild(context);
+      crumbs.appendChild(trailList(trail.length ? trail : [{label: data.title || "Dependencies"}])); context.appendChild(crumbs);
+      head.appendChild(context);
 
       var toolbar = element("div", "bp-dag-toolbar");
       toolbar.setAttribute("role", "group"); toolbar.setAttribute("aria-label", "Dependency explorer controls");
       var searchWrap = refs.searchWrap = element("div", "bp-dag-search-wrap");
       refs.search = element("input", "bp-dag-search");
-      refs.search.type = "search"; refs.search.placeholder = "Search the whole roadmap ( / )";
+      refs.search.type = "search"; refs.search.placeholder = "Search the roadmap";
       refs.search.setAttribute("aria-label", "Search all graph nodes");
       refs.search.setAttribute("aria-controls", "bp-dag-search-results-" + instance);
       refs.searchResults = element("div", "bp-dag-search-results"); refs.searchResults.id = "bp-dag-search-results-" + instance;
@@ -886,14 +906,14 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
         label.appendChild(document.createTextNode(statusLabel(key)));
         label.appendChild(element("span", "bp-dag-check-count", String(statusCounts.get(key) || 0))); fieldset.appendChild(label);
       });
-      refs.filterPopover.appendChild(fieldset); refs.filters.appendChild(refs.filterSummary); refs.filters.appendChild(refs.filterPopover);
-      toolbar.appendChild(refs.filters);
-
-      refs.isolatedLabel = element("label", "bp-dag-isolated"); refs.isolated = element("input");
-      refs.isolated.type = "checkbox"; refs.isolated.checked = state.showIsolated; refs.isolatedLabel.appendChild(refs.isolated);
-      refs.isolatedLabel.appendChild(document.createTextNode("Show items without edges"));
-      refs.isolatedLabel.hidden = !data.nodes.some(function (node) { return node.isolated; }) ||
-        data.nodes.every(function (node) { return node.isolated; }); toolbar.appendChild(refs.isolatedLabel);
+      var edges = element("fieldset", "bp-dag-isolated"), isolated = element("label", "bp-dag-check");
+      edges.appendChild(element("legend", "", "Edges"));
+      refs.isolated = element("input"); refs.isolated.type = "checkbox"; isolated.appendChild(refs.isolated);
+      isolated.appendChild(document.createTextNode("Include items without edges")); edges.appendChild(isolated);
+      edges.hidden = !data.nodes.some(function (node) { return node.isolated; }) ||
+        data.nodes.every(function (node) { return node.isolated; });
+      refs.filterPopover.appendChild(fieldset); refs.filterPopover.appendChild(edges);
+      refs.filters.appendChild(refs.filterSummary); refs.filters.appendChild(refs.filterPopover); toolbar.appendChild(refs.filters);
 
       var modes = element("div", "bp-dag-modes"); modes.setAttribute("role", "group"); modes.setAttribute("aria-label", "Explorer view");
       refs.graphMode = button("bp-dag-mode-button", mapAllowed ? "Map" : "Map · too many items");
@@ -905,11 +925,18 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       refs.fit = button("bp-dag-button", "Fit", "Fit shown nodes");
       zoomGroup.appendChild(refs.zoomOut); zoomGroup.appendChild(refs.zoomIn); zoomGroup.appendChild(refs.fit); toolbar.appendChild(zoomGroup);
 
-      refs.stats = element("span", "bp-dag-stats"); refs.statsText = element("span"); refs.hiddenButton = button("bp-dag-hidden-button", "");
-      refs.stats.appendChild(refs.statsText); refs.stats.appendChild(refs.hiddenButton); toolbar.appendChild(refs.stats);
-      head.appendChild(toolbar); host.appendChild(head);
+      refs.hiddenButton = button("bp-dag-hidden-button", ""); toolbar.appendChild(refs.hiddenButton);
+      head.appendChild(toolbar);
+      // Tab follows where the head draws the link: after the controls in one row, before them in the grid.
+      var book = safeHref(view.book);
+      if (book) {
+        var bookLink = element("a", "bp-dag-book", "Open the textbook page"), narrow = matchMedia("(max-width: 1100px)");
+        var placeBook = function () { var had = document.activeElement === bookLink; head.insertBefore(bookLink, narrow.matches ? toolbar : null); if (had) bookLink.focus(); };
+        bookLink.href = book; placeBook(); narrow.addEventListener("change", placeBook);
+      }
+      host.appendChild(head);
 
-      var body = element("div", "bp-dag-body"), main = element("div", "bp-dag-main");
+      var body = refs.body = element("div", "bp-dag-body"), main = element("div", "bp-dag-main");
       refs.navigation = element("aside", "bp-dag-navigation");
       refs.navigation.setAttribute("aria-label", "Wiki hierarchy");
       refs.navigationInner = element("div", "bp-dag-navigation-inner");
@@ -920,16 +947,15 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
         "use Control or Command plus scroll to zoom, and use arrow keys between node buttons.");
       refs.canvas = element("canvas", "bp-dag-canvas"); refs.canvas.setAttribute("aria-hidden", "true");
       refs.nodeLayer = element("div", "bp-dag-node-layer"); refs.density = element("div", "bp-dag-density"); refs.density.hidden = true;
-      refs.guide = element("div", "bp-dag-guide"); refs.guide.hidden = !atlas;
       refs.empty = element("div", "bp-dag-empty", data.nodes.length ? "No nodes match these controls." :
         "This roadmap has no articles yet."); refs.empty.hidden = true;
-      refs.stage.appendChild(refs.canvas); refs.stage.appendChild(refs.nodeLayer); refs.stage.appendChild(refs.guide);
+      refs.stage.appendChild(refs.canvas); refs.stage.appendChild(refs.nodeLayer);
       refs.stage.appendChild(refs.density); refs.stage.appendChild(refs.empty);
       main.appendChild(refs.stage);
 
       refs.inventory = element("section", "bp-dag-inventory"); refs.inventory.hidden = true;
       refs.inventory.setAttribute("aria-label", "Complete node inventory");
-      var inventoryHead = element("div", "bp-dag-inventory-head"); inventoryHead.appendChild(element("h2", "", "Contents of this scope"));
+      var inventoryHead = element("div", "bp-dag-inventory-head"); inventoryHead.appendChild(element("h2", "", "Contents"));
       refs.inventorySummary = element("span", "bp-dag-inventory-summary"); inventoryHead.appendChild(refs.inventorySummary);
       refs.wholeSearch = button("bp-dag-whole-search", "search the whole roadmap");
       refs.inventoryScroll = element("div", "bp-dag-inventory-scroll"); refs.inventoryList = element("ul", "bp-dag-inventory-list");
@@ -947,8 +973,23 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       refs.inspector.appendChild(refs.inspectorInner); body.appendChild(refs.inspector); host.appendChild(body);
       refs.announcement = element("p", "bp-dag-sr-only"); refs.announcement.setAttribute("aria-live", "polite"); host.appendChild(refs.announcement);
       refs.ctx = refs.canvas.getContext("2d");
+      // Reset the probe first: a rejected site font must not inherit an earlier 11px font.
+      refs.ctx.font = "10px sans-serif";
+      family = getComputedStyle(host).fontFamily; refs.ctx.font = "11px " + family;
+      if (refs.ctx.font.indexOf("11px") < 0) family = "sans-serif";
     }
 
+    function trailList(entries, className) {
+      var list = element("ol", className);
+      entries.forEach(function (entry, index) {
+        var item = element("li"), href = safeHref(entry.url);
+        item.title = entry.label;
+        if (href) { var link = element("a", "", entry.label); link.href = href; link.title = entry.label; item.appendChild(link); }
+        else { item.textContent = entry.label; if (!className && index === entries.length - 1) item.setAttribute("aria-current", "page"); }
+        list.appendChild(item);
+      });
+      return list;
+    }
     // MathJax typesets authored TeX after the calling render, forgetting the old math first.
     function typeset(container) {
       var M = window.MathJax;
@@ -960,29 +1001,12 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       if (!refs.navigationInner) return;
       typeset(refs.navigationInner); refs.navigationInner.textContent = ""; refs.navigationNodes = new Map();
       if (intro) { if (!state.introInSheet) refs.navigationInner.appendChild(intro); } else {
-        var trail = Array.isArray(view.breadcrumbs) && view.breadcrumbs.length ? view.breadcrumbs : [];
-        var home = trail.map(function (entry) { return {label: entry.label, href: safeHref(entry.url)}; })
-          .find(function (entry) { return entry.href; });
-        if (home) {
-          var homeLink = element("a", "bp-dag-navigation-home", home.label || "Back to book");
-          homeLink.href = home.href; refs.navigationInner.appendChild(homeLink);
-      }
-      refs.navigationInner.appendChild(element("p", "bp-dag-navigation-kicker", atlas ? "Library atlas" : "Current scope"));
+      // The h1 names the current scope, so the rail's trail lists only its ancestors.
+      if (trail.length > 1) refs.navigationInner.appendChild(trailList(trail.slice(0, -1), "bp-dag-navigation-path"));
       refs.navigationInner.appendChild(element("h1", "bp-dag-navigation-title", data.title || "Mathematics"));
-      if (trail.length) {
-        var path = element("ol", "bp-dag-navigation-path");
-        trail.forEach(function (entry, index) {
-          var item = element("li"), href = safeHref(entry.url);
-          if (href) { var link = element("a", "", entry.label); link.href = href; item.appendChild(link); }
-          else { item.textContent = entry.label; if (index === trail.length - 1) item.setAttribute("aria-current", "page"); }
-          path.appendChild(item);
-        });
-        refs.navigationInner.appendChild(path);
-      }
       if (view.summary) refs.navigationInner.appendChild(element("p", "bp-dag-navigation-summary", view.summary));
-      refs.navigationInner.appendChild(element("p", "bp-dag-navigation-counts",
-        data.nodes.length.toLocaleString() + (atlas ? " topics" : " items") + " · " +
-        (data.edge_count || data.edges.length).toLocaleString() + " dependencies"));
+      refs.navigationInner.appendChild(element("p", "bp-dag-navigation-counts", plural(data.nodes.length, atlas ? "topic" : "item",
+        atlas ? "topics" : "items") + " · " + plural(data.edge_count || data.edges.length, "dependency", "dependencies")));
       }
 
       var visible = data.nodes.slice(0, state.navigationLimit), groups = new Map();
@@ -992,7 +1016,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       });
       groups.forEach(function (nodes, label) {
         var section = element("section", "bp-dag-navigation-group");
-        section.appendChild(element("h2", "", label));
+        if (groups.size > 1) section.appendChild(element("h2", "", label));
         var list = element("ul", "bp-dag-navigation-list");
         nodes.forEach(function (node) {
           var item = element("li"), href = safeHref(node.url), control;
@@ -1003,8 +1027,10 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
           }
           control.dataset.navigationNodeId = node.id;
           control.appendChild(element("span", "", node.title));
-          control.appendChild(element("span", "bp-dag-navigation-meta",
-            node.kind === "scope" ? (node.member_count || 0).toLocaleString() : statusLabel(node.status)));
+          // A scope counts its items; a leaf shows its status as a swatch, so the rows end evenly.
+          var mark = node.kind === "scope" ? element("span", "bp-dag-navigation-meta", (node.member_count || 0).toLocaleString()) : swatch(node.status);
+          if (node.kind !== "scope") { mark.title = statusLabel(node.status); mark.setAttribute("role", "img"); mark.setAttribute("aria-label", mark.title); }
+          control.appendChild(mark);
           item.appendChild(control); list.appendChild(item); refs.navigationNodes.set(node.id, control);
         });
         section.appendChild(list); refs.navigationInner.appendChild(section);
@@ -1063,7 +1089,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       refs.loadMore.addEventListener("click", function () { state.listLimit += LIST_PAGE; renderInventory(false); });
       refs.wholeSearch.addEventListener("click", openResults);
       refs.sheetHandle.addEventListener("click", function () {
-        setSheet(!host.classList.contains("bp-dag-sheet-open"));
+        setSheet(!host.classList.contains("bp-dag-sheet-open"), state.selected);
       });
       refs.inspector.addEventListener("keydown", function (event) {
         if (event.key === "Escape" && state.selected) { event.preventDefault(); clearSelection(true, true); }
@@ -1165,13 +1191,11 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       refs.isolated.checked = state.showIsolated;
       refs.statusInputs.forEach(function (input, key) { input.checked = state.selectedStatuses.has(key); });
       var enabled = state.selectedStatuses.size;
-      refs.filterSummary.textContent = enabled === presentStatuses.length ? "Status" : "Status · " + enabled;
+      refs.filterSummary.textContent = (enabled === presentStatuses.length ? "Status" : "Status · " + enabled) +
+        (state.showIsolated ? "" : " · edges only");
       refs.graphMode.setAttribute("aria-pressed", String(state.mode === "graph"));
       refs.listMode.setAttribute("aria-pressed", String(state.mode === "list"));
       refs.stage.hidden = state.mode !== "graph"; refs.inventory.hidden = state.mode !== "list";
-      if (atlas) refs.guide.textContent = state.selected ?
-        "Showing the direct dependency neighborhood of " + state.selected.title :
-        "Select a topic to reveal its dependency neighborhood";
     }
 
     function collect(start, adjacency) {
@@ -1201,8 +1225,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       });
       state.activeIds = new Set(state.active.map(function (node) { return node.id; }));
       var hidden = data.nodes.length - state.active.length;
-      refs.statsText.textContent = state.active.length + " of " + data.nodes.length + " shown" + (hidden ? " / " : "");
-      refs.hiddenButton.textContent = hidden ? "+" + hidden + " hidden" : ""; refs.hiddenButton.hidden = hidden === 0;
+      refs.hiddenButton.textContent = "Show " + hidden + " hidden"; refs.hiddenButton.hidden = !hidden;
       refs.empty.hidden = state.active.length !== 0;
       state.activeDirty = false;
     }
@@ -1222,7 +1245,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       refs.canvas.height = Math.max(1, Math.round(refs.stage.clientHeight * ratio));
       var nextOrientation = refs.stage.clientWidth <= 620 ? "tb" : "lr";
       var changed = nextOrientation !== state.orientation; state.orientation = nextOrientation;
-      if (firstResize || changed) { firstResize = false; fit(); } else schedule();
+      if (firstResize || changed) { firstResize = false; fit(); } else if (state.mode === "graph") draw();
     }
     function fit() {
       calculateActive(); var nodes = state.active.length ? state.active : data.nodes; if (!nodes.length) return;
@@ -1247,18 +1270,29 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
         (refs.stage.clientHeight - height * state.transform.scale) / 2 - minY * state.transform.scale;
       schedule();
     }
-    function center(node, minimumScale) {
-      if (!node) return; var box = world(node); state.transform.scale = Math.max(state.transform.scale, minimumScale || .82);
+    // Open details cover part of the map; this is the larger part they leave, in stage pixels.
+    function freeArea() {
       var band = refs.stage.clientHeight, left = 0, right = refs.stage.clientWidth, drawer = refs.inspector;
-      // Open details cover part of the map, so the node centres in the larger part they leave.
       if (host.classList.contains("bp-dag-sheet-open")) {
         var start = drawer.offsetLeft - refs.stage.parentNode.offsetLeft, end = start + drawer.offsetWidth;
         if (sheetLayout()) band = Math.max(NODE_H, Math.min(band, drawer.offsetTop));
         else if (start > right - end) right = Math.max(NODE_W, Math.min(right, start));
         else left = Math.min(Math.max(0, end), right - NODE_W);
       }
-      state.transform.x = (left + right) / 2 - (box.x + box.w / 2) * state.transform.scale;
-      state.transform.y = band / 2 - (box.y + box.h / 2) * state.transform.scale; schedule();
+      return {band: band, left: left, right: right};
+    }
+    function center(node, minimumScale) {
+      if (!node) return; var box = world(node), free = freeArea(); state.transform.scale = Math.max(state.transform.scale, minimumScale || .82);
+      state.transform.x = (free.left + free.right) / 2 - (box.x + box.w / 2) * state.transform.scale;
+      state.transform.y = free.band / 2 - (box.y + box.h / 2) * state.transform.scale; schedule();
+    }
+    // A click leaves the map where it is unless the details it opens cover the node; then it pans just clear.
+    function reveal(node) {
+      var box = screen(node), free = freeArea(), pad = 12;
+      if (free.right < refs.stage.clientWidth && box.x + box.w > free.right) state.transform.x += free.right - pad - box.x - box.w;
+      if (free.left > 0 && box.x < free.left) state.transform.x += free.left + pad - box.x;
+      if (free.band < refs.stage.clientHeight && box.y + box.h > free.band) state.transform.y += free.band - pad - box.y - box.h;
+      schedule();
     }
     function zoomAt(factor, x, y) {
       var old = state.transform.scale, next = clamp(old * factor, MIN_SCALE, 4);
@@ -1307,7 +1341,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
         ctx.save(); ctx.fillStyle = regionColors[index % regionColors.length];
         ctx.strokeStyle = isDark() ? "#35435c" : "#b9c7da"; ctx.lineWidth = 1.2;
         rounded(ctx, box.x, box.y, box.w, box.h, 18); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = isDark() ? "#d9e3f2" : "#30445f"; ctx.font = "700 13px sans-serif";
+        ctx.fillStyle = isDark() ? "#d9e3f2" : "#30445f"; ctx.font = "700 13px " + family;
         ctx.textAlign = "left"; ctx.fillText(region.label + " · " + region.count, box.x + 13, box.y + 21);
         ctx.restore();
       });
@@ -1361,7 +1395,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
         ctx.closePath(); ctx.fill();
       }
       if (count > 1 && state.transform.scale > .32) {
-        ctx.globalAlpha = highlighted ? .82 : .2; ctx.font = Math.max(9, 10 * state.transform.scale) + "px sans-serif";
+        ctx.globalAlpha = highlighted ? .82 : .2; ctx.font = Math.max(11, 10 * state.transform.scale) + "px " + family;
         ctx.textAlign = "center"; ctx.fillText("×" + count, (ax + bx) / 2, (ay + by) / 2 - 4);
       }
       ctx.restore();
@@ -1402,14 +1436,13 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
     }
     function makeNodeControl(node) {
       var control = button("bp-dag-node", ""); control.dataset.autoformNodeId = node.id; control.dataset.kind = node.kind || "node";
-      var scopeMeta = node.kind === "scope" ? plural(node.member_count || 0, "item", "items") + " · " +
-        plural(node.internal_dependency_count || 0, "internal link", "internal links") :
+      var scopeMeta = node.kind === "scope" ? plural(node.member_count || 0, "item", "items") :
         node.kind === "boundary" ? "External scope · open" : null;
       control.setAttribute("aria-label", node.title + (node.area ? ", " + node.area : "") + ", " +
         (scopeMeta || statusLabel(node.status)) + (node.isolated ? ", no dependency edges in this view" : ""));
       var content = atlas && node.kind === "scope" ? element("span", "bp-dag-node-core") : control;
       content.appendChild(element("span", "bp-dag-node-title", node.title));
-      content.appendChild(element("span", "bp-dag-node-meta", scopeMeta || statusLabel(node.status) + " · " + node.id));
+      content.appendChild(element("span", "bp-dag-node-meta", scopeMeta || statusLabel(node.status)));
       content.appendChild(element("span", "bp-dag-node-relation", ""));
       if (content !== control) control.appendChild(content);
       control.addEventListener("click", function (event) { event.stopPropagation(); activateNode(node, false); });
@@ -1474,18 +1507,13 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
     function searchScore(node, query) {
       var title = node.title.toLocaleLowerCase(), id = node.id.toLocaleLowerCase();
       var lean = (node.lean || "").toLocaleLowerCase(), summary = (node.summary || "").toLocaleLowerCase();
-      if (title === query) return [0, "Exact title"]; if (id === query) return [1, "Exact id"];
-      if (lean === query) return [2, "Exact Lean name"];
-      if (title.startsWith(query)) return [3, "Title prefix"]; if (id.startsWith(query)) return [4, "Id prefix"];
-      if (lean.startsWith(query)) return [5, "Lean prefix"];
-      if (title.split(/\s+/).some(function (word) { return word.startsWith(query); })) return [6, "Word prefix"];
-      if (title.indexOf(query) >= 0) return [7, "Title match"]; if (id.indexOf(query) >= 0) return [8, "Id match"];
-      if (lean.indexOf(query) >= 0) return [9, "Lean match"];
-      if (summary.indexOf(query) >= 0) return [10, "Statement match"];
+      if (title === query) return 1; if (id === query) return 2; if (lean === query) return 3;
+      if (title.startsWith(query)) return 4; if (id.startsWith(query)) return 5; if (lean.startsWith(query)) return 6;
+      if (title.split(/\s+/).some(function (word) { return word.startsWith(query); })) return 7;
+      if (title.indexOf(query) >= 0) return 8; if (id.indexOf(query) >= 0) return 9;
+      if (lean.indexOf(query) >= 0) return 10; if (summary.indexOf(query) >= 0) return 11;
       var terms = query.split(/\s+/).filter(Boolean), all = [title, id, lean, summary].join(" ");
-      if (terms.length > 1 && terms.every(function (term) { return all.indexOf(term) >= 0; }))
-        return [11, "All terms match"];
-      return null;
+      return terms.length > 1 && terms.every(function (term) { return all.indexOf(term) >= 0; }) ? 12 : 0;
     }
     function ensureGlobalSearch() {
       var source = host.getAttribute("data-catalog-src");
@@ -1528,7 +1556,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
     }
     function rankMatches(nodes, query) {
       return nodes.map(function (node) {
-        var score = searchScore(node, query); return score ? {node: node, rank: score[0], reason: score[1]} : null;
+        var rank = searchScore(node, query); return rank ? {node: node, rank: rank} : null;
       }).filter(Boolean).sort(function (a, b) { return a.rank - b.rank || a.node._index - b.node._index; });
     }
     function searchMatches() {
@@ -1543,8 +1571,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       matches.slice(0, state.searchLimit).forEach(function (match) {
         var item = element("li"), choose = button("bp-dag-result", ""); choose.dataset.resultId = match.node.id;
         choose.appendChild(element("span", "bp-dag-result-title", match.node.title));
-        choose.appendChild(element("span", "bp-dag-result-id", match.node.id));
-        choose.appendChild(element("span", "bp-dag-result-reason", match.reason));
+        choose.appendChild(element("span", "bp-dag-result-meta", match.node.area || statusLabel(match.node.status)));
         choose.addEventListener("click", function () { activateNode(match.node, true); }); item.appendChild(choose); list.appendChild(item);
         choose.addEventListener("keydown", searchResultKeydown);
       });
@@ -1613,23 +1640,26 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
     function selectNode(node, historyMode, moveCamera) {
       if (!node) return; if (!state.selected || state.selected.id !== node.id) state.direction = "both";
       state.selected = node; state.activeDirty = true; state.spotlight = null;
-      host.classList.add("bp-dag-has-selection"); setSheet(true);
+      setSheet(true, node);
       syncControls(); renderInspector(); renderInventory(false);
       refs.announcement.textContent = "Selected " + node.title + ", " + statusLabel(node.status);
-      if (historyMode) writeLocation(historyMode); if (moveCamera) center(node, .82); else schedule();
+      if (historyMode) writeLocation(historyMode); if (moveCamera) center(node, .82); else reveal(node);
     }
     function clearSelection(updateHistory, returnFocus) {
       var refit = state.direction !== "both", cleared = state.selected;
       state.selected = null; state.direction = "both"; state.activeDirty = true; state.spotlight = null;
-      host.classList.remove("bp-dag-has-selection");
-      setSheet(false);
+      setSheet(false, null);
       syncNavigationSelection(); renderInspector(); renderInventory(false); if (refit) requestAnimationFrame(fit); else schedule();
       if (updateHistory) writeLocation("push");
       var chosen = returnFocus && cleared && (state.mode === "list" ? refs.inventoryRows.get(cleared.id) : overlays.get(cleared.id));
       if (chosen) chosen.focus();
     }
-    function setSheet(open) {
-      host.classList.toggle("bp-dag-sheet-open", Boolean(open));
+    // From 681px to 1,100px details can open the head's first row; the map shifts back by it, so nothing jumps.
+    // Measure both class changes together; callers need no selection-toggle ordering rule.
+    function setSheet(open, selected) {
+      var top = refs.body.offsetTop; host.classList.toggle("bp-dag-sheet-open", Boolean(open));
+      host.classList.toggle("bp-dag-has-selection", Boolean(selected));
+      state.transform.y += top - refs.body.offsetTop; schedule();
       refs.sheetHandle.setAttribute("aria-expanded", String(Boolean(open)));
       syncSheetAccessibility();
     }
@@ -1663,7 +1693,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       refs.statusInputs.forEach(function (input, key) { if (input.checked) state.selectedStatuses.add(key); });
       if (state.selected && !state.selectedStatuses.has(state.selected.status)) {
         state.selected = null; state.direction = "both"; state.spotlight = null;
-        host.classList.remove("bp-dag-has-selection"); setSheet(false);
+        setSheet(false, null);
         refs.announcement.textContent = "Selection cleared because its status is hidden.";
       }
       state.activeDirty = true; writeLocation("replace"); refresh(true);
@@ -1678,7 +1708,6 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       typeset(refs.inspector); refs.inspectorInner.textContent = ""; refs.sheetHandle.textContent = state.selected ? state.selected.title : introTitle || "Graph details";
       if (!state.selected) {
         if (intro) { if (state.introInSheet) refs.inspectorInner.appendChild(intro); } else {
-          refs.inspectorInner.appendChild(element("p", "bp-dag-kicker", atlas ? "Mathematics knowledge map" : "Dependency explorer"));
           refs.inspectorInner.appendChild(element("h2", "", data.title || "Dependencies"));
           if (view.summary) refs.inspectorInner.appendChild(element("p", "bp-dag-summary", view.summary));
         }
@@ -1691,7 +1720,7 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
         if (internalDependencies) refs.inspectorInner.appendChild(element("p", "bp-dag-overview",
           plural(internalDependencies, "additional authored dependency lies", "additional authored dependencies lie") + " inside the visible topics."));
         if (atlas && !data.edges.length) refs.inspectorInner.appendChild(element("p", "bp-dag-overview",
-          "No cross-topic dependency links are authored at this level. Card height shows scope; rings show formalization status. Select a topic to read its mathematical overview."));
+          "No dependencies are authored between these topics."));
         if (atlas && (data.regions || []).length) {
           distribution("Mathematical regions", data.regions.map(function (region) { return [region.label, region.count]; }));
         }
@@ -1699,53 +1728,46 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
           return [statusLabel(key), statusCounts.get(key), key];
         }));
         if (statusCounts.has("inventory_checked") || statusCounts.has("inventory_pending")) refs.inspectorInner.appendChild(element("p", "bp-dag-overview",
-          "Inventory statuses are neutral: an inventory records inspection, not a mathematical proof."));
-        refs.inspectorInner.appendChild(element("p", "bp-dag-overview",
-          atlas ? "Click a topic to read it; click it again or use Explore topic to dive in. Contents exposes the same map as a complete accessible list." :
-          "The map carries dependency topology; Map and Contents expose the same nodes as keyboard-accessible controls.")); return;
+          "Inventory statuses are neutral: an inventory records inspection, not a mathematical proof.")); return;
       }
-      var node = state.selected, header = element("div", "bp-dag-inspector-header"), titleWrap = element("div");
-      titleWrap.appendChild(element("p", "bp-dag-kicker", (node.kind === "scope" ? "Scope" :
-        node.kind === "boundary" ? "External scope" : node.declaration || "Roadmap item") + (node.area ? " · " + node.area : "")));
-      titleWrap.appendChild(element("h2", "", node.title)); header.appendChild(titleWrap);
+      var node = state.selected, header = element("div", "bp-dag-inspector-header");
+      if (node.declaration) header.appendChild(element("p", "bp-dag-kicker", node.declaration + (node.area ? " · " + node.area : "")));
+      header.appendChild(element("h2", "", node.title));
       var close = button("bp-dag-close", "×", "Close details"); close.addEventListener("click", function () {
         // Hiding the details takes focus out of them; it returns to the selection, not to the page.
-        setSheet(false);
+        setSheet(false, state.selected);
         var chosen = state.selected && (state.mode === "list" ? refs.inventoryRows.get(state.selected.id) : overlays.get(state.selected.id));
         if (chosen) chosen.focus();
       });
-      header.appendChild(close); refs.inspectorInner.appendChild(header); refs.inspectorInner.appendChild(element("code", "bp-dag-node-id", node.id));
+      header.appendChild(close); refs.inspectorInner.appendChild(header);
       var inventoryOnly = node.kind === "scope" && (node.status_counts || []).length > 0 && node.status_counts.every(function (entry) {
         return palette[entry[0]] && palette[entry[0]].neutral;
       });
-      var pill = element("span", "bp-dag-status-pill", inventoryOnly ? "inventory only" : statusLabel(node.status)), color = colors(node);
+      var actions = element("div", "bp-dag-actions"), pill = element("span", "bp-dag-status-pill", inventoryOnly ? "inventory only" : statusLabel(node.status)), color = colors(node);
       pill.style.setProperty("--dag-pill-fill", color.fill); pill.style.setProperty("--dag-pill-stroke", color.stroke);
-      refs.inspectorInner.appendChild(pill);
+      actions.appendChild(pill); refs.inspectorInner.appendChild(actions);
       var href = safeHref(node.url);
       if (href) {
         var open = element("a", "bp-dag-open", node.kind === "scope" || node.kind === "boundary" ? "Explore topic" : "Open article");
-        open.href = href; refs.inspectorInner.appendChild(open);
+        open.href = href; actions.appendChild(open);
       }
       if (node.lean) refs.inspectorInner.appendChild(element("p", "bp-dag-lean",
         "Lean: " + node.lean + (node.lean_more ? " and " + node.lean_more + " more" : "")));
       if (node.summary) refs.inspectorInner.appendChild(element("p", "bp-dag-summary", node.summary));
-      else if (node.kind === "scope") refs.inspectorInner.appendChild(element("p", "bp-dag-summary",
-        "This topic contains " + plural(node.member_count || 0, "roadmap item", "roadmap items") + ". Explore it to see its mathematical subtopics and dependency structure."));
       if (node.kind === "scope" && node.internal_dependency_count) refs.inspectorInner.appendChild(element("p", "bp-dag-overview",
         plural(node.internal_dependency_count, "authored dependency connects", "authored dependencies connect") + " results inside this topic."));
       var before = prerequisites.get(node.id) || [], after = dependents.get(node.id) || [];
       var path = pathSpotlight(), beforeCount = path ? path.before.size - 1 : 0;
       var afterCount = path ? path.after.size - 1 : 0;
       if (before.length || after.length) {
-        var paths = element("section", "bp-dag-section"); paths.appendChild(element("h3", "", "Path spotlight"));
-        var pivots = element("div", "bp-dag-pivots");
-        [["Prerequisites " + beforeCount, "prerequisites", beforeCount], ["All paths", "both", 1],
+        var pivots = element("div", "bp-dag-pivots"); pivots.setAttribute("role", "group"); pivots.setAttribute("aria-label", "Paths");
+        [["All", "both", 1], ["Prerequisites " + beforeCount, "prerequisites", beforeCount],
           ["Dependents " + afterCount, "dependents", afterCount]].forEach(function (entry) {
           var pivot = button("bp-dag-pivot", entry[0]); pivot.disabled = !entry[2];
           pivot.setAttribute("aria-pressed", String(state.direction === entry[1]));
           pivot.addEventListener("click", function () { setDirection(entry[1]); }); pivots.appendChild(pivot);
         });
-        paths.appendChild(pivots); refs.inspectorInner.appendChild(paths);
+        refs.inspectorInner.appendChild(pivots);
       }
       appendRelations("Direct prerequisites", before); appendRelations("Direct dependents", after);
       var entries = node.status_counts || [];
@@ -1789,13 +1811,13 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
         if (node === state.selected) row.setAttribute("aria-current", "true");
         refs.inventoryRows.set(node.id, row);
         row.appendChild(element("span", "bp-dag-inventory-title", node.title));
-        row.appendChild(element("span", "bp-dag-inventory-id", node.id));
-        row.appendChild(element("span", "bp-dag-inventory-meta",
-          statusLabel(node.status) + (node.area ? " · " + node.area : "") + (node.isolated ? " · isolated" : "")));
+        row.appendChild(element("span", "bp-dag-inventory-meta", statusLabel(node.status) + (node.area ? " · " + node.area : "")));
         row.addEventListener("click", function () { activateNode(node, true); }); item.appendChild(row); refs.inventoryList.appendChild(item);
       });
-      refs.inventorySummary.textContent = visible.length + " of " + nodes.length + " listed" +
-        (state.mapAllowed ? " · items without edges included" : " · map unavailable above " + MAX_MAP_NODES + " items");
+      // A count, or "N of M" while a page or a filter shows fewer.
+      var shown = visible.length < nodes.length ? visible : nodes, total = shown === visible ? nodes : data.nodes;
+      refs.inventorySummary.textContent = shown.length < total.length ? shown.length.toLocaleString() + " of " +
+        total.length.toLocaleString() : plural(total.length, atlas ? "topic" : "item", atlas ? "topics" : "items");
       if (state.query && host.getAttribute("data-catalog-src")) {
         refs.inventorySummary.appendChild(document.createTextNode(" · ")); refs.inventorySummary.appendChild(refs.wholeSearch);
       }
@@ -1824,8 +1846,8 @@ _SCRIPT = r"""/* Generated by autoform render. Edits are overwritten. */
       state.activeDirty = true; state.spotlight = null;
       if (node) {
         state.selectedStatuses.add(node.status);
-        host.classList.add("bp-dag-has-selection"); setSheet(true);
-      } else { host.classList.remove("bp-dag-has-selection"); setSheet(false); }
+        setSheet(true, node);
+      } else setSheet(false, null);
       syncControls(); renderInspector(); renderInventory(inventoryKey() !== listed); schedule();
       if (node) setTimeout(function () { center(node, .82); }, 0);
     }

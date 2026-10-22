@@ -169,7 +169,9 @@ def test_render_writes_a_derived_tree_and_leaves_the_vault_alone(tmp_path: Path)
     chapter_payload = json.loads(
         (out / "dependencies/chapters/roadmap.json").read_text(encoding="utf-8")
     )
-    assert chapter_payload["title"] == "Top level dependencies"
+    # The explorer names the scope; the page's own H1 adds what it draws, for the tab and site search.
+    assert chapter_payload["title"] == "Top level"
+    assert "\n# Top level dependencies\n" in (out / "dependencies/chapters/roadmap.md").read_text(encoding="utf-8")
     assert chapter_payload["view"]["breadcrumbs"][-1] == {"label": "Top level", "url": None}
     full_page = (out / "dependencies/full.md").read_text(encoding="utf-8")
     assert 'data-graph-src="full.json"' in full_page
@@ -203,7 +205,7 @@ def test_the_root_explorer_takes_the_roadmap_root_title(tmp_path: Path) -> None:
     chapter_payload = json.loads((out / "dependencies/chapters/roadmap.json").read_text(encoding="utf-8"))
     assert project_payload["title"] == "Learning theory"
     assert [node["title"] for node in project_payload["nodes"]] == ["Top level"]
-    assert chapter_payload["title"] == "Top level dependencies"
+    assert chapter_payload["title"] == "Top level"
     crumbs = [crumb["label"] for crumb in chapter_payload["view"]["breadcrumbs"]]
     assert crumbs == ["Book", "Learning theory", "Top level"]
 
@@ -917,6 +919,8 @@ def test_the_module_inventory_figure_counts_inventories_and_hides_at_zero(tmp_pa
         '<div class="bp-figure-note">existing Lean modules inventoried</div>'
     ) in overview
     assert "existing Lean modules checked" not in overview
+    # The rail hides the figure and counts the inventory in its line of counts.
+    assert re.search(r'<p class="bp-hero-counts">\d+ chapters? · 1 module inventory</p>', overview)
 
 
 def test_an_unclassified_catalog_warning_names_the_contract_once(tmp_path: Path) -> None:
@@ -1038,6 +1042,28 @@ def test_the_landing_page_is_one_full_page_explorer_opened_by_its_hero(
         assert retired not in overview
     assert overview.count("blueprint-dag.js") == 1
     assert (tmp_path / "out/dependencies.json").is_file()
+
+
+def test_the_rail_hero_keeps_two_figures_a_counts_line_and_the_coverage_link(tmp_path: Path) -> None:
+    """In the 288px rail the hero stacked a kicker, four gradient tiles whose notes repeated their labels, a bar
+    and a coverage sentence before the book link and Next up."""
+    _render(tmp_path)
+    overview = (tmp_path / "out/README.md").read_text(encoding="utf-8")
+    intro = overview.split('class="bp-dag-intro bp-landing-intro"', 1)[1]
+    # The chapter and inventory figures stay in the markup, and the rail reads them as one line instead.
+    assert intro.index("bp-hero-figures") < intro.index('<p class="bp-hero-counts">') < intro.index("bp-hero-bar")
+    counts = re.search(r'<p class="bp-hero-counts">([^<]*)</p>', intro)
+    assert counts is not None and re.fullmatch(r"\d+ chapters?( · \d+ module inventor(y|ies))?", counts.group(1))
+    css = (tmp_path / "out/stylesheets/blueprint.css").read_text(encoding="utf-8")
+    assert (
+        ".bp-landing-intro.bp-landing-intro :is(\n  .bp-hero-kicker,\n  .bp-figure:nth-child(n + 3),\n"
+        "  .bp-figure-note,\n  .bp-hero-bar,\n  .bp-hero-coverage-label,\n  .bp-hero-coverage-counts\n) { display: none; }"
+    ) in css
+    # The gradient rule is the narrow hero's one accent; its figures are plain.
+    value = css.split(".bp-landing-intro.bp-landing-intro .bp-figure-value {", 1)[1].split("}", 1)[0]
+    assert "background: none;" in value and "color: var(--bp-fg);" in value
+    assert ".bp-landing-intro.bp-landing-intro .bp-hero-coverage-link { margin-left: 0; }" in css
+    assert "last-child:nth-child(odd)" not in css
 
 
 def test_the_legends_beside_the_explorer_count_what_its_rings_count(tmp_path: Path) -> None:
@@ -2790,8 +2816,9 @@ def test_a_fresh_vault_reports_no_work_rather_than_one_ready_item(tmp_path: Path
     assert "items settled" not in overview
     assert '<div class="bp-figure-value">0%</div>' in overview
     assert '<div class="bp-figure-value">0</div>' in overview
-    # Nothing is there to explore yet, so the home page mounts no explorer.
+    # Nothing is there to explore yet, so the home page mounts no explorer, and its hero keeps every figure.
     assert "bp-dag-viewer" not in overview
+    assert "bp-hero-counts" not in overview
 
 
 def test_a_directory_link_uses_tree_even_when_the_repo_url_says_blob() -> None:

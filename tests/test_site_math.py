@@ -786,7 +786,7 @@ def test_only_a_file_a_browser_only_shows_is_published(tmp_path: Path, capsys: p
     site = _render(blueprint)
     assert not any((site / relative).exists() for relative in _RUNNABLE)
     assert all((site / relative).read_bytes() == content for relative, content in _SHOWN.items())
-    assert "display: none" not in (site / "stylesheets/blueprint.css").read_text(encoding="utf-8")
+    assert ".af-status" not in (site / "stylesheets/blueprint.css").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(
