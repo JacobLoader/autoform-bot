@@ -402,7 +402,10 @@ def test_setup_asset_static_site_contract(repo_root: Path, tmp_path: Path) -> No
     verify = (example / ".github/workflows/autoform-verify.yml").read_text(encoding="utf-8")
     # The generated workflows' safety steps. The example mirrors the templates
     # (test_example_workflows_match_the_scaffold_templates), so these hold for both.
-    assert "github.ref == 'refs/heads/main'" in workflow
+    # Pages deploys only a main commit whose verify run passed (#399).
+    assert "github.event.workflow_run.conclusion == 'success'" in workflow
+    assert "github.event.workflow_run.head_branch == 'main'" in workflow
+    assert "github.event.workflow_run.path == '.github/workflows/autoform-verify.yml'" in workflow
     assert 'lake clean "$root_package"' in verify
     assert "Reject kernel-check bypass options" in verify
     assert 'forbidden="skip""KernelTC"' in verify

@@ -928,18 +928,15 @@ def _anchors_from_body(body: str) -> frozenset[str]:
     return frozenset(html.unescape(found) for found in _HEADING_ID.findall(rendered))
 
 
+#: Views earlier renders wrote at the blueprint root, which render no longer writes.
+RETIRED_VIEWS = frozenset({"dependencies.html", "graph.html", "progress.md"})
 #: Views generated at the blueprint root. Render omits the vault's copies: it
 #: writes the current views itself and drops stale copies of the retired ones.
-GENERATED_VIEWS = frozenset(
-    {
-        "dependencies.md",
-        "dependencies.html",
-        "graph.html",
-        "progress.md",
-        # The vault keeps its own Obsidian-readable copy; the site builds one.
-        "structure.md",
-    }
-)
+GENERATED_VIEWS = RETIRED_VIEWS | {
+    "dependencies.md",
+    # The vault keeps its own Obsidian-readable copy; the site builds one.
+    "structure.md",
+}
 
 
 def resolved_path(path: Path) -> Path | None:
@@ -1245,6 +1242,7 @@ __all__ = [
     "INLINE_CODE",
     "NOTES_BOX",
     "PAGE_SUFFIXES",
+    "RETIRED_VIEWS",
     "SITE_EXTENSIONS",
     "SITE_EXTENSION_CONFIGS",
     "STATEMENT_BOX",
