@@ -1187,7 +1187,10 @@ The import edit's `claim_targets` contain only the selected article and a stable
 `module_claim_target` resource, `lean-module/<lowercase-slug>-<sha256[:16]>`.
 `affected_claim_targets` are downstream warnings, not pre-emptive ownership
 requirements; `claim_keys` and `affected_claim_keys` match the JSON from
-`autoform claim list --worker-id WORKER`. `unresolved_articles` reports local
+`autoform claim list --worker-id WORKER`, and given the corresponding
+`claim_targets` or `affected_claim_targets` as targets it lists only those
+claims.
+`unresolved_articles` reports local
 declarations absent from the loaded environment without globally blocking
 unrelated edits, while every `affected_unowned_helpers` entry includes its own
 claim target and key.
@@ -1248,6 +1251,7 @@ autoform claim acquire af_5b0e4d3c2a1f09e8d7c6b5a4
 autoform claim renew af_5b0e4d3c2a1f09e8d7c6b5a4
 autoform claim release af_5b0e4d3c2a1f09e8d7c6b5a4
 autoform claim acquire af_5b0e4d3c2a1f09e8d7c6b5a4 af_0123456789abcdef01234567
+autoform claim list af_5b0e4d3c2a1f09e8d7c6b5a4 af_0123456789abcdef01234567
 ```
 
 Claims are optional: use them when other people or sessions may work on the same
@@ -2457,6 +2461,21 @@ board with claim keys that differ only in case, which a case-insensitive
 scratch cannot store under their names, is listed with one more command that
 names its claims first. A listing is a report, not a lock: every acquire,
 renew, and release checks ownership again.
+
+`claim list TARGET...` lists only those targets' claims, in the same JSON; a
+target without a claim is left out, and a duplicate target exits 2. It names
+the targets' refs, fetches only those and reads their leases, so neither the
+board's size nor changes to other claims affect it, and a target released
+meanwhile has the targets named again, never the whole board. `--timeout
+SECONDS`, 120 by default, bounds the whole listing, and a step still running
+after five seconds is named on stderr as `claim list: <step>...`. A listing
+that fails exits 1 with nothing on stdout and one line on stderr: `error:
+timeout:` when the board did not answer in time, naming the step; `error:
+contention:` when the board refused every fetch because claims kept moving; or
+`error: transport:` for any other failure to reach or read the board. Claim
+commands run Git without a terminal and with `GIT_TERMINAL_PROMPT=0`, so a
+missing credential fails at once instead of waiting for a prompt, and a Git
+command that runs out of time is ended together with everything it started.
 
 A Git process that stops while updating a claim ref leaves a lock file in the
 board, and Git then refuses the updates it guards:

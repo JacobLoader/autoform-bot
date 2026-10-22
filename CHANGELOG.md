@@ -9,6 +9,13 @@ date when the release is tagged.
 
 ## Unreleased
 
+- **Claims.** `claim list TARGET...` lists only those claims, whatever the
+  rest of the board holds or does. `--timeout` (120 seconds by default) bounds
+  a listing, a slow step is named on stderr, and a failure goes to stderr
+  labelled `timeout:`, `contention:` or `transport:` with nothing on stdout.
+  Claim commands no longer wait for a Git credential prompt, and a Git command
+  that runs out of time no longer leaves its transport running (#432).
+
 ## 0.6.0 (2026-10-22)
 
 What has landed since 0.5.0, across 236 merged pull requests, grouped by
