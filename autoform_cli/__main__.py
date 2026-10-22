@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Sequence
+from functools import partial
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -532,6 +533,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="fail when a 'lean:' declaration is not found in the Lean sources, is defined more than once in them, "
         "or cannot be looked up because the sources cannot be read",
     )
+    render.add_argument(
+        "--review",
+        action="store_true",
+        help="add each statement's review, judged as review check judges it (needs --lean-root)",
+    )
+    _add_probe_timeout_argument(render)
 
     args = parser.parse_args(argv)
 
@@ -1701,15 +1708,16 @@ def _review(args: argparse.Namespace) -> int:
     return 2
 
 
-def _print_refusal(exc: GraphValidationError | ReviewError | SkeletonError) -> None:
+def _print_refusal(exc: GraphValidationError | PublicationError | ReviewError | SkeletonError, *, stream=None) -> None:
     """Print why review evidence was refused, naming the article each finding is about."""
 
+    stream = stream or sys.stderr
     if isinstance(exc, ReviewError):
         for finding in exc.findings:
-            print(f"error: {_finding_text(finding)}", file=sys.stderr)
+            print(f"error: {_finding_text(finding)}", file=stream)
         return
     for issue in exc.issues:
-        print(f"error: {issue}", file=sys.stderr)
+        print(f"error: {issue}", file=stream)
 
 
 def _review_prepare(args: argparse.Namespace) -> int:
@@ -1901,6 +1909,15 @@ def _default_claim_scratch(repo: str, worker_id: str) -> Path:
 
 
 def _render(args: argparse.Namespace) -> int:
+    if not args.review and args.timeout is not None:
+        print("error: --timeout requires --review", file=sys.stderr)
+        return 2
+    if args.review and args.lean_root is None:
+        print("error: --review requires --lean-root", file=sys.stderr)
+        return 2
+    # Render runs the extraction once its checks of the output and the inputs
+    # pass, so a render they refuse costs no Lean.
+    review = partial(extract_skeletons, args.blueprint_dir, lean_root=args.lean_root, timeout=args.timeout)
     try:
         report = render_site(
             args.blueprint_dir,
@@ -1908,10 +1925,10 @@ def _render(args: argparse.Namespace) -> int:
             lean_root=args.lean_root,
             repository_url=args.repository_url,
             ref=args.ref,
+            review=review if args.review else None,
         )
-    except (GraphValidationError, PublicationError) as exc:
-        for issue in exc.issues:
-            print(f"error: {issue}")
+    except (GraphValidationError, PublicationError, ReviewError, SkeletonError) as exc:
+        _print_refusal(exc, stream=sys.stdout)
         return 1
 
     print(f"{report.output_dir}: {report.pages} pages, {report.nodes} nodes, {report.linked} code links")

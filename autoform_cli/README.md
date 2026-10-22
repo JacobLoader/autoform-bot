@@ -223,7 +223,7 @@ An article asserts only facts a human or agent verified:
 | `not_ready: true` | Needs more blueprint work before it can be attempted. |
 | `lean: Ns.decl` | Declaration name(s) that discharge the article. |
 | `discussion: 42` | Issue number or URL where the article is being discussed. |
-| `article_id: af_...` | Durable identity, `af_` plus 24 lowercase hex digits; `autoform work` requires it on unfinished formalizable leaves, `review record` on the article it records, and `review prepare` and `review check` on every Lean-mapped article. |
+| `article_id: af_...` | Durable identity, `af_` plus 24 lowercase hex digits; `autoform work` requires it on unfinished formalizable leaves, `review record` on the article it records, and `review prepare`, `review check`, and `render --review` on every Lean-mapped article but a module catalog. |
 | `review_approved: sha256:<64 hex>` | The hash of the complete review surface someone approved for this article. It shows that surface is unchanged, not who approved it. |
 | `open_statements: allowed` | Project policy, valid only in `roadmap/README.md`: a theorem's statement may land with a `sorry` proof (see [Open statements](#open-statements)). Absent or `forbidden` keeps the strict policy. |
 | `published: false` | Folder setting, valid only in the `README.md` of a folder below `roadmap/`: `check` and `audit` validate the folder and everything in it, but render leaves it out of the site and of the publication hash. No link on a published roadmap article may point into it, whether a dependency, a source or prose; a link from any other page keeps only its text, with a warning. `audit` and render reject coverage evidence that points into it. A folder inside an unpublished one is unpublished too, whatever its own README says. |
@@ -895,9 +895,10 @@ provenance.
 
 Testimony is plain text with TeX formulas between dollar signs. GitHub and a
 Markdown viewer of the vault show it as typed, in the card's text block, and
-render copies nothing under `readbacks/` to the site. Its formulas are the
-pieces `readback.split_testimony` finds, so `\$` is a dollar sign that opens
-nothing. The rules are in the read-back guide
+`render --review` shows it escaped in the statement's *Review* panel, but
+copies no file under `readbacks/` to the site. Its formulas are the pieces
+`readback.split_testimony` finds, so `\$` is a dollar sign that opens nothing.
+The rules are in the read-back guide
 `skills/human-review/references/readback.md`, and `readback.py` applies them.
 Testimony must show a reader everything it says, so invisible and reordering
 characters, and combining marks stacked over the lines around or with nothing
@@ -911,7 +912,8 @@ statements need out of MathJax 3.2.2's base and ams packages, with no spacing,
 phantom, colour, box, size, or macro command, and hold nothing that shows as a
 blank, such as a run of spaces in `\text`, an empty `\frac` or script, or two
 empty cells one after the other. `readback.typesetting_warnings` names each
-formula that cannot be, which a site shows as typed.
+formula that cannot be, which the site shows as typed, dollar signs and all,
+while it typesets the rest, and render warns about each.
 
 Cards are read without following links, so a linked card or directory is
 skipped. A card file holds at most 4 MiB, no file is read more than one byte
@@ -1036,7 +1038,7 @@ declarations together and each alone is honestly incomplete. A judge of
 faithfulness is given the article packet and its passage; an auditor asked what
 one declaration asserts is given that declaration's packet alone.
 
-Review a formalized statement with three commands:
+Review a formalized statement with three commands, then publish the review:
 
 ```bash
 autoform review prepare blueprint --lean-root . --packets review-packets
@@ -1044,6 +1046,7 @@ autoform review record blueprint --packets review-packets \
   --article-id af_0123456789abcdef01234567 --declaration Ns.result \
   --testimony read-back.txt --model muse-spark-1.1
 autoform review check blueprint --lean-root .
+autoform render blueprint --lean-root . --review
 ```
 
 `review prepare` extracts every Lean-mapped article from the current built tree
@@ -1089,8 +1092,34 @@ breaks any of these comparisons fails the check with `review-snapshot-changed`;
 run it again once the blueprint is idle. These are comparisons, not a lock: a
 change restored between them goes unseen, and an edit after the last does not
 affect a verdict already reached. `tex-macros.json` is read once, after Lean,
-and compared with nothing. `review prepare` and `review check` accept the same
-`--timeout SECONDS` probe override as `skeleton`.
+and compared with nothing. `review prepare`, `review check`, and
+`render --review` accept the same `--timeout SECONDS` probe override as
+`skeleton`.
+
+`render --review` makes the same check, from one extraction of its own, and
+puts a *Review* disclosure under every formalized statement: the approval state,
+the review hash to approve, as a row that can be selected, the cited passage,
+and for each declaration its read-back card, marked current, invalid with the
+reasons, or missing, and the exact packet that was hashed. The packet is all
+the approval binds of a declaration, so the rows beside it mark its statement
+hash, and what it assumes and its axioms, proof included, as not bound. Render
+runs the extraction once its output, the vault it captured, the graph, the
+coverage contract and the Lean sources pass their checks, so a render they
+refuse costs no Lean. It judges the cards and the `tex-macros.json` it
+captured, the bytes `publication.json` hashes, and the articles and cited
+passages it publishes must be the ones the extraction read: an edit to one
+between the capture and the end of the extraction fails it with
+`review-snapshot-changed`. A card's formulas are typeset only when
+`readback.formula_problems` accepts them; any other is shown as typed, and
+render warns about it with its exit status unchanged. A passage cut from a file
+the site leaves out, such as a script, a file under `readbacks/`, or
+`atlas.json`, is refused with `review-source-unpublished`. A folder whose
+README says `published: false` is reviewed with the rest of the vault, and its
+articles, which render leaves out, get no disclosure and no warning; nor does a
+module catalog, which is not under review. The panels stay out of the site's
+search. `--timeout` is accepted only with `--review`, and when the review is
+refused, render prints the reasons on stdout and exits 1, as its other refusals
+do.
 
 The gate is opt-in for every project: a project turns it on by committing
 `blueprint/.autoform-review` holding `autoform-review-policy/v1` and a line
@@ -1516,13 +1545,15 @@ earlier site.
 configuration, on every build; `mkdocs.yml` lists it before the MathJax
 bundle, as `autoform init` writes both. It expects MathJax 3.2.2, the release
 its TeX settings were checked against, loads it itself when no bundle is
-listed, and leaves formulas as typed under any other release. The articles on
-a page share one TeX input, with the packages base, ams, noundefined,
-boldsymbol, mathtools, braket, mhchem, and amscd (`CD` diagrams), and the
-project's macros from
-`blueprint/tex-macros.json`, written as MathJax's `tex.macros` is: a name maps
-to a body, `[body, arguments]`, or `[body, arguments, default]`. So that no
-formula changes another or colors a
+listed, and leaves formulas as typed under any other release. Another script
+in `mkdocs.yml` cannot replace that configuration: an assignment to
+`window.MathJax`, such as the snippet Material's documentation gives, is
+ignored with an error in the browser console. The articles on a page share
+one TeX input, with the packages base, ams, noundefined, boldsymbol,
+mathtools, braket, mhchem, and amscd (`CD` diagrams), and the project's macros
+from `blueprint/tex-macros.json`, written as MathJax's `tex.macros` is: a name
+maps to a body, `[body, arguments]`, or `[body, arguments, default]`. So that
+no formula changes another or colors a
 symbol like the site's status marks, that input turns off `\label`,
 `\mmlToken`, `\DeclareMathOperator`, the paired-delimiter and tag-form
 commands of mathtools, and `\mathtoolsset`: each shows in red and does nothing,
@@ -1536,15 +1567,19 @@ commands; and verb and bussproofs are not loaded either. So `\cancel`,
 take one of their names; `check` and `render` warn about a macro they leave
 out. They judge and build the script from
 the copy of `tex-macros.json` that `render` reads once and publishes beside it,
-so an edit made during a render reaches neither. That input reads only the
-formulas the site's Markdown marks, such as
+so an edit made during a render reaches neither. Each read-back card is
+typeset with a TeX input of its own that knows only base, ams, and
+noundefined, so nothing an article, another card, or the project's macros
+define reaches it. The articles' input, and `check`, read only the formulas
+the site's Markdown marks, such as
 `$...$` or `$$...$$` in an article. Other text, such as a
 statement's title in its heading, a `discussion:` value, the lead on the home
 page, the navigation, and a table of contents, is shown as typed, TeX and all.
 Every formula paints only within its own line and the block that holds it,
 with either renderer and any theme, so no article formula can cover a card, a
 mark, or the text beside it. An inline formula wider than its paragraph is cut
-at the paragraph's edge, so write one that wide as a display, which scrolls.
+at the paragraph's edge, so write one that wide as a display, which scrolls,
+as does a card too wide for the page.
 
 A project scaffolded before `render` wrote that file keeps a
 `blueprint/javascripts/mathjax.js` and lists the MathJax bundle in `mkdocs.yml`
@@ -2761,7 +2796,10 @@ available views. It contains no timestamp or absolute path, so identical inputs
 produce identical output files. Render reads the blueprint and the Lean sources
 once each and derives every page, link and hash from those bytes; an edit saved
 during a render waits for the next one, and until then the dashboard reports the
-built site as stale. The vault's hidden implementation notes are read in place
+built site as stale. Under `--review`, the extraction reads both again, and an
+article or cited passage edited between the capture and the end of the
+extraction fails the render instead (see `render --review` under statement
+review); a later edit waits for the next one. The vault's hidden implementation notes are read in place
 only to validate them. Repository links appear only when the Lean bytes match
 one locally available Git commit, recorded by its full object ID; a clean
 checkout that Git converts on checkout still matches. Otherwise the render stays
