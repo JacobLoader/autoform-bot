@@ -1157,7 +1157,7 @@ Report the coordination and review scope of an import edit without forbidding
 the edit:
 
 ```bash
-autoform work import-impact SELECTOR MODULE [TARGET] --lean-root PATH [--json] [--timeout SECONDS]
+autoform work import-impact SELECTOR MODULE [TARGET] --lean-root PATH [--json] [--timeout SECONDS] [--module-scope SCOPE]
 ```
 
 `import-impact` is advisory and does not edit authored roadmap or Lean source;
@@ -1183,6 +1183,18 @@ reached is no longer built. The report does not list such modules.
 
 JSON uses `autoform-module-import-impact/v1` and binds the graph with
 `module_graph_revision`; `module_scope` is `loaded-root-library-graph`.
+
+`--module-scope import-closure` loads only the root-package modules whose source
+may import `MODULE`: a file is a candidate when its text contains every component
+of a candidate's name, repeated until no new file matches, and Lean loads what
+the candidates import. Only those modules must be built, and stale-build advice
+names them. `affected_modules` is still exact. An article owns an affected
+declaration when one of its `lean:` names equals the declaration or is a dotted
+prefix of it, so `affected_articles` may list more articles than the default
+scope does, and `article_local` is always `false`. Articles outside the closure
+appear in `unresolved_articles`. A `.lean` file outside the captured sources,
+such as one in `.lake/packages`, that may import a candidate makes the command
+exit 2 and asks for the default scope.
 The import edit's `claim_targets` contain only the selected article and a stable
 `module_claim_target` resource, `lean-module/<lowercase-slug>-<sha256[:16]>`.
 `affected_claim_targets` are downstream warnings, not pre-emptive ownership

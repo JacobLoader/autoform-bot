@@ -2695,6 +2695,30 @@ def test_revision_impact_accepts_unrelated_churn_during_its_final_capture(
 # --------------------------------------------------------------------------- #
 
 
+def test_cli_import_impact_takes_the_import_closure_scope(tmp_path: Path, monkeypatch, capsys) -> None:
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _closure_lean_root(tmp_path)
+    _stub_probe(
+        monkeypatch,
+        records=[_payload("Demo.base", kind="def", module="Demo.A")],
+        modules=(
+            ModuleEvidence("Demo.A", str((lean_root / "Demo/A.lean").resolve())),
+            ModuleEvidence("Demo.B", str((lean_root / "Demo/B.lean").resolve()), ("Demo.A",)),
+        ),
+    )
+
+    code = cli.main(
+        ["work", "import-impact", _BASE_ID, "Demo.A", str(project), "--lean-root", str(lean_root),
+         "--module-scope", "import-closure", "--json"]
+    )
+
+    output = capsys.readouterr()
+    assert code == 0, output.err
+    report = json.loads(output.out)
+    assert report["module_scope"] == "import-closure"
+    assert report["article_local"] is False
+
+
 def _lean_toolchain_available() -> bool:
     """Whether a project pinned like the skeleton fixture builds here without a download.
 
@@ -3146,6 +3170,21 @@ def test_import_impact_reads_a_library_nested_in_another_srcdir(tmp_path: Path, 
     report = json.loads(output.out)
     assert report["affected_modules"] == ["Demo", "Demo.Basic", "Tests"]
     assert report["affected_claim_targets"] == ["chapter/t"]
+
+
+@pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
+def test_import_closure_scope_matches_the_default_modules_on_a_built_project(tmp_path: Path) -> None:
+    lean_root = _imp_project(tmp_path)
+    project = _imp_roadmap(tmp_path)
+
+    default = module_import_impact(project, "chapter/base", "Imp.Basic", lean_root=lean_root)
+    narrow = module_import_impact(
+        project, "chapter/base", "Imp.Basic", lean_root=lean_root, module_scope="import-closure"
+    )
+
+    assert narrow.affected_modules == default.affected_modules
+    assert {a.id for a in narrow.affected_articles} >= {a.id for a in default.affected_articles}
+    assert {h.name for h in narrow.affected_unowned_helpers} <= {h.name for h in default.affected_unowned_helpers}
 
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
