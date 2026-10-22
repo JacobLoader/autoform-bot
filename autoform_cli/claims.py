@@ -9,6 +9,7 @@ overwrite one another.
 from __future__ import annotations
 
 import contextlib
+import functools
 import hashlib
 import json
 import math
@@ -99,6 +100,8 @@ _GIT_ENV = {
     # A missing credential fails at once instead of waiting for a prompt.
     "GIT_TERMINAL_PROMPT": "0",
 }
+# ClaimBoard._git, or a functools.partial of it that carries a deadline.
+_Git = Callable[..., "subprocess.CompletedProcess[Any]"]
 _CAS_REJECTIONS = (
     "stale info",
     "fetch first",
@@ -261,6 +264,12 @@ def _validate_ttl(ttl: int | float) -> int | float:
     return ttl
 
 
+def _validate_timeout(timeout: float) -> float:
+    if not _is_finite_number(timeout) or timeout <= 0:
+        raise ValueError("claim list timeout must be a finite positive number")
+    return timeout
+
+
 def _reject_json_constant(value: str) -> None:
     raise ValueError(f"non-finite JSON number {value!r}")
 
@@ -401,24 +410,30 @@ class ClaimBoard:
             raise ClaimTransportError(f"git {' '.join(args[:2])} failed against claim board: {detail}")
         return proc
 
-    def _ensure_scratch(self) -> None:
+    def _ensure_scratch(self, git: _Git | None = None) -> None:
+        git = self._git if git is None else git
         last_error: BaseException | None = None
         for attempt in range(_SCRATCH_INIT_ATTEMPTS):
             try:
                 if self.scratch.is_dir():
-                    ready = self._git(
+                    ready = git(
                         ["rev-parse", "--is-bare-repository"],
                         check=False,
+                        step="preparing the scratch",
                     )
                     if ready.returncode == 0 and ready.stdout.strip() == "true":
                         return
                 self.scratch.mkdir(parents=True, exist_ok=True)
+            except ClaimTimeoutError:
+                raise
             except (OSError, ClaimTransportError) as exc:
                 last_error = exc
                 break
             try:
-                self._git(["init", "--bare", "--quiet", "."])
+                git(["init", "--bare", "--quiet", "."], step="preparing the scratch")
                 return
+            except ClaimTimeoutError:
+                raise
             except ClaimTransportError as exc:
                 last_error = exc
             if attempt + 1 < _SCRATCH_INIT_ATTEMPTS:
@@ -850,7 +865,12 @@ class ClaimBoard:
             and not self.expired(lease)
         )
 
-    def list(self) -> list[dict[str, Any]]:
+    def list(
+        self,
+        *,
+        timeout: float | None = None,
+        progress: Callable[[str], None] | None = None,
+    ) -> list[dict[str, Any]]:
         """Return all claim refs, including malformed and expired entries.
 
         One fetch copies every claim ref and its commit into refs private to
@@ -859,22 +879,32 @@ class ClaimBoard:
         git commands it takes do not grow with the number of claims. A ref that
         changes meanwhile is listed as it was; every update checks ownership
         again.
+
+        With ``timeout``, the listing gets that many seconds in all, and running
+        out raises ``ClaimTimeoutError`` naming the step it was on.
+        ``progress`` hears the name of each step still running after five
+        seconds.
         """
-        self._ensure_scratch()
+        deadline = None if timeout is None else time.monotonic() + _validate_timeout(timeout)
+        git = functools.partial(self._git, deadline=deadline, progress=progress)
+        self._ensure_scratch(git)
         written: dict[str, dict[str, str] | None] = {}
         try:
-            return self._read_listed(self._fetch_claims(written))
+            return self._read_listed(self._fetch_claims(written, git), git)
         finally:
+            # Deleting the private refs gets its own time limit, even after the deadline.
             for namespace, refs in written.items():
                 self._delete_refs(namespace, refs)
 
-    def _fetch_claims(self, written: dict[str, dict[str, str] | None]) -> dict[str, str]:
+    def _fetch_claims(self, written: dict[str, dict[str, str] | None], git: _Git) -> dict[str, str]:
         """Fetch every claim ref into refs private to this call; return each claim's object ID, by key.
 
         Each fetch's namespace goes into ``written`` before it runs, with the refs
         it wrote once they are read. A private ref is named after its claim key,
         which a case-insensitive scratch cannot do for two keys that differ only
         in case; the board's keys are then fetched again by name into numbered refs.
+        A board that refuses every attempt because claim refs moved raises
+        ``ClaimContentionError``.
         """
         keys: list[str] | None = None
         failures = 0
@@ -886,36 +916,53 @@ class ClaimBoard:
             # round spent offering them is a window in which a renewal fails it.
             args = ["fetch", "--quiet", "--no-tags", f"--negotiation-tip={namespace}*"]
             if keys is None:
-                fetch = self._git([*args, self.repo_url, f"+{CLAIM_REF_PREFIX}*:{namespace}*"], check=False)
+                fetch = git(
+                    [*args, self.repo_url, f"+{CLAIM_REF_PREFIX}*:{namespace}*"],
+                    check=False,
+                    step="fetching the claim board",
+                )
             else:
                 refspecs = "".join(f"+{CLAIM_REF_PREFIX}{key}:{namespace}{index}\n" for index, key in enumerate(keys))
-                fetch = self._git([*args, "--stdin", self.repo_url], check=False, input_text=refspecs)
+                fetch = git(
+                    [*args, "--stdin", self.repo_url],
+                    check=False,
+                    input_text=refspecs,
+                    step=f"fetching {len(keys)} claim refs",
+                )
             if fetch.returncode == 0:
-                refs = written[namespace] = self._refs_in(namespace)
+                refs = written[namespace] = self._refs_in(namespace, git)
                 if keys is None:
                     return _claims_by_key(refs, namespace)
                 numbered = ((key, refs.get(f"{namespace}{index}")) for index, key in enumerate(keys))
                 return {key: oid for key, oid in numbered if oid is not None}
             if keys is None and any(marker in fetch.stderr for marker in _CASE_COLLISION):
-                keys = self._remote_keys()
+                keys = self._remote_keys(git)
                 continue
             failures += 1
             # A claim released after `ls-remote` named it is no longer there to fetch.
             retryable = _MOVED_WANT in fetch.stderr or (keys is not None and _MISSING_REF in fetch.stderr)
-            if not retryable or failures == _LIST_FETCH_ATTEMPTS:
+            if not retryable:
                 raise ClaimTransportError(f"cannot fetch the claim board: {_fetch_failure(fetch.stderr)}")
+            if failures == _LIST_FETCH_ATTEMPTS:
+                raise ClaimContentionError(
+                    f"the claim board refused {failures} fetches because claim refs kept moving: "
+                    f"{_fetch_failure(fetch.stderr)}"
+                )
             if keys is not None:
-                keys = self._remote_keys()
+                keys = self._remote_keys(git)
 
-    def _remote_keys(self) -> list[str]:
+    def _remote_keys(self, git: _Git) -> list[str]:
         """Return every validly named claim key the board advertises."""
-        proc = self._git(["ls-remote", "--refs", self.repo_url, f"{CLAIM_REF_PREFIX}*"])
+        proc = git(["ls-remote", "--refs", self.repo_url, f"{CLAIM_REF_PREFIX}*"], step="naming the claim refs")
         refs = {line.partition("\t")[2]: "" for line in proc.stdout.splitlines()}
         return list(_claims_by_key(refs, CLAIM_REF_PREFIX))
 
-    def _refs_in(self, namespace: str) -> dict[str, str]:
+    def _refs_in(self, namespace: str, git: _Git) -> dict[str, str]:
         """Return the object ID of every ref under ``namespace``, by ref name."""
-        proc = self._git(["for-each-ref", "--format=%(objectname)%09%(refname)", namespace])
+        proc = git(
+            ["for-each-ref", "--format=%(objectname)%09%(refname)", namespace],
+            step="reading the fetched refs",
+        )
         refs: dict[str, str] = {}
         for line in proc.stdout.splitlines():
             oid, separator, ref = line.partition("\t")
@@ -931,13 +978,13 @@ class ClaimBoard:
         """
         try:
             if refs is None:
-                refs = self._refs_in(namespace)
+                refs = self._refs_in(namespace, self._git)
             if refs:
                 self._git(["update-ref", "--stdin"], input_text="".join(f"delete {ref}\n" for ref in refs))
         except ClaimTransportError:
             pass
 
-    def _read_commits(self, oids: Sequence[str]) -> dict[str, bytes | None]:
+    def _read_commits(self, oids: Sequence[str], git: _Git) -> dict[str, bytes | None]:
         """Read every object with one ``cat-file --batch``: its raw commit, or None if missing or not a commit.
 
         A tag is peeled to its commit, as ``cat-file commit`` in :meth:`_read_lease` does.
@@ -945,7 +992,7 @@ class ClaimBoard:
         if not oids:
             return {}
         requests = "".join(f"{oid}^{{commit}}\n" for oid in oids).encode()
-        output = self._git(["cat-file", "--batch"], input_bytes=requests).stdout
+        output = git(["cat-file", "--batch"], input_bytes=requests, step=f"reading {len(oids)} leases").stdout
         commits: dict[str, bytes | None] = {}
         position = 0
         for oid in oids:
@@ -960,8 +1007,8 @@ class ClaimBoard:
             position += size + 1
         return commits
 
-    def _read_listed(self, listed: Mapping[str, str]) -> list[dict[str, Any]]:
-        commits = self._read_commits(list(dict.fromkeys(listed.values())))
+    def _read_listed(self, listed: Mapping[str, str], git: _Git) -> list[dict[str, Any]]:
+        commits = self._read_commits(list(dict.fromkeys(listed.values())), git)
         leases: list[dict[str, Any]] = []
         for key, oid in listed.items():
             try:

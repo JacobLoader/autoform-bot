@@ -968,8 +968,11 @@ def test_list_reports_a_failed_fetch_without_retrying(
         return git(args, **kwargs)
 
     monkeypatch.setattr(reader, "_git", failing_fetch)
-    with pytest.raises(claims.ClaimTransportError, match=r"cannot fetch the claim board.*simulated fetch failure"):
+    with pytest.raises(
+        claims.ClaimTransportError, match=r"cannot fetch the claim board.*simulated fetch failure"
+    ) as failed:
         reader.list()
+    assert not isinstance(failed.value, claims.ClaimContentionError)
     assert len(fetches) == 1
 
 
@@ -1892,3 +1895,105 @@ def test_git_kills_its_command_when_progress_raises(tmp_path: Path, monkeypatch:
         board._git(_alias("spawn", f"sleep 30 & echo $! > '{pid_file}'; wait"), progress=broken)
 
     _assert_gone(int(pid_file.read_text()))
+
+
+@pytest.fixture
+def hanging_board(monkeypatch: pytest.MonkeyPatch) -> str:
+    """A board URL whose transport never answers."""
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.ext.allow")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "always")
+    return "ext::sleep 30"
+
+
+def test_list_stops_at_its_timeout_and_names_the_step(tmp_path: Path, hanging_board: str) -> None:
+    reader = claims.ClaimBoard(hanging_board, "worker-b", tmp_path / "scratch")
+    started = time.monotonic()
+
+    with pytest.raises(claims.ClaimTimeoutError) as timed_out:
+        reader.list(timeout=1)
+
+    assert timed_out.value.step == "fetching the claim board"
+    assert time.monotonic() - started < 10
+    assert _git("for-each-ref", "refs/autoform-list/", cwd=tmp_path / "scratch") == ""
+
+
+def test_list_deletes_its_refs_after_a_timeout_later_in_the_listing(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire("a", ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+
+    def times_out_reading_leases(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "cat-file":
+            raise claims.ClaimTimeoutError(str(kwargs["step"]))
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(reader, "_git", times_out_reading_leases)
+    with pytest.raises(claims.ClaimTimeoutError) as timed_out:
+        reader.list(timeout=60)
+
+    assert timed_out.value.step == "reading 1 leases"
+    assert _git("for-each-ref", "refs/autoform-list/", cwd=tmp_path / "scratch-worker-b") == ""
+
+
+def test_list_gives_every_git_command_its_deadline_except_cleanup(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire("a", ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+    deadlines: dict[str, object] = {}
+
+    def recording_git(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        deadlines[args[0]] = kwargs.get("deadline")
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(reader, "_git", recording_git)
+    reader.list(timeout=60)
+
+    assert deadlines.pop("update-ref") is None
+    assert deadlines and all(isinstance(deadline, float) for deadline in deadlines.values())
+
+
+def test_list_names_no_step_when_every_step_is_fast(tmp_path: Path, board_repo: Path) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire("a", ttl=600)
+    steps: list[str] = []
+
+    assert [lease["_key"] for lease in _board(tmp_path, board_repo, "worker-b").list(progress=steps.append)] == ["a"]
+    assert steps == []
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf"), True])
+def test_list_refuses_a_timeout_that_is_not_a_positive_finite_number(
+    tmp_path: Path, board_repo: Path, timeout: float
+) -> None:
+    with pytest.raises(ValueError, match="timeout"):
+        _board(tmp_path, board_repo, "worker-b").list(timeout=timeout)
+
+
+def test_list_reports_contention_when_every_fetch_is_refused_because_refs_moved(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire("a", ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+    fetches: list[list[str]] = []
+
+    def always_refused(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "fetch":
+            fetches.append(args)
+            return subprocess.CompletedProcess(
+                ["git", *args], 128, "", "fatal: remote error: upload-pack: not our ref 1234\n"
+            )
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(reader, "_git", always_refused)
+    with pytest.raises(claims.ClaimContentionError, match="not our ref"):
+        reader.list()
+    assert len(fetches) == 3
