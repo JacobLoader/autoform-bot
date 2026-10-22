@@ -1797,6 +1797,31 @@ def test_import_closure_scope_imports_only_candidate_importers(tmp_path: Path, m
     assert report.affected_modules == ("Demo.A", "Demo.B")
 
 
+def test_import_closure_scope_reaches_a_roots_library_module_through_its_root(tmp_path: Path, monkeypatch) -> None:
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = tmp_path / "lean"
+    (lean_root / "Demo").mkdir(parents=True)
+    (lean_root / "lakefile.toml").write_text(
+        'name = "Demo"\n\n[[lean_lib]]\nname = "Demo"\nroots = ["Demo"]\n', encoding="utf-8"
+    )
+    (lean_root / "Demo.lean").write_text("import Demo.A\n", encoding="utf-8")
+    (lean_root / "Demo" / "A.lean").write_text("def Demo.base (n : Nat) : Nat := n\n", encoding="utf-8")
+    calls = _stub_probe(
+        monkeypatch,
+        records=[_payload("Demo.base", kind="def", module="Demo.A")],
+        modules=(
+            ModuleEvidence("Demo", str((lean_root / "Demo.lean").resolve()), ("Demo.A",)),
+            ModuleEvidence("Demo.A", str((lean_root / "Demo/A.lean").resolve())),
+        ),
+    )
+
+    report = module_import_impact(project, _BASE_ID, "Demo.A", lean_root=lean_root, module_scope="import-closure")
+
+    imports = [line for line in calls[0]["probe"].splitlines() if line.startswith("import Demo")]
+    assert imports == ["import Demo"]
+    assert report.affected_modules == ("Demo", "Demo.A")
+
+
 def test_import_closure_scope_names_only_its_modules_when_stale(tmp_path: Path, monkeypatch) -> None:
     project = _blueprint_project(tmp_path, "Demo")
     lean_root = _closure_lean_root(tmp_path)

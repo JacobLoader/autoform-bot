@@ -1460,7 +1460,7 @@ def _load_impact_evidence(
         )
         selected_modules = imports
         if module_scope == IMPORT_CLOSURE_SCOPE:
-            if module not in imports:
+            if module not in local_modules:
                 raise ImpactError(f"not a project module: {module}")
             captured = dict(source_snapshot.source_files)
             sources = {
@@ -1470,6 +1470,8 @@ def _load_impact_evidence(
             }
             closure = import_closure(module, sources, _outside_sources(root, set(captured)))
             imports = tuple(name for name in imports if name in closure)
+            if not imports:
+                raise ImpactError(f"not a loaded project module: {module}")
         try:
             output = skeleton.run_probe(
                 render_impact_probe(
