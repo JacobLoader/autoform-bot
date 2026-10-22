@@ -632,19 +632,28 @@ def _article_readback_findings(
         if card is None:
             reason = f"no read-back filed for {declaration.name}"
             findings.append(ReviewFinding(article.node_id, "readback-missing", reason))
-            continue
-        errors = list(card.validate())
-        # A card that could not be read is reported by that reason alone. The
-        # card is the one filed for this article and name, and a valid card
-        # shows the packet its hash names, so only that hash can differ. The
-        # statement hash is not compared: it covers the Lean version, and a
-        # Lean or Mathlib bump that leaves the packet unchanged keeps the card.
-        if not card.unreadable and card.packet_hash != declaration.packet_hash:
-            errors.append("packet hash does not match the prepared declaration")
-        if errors:
-            reason = f"read-back for {declaration.name} is invalid: " + "; ".join(dict.fromkeys(errors))
+        elif errors := readback_errors(declaration, card):
+            reason = f"read-back for {declaration.name} is invalid: " + "; ".join(errors)
             findings.append(ReviewFinding(article.node_id, "readback-invalid", reason))
     return findings
+
+
+def readback_errors(declaration: ReviewDeclaration, card: Readback) -> tuple[str, ...]:
+    """Why ``card`` is not a valid, current read-back of ``declaration``;
+    empty when it is. This is the one card judge, for ``review check`` and the
+    site alike.
+
+    A card that could not be read is reported by that reason alone. The card
+    is the one filed for this article and name, and a valid card shows the
+    packet its hash names, so only that hash can differ. The statement hash is
+    not compared: it covers the Lean version, and a Lean or Mathlib bump that
+    leaves the packet unchanged keeps the card.
+    """
+
+    errors = list(card.validate())
+    if not card.unreadable and card.packet_hash != declaration.packet_hash:
+        errors.append("packet hash does not match the prepared declaration")
+    return tuple(dict.fromkeys(errors))
 
 
 def _review_hash(article: ReviewArticle, readbacks: Mapping[tuple[str, str], Readback]) -> str:
@@ -692,6 +701,7 @@ __all__ = [
     "canonical_statement",
     "read_regular_file",
     "read_review_packet",
+    "readback_errors",
     "review_findings",
     "review_states",
     "write_review_packets",
