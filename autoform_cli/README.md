@@ -1590,18 +1590,10 @@ and declaration kinds are checked against the Lean source index, along with the
 elaboration limits each target runs under.
 
 An alias has its target's kind, size, and elaboration limits when the index
-can be sure what the target is. The audit tries the names Lean tries, in the
-alias's namespace, then in each enclosing one, then at the root, passing over
-a declaration below the alias in its file, which Lean has not seen yet. The
-first other name must be a declaration above the alias in the same file. A
-name the index does not hold may be declared by another library such as
-Mathlib, one in another file may not be imported, and a `protected` one for a
-one-component target is skipped by Lean unless it is also private, written or
-under the module system; such an alias matches any intent and is measured, like
-any other declaration, by its own span and limits. Each name of
-`alias ⟨mp, mpr⟩`, and any alias of one, is a theorem whatever its target is.
-Batteries makes an alias of anything but a theorem a `def`, but the audit checks
-what an article's object is, and an alias names the same object as its target.
+can be sure what the target is, by the rules in `lean.py`'s `alias_target`;
+otherwise it matches any intent and is measured, like any other declaration,
+by its own span and limits. Each name of `alias ⟨mp, mpr⟩`, and any alias of
+one, is a theorem whatever its target is.
 
 A wanted target matches the intent its command mirrors: `theorem_wanted` and
 `proof_wanted` a `theorem`, `lemma`, `proposition`, or `corollary`,
@@ -1653,8 +1645,6 @@ whose direct children are all chapter pages is a repository-wide subject index
 and may hold 64; one root-level leaf returns the root to the 24-article limit.
 A `navigation: module` page lists one Lean module's declarations, so it may
 hold as many as the dependency explorer draws as a map, 120.
-Both defects leave a valid graph, which is why they need their own checks
-rather than falling out of `autoform check`.
 
 ### Node size
 
@@ -1665,15 +1655,7 @@ clears both 200 lines and four times this project's own median, so a project
 whose units are uniformly long is measured against itself rather than gated on
 an imported norm, and a project with too few finished nodes to have a
 meaningful median cannot clear the multiple at all. Every measurement appears
-in the finding's reason, so `--json` over a finished project is also the
-calibration corpus for the threshold.
-
-Nothing authored in an article predicts this. On the 43 finished nodes of
-[`phulin/finite-flat`](https://github.com/phulin/finite-flat), prose length
-correlates with realized Lean length at r = -0.03 and prerequisite count at
-r = 0.25; its largest node is 1344 lines of Lean behind 66 words of prose and a
-single declaration name. Pre-formalization size estimates were considered and
-rejected on that evidence.
+in the finding's reason.
 
 ### Elaboration limits
 
@@ -1706,14 +1688,6 @@ example `2 of 40 catalogued declarations have no maxHeartbeats limit
 and a finite limit must pass a rebuild`. A name that does not resolve is a
 `lean-target-not-found` or `lean-target-ambiguous` finding and is not counted.
 
-ATLAS v1, built with Autoform, shows what accumulates without this check: 901
-raised `maxHeartbeats` settings, 497 of them file- or section-wide and 9 of them
-`0` ([#260](https://github.com/facebookresearch/autoform-bot/issues/260)).
-
-The audit API also accepts an already compiled graph. Formalize may use its
-findings while working the Markdown frontier, but the audit itself never
-enqueues work, stamps articles, or creates another graph artifact.
-
 ### Statement text
 
 A formalizable article must state its result in prose a reader sees. At most
@@ -1744,63 +1718,33 @@ held to the same placeholder rule.
 
 `autoform search` is a read-only projection of Markdown: it writes nothing,
 builds no index, and starts no process. The contract is the JSON shape, the
-exit codes, and the rule that an article is a hit only when every term occurs
-in it; how the terms are cut, folded, and ranked, described below, may change.
-The query splits on whitespace into terms. Words that carry no meaning (`a`,
-`an`, `and`, `are`, `as`, `at`, `be`,
-`by`, `can`, `do`, `does`, `for`, `from`, `has`, `have`, `if`, `in`, `is`,
-`it`, `its`, `let`, `of`, `on`, `or`, `such`, `that`, `the`, `then`, `there`,
-`these`, `this`, `to`, `we`, `when`, `where`, `which`, `whose`, `with`) are
-dropped unless the query has no other word; `not`, `every`, and `exists` are
-kept. A term sheds surrounding sentence punctuation, quotation marks,
-backticks, `$`, emphasis marks that wrap it on both sides, and parentheses
-around it, in any combination, but keeps a parenthesis that closes one inside
-it, as in `f(x)`, and keeps square brackets. A word of letters only also sheds a
-final `ing`, `ed`, `es`, or `s`, with the `i` of `-ies` and a doubled last
-letter, when four letters remain and it does not end in `ss`, `us`, or `is`,
-and a final `y` after a consonant when five remain: `recovered`, `topologies`,
-and `topology` are searched as `recover`, `topolog`, and `topolog`. Only the
-query is shortened, so a form that does not begin with the shortened word
-finds nothing: `indices` does not find `index`, `mapping` `map`, `sets` `set`,
-`bodies` `body`, nor `define` `defining`. A name with a dot, underscore, or
-digit is searched exactly. `terms` in the JSON
-shows what was searched. An article is a hit
-when every term is a substring of one of its fields; terms may sit in
-different fields. Both sides are folded first: case,
-width, accents and other combining marks on letters, typographic dashes and
-quotes, and invisible characters do not matter. Fields, best
-first: `title`; `lean` (the last component of each `lean:` and
-`mathlib_declaration` name, and a term that is the whole name or its last
-components, as `Convex.separation` is of `Project.Convex.separation`, with or
-without `_root_.` and `«»`; a prime, `?`, or `!` ending a name is not compared,
-so `Project.foo` is also a `lean` match for `Project.foo'`); `node_id` (the
-last component of the path ID);
-`statement_text`; `ancestors` (titles of containing articles below the roadmap
-root); `qualified_names` (the path ID and Lean names in full, also without
-`_root_.` and `«»`, which is where a namespace alone matches). A title is
-matched without its Markdown markup. The statement is
-matched as the site publishes it, without headings, code blocks, diagrams,
-comments, and elements carrying `hidden`; inline code and mathematics count,
-and published mathematics is delimited `\(...\)`, so search for a formula's
-content. Other frontmatter and the sections after the statement are not
-searched. There is no phrase search and no synonym or prefix handling: `map`
-matches `roadmap`, `unambiguous` does not match `non-ambiguous`, and one
-absent term means no hit, so query with a few distinctive words or one exact
-Lean name, and retry with fewer words before treating a result as new.
-A symbol such as `ℝ` folds to its plain letter, and a one-letter term matches
-nearly every article. A superscript or subscript digit folds to the digit while
-`^` and `_` stay, so `S^1` and `S¹`, or `H_0` and `H₀`, do not find each other;
-search for each spelling.
+exit codes, and the rule that an article is a hit only when every term of the
+query occurs in it, as a substring of one of its fields; terms may sit in
+different fields. How the query is cut into terms, shortened, and ranked may
+change, and `search.py` describes it; `terms` in the JSON shows what was
+searched. Case, width, accents, typographic dashes and quotes, and invisible
+characters do not matter. The fields, best first:
 
-Hits sort by the best field any term matched. Among hits with the same best
-field, those that contain every word as typed, in any field, come before those
-reached only through a shortened word; then by the weakest field any term
-needed, then an article owning a Lean name, or the name's last components,
-that a query word spells, ignoring case and dropped filler words: a final
-prime, `?`, or `!` counts, while quotation marks, parentheses, `*` emphasis,
-and punctuation around the word do not (`Project.foo'` puts the owner of
-`Project.foo'` before that of `Project.foo`); then more dependents first, then
-node ID.
+- `title`, without its Markdown markup;
+- `lean`, the last component of each `lean:` and `mathlib_declaration` name, or
+  a term that is the whole name or its last components;
+- `node_id`, the last component of the path ID;
+- `statement_text`, as the site publishes it, without headings, code blocks,
+  diagrams, comments, and hidden elements; inline code and mathematics count,
+  and published mathematics is delimited `\(...\)`, so search for a formula's
+  content;
+- `ancestors`, the titles of containing articles below the roadmap root;
+- `qualified_names`, the path ID and Lean names in full, which is where a
+  namespace alone matches.
+
+Other frontmatter and the sections after the statement are not searched. There
+is no phrase, synonym, or prefix search, and one absent term means no hit:
+`map` matches `roadmap`, `unambiguous` does not match `non-ambiguous`, and a
+one-letter term matches nearly every article. Only the query is shortened, so
+`indices` does not find `index`, and `S^1` and `S¹`, or `H_0` and `H₀`, do not
+find each other. Query with a few distinctive words or one exact Lean name,
+search each spelling, and retry with fewer words before treating a result as
+new. Hits sort by the best field any term matched, and last by node ID.
 
 `--state` takes exact derived state keys, which `autoform search --help` lists
 (`proved` does not include `fully_proved`), and `--declaration` frontmatter
@@ -1886,12 +1830,9 @@ header's `generator`, `probe`, or `package`.
 A declaration matches when every term occurs in its last name component
 (`lean`), docstring, module header (`module_doc`), full name (also without
 `_root_.` and `«»`) or module (`qualified_names`), the constants in its type
-(`mentions`), or its keyword
-(`kind`), ranked in that order. Hits sort by best field, then the words as
-typed before a stem, then worst field, then a declaration whose name a query
-word spells, by the rule for articles above, then `complete` before `wanted`,
-then name. `--state` and `--declaration` apply to articles only; `--limit` applies
-to each list.
+(`mentions`), or its keyword (`kind`), ranked in that order, with `complete`
+before `wanted` among otherwise equal hits. `--state` and `--declaration` apply
+to articles only; `--limit` applies to each list.
 
 With `--library` the JSON schema is `autoform-search/v2`: every
 `autoform-search/v1` key keeps its meaning, and `libraries` lists, in the
@@ -1929,46 +1870,17 @@ the Autoform version that wrote it, so the command refuses to run from an
 Autoform that is not installed. The index is written whole or not at all; a
 failed write says why and whether the previous index is unchanged.
 
-A declaration is indexed when all of these hold:
-
-1. It is not a constructor, recursor, projection, auxiliary recursor,
-   `noConfusion` or matcher, and its name is not an internal detail.
-2. It has a declaration range.
-3. Its range starts with a declaration keyword, after any docstring,
-   attributes and modifiers. This leaves out what a command or attribute
-   generates beside a declaration, and `where` and `let rec` helpers.
-4. The source text at its selection range is its name, a dot-separated suffix
-   of it, or the keyword `instance`. A leading `_root_.` is not part of the
-   written name, so `theorem _root_.Nat.foo` is indexed as `Nat.foo`, and the
-   quotes of a component such as `«odd name»` are not compared.
-
-The `line` of a record is the line of the declaration's first modifier or,
-with none, of its keyword: `theorem`, not the docstring or an attribute above
-it. Its `statement` starts there and ends at the first of these, outside
-brackets, comments, strings and character literals:
-
-- `:=`, unless it belongs to a `let` or `have` written in the type;
-- the word `where`;
-- a `|` that starts a line, or is followed by a `=>` before the next `:=`,
-  unless it belongs to an absolute value, which is a `|` and a closing `|`
-  with no space inside (`|x|`) or, at the start of a line, a `|` that follows
-  a `:`, a comma or an infix sign and has a closing `|` before any `=>`;
-  a `|` that is part of an operator such as `<|` is not a bar;
-- for an `inductive` type, the first `|`.
-
-The statement may be cut short, and never holds a part of the body. A wanted
-placeholder has no alternatives and no `where`: its statement runs to the end
-of the command, or to its `:=` when a `def_wanted` or `instance_wanted` is
-written with a body.
-
-If a range the probe reports is not in the source file, the source is not the
-one the library was built from, and the command exits 2 and names the
-declaration and its module.
-
-A declaration that rests on `sorry` or on an axiom other than `propext`,
-`Quot.sound` and `Classical.choice` is left out, and the count is written to
-standard error. A result declared with `theorem_wanted`, `proof_wanted`,
-`def_wanted` or `instance_wanted` is indexed with status `wanted`.
+A declaration is indexed when it is one a user wrote with a declaration
+keyword, not a generated companion, an internal detail, or a `where` or
+`let rec` helper; `library/declarations.py` gives the exact selection, the
+`line`, and where a record's `statement` is cut, which never includes part of
+the body. A declaration that rests on `sorry` or on an axiom other than
+`propext`, `Quot.sound` and `Classical.choice` is left out, and the count is
+written to standard error. A result declared with `theorem_wanted`,
+`proof_wanted`, `def_wanted` or `instance_wanted` is indexed with status
+`wanted`. A range the probe reports that is not in the source file means the
+source is not the one the library was built from: the command exits 2 and
+names the declaration and its module.
 
 `--check` writes nothing. It exits 0 when the index at the root is current, 1
 when it is stale, with the reason on standard error, and 2 when it cannot
@@ -1988,25 +1900,11 @@ The index's `package` is the name in the package's `lake-manifest.json`, else in
 is checked out in never matters.
 Module names must be ASCII identifiers. A Lean file under an indexed
 directory that no indexed library builds is refused. So are two modules that
-declare the same public name in two ways: Lean refuses to import both.
-
-Lean does import two modules that state one theorem the same way, and keeps
-one copy. Such a name is indexed once, under the first of its modules in name
-order, with the line, statement, docstring and status of that module's
-declaration. Which copy Lean keeps depends on the order it loads the modules
-in; the index does not. Each such name is a warning on standard error that
-names the module it is indexed under and the others, and the summary line
-counts them. `--check` does not mention them. A name that is not indexed, such
-as an equation lemma two modules both generate, is no warning. A name whose
-first module leaves it on `sorry` or declares it as an axiom is left out and
-counted with the others, with a warning that names the module whose declaration
-was read and the other modules, since one of them may hold a whole proof. If the docstring of such a name comes from `@[inherit_doc]`,
-the record has none.
-
-A wanted name is no clash either: it is private to its module, so two modules
-may use the same one, for example two anonymous `instance_wanted` of one
-class, and each is indexed. A declaration record is identified by its name and
-its module together.
+declare the same public name in two ways: Lean refuses to import both. A
+theorem two modules state the same way is indexed once, under the first of
+its modules in name order, with a warning on standard error naming the
+modules; a wanted name is private to its module, so each module's copy is
+indexed, and a record is identified by its name and module together.
 
 ## Open statements
 
