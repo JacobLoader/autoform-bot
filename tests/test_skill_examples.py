@@ -856,9 +856,15 @@ def test_documented_autoform_commands_parse(repo_root: Path, monkeypatch: pytest
                 options = leaf._option_string_actions
                 failures += [f"{where}: unknown {w}" for w in rest if w.split("=")[0] not in options]
                 continue
+            argv = [_sample(word) for word in words]
+            # A placeholder after an option with fixed choices, such as `--module-scope SCOPE`, takes the first one.
+            for i, word in enumerate(words[:-1]):
+                action = leaf._option_string_actions.get(word)
+                if action is not None and action.choices and argv[i + 1] != words[i + 1]:
+                    argv[i + 1] = next(iter(action.choices))
             try:
                 with contextlib.redirect_stdout(io.StringIO()), contextlib.suppress(SystemExit):  # `--help` exits 0
-                    parser.parse_args([_sample(word) for word in words])
+                    parser.parse_args(argv)
             except ValueError as error:
                 failures.append(f"{where}: {error}")
     assert checked > 100
