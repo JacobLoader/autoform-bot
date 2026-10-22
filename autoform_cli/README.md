@@ -432,8 +432,8 @@ code links (see the publication contract below). A Lake project in a
 subdirectory of the repository, such as `v1/`, is passed as `--lean-root v1`.
 Links name paths from the repository's top level, so its files link under `v1/`,
 and a blueprint beside it, such as `blueprint/`, under `blueprint/`. The
-generated `blueprint-pages.yml` passes `--lean-root .` to both commands; edit it
-to match.
+generated `blueprint-pages.yml` passes `--lean-root .` to `check`, `audit` and
+`render`; edit each to match.
 
 `dashboard` serves the exact built MkDocs site on `127.0.0.1`, choosing an
 available port unless `--port` is supplied, and adds a read-only live overlay
@@ -670,15 +670,29 @@ verify run, or its Pages run, deploys that older commit, which stays up until
 the next deploy.
 
 Publication and audit are deliberately different gates. The generated
-`blueprint-pages.yml` runs `check` and `render`; it does not run `audit`. An
-invalid coverage contract fails `render` before any output is written, but a
-valid contract with `MAPPED` rows publishes normally even though `audit` reports
-each one as a `declared-coverage-gap`. That is intended: a roadmap is published
-while it is still being decomposed, and the published `coverage.complete: false`
-is how a reader sees that. Coverage-role issues take the same path: `render`
-prints each one as a warning and publishes, and `audit` reports it. Run
-`autoform audit` in CI when you want mapped rows or role findings to block a
-merge.
+`blueprint-pages.yml` gates on `check` and `render`, and runs `audit` after
+`check` only as a report: the step lists every finding in the run's log, or
+`OK: roadmap audit passed`, and `continue-on-error` keeps a finding from failing
+the build or stopping a deploy. An invalid coverage contract fails `render`
+before any output is written, but a valid contract with `MAPPED` rows publishes
+normally even though `audit` reports each one as a `declared-coverage-gap`; a
+freshly scaffolded project's first run lists one, for the template's row. That
+is intended: a roadmap is published while it is still being decomposed, and the
+published `coverage.complete: false` is how a reader sees that. Coverage-role
+issues take the same path: `render` prints each one as a warning and publishes,
+and `audit` reports it. A project scaffolded before the report step can add it
+after `check`:
+
+```yaml
+      - name: Audit the roadmap (report only)
+        continue-on-error: true
+        run: >-
+          uvx --from "git+${AUTOFORM_SOURCE}@${AUTOFORM_REF}"
+          autoform audit blueprint --lean-root .
+```
+
+Run `autoform audit` without `continue-on-error` in your own CI when you want
+mapped rows or role findings to block a merge.
 
 Extract what a reader must trust for each formalized statement:
 
