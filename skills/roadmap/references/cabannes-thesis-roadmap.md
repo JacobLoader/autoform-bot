@@ -17,18 +17,13 @@ The example stays intentionally small:
 - seven DAG nodes decompose one representative “Infimum Loss” slice and its
   supporting full-supervision construction.
 
-This is a structural example, not a completion fixture. Only one of its six
-chapter clusters has pull-request-sized nodes; comparison, consistency,
-learning-rate results, and the other chapters still need source inspection and
-decomposition. Its `MAPPED` rows are unfinished, so the vault is not a valid
-finish state for a complete Roadmap invocation over the thesis. Use it to
-inspect article shape, source links, coverage, and dependencies without copying
-its partial stopping point.
-
-These nodes happen to map one-to-one to main public artifacts. That is not a
-format restriction: a node may carry several supporting definitions or
-statements when one unique main result makes the whole node a coherent pull
-request and review unit.
+This is a structural example, not a completion fixture: only one of its six
+chapter clusters has pull-request-sized nodes, and its `MAPPED` rows make the
+vault an invalid finish state for a complete Roadmap pass over the thesis. Use
+it to inspect article shape, source links, coverage, and dependencies, not as a
+stopping point to copy. Its nodes happen to map one-to-one to main public
+artifacts; a node may also carry several supporting declarations under one
+unique main result.
 
 The detailed slice uses labels verified in `infimum/core.tex` from the public
 [arXiv e-print source](https://export.arxiv.org/e-print/2209.11629):
@@ -46,15 +41,7 @@ supervision and the proof that it is non-ambiguous. They are grounded in the
 existing Lean declarations and feed the source-level supervision-recovery
 target without being presented as additional thesis statements.
 
-Use the source locators, explicit coverage contract, coherent nodes, and
-dependency links as the pattern, not the thesis mathematics or the incomplete
-scope. A user-requested staged pass may stop at a named slice; an ordinary
-complete pass continues until its adopted boundary satisfies Roadmap's finish
-contract.
-
 Existing and planned mathematics coexist in one book here: five of the seven
 nodes are already formalized, both supporting declarations and three of the
 five source targets, while Infimum loss is ready to state and Supervision
-recovery remains planned. For a repository-wide inventory, generalize that
-pattern by inventorying all in-scope project declarations rather than selecting
-only the future-work slice.
+recovery remains planned.

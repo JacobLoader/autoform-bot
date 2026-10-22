@@ -26,21 +26,19 @@ leases expire after 25 minutes, and immediately before integrating.
 
 ## Import edits
 
-Compare the import-impact report's claim keys with the JSON from
-`autoform claim list --worker-id WORKER` given its `claim_targets` and
-`affected_claim_targets`, which lists only those claims: another owner's live
-affected claim is
-a conflict, and malformed evidence is unverifiable. An expired valid claim is
-not active. Before the edit, atomically acquire the required article and module
-`claim_targets`; an already-held same-worker article claim is upgraded, not
-released first. Recheck affected keys after acquisition and before integration.
-These checks are best-effort coordination, not a lock on downstream articles.
-Before repairing any article that actually needs changes, listed as affected or
-not, atomically acquire the full held set plus its targets. On a refused
-import-claim acquisition or a recheck conflict, release the complete currently
-held import set before waiting or reporting, unless handing off an existing
-verified candidate as described below. Renew, hand off, and release the full
-import claim set together.
+Compare the import-impact report's claim keys with `autoform claim list`, as the
+[CLI reference](../../../autoform_cli/README.md#commands) describes: another
+owner's live affected claim is a conflict, malformed evidence is unverifiable,
+and an expired valid claim is not active. Before the edit, atomically acquire
+the required article and module `claim_targets`; an already-held same-worker
+article claim is upgraded, not released first. Recheck affected keys after
+acquisition and before integration; these checks are best-effort coordination,
+not a lock on downstream articles. Before repairing any article that actually
+needs changes, listed as affected or not, atomically acquire the full held set
+plus its targets. On a refused import-claim acquisition or a recheck conflict,
+release the complete currently held import set before waiting or reporting,
+unless handing off an existing verified candidate as described below. Renew,
+hand off, and release the full import claim set together.
 
 ## Integration and handoff
 
