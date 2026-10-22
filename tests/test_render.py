@@ -340,16 +340,15 @@ def test_the_site_publishes_no_second_copy_of_the_vault(tmp_path: Path) -> None:
     assert "blueprint/roadmap/top.md" in chapter
 
 
-def test_the_vault_graph_keeps_a_visible_legend(tmp_path: Path) -> None:
-    """Obsidian never loads this stylesheet, so a hover note is unreachable there."""
+def test_the_vault_summary_keeps_its_statuses_in_plain_markdown(tmp_path: Path) -> None:
+    """Obsidian never loads this stylesheet, so the site's legend markup would be inert there."""
     from autoform_cli.visualize import export_graph
 
     project = _project(tmp_path)
     document = export_graph(project / "blueprint").read_text(encoding="utf-8")
 
-    assert "bp-legend-icon" not in document
-    assert "## Legend" in document
-    assert 'class="bp-legend-grid"' in document
+    assert "| Status | Count | Meaning |" in document
+    assert "bp-legend" not in document and "<span" not in document
 
 
 def test_the_site_carries_its_own_mark(tmp_path: Path) -> None:
@@ -1520,20 +1519,142 @@ def test_both_colour_schemes_are_published(tmp_path: Path) -> None:
     assert ".navbar" not in css
     assert "data-bs-theme" not in css
 
-    # A rendered diagram cannot be restyled, so the script owns both palettes
-    # and redraws when the scheme changes.
+    # A rendered diagram cannot be restyled, so the script redraws authored
+    # diagrams in Mermaid's theme for each scheme. Generated graphs are the
+    # explorer, so it injects no status palette.
     assert '"light"' in script and '"dark"' in script
     assert "data-md-color-scheme" in script
     assert "MutationObserver" in script
-    assert "bindFunctions" in script
-    for state in STATES:
-        assert f"classDef {state.key} fill:{state.fill}," in script
-        assert f"classDef {state.key} fill:{state.dark_fill}," in script
-    # Both palettes ship: the light chapter box and the dark one.
-    assert "classDef scope fill:#EBF2FE" in script
-    assert "classDef scope fill:#1C1D1F" in script
-    assert "classDef boundary" in script
-    assert "classDef focus" in script
+    assert "classDef" not in script
+
+
+_MERMAID_HARNESS = r"""
+const fs = require("fs");
+const vm = require("vm");
+const source = fs.readFileSync(process.argv[2], "utf8");
+
+function settle() { return new Promise((resolve) => setImmediate(resolve)); }
+
+async function run(blocks, preloaded) {
+  const calls = [], injected = [], observers = [], errors = [], selectors = [];
+  let scheme = null, inFlight = 0, mostInFlight = 0;
+  const elements = blocks.map((block) => ({className: block[0], textContent: block[1], innerHTML: ""}));
+  const mermaid = {
+    initialize: (config) => calls.push(
+      ["initialize", config.securityLevel, config.htmlLabels, config.flowchart.htmlLabels, config.theme, config.secure,
+       config.startOnLoad]
+    ),
+    // A render settles on a later turn, so two drawn at once would overlap.
+    render: (id, text) => {
+      calls.push(["render", text]);
+      inFlight += 1;
+      mostInFlight = Math.max(mostInFlight, inFlight);
+      return settle().then(() => {
+        inFlight -= 1;
+        if (text.indexOf("broken") >= 0) throw new Error("parse error");
+        return {svg: "<svg>" + text + "</svg>", bindFunctions: () => calls.push(["bind"])};
+      });
+    },
+  };
+  const context = {
+    console: {error: (message) => errors.push(message)},
+    document: {
+      // Only the diagrams match, so a broader selector finds none.
+      querySelectorAll: (selector) => { selectors.push(selector); return selector === ".mermaid" ? elements : []; },
+      body: {getAttribute: () => scheme},
+      createElement: () => ({}),
+      head: {appendChild: (element) => injected.push(element)},
+    },
+    MutationObserver: function (callback) { observers.push(callback); this.observe = () => {}; },
+  };
+  if (preloaded) context.mermaid = mermaid;
+  vm.createContext(context);
+  vm.runInContext(source, context);
+  if (!preloaded && injected.length) { context.mermaid = mermaid; injected[0].onload(); }
+  // A switch to the dark scheme while the first pass is still drawing redraws
+  // every diagram, still locked down, once that pass is done.
+  scheme = "slate";
+  observers.forEach((callback) => callback([{attributeName: "data-md-color-scheme"}]));
+  for (let turn = 0; turn < 100; turn++) await settle();
+  return {
+    calls, errors, mostInFlight, selectors,
+    sources: injected.map((element) => element.src),
+    drawn: elements.map((element) => element.innerHTML),
+  };
+}
+
+(async () => {
+  console.log(JSON.stringify({
+    none: await run([], false),
+    loaded: await run(JSON.parse(process.argv[3]), false),
+    preloaded: await run([["mermaid", "graph TD\n  c --> d"]], true),
+  }));
+})();
+"""
+
+
+def test_the_site_draws_authored_diagrams_locked_down_and_only_where_a_page_has_one(tmp_path: Path) -> None:
+    """Generated maps are the explorer, so every diagram is one an author wrote.
+
+    Strict mode drops click callbacks and labels draw as plain text, and a page
+    without a diagram never loads Mermaid, while a site configuration that
+    still loads it globally keeps working. An element of the class render once
+    gave its own graphs is drawn the same way, and no palette is added to any
+    diagram. Diagrams are drawn one at a time, a scheme change's redraw waits
+    for the pass before it, and a diagram that fails leaves the others drawn.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available")
+    script = tmp_path / "blueprint-mermaid.js"
+    script.write_text(render_module._mermaid_script(), encoding="utf-8")
+    harness = tmp_path / "harness.js"
+    harness.write_text(_MERMAID_HARNESS, encoding="utf-8")
+    blocks = [
+        ("mermaid bp-graph", "graph LR\n  a --> b"),
+        ("mermaid", 'flowchart LR\n  A\n  click A call eval("document.title=1")'),
+        ("mermaid", "sequenceDiagram\n  A->>B: hi"),
+        ("mermaid", "graph LR\n  broken"),
+        ("mermaid", "graph TD\n  later --> drawn"),
+    ]
+
+    result = json.loads(
+        subprocess.run(
+            [node, str(harness), str(script), json.dumps(blocks)], capture_output=True, text=True, check=True
+        ).stdout
+    )
+
+    assert result["none"] == {
+        "calls": [], "errors": [], "mostInFlight": 0, "selectors": [".mermaid"], "sources": [], "drawn": []
+    }
+    loaded = result["loaded"]
+    assert loaded["selectors"] == [".mermaid"]
+    assert loaded["sources"] == [render_module.MERMAID_LIBRARY]
+    # Each diagram is drawn from its source as written, strictly and with
+    # plain-text labels that no directive can turn back into HTML, the whole
+    # light pass before the dark one.
+    secure = ["secure", "securityLevel", "startOnLoad", "maxTextSize", "suppressErrorRendering", "maxEdges", "htmlLabels"]
+    assert loaded["calls"] == [
+        call
+        for theme in ("neutral", "dark")
+        for _classes, diagram in blocks
+        for call in (
+            ["initialize", "strict", False, False, theme, secure, False],
+            ["render", diagram],
+            *([] if "broken" in diagram else [["bind"]]),
+        )
+    ]
+    assert loaded["mostInFlight"] == 1
+    assert loaded["errors"] == ["autoform: a diagram could not be drawn"] * 2
+    assert loaded["drawn"] == ["" if "broken" in diagram else f"<svg>{diagram}</svg>" for _classes, diagram in blocks]
+    preloaded = result["preloaded"]
+    assert preloaded["sources"] == []
+    assert preloaded["calls"][:3] == [
+        ["initialize", "strict", False, False, "neutral", secure, False],
+        ["render", "graph TD\n  c --> d"],
+        ["bind"],
+    ]
+    assert preloaded["drawn"] == ["<svg>graph TD\n  c --> d</svg>"]
 
 
 def test_the_generated_script_is_valid_javascript(tmp_path: Path) -> None:
@@ -1547,10 +1668,9 @@ def test_the_generated_script_is_valid_javascript(tmp_path: Path) -> None:
         assert result.returncode == 0, result.stderr
 
 
-def test_render_draws_no_graph_loose(tmp_path: Path) -> None:
+def test_render_writes_no_mermaid_graph(tmp_path: Path) -> None:
     """The explorer draws render's maps, so no page render writes holds a
-    graph of the class the site's diagram script would draw loose, and every
-    diagram on the site is drawn strictly."""
+    Mermaid graph, and every diagram on the site is one an author wrote."""
 
     _render(tmp_path)
     out = tmp_path / "out"
@@ -1560,73 +1680,6 @@ def test_render_draws_no_graph_loose(tmp_path: Path) -> None:
         assert "```mermaid" not in page, name
         assert 'class="mermaid' not in page, name
         assert 'class="bp-dag-viewer"' in page, name
-
-
-_MERMAID_HARNESS = r"""
-const fs = require("fs");
-const calls = [];
-let level = null;
-function element(classes, text) {
-  return {classes: classes, textContent: text, innerHTML: "",
-          classList: {contains: function (name) { return classes.indexOf(name) >= 0; }}};
-}
-const elements = [
-  element(["mermaid", "bp-graph"], "graph LR\n  n0"),
-  element(["mermaid"], 'flowchart LR\n  A\n  click A call eval("document.title=1")'),
-  element(["mermaid"], "sequenceDiagram\n  A->>B: hi"),
-];
-global.document = {
-  readyState: "complete",
-  body: {getAttribute: function () { return null; }},
-  querySelectorAll: function (selector) {
-    return selector === ".mermaid" ? elements : [];
-  },
-};
-global.MutationObserver = function () { this.observe = function () {}; };
-global.mermaid = {
-  initialize: function (config) { level = config.securityLevel; },
-  render: function (id, source) {
-    calls.push({level: level, source: source});
-    return Promise.resolve({svg: "<svg>" + id + "</svg>"});
-  },
-};
-eval(fs.readFileSync(process.argv[2], "utf8"));
-setTimeout(function () {
-  console.log(JSON.stringify({calls: calls, drawn: elements.map(function (e) { return e.innerHTML; })}));
-}, 0);
-"""
-
-
-def test_the_script_draws_an_authors_diagram_strictly(tmp_path: Path) -> None:
-    """Loose security, which render's graphs need for their links, runs a
-    click's call as script and draws a label's markup, so only the graphs
-    render marked are drawn loose. An author's diagram is drawn strictly,
-    and without the flowchart palette, which another kind of diagram could
-    not parse."""
-
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node is not available")
-    _render(tmp_path)
-    harness = tmp_path / "harness.js"
-    harness.write_text(_MERMAID_HARNESS, encoding="utf-8")
-
-    result = subprocess.run(
-        [node, str(harness), str(tmp_path / "out/javascripts/blueprint-mermaid.js")],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    report = json.loads(result.stdout)
-
-    assert report["drawn"] == ["<svg>bp-graph-0</svg>", "<svg>bp-graph-1</svg>", "<svg>bp-graph-2</svg>"]
-    assert [(call["level"], call["source"].split("\n")[0]) for call in report["calls"]] == [
-        ("loose", "graph LR"),
-        ("strict", "flowchart LR"),
-        ("strict", "sequenceDiagram"),
-    ]
-    assert "classDef" in report["calls"][0]["source"]
-    assert not any("classDef" in call["source"] for call in report["calls"][1:])
 
 
 @pytest.mark.parametrize("destination", ("same", "child", "parent"))
@@ -1819,13 +1872,13 @@ def test_anchored_links_resolve_only_entries_that_are_read(
         for index in range(10_000)
     }
     calls: list[tuple[Path, Path, str]] = []
-    original_relative_link = render_module.mermaid.relative_link
+    original_relative_link = render_module.relative_link
 
     def relative_link(target: Path, output: Path, extension: str) -> str:
         calls.append((target, output, extension))
         return original_relative_link(target, output, extension)
 
-    monkeypatch.setattr(render_module.mermaid, "relative_link", relative_link)
+    monkeypatch.setattr(render_module, "relative_link", relative_link)
     links = render_module._anchored_links(targets, page)
 
     assert calls == []
@@ -2781,17 +2834,15 @@ def test_render_leaves_html_comments_out_of_the_site_but_not_out_of_code(tmp_pat
 
 
 def _count_relative_links(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
-    """Record the target of every `mermaid.relative_link` call."""
-    from autoform_cli import mermaid
-
+    """Record the target of every `relative_link` call render makes."""
     calls: list[Path] = []
-    relative_link = mermaid.relative_link
+    relative_link = render_module.relative_link
 
     def counting(target: Path, output: Path, link_extension: str) -> str:
         calls.append(target)
         return relative_link(target, output, link_extension)
 
-    monkeypatch.setattr(mermaid, "relative_link", counting)
+    monkeypatch.setattr(render_module, "relative_link", counting)
     return calls
 
 

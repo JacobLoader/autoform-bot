@@ -412,8 +412,8 @@ scope limits, JSON fields, nullability, and diagnostic codes.
 pairs. These are the pairs `project new` can lock offline; it does not resolve
 others, which it writes unlocked for `lake update`.
 
-Publishing a project runs four steps in order: validate, write the Mermaid
-graph into the vault, render the site source, then strict-build the site.
+Publishing a project runs four steps in order: validate, refresh the vault's
+dependency summary, render the site source, then strict-build the site.
 
 ```bash
 uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform check blueprint --lean-root .
@@ -1328,11 +1328,22 @@ worktree shares and Git does not track; outside Git they fall back to
 `AUTOFORM_DEBRIEF_DIR` to an absolute path outside the Git working tree to
 choose another store.
 
-Write the Mermaid dependency graph into the vault, where Obsidian renders it:
+Refresh the vault's dependency summary, `blueprint/dependencies.md`:
 
 ```bash
 autoform-visualize blueprint
 ```
+
+The summary is plain Markdown built from the explorer's project map, so it
+reads the same in Obsidian, to an agent, and on GitHub where the repository
+tracks it (the scaffolded vault ignores it). It holds a table of statuses with
+their meanings; one row per chapter with its items, its work ready to pick up,
+and the chapters it depends on and is used by, marking a dependency only a
+proof needs; the articles themselves while the roadmap has at most 120; and how
+to open the explorer, which draws the whole graph. Its front matter carries
+`kind: graph` and `autoform_generated: true`. It replaces a missing page, one it
+wrote, or the Mermaid page earlier versions wrote, and refuses any other page
+with exit status 2.
 
 Build the publishable site source — a book overview, aggregate progress,
 statement boxes with collapsed dependency details, a multi-scale dependency
@@ -1362,6 +1373,10 @@ one canvas. Every generated site projection uses the same deterministic
 JSON-derived Canvas and semantic-DOM explorer with search, filters, pan/zoom,
 and hash-routed node neighborhoods, so none inherits Mermaid's text, edge, or
 SVG-size ceilings. Authored Mermaid remains supported in the vault and book.
+The site draws an authored diagram in Mermaid's strict mode, with labels as
+plain text, and loads Mermaid only on a page that has one: click callbacks and
+HTML in labels do not work there, while a link to a URL does, through
+Mermaid's URL sanitizer.
 A persistent hierarchy rail keeps the current ancestry and immediate contents
 visible, except on phones and, up to 1,200 px wide, under open details, while
 the head shows the trail. The project overview groups readable topic cards by
@@ -1371,17 +1386,18 @@ shrinking it.
 Breadcrumbs return through the explorer hierarchy to the book (to the home page
 for a roadmap with neither a root article nor root leaves), and every formal
 statement links to the smallest explorer scope containing that item. Render
-writes no Mermaid graph of its own, so `javascripts/blueprint-mermaid.js` draws
-every ```` ```mermaid ```` diagram an article holds strictly, its labels as
-text and with no click. The explorer shows a title as typed, and a link render
+writes no Mermaid graph of its own, so every diagram on the site is one an
+article holds. The explorer shows a title as typed, and a link render
 writes from file and folder names, such as the book's previous and next links
 and the links between statements, is percent-encoded, so a name can make no
 link a `javascript:` URL; a Markdown link render moves keeps its decoded
 spelling and starts with `./` when its first segment, a folder's or a file's
 name, holds a colon, for the same reason. Point
 `mkdocs.yml` at `docs_dir: site-src` and enable `md_in_html` plus a
-`pymdownx.superfences` mermaid fence; see the [repository
-example](../skills/setup/assets/cabannes-thesis-project/mkdocs.yml).
+`pymdownx.superfences` mermaid fence; see the [setup
+template](templates/mkdocs.yml). The
+generated `javascripts/blueprint-mermaid.js` loads Mermaid itself, so the
+configuration lists that script but not the Mermaid library.
 
 This shared-explorer layout replaces the `dependencies/nodes/*.html` focus
 pages of earlier sites: a statement's dependency link is now
@@ -1511,6 +1527,20 @@ What an existing repository meets when it moves to this version:
     `module` for a module catalog, while the schema stays
     `autoform-search/v1`: `autoform-search/v2` already names the `--library`
     output. A consumer that rejects unknown keys must accept the new one.
+12. `autoform-visualize` writes a plain-Markdown dependency summary to
+    `blueprint/dependencies.md` in place of the Mermaid graph. It replaces a
+    missing page, its own, or the Mermaid page earlier versions wrote, and
+    refuses any other page with exit status 2. Its `--link-extension` option
+    is gone: the summary is read in the vault, so its links name the Markdown
+    files.
+13. The site draws authored Mermaid diagrams in strict mode, with plain-text
+    labels, and only on pages that have one, so click callbacks and HTML in
+    labels stop working; links to URLs still work. The site no longer appends
+    the status palette's `classDef` lines, so a class such as
+    `A:::fully_proved` is no longer coloured. A `mkdocs.yml` that loads
+    Mermaid from the CDN keeps working, and may drop that line once CI's
+    `AUTOFORM_REF` includes this change: a render pinned before it needs the
+    line to draw any diagram.
 
 ## Validation
 

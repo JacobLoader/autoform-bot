@@ -1111,7 +1111,6 @@ _FENCE_RULE = (
         ("``` { .lean #anchor }\nx\n```", "{ .lean #anchor }"),
         ("- item\n\n    ```{.text .bp-mark}\n    x\n    ```", "{.text .bp-mark}"),
         ("> ~~~{.text .mermaid}\n> graph LR\n> ~~~", "{.text .mermaid}"),
-        # The site draws render's own graphs, of this class, with loose security.
         ("```{.text .mermaid .bp-graph}\ngraph LR\n```", "{.text .mermaid .bp-graph}"),
     ],
 )
