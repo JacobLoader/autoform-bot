@@ -5,8 +5,76 @@ declaration says what the blueprint claims: its statement and, transitively,
 every project definition that statement rests on. Proofs are the kernel's
 problem. The closure comes from elaborated terms, read back from a small probe
 run with ``lake env lean``, never from source text. The output is deterministic
-and path-free, and nothing here writes into the vault. The rationale is in the
-``autoform skeleton`` section of ``autoform_cli/README.md``.
+and path-free, and nothing here writes into the vault. The user-facing contract
+is the ``autoform skeleton`` section of ``autoform_cli/README.md``; the
+mechanics below are what it leaves out.
+
+Probe. For each module that declares a selected target, the probe imports that
+module and the helper module ``autoform-skeleton-helper`` (compiled with the
+project's toolchain and no project module in scope, its constants all in the
+``AutoformSkeleton`` namespace) and makes one fully qualified call, with no
+``open`` or ``set_option``. It sets exactly two printing options,
+``pp.funBinderTypes`` and ``pp.coercions.types``, so a reader sees what each
+binder ranges over and where each cast lands. A lexical closure would miss what
+``open``, notation, implicit instances, and auto-bound variables bring in, and
+every miss would silently shrink the trusted surface. When the Lake freshness
+check fails other than as stale, the error keeps the first 20 lines of Lake's
+output and counts the rest. Each name is probed in the module whose source the
+lexical index finds it in; a name with one public declaration beside private
+ones is probed in the public one's module. An error the probe meets while
+reading one declaration leaves only that declaration unresolved. A reason
+quotes at most 2,000 characters of Lean's output, shows the probe's temporary
+directory as ``<scratch>`` and project paths relative to the project, and so
+reads the same on every run.
+
+Folding. Only companions that Lean's environment records as generated are
+folded onto their parent; an internal-looking name alone is not proof of
+provenance. Rangeless internal-detail declarations, such as ``f._unary``,
+``f._f``, and ``S.x._default``, are bound by their elaborated material and
+marked ``-- source not shown`` rather than passed off as their parent's source.
+``partial def`` is detected from the environment, not the source text.
+
+Report. Declarations in one project share most of what they trust, so the
+report states each boundary module's identity once, in ``boundary_modules``,
+and each trusted declaration's and external constant's semantic material once
+per root module that reaches it, in ``trusted`` and ``semantics``, keyed by
+root module, then name: a name means what the root module's environment
+declares under it. A report therefore grows with the number of root modules
+times the material they share. The probe states each elaborated subterm of 256
+bytes or more once, since proof terms repeat large subterms; the report keeps
+each material's full text. Two probes that disagree about one module's files
+stop the command.
+
+Resources. Probes run one per CPU available to the process, at most eight; on
+Python 3.13 and later ``PYTHON_CPU_COUNT`` sets that count. Each probe's
+budget is its own rather than a share of one deadline, so its result does not
+depend on which probes ran before it, and an extraction can run for one probe
+budget per round of parallel probes. The parsed records, at most 512 Mi
+characters of semantic material per probed module, stay in memory until the
+report is built.
+
+Drift hash boundary. The compiled identities are every part a module-system
+build writes for each module of the transitive external boundary. Only modules
+whose ``.olean`` lies in the toolchain's own ``lib/lean`` count as core and
+stay outside the boundary; a dependency module named ``Lake.Foo`` is external
+like any other. Compiler-generated matcher and recursor bodies stay in the hash
+although they are folded out of the reading list.
+
+Comment stripping. A source is parsed with the tokens of a file that imports
+its root module and the scoped notation of the namespaces the declaration sits
+in and the file opens above it, but not the file's ``local`` notation. Source
+with a known non-builtin token containing ``--`` or ``/-`` is withheld unless
+that token was globally active through an import of the source's own module,
+since the probe cannot reconstruct when a same-module token was declared or
+where a scoped token was active. What the probe cannot see, and so can get
+wrong (showing code as a comment or a comment as code): a ``local`` token; a
+token without ``--`` or ``/-`` that still moves where a comment or a string
+starts (with ``++"`` a token, ``x ++" -- y "`` holds a comment, and without it
+a string), when the probe has it and the file did not have it there, as for one
+declared later in the same module, or the reverse, as for a scoped token the
+file activated in a way the probe does not reconstruct; and, under the module
+system, a token that only a private import's imports declare, which Lean does
+not load for the file.
 """
 
 from __future__ import annotations
