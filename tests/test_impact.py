@@ -1861,6 +1861,23 @@ def test_import_closure_scope_refuses_a_package_file_that_may_import_the_closure
         module_import_impact(project, _BASE_ID, "Demo.A", lean_root=lean_root, module_scope="import-closure")
 
 
+def test_import_closure_scope_refuses_a_path_dependency_file_outside_the_lean_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = _blueprint_project(tmp_path, "Demo")
+    lean_root = _closure_lean_root(tmp_path)
+    (lean_root / "lake-manifest.json").write_text(
+        json.dumps({"packagesDir": ".lake/packages", "packages": [{"type": "path", "dir": "../D", "name": "D"}]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "D").mkdir()
+    (tmp_path / "D" / "X.lean").write_text("import Demo.B\n", encoding="utf-8")
+    _stub_probe(monkeypatch)
+
+    with pytest.raises(ImpactError, match=r"D/X\.lean may import Demo\.B"):
+        module_import_impact(project, _BASE_ID, "Demo.A", lean_root=lean_root, module_scope="import-closure")
+
+
 def test_cli_reports_import_impact_without_refusing_the_edit(tmp_path: Path, monkeypatch, capsys) -> None:
     project = _blueprint_project(tmp_path, "Demo")
     lean_root = _stub_lean_root(tmp_path)

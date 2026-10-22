@@ -452,22 +452,46 @@ def import_closure(
     return closure
 
 
-def _outside_sources(root: Path, inventoried: Collection[Path]) -> Iterator[tuple[str, bytes]]:
-    """Every ``.lean`` file under ``root`` the captured inventory lacks, dependency packages included."""
+def _raise(error: OSError) -> None:
+    raise error
 
+
+def _outside_sources(root: Path, inventoried: Collection[Path]) -> Iterator[tuple[str, bytes]]:
+    """Every ``.lean`` file the captured inventory lacks under ``root`` and the manifest's outside package dirs."""
+
+    tops = [root]
+    manifest_path = root / "lake-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+    if isinstance(manifest, dict):
+        dirs = [manifest.get("packagesDir")]
+        packages = manifest.get("packages")
+        if isinstance(packages, list):
+            dirs += [
+                package.get("dir")
+                for package in packages
+                if isinstance(package, dict) and package.get("type") == "path"
+            ]
+        real_root = Path(os.path.realpath(root))
+        for entry in dirs:
+            if isinstance(entry, str):
+                top = Path(os.path.realpath(root / entry))
+                if top.is_dir() and not top.is_relative_to(real_root):
+                    tops.append(top)
     seen: set[str] = set()
-    for directory, names, files in os.walk(root, followlinks=True):
-        real = os.path.realpath(directory)
-        if real in seen:
-            names[:] = []
-            continue
-        seen.add(real)
-        names[:] = [name for name in names if name != ".git"]
-        for file in files:
-            path = Path(directory, file)
-            relative = path.relative_to(root)
-            if file.endswith(".lean") and relative not in inventoried:
-                yield relative.as_posix(), path.read_bytes()
+    for top in tops:
+        # An unreadable directory raises rather than hiding a file that may import the closure.
+        for directory, names, files in os.walk(top, onerror=_raise, followlinks=True):
+            real = os.path.realpath(directory)
+            if real in seen:
+                names[:] = []
+                continue
+            seen.add(real)
+            names[:] = [name for name in names if name != ".git"]
+            for file in files:
+                path = Path(directory, file)
+                relative = path.relative_to(root) if top == root else path
+                if file.endswith(".lean") and relative not in inventoried:
+                    yield relative.as_posix(), path.read_bytes()
 
 
 def _validated_module_evidence(
