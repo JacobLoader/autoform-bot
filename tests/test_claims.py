@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
@@ -1806,7 +1807,7 @@ def test_git_runs_without_a_controlling_terminal(tmp_path: Path) -> None:
     board = _scratch_board(tmp_path)
 
     probe = _alias("tty", "(exec 3</dev/tty) 2>/dev/null && echo tty || echo none")
-    assert board._git(probe).stdout.strip() == "none"
+    assert board._git(probe, isolated=True).stdout.strip() == "none"
 
 
 def test_git_reads_no_input_it_was_not_given(tmp_path: Path) -> None:
@@ -1844,9 +1845,23 @@ def test_git_reports_its_own_time_limit_as_a_transport_error(
     monkeypatch.setattr(claims, "_GIT_CALL_TIMEOUT_S", 0.5)
 
     with pytest.raises(claims.ClaimTransportError) as failed:
-        board._git(_alias("hang", "sleep 30"), deadline=time.monotonic() + 60)
+        board._git(_alias("hang", "sleep 30"))
 
     assert not isinstance(failed.value, claims.ClaimTimeoutError)
+
+
+def test_git_lets_a_caller_deadline_outlast_its_own_time_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    board = _scratch_board(tmp_path)
+    monkeypatch.setattr(claims, "_GIT_CALL_TIMEOUT_S", 0.5)
+    started = time.monotonic()
+
+    with pytest.raises(claims.ClaimTimeoutError) as timed_out:
+        board._git(_alias("hang", "sleep 30"), deadline=started + 1.5, step="hanging")
+
+    assert timed_out.value.step == "hanging"
+    assert time.monotonic() - started >= 1.4
 
 
 @pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX")
@@ -1859,6 +1874,7 @@ def test_git_kills_what_it_started_when_it_times_out(tmp_path: Path) -> None:
             _alias("spawn", f"sleep 30 & echo $! > '{pid_file}'; wait"),
             deadline=time.monotonic() + 1,
             step="spawning",
+            isolated=True,
         )
 
     _assert_gone(int(pid_file.read_text()))
@@ -1894,7 +1910,7 @@ def test_git_kills_its_command_when_progress_raises(tmp_path: Path, monkeypatch:
         raise BrokenPipeError("stderr closed")
 
     with pytest.raises(BrokenPipeError):
-        board._git(_alias("spawn", f"sleep 30 & echo $! > '{pid_file}'; wait"), progress=broken)
+        board._git(_alias("spawn", f"sleep 30 & echo $! > '{pid_file}'; wait"), progress=broken, isolated=True)
 
     _assert_gone(int(pid_file.read_text()))
 
@@ -2169,7 +2185,7 @@ def test_git_ends_with_its_caller_when_the_caller_is_terminated(tmp_path: Path) 
         f"board = claims.ClaimBoard(pathlib.Path({str(tmp_path / 'unused.git')!r}), 'w', "
         f"pathlib.Path({str(tmp_path / 'scratch')!r}))\n"
         "board._ensure_scratch()\n"
-        f"board._git({_alias('spawn', f'sleep 30 & echo $! > {pid_file}; wait')!r})\n"
+        f"board._git({_alias('spawn', f'sleep 30 & echo $! > {pid_file}; wait')!r}, isolated=True)\n"
     )
     caller = subprocess.Popen([sys.executable, "-c", script], cwd=Path(claims.__file__).parents[1])
     started_by = time.monotonic() + 10
@@ -2181,3 +2197,115 @@ def test_git_ends_with_its_caller_when_the_caller_is_terminated(tmp_path: Path) 
 
     assert caller.wait(timeout=10) == -signal.SIGTERM
     _assert_gone(int(pid_file.read_text()))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX")
+def test_git_shares_its_callers_process_group_unless_isolated(tmp_path: Path) -> None:
+    board = _scratch_board(tmp_path)
+    probe = _alias("pgid", "ps -o pgid= -p $$")
+
+    assert int(board._git(probe).stdout) == os.getpgrp()
+    assert int(board._git(probe, isolated=True).stdout) != os.getpgrp()
+
+
+def test_list_runs_every_git_command_isolated_except_cleanup(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire("a", ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    calls = _counting(reader, monkeypatch)
+
+    reader.list()
+
+    isolated = {args[0]: bool(kwargs.get("isolated")) for args, kwargs in calls}
+    assert isolated.pop("update-ref") is False
+    assert {"fetch", "for-each-ref", "cat-file"} <= isolated.keys()
+    assert all(isolated.values())
+
+
+@pytest.mark.skipif(os.name != "posix", reason="signals are POSIX")
+def test_git_reports_a_termination_its_caller_survives_as_a_transport_error(tmp_path: Path) -> None:
+    board = _scratch_board(tmp_path)
+    seen: list[int] = []
+    previous = signal.signal(signal.SIGTERM, lambda signum, frame: seen.append(signum))
+    timer = threading.Timer(0.5, os.kill, (os.getpid(), signal.SIGTERM))
+    try:
+        timer.start()
+        with pytest.raises(claims.ClaimTransportError, match="SIGTERM"):
+            board._git(_alias("hang", "sleep 30"), isolated=True)
+    finally:
+        timer.cancel()
+        signal.signal(signal.SIGTERM, previous)
+
+    assert seen == [signal.SIGTERM]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups and signals are POSIX")
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
+def test_interrupting_an_acquire_leaves_no_ref_lock_on_the_board(
+    tmp_path: Path, board_repo: Path, signum: int
+) -> None:
+    marker = tmp_path / "locked"
+    hook = board_repo / "hooks" / "reference-transaction"
+    hook.parent.mkdir(exist_ok=True)
+    # Hold the claim ref's lock, as a push interrupted mid-update does.
+    hook.write_text(f'#!/bin/sh\nif [ "$1" = prepared ]; then touch \'{marker}\'; sleep 30; fi\n')
+    hook.chmod(0o755)
+    script = (
+        "import pathlib\n"
+        "from autoform_cli import claims\n"
+        f"board = claims.ClaimBoard(pathlib.Path({str(board_repo)!r}), 'w', pathlib.Path({str(tmp_path / 'scratch')!r}))\n"
+        "board.acquire('x', ttl=600)\n"
+    )
+    # Its own session stands in for a terminal's foreground process group.
+    caller = subprocess.Popen(
+        [sys.executable, "-c", script], cwd=Path(claims.__file__).parents[1], start_new_session=True
+    )
+    try:
+        started_by = time.monotonic() + 20
+        while not marker.exists():
+            assert time.monotonic() < started_by, "the push never took the claim ref's lock"
+            time.sleep(0.05)
+
+        os.killpg(caller.pid, signum)
+        caller.wait(timeout=10)
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(caller.pid, signal.SIGKILL)
+
+    lock = board_repo / "refs" / "autoform-claims" / "x.lock"
+    gone_by = time.monotonic() + 5
+    while lock.exists() and time.monotonic() < gone_by:
+        time.sleep(0.05)
+    assert not lock.exists()
+
+
+def test_list_of_targets_reads_only_them_on_a_board_of_thousands(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Thousands of claims and unrelated branches, as a busy project's origin holds.
+    first, last = _plant_lease(board_repo, "k0000"), _plant_lease(board_repo, "k3549")
+    refs = {f"{claims.CLAIM_REF_PREFIX}k{index:04d}": first for index in range(1, 3549)}
+    refs.update({f"refs/heads/branch-{index}": first for index in range(2000)})
+    refs[f"{claims.CLAIM_REF_PREFIX}k0000"] = first
+    refs[f"{claims.CLAIM_REF_PREFIX}k3549"] = last
+    for ref in (f"{claims.CLAIM_REF_PREFIX}k0000", f"{claims.CLAIM_REF_PREFIX}k3549"):
+        _git("update-ref", "-d", ref, cwd=board_repo)
+    (board_repo / "packed-refs").write_text(
+        "# pack-refs with: peeled fully-peeled sorted \n" + "".join(f"{oid} {ref}\n" for ref, oid in sorted(refs.items()))
+    )
+    reader = _board(tmp_path, board_repo, "worker-b")
+    calls = _counting(reader, monkeypatch)
+    started = time.monotonic()
+
+    listed = reader.list(["k3549", "k0000", "absent"], timeout=30)
+
+    assert [(lease["_key"], lease["_oid"], lease["_malformed"]) for lease in listed] == [
+        ("k0000", first, False),
+        ("k3549", last, False),
+    ]
+    [fetch] = [kwargs for args, kwargs in calls if args[0] == "fetch"]
+    assert len(str(fetch["input_text"]).splitlines()) == 2
+    assert len(calls) <= 6
+    assert time.monotonic() - started < 15

@@ -57,15 +57,18 @@ _NEGOTIATION_TIP_WARNING = "warning: ignoring --negotiation-tip="
 # this grace after a failed push is reported as blocking the claim.
 _LOCK_GRACE_S = 2.0
 _LOCK_POLL_S = 0.05
-# One git command's time limit, whatever deadline its caller has.
+# One git command's time limit when its caller sets no deadline.
 _GIT_CALL_TIMEOUT_S = 120.0
 # A step still running after this long is named to a progress callback.
 _PROGRESS_AFTER_S = 5.0
+# How long a stopped git command gets to clean up, such as removing a ref's
+# lock file, before it is killed.
+_STOP_GRACE_S = 1.0
 # How long a killed git command gets to be reaped.
 _KILL_GRACE_S = 5.0
-# Each git command leads its own process group, without a controlling
-# terminal, so ssh cannot prompt and a timeout also ends git's transport.
-_NEW_PROCESS_GROUP: dict[str, Any] = (
+# An isolated git command leads its own process group, without a controlling
+# terminal, so ssh cannot prompt and stopping it also ends git's transport.
+_OWN_PROCESS_GROUP: dict[str, Any] = (
     {"start_new_session": True}
     if os.name == "posix"
     else {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
@@ -316,12 +319,13 @@ class _Terminated(BaseException):
 
 @contextlib.contextmanager
 def _git_ends_with_its_caller():
-    """Let SIGTERM and SIGHUP end a running claim git command along with its caller.
+    """Let SIGTERM and SIGHUP end a running isolated claim git command along with its caller.
 
     The command leads its own session, so a signal sent to the caller's process
     group no longer reaches it. In the main thread, such a signal is raised as
-    an exception, which ``ClaimBoard._git`` answers by killing the command's
-    group; the signal is then delivered again to the handler it replaced.
+    an exception, which ``ClaimBoard._git`` answers by stopping the command's
+    group; the signal is then delivered again to the handler it replaced. A
+    caller whose handler returns gets a ``ClaimTransportError``.
     """
     if os.name != "posix" or threading.current_thread() is not threading.main_thread():
         yield
@@ -345,7 +349,8 @@ def _git_ends_with_its_caller():
             signal.signal(signum, handler)
         previous.clear()
         signal.raise_signal(exc.signum)
-        raise
+        name = signal.Signals(exc.signum).name
+        raise ClaimTransportError(f"claim git command interrupted by {name}") from None
     finally:
         for signum, handler in previous.items():
             signal.signal(signum, handler)
@@ -369,22 +374,36 @@ def _communicate(
     return process.communicate(data, timeout=limit)
 
 
-def _kill_group(process: subprocess.Popen[Any]) -> None:
-    """Kill a git command and everything it started, then reap it."""
-    with contextlib.suppress(OSError, subprocess.SubprocessError):
-        if os.name == "posix":
-            # git is not reaped yet, so its pid still names its process group.
-            os.killpg(process.pid, signal.SIGKILL)
-        else:
-            subprocess.run(
-                ["taskkill", "/T", "/F", "/PID", str(process.pid)],
-                capture_output=True,
-                timeout=_KILL_GRACE_S,
-            )
-    with contextlib.suppress(OSError):
-        process.kill()
-    with contextlib.suppress(subprocess.TimeoutExpired):
-        process.communicate(timeout=_KILL_GRACE_S)
+def _stop(process: subprocess.Popen[Any], *, group: bool) -> None:
+    """Stop a git command: SIGTERM, a grace to clean up, then SIGKILL; then reap it.
+
+    With ``group``, the command leads its own process group and the signals
+    reach everything it started.
+    """
+    if os.name != "posix":
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            if group:
+                subprocess.run(
+                    ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                    capture_output=True,
+                    timeout=_KILL_GRACE_S,
+                )
+            process.kill()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.communicate(timeout=_KILL_GRACE_S)
+        return
+    for signum, grace in ((signal.SIGTERM, _STOP_GRACE_S), (signal.SIGKILL, _KILL_GRACE_S)):
+        with contextlib.suppress(OSError):
+            if group:
+                # git is not reaped yet, so its pid still names its process group.
+                os.killpg(process.pid, signum)
+            else:
+                process.send_signal(signum)
+        try:
+            process.communicate(timeout=grace)
+            return
+        except subprocess.TimeoutExpired:
+            continue
 
 
 class ClaimBoard:
@@ -410,23 +429,31 @@ class ClaimBoard:
         deadline: float | None = None,
         step: str = "running git",
         progress: Callable[[str], None] | None = None,
+        isolated: bool = False,
     ) -> subprocess.CompletedProcess[Any]:
         """Run git in the scratch board; with ``input_bytes``, input and output are bytes.
 
-        A command gets at most 120 seconds and, with ``deadline`` (a
-        ``time.monotonic()`` value), no time past it, which raises
-        ``ClaimTimeoutError`` naming ``step``. Running out kills the command's
-        whole process group. ``progress`` hears ``step`` once if the command
-        is still running after five seconds.
+        A command gets 120 seconds or, with ``deadline`` (a
+        ``time.monotonic()`` value), until then, which raises
+        ``ClaimTimeoutError`` naming ``step``; running out stops it.
+        ``progress`` hears ``step`` once if the command is still running after
+        five seconds.
+
+        An ``isolated`` command leads its own process group without a
+        controlling terminal, so stopping it ends everything it started.
+        Otherwise it shares the caller's process group, as a push must: a
+        terminal's interrupt then reaches git, which removes its ref locks.
         """
-        limit = _GIT_CALL_TIMEOUT_S
-        if deadline is not None:
-            limit = min(limit, deadline - time.monotonic())
+        if deadline is None:
+            limit = _GIT_CALL_TIMEOUT_S
+        else:
+            limit = deadline - time.monotonic()
             if limit <= 0:
                 raise ClaimTimeoutError(step)
         data = input_text if input_bytes is None else input_bytes
-        with _git_ends_with_its_caller():
-            return self._run_git(args, data, check, input_bytes is None, limit, step, progress)
+        guard = _git_ends_with_its_caller() if isolated else contextlib.nullcontext()
+        with guard:
+            return self._run_git(args, data, check, input_bytes is None, limit, step, progress, deadline, isolated)
 
     def _run_git(
         self,
@@ -437,6 +464,8 @@ class ClaimBoard:
         limit: float,
         step: str,
         progress: Callable[[str], None] | None,
+        deadline: float | None,
+        isolated: bool,
     ) -> subprocess.CompletedProcess[Any]:
         try:
             process = subprocess.Popen(
@@ -447,19 +476,19 @@ class ClaimBoard:
                 stderr=subprocess.PIPE,
                 text=text,
                 env={**os.environ, **_GIT_ENV},
-                **_NEW_PROCESS_GROUP,
+                **(_OWN_PROCESS_GROUP if isolated else {}),
             )
         except OSError as exc:
             raise ClaimTransportError(f"git claim-board operation failed: {exc}") from exc
         try:
             stdout, stderr = _communicate(process, data, limit, step, progress)
         except subprocess.TimeoutExpired as exc:
-            _kill_group(process)
-            if limit < _GIT_CALL_TIMEOUT_S:
+            _stop(process, group=isolated)
+            if deadline is not None:
                 raise ClaimTimeoutError(step) from exc
             raise ClaimTransportError(f"git claim-board operation failed: {exc}") from exc
         except BaseException:
-            _kill_group(process)
+            _stop(process, group=isolated)
             raise
         proc = subprocess.CompletedProcess(["git", *args], process.returncode, stdout, stderr)
         if check and proc.returncode != 0:
@@ -938,11 +967,13 @@ class ClaimBoard:
         answered, other processes sharing the scratch cannot change it, and the
         git commands it takes do not grow with the number of claims. A ref that
         changes meanwhile is listed as it was; every update checks ownership
-        again.
+        again. The listing is not a proven consistent snapshot: the board may
+        advertise its refs one by one, so a peer's multi-claim push made
+        meanwhile can show some of its claims changed and others not.
 
-        With ``keys``, only their refs are named, fetched and read, so neither
-        the board's size nor changes to other claims affect the listing; a key
-        without a claim ref is left out.
+        With ``keys``, only their refs are fetched and read, so changes to other
+        claims never make the listing retry; a key without a claim ref is left
+        out.
 
         With ``timeout``, the listing gets that many seconds in all, and running
         out raises ``ClaimTimeoutError`` naming the step it was on.
@@ -951,7 +982,7 @@ class ClaimBoard:
         """
         targets = None if keys is None else _validate_keys(keys)
         deadline = None if timeout is None else time.monotonic() + _validate_timeout(timeout)
-        git = functools.partial(self._git, deadline=deadline, progress=progress)
+        git = functools.partial(self._git, deadline=deadline, progress=progress, isolated=True)
         self._ensure_scratch(git)
         written: dict[str, dict[str, str] | None] = {}
         try:
