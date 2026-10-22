@@ -777,10 +777,13 @@ partial def autoformOpenAuditReachesFailed (env : Environment) (isRoot : Name �
 def autoformOpenAuditNameList (names : Array Name) : MessageData :=
   MessageData.joinSep (names.toList.map MessageData.ofName) ", "
 
-/-- Whether a declaration of the build belongs to one of the root package's modules. -/
-def autoformAuditIsRoot (env : Environment) (targetModules : List Name) (declName : Name) : Bool :=
+/-- Whether a declaration of the build belongs to one of the root package's modules.
+`moduleNames` is `env.header.moduleNames`, which builds a new array on every call,
+so the caller computes it once rather than once for each constant. -/
+def autoformAuditIsRoot (env : Environment) (moduleNames : Array Name) (targetModules : List Name)
+    (declName : Name) : Bool :=
   match env.getModuleIdxFor? declName with
-  | some moduleIdx => targetModules.contains env.header.moduleNames[moduleIdx.toNat]!
+  | some moduleIdx => targetModules.contains moduleNames[moduleIdx.toNat]!
   | none => false
 
 /-- The build: the root package's modules and what they import, loaded from the
@@ -904,7 +907,8 @@ def autoformAuditStrict (moduleJson tableJson : String) : CommandElabM Unit := d
   let env ← autoformAuditImportBuild targetModules
   let axiomCache ← IO.mkRef ({} : Std.HashMap Name (Array Name))
   let axiomsOf := autoformAuditAxiomsOf env axiomCache
-  let isRoot := autoformAuditIsRoot env targetModules
+  let moduleNames := env.header.moduleNames
+  let isRoot := autoformAuditIsRoot env moduleNames targetModules
   let mut errors : Array MessageData := #[]
   let mut checked : Nat := 0
   let mut badSafety : Array Name := #[]
@@ -981,7 +985,8 @@ def autoformAuditOpen (moduleJson articleJson : String) : CommandElabM Unit := d
   let env ← autoformAuditImportBuild targetModules
   let axiomCache ← IO.mkRef ({} : Std.HashMap Name (Array Name))
   let axiomsOf := autoformAuditAxiomsOf env axiomCache
-  let isRoot := autoformAuditIsRoot env targetModules
+  let moduleNames := env.header.moduleNames
+  let isRoot := autoformAuditIsRoot env moduleNames targetModules
   let mut errors : Array MessageData := #[]
   let mut openSet : Std.HashSet Name := {}
   for (declName, _, isOpen, _) in articles do
