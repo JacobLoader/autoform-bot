@@ -639,9 +639,10 @@ def render_impact_probe(
     probe refuses a root-package module the captured inventory lacks: a loaded
     module outside ``project_modules`` whose OLean lies under ``artifact_dir``,
     or a module outside ``selected_modules`` (every module a library's globs or
-    roots select) that it finds by walking a ``glob_directories`` entry. Each entry is the directory of an ``M.*`` or
-    ``M.+`` glob, with ``M`` and the glob. ``emit_module_evidence`` also
-    records every loaded project module's source, artifact and direct imports.
+    roots select) that it finds by walking a ``glob_directories`` entry. Each
+    entry is the directory of an ``M.*`` or ``M.+`` glob, with ``M`` and the
+    glob. ``emit_module_evidence`` also records every loaded project module's
+    source, artifact and direct imports.
     """
 
     modules = sorted(set(imports))
@@ -1173,6 +1174,7 @@ def compute_module_import_impact(
         for resolved in resolved_names:
             named.setdefault(resolved, []).append(article.id)
         touched[article.id] = {records[resolved].module for resolved in resolved_names} & affected_set
+
     def owners(record: ConstantRecord) -> tuple[str, ...]:
         if module_scope != IMPORT_CLOSURE_SCOPE:
             return _owners(record, records, named)

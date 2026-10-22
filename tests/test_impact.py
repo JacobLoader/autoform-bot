@@ -1791,8 +1791,13 @@ def test_import_closure_scope_imports_only_candidate_importers(tmp_path: Path, m
 
     report = module_import_impact(project, _BASE_ID, "Demo.A", lean_root=lean_root, module_scope="import-closure")
 
-    imports = [line for line in calls[0]["probe"].splitlines() if line.startswith("import Demo")]
+    lines = calls[0]["probe"].splitlines()
+    imports = [line for line in lines if line.startswith("import Demo")]
     assert imports == ["import Demo.A", "import Demo.B"]
+    # The glob walk still checks the full selection, so the unloaded Demo.Apart is not refused.
+    requested = lines[lines.index("  let selectedModules : Std.HashSet Name :=") + 1]
+    selected = json.loads(json.loads(requested.split("requestedNames ", 1)[1].removesuffix(").toList")))
+    assert [name for name, _parts in selected] == ["Demo.A", "Demo.Apart", "Demo.B"]
     assert report.module_scope == "import-closure"
     assert report.affected_modules == ("Demo.A", "Demo.B")
 

@@ -1161,10 +1161,11 @@ autoform work import-impact SELECTOR MODULE [TARGET] --lean-root PATH [--json] [
 ```
 
 `import-impact` is advisory and does not edit authored roadmap or Lean source;
-its Lake freshness check may refresh build hash sidecars. The probe imports
-every module of the root libraries, so each must be built: a missing or stale
-build exits 2 with the `lake build` command for those libraries, how many
-modules were checked, and the first module Lake found unbuilt. Freshness is
+its Lake freshness check may refresh build hash sidecars. Under the default
+scope the probe imports every module of the root libraries, so each must be
+built: a missing or stale build exits 2 with the `lake build` command for those
+libraries, how many modules were checked, and the first module Lake found
+unbuilt. Freshness is
 Lake's rehash of this checkout's `.lake` against this checkout's sources, so a
 build in another clone or worktree does not make this one fresh.
 `SELECTOR` identifies the working article and `MODULE` the module whose
@@ -1194,8 +1195,11 @@ prefix of it, so `affected_articles` may list more articles than the default
 scope does, and `article_local` is always `false`. `unresolved_articles` leaves
 out a name the probe did not load when the Lean source index places it in a
 module outside `affected_modules`. A `.lean` file outside the captured sources,
-such as one in `.lake/packages`, that may import a candidate makes the command
-exit 2 and asks for the default scope.
+such as one in `.lake/packages` or a path dependency, that may import a
+candidate makes the command exit 2 and asks for the default scope. The check
+over-refuses when a component of a candidate's name is a common word that
+dependency sources contain; then use the default scope.
+
 The import edit's `claim_targets` contain only the selected article and a stable
 `module_claim_target` resource, `lean-module/<lowercase-slug>-<sha256[:16]>`.
 `affected_claim_targets` are downstream warnings, not pre-emptive ownership
