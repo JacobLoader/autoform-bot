@@ -34,10 +34,7 @@ def test_root_readme_uses_the_canonical_repository(repo_root: Path) -> None:
     readme = (repo_root / "README.md").read_text(encoding="utf-8")
 
     assert "claude plugin marketplace add facebookresearch/autoform-bot" in readme
-    assert (
-        "codex plugin marketplace add facebookresearch/autoform-bot --ref main"
-        in readme
-    )
+    assert "codex plugin marketplace add facebookresearch/autoform-bot" in readme
     assert "git clone https://github.com/facebookresearch/autoform-bot.git" in readme
     assert "`execution` branch" not in readme
     assert "VivienCabannes/autoform-bot" not in readme
@@ -94,14 +91,16 @@ def test_the_example_uses_nothing_newer_than_its_autoform_pin(repo_root: Path) -
     """The example's CI runs its pinned AUTOFORM_REF, 0288506b, which predates catalogs.
 
     That check rejects `catalog:` and `area:` and that render rejects
-    INVENTORIED, while it ignores atlas.json, and its render draws Mermaid maps.
-    Move the pin, here and in the workflow equivalence test, before relaxing this.
+    INVENTORIED, while it ignores atlas.json, and its render draws Mermaid maps
+    through the global Mermaid script, so mkdocs.yml keeps that line. Move the
+    pin, here and in the workflow equivalence test, before relaxing this.
     """
     example = repo_root / _EXAMPLE
     for page in (example / "blueprint/roadmap").rglob("*.md"):
         text = page.read_text(encoding="utf-8")
         frontmatter = text[4:].split("\n---", 1)[0] if text.startswith("---\n") else ""
         assert not re.search(r"^(?:area|catalog):", frontmatter, re.MULTILINE), page
+    assert "mermaid@11.4.1/dist/mermaid.min.js" in (example / "mkdocs.yml").read_text(encoding="utf-8")
     assert "INVENTORIED" not in (example / "blueprint/coverage/README.md").read_text(encoding="utf-8")
     assert "dependency maps of the project and each chapter" in " ".join(
         (example / "README.md").read_text(encoding="utf-8").split()
@@ -168,12 +167,13 @@ def test_import_edits_use_reported_scope_instead_of_a_blanket_ban(
     cli = " ".join(documents["autoform_cli/README.md"].split())
     assert (
         "autoform work import-impact SELECTOR MODULE [TARGET] --lean-root PATH "
-        "[--json] [--timeout SECONDS]"
+        "[--json] [--timeout SECONDS] [--module-scope SCOPE]"
     ) in cli
     assert "advisory and does not edit authored roadmap or Lean source" in cli
     assert "freshness check may refresh build hash sidecars" in cli
     assert "`autoform-module-import-impact/v1`" in cli
     assert "`module_scope` is `loaded-root-library-graph`" in cli
+    assert "`--module-scope import-closure`" in cli
     assert "`module_claim_target`" in cli
     assert "`lean-module/<lowercase-slug>-<sha256[:16]>`" in cli
     assert "The import edit's `claim_targets` contain only the selected article" in cli
@@ -266,6 +266,7 @@ def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
     assert "Before choosing none, run `autoform claim list` once" in formalize
     assert "an unexpired claim on the board means another session uses them" in formalize
     assert "if the command fails, as it does in a checkout without an `origin`, tell the user" in formalize
+    assert "means the board exists but could not be read, not that it holds no claims" in formalize
     assert "the lead checks them when it confirms the edit's new targets and again before the edit lands" in formalize
     assert "If workers would wait on each other, the lead has one of them give up what it holds" in formalize
     assert "re-run `autoform work import-impact` on the result; if integration brought in a change" in formalize
@@ -1203,7 +1204,8 @@ def test_roadmap_skill_commits_the_final_checked_pass(repo_root: Path) -> None:
         "`autoform check` with `--lean-root .`",
         "`autoform audit`",
         "Fix the other `warning:` lines inside the adopted boundary as you would a finding",
-        "Commit the vault and refreshed graph only after this final validation",
+        "refresh the dependency summary with `autoform-visualize`",
+        "Commit the vault, with the refreshed summary where the repository tracks it, only after this final validation",
         "no `MAPPED` rows",
         "latest commit contains every change from the pass",
     ):
@@ -1738,8 +1740,12 @@ def test_the_example_site_config_matches_what_setup_would_write(repo_root) -> No
     writes, or the example stops demonstrating the product. It already drifted
     once: the template moved to Plus Jakarta Sans and the example kept
     requesting Merriweather, so the built demo showed the old typeface.
+
+    The example also keeps the Mermaid script its pinned render needs, which
+    the template no longer lists because the site script loads Mermaid itself.
     """
     substituted = {"site_name", "repo_url"}
+    pinned_mermaid = "  - https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"
 
     def significant(text: str) -> list[str]:
         return [
@@ -1755,4 +1761,5 @@ def test_the_example_site_config_matches_what_setup_would_write(repo_root) -> No
         repo_root / "skills/setup/assets/cabannes-thesis-project/mkdocs.yml"
     ).read_text(encoding="utf-8")
 
-    assert significant(example) == significant(template)
+    assert pinned_mermaid not in template.splitlines()
+    assert [line for line in significant(example) if line != pinned_mermaid] == significant(template)

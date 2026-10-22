@@ -19,12 +19,21 @@ from urllib.parse import unquote, urlsplit
 from . import debrief, debrief_orchestrator, status
 from .article_identity import ArticleIdWriteError, plan_article_ids, write_article_ids
 from .audit import audit_blueprint
-from .claims import CLAIM_TTL_S, ClaimBoard, ClaimTransportError, author_claim_key
+from .claims import (
+    CLAIM_TTL_S,
+    ClaimBoard,
+    ClaimContentionError,
+    ClaimTimeoutError,
+    ClaimTransportError,
+    author_claim_key,
+)
 from .doctor import diagnose_project
 from .dashboard import publication_bound_live_state, serve_dashboard
 from .graph import Graph, GraphValidationError, atlas_omissions, catalogs_without_ledger, load_graph
 from .graph_views import _countable, _module_inventories
 from .impact import (
+    IMPORT_CLOSURE_SCOPE,
+    MODULE_IMPORT_SCOPE,
     ImpactError,
     format_impact,
     format_module_import_impact,
@@ -280,6 +289,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=f"seconds the Lean probe may run (default {DEFAULT_PROBE_TIMEOUT:g}); "
         "the Lake freshness check before it has its own budget",
     )
+    work_import_impact.add_argument(
+        "--module-scope",
+        choices=(MODULE_IMPORT_SCOPE, IMPORT_CLOSURE_SCOPE),
+        default=MODULE_IMPORT_SCOPE,
+        metavar="SCOPE",
+        help=f"{MODULE_IMPORT_SCOPE} (default) loads every root library; {IMPORT_CLOSURE_SCOPE} loads only "
+        "files that may import MODULE, reports affected modules exactly and over-reports articles",
+    )
     search = subparsers.add_parser(
         "search", help="find articles by title, Lean name, or statement text before adding one"
     )
@@ -365,7 +382,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if operation == "acquire":
             command.add_argument("--note", default="")
     claim_list = claim_subparsers.add_parser("list")
+    claim_list.add_argument("node_id", nargs="*", help="list only these claim targets")
     _add_claim_board_arguments(claim_list)
+    claim_list.add_argument(
+        "--timeout",
+        type=_positive_seconds,
+        default=120.0,
+        metavar="SECONDS",
+        help="time limit for the whole listing (default: 120)",
+    )
     claim_cleanup = claim_subparsers.add_parser("cleanup")
     _add_claim_board_arguments(claim_cleanup)
 
@@ -602,15 +627,16 @@ def _byte_order_mark_warnings(graph: Graph) -> list[str]:
 def _source_link_issues(graph: Graph) -> tuple[list[str], list[str]]:
     """Name each ``## Sources`` link to a local path that is not a file in the blueprint, or is hidden.
 
-    Returns the errors, then the warnings. The generated workflows run ``check``
-    but not ``audit``, and render publishes a missing or escaping target broken:
-    a page a strict MkDocs build cannot find, a repository URL that 404s for a
-    hidden note under ``sources/``, or the link's text alone. Render omits
-    hidden files, so a hidden target is refused too, unless it is a note under
-    ``sources/`` that exists. Only a repository link reaches that note, and
-    render writes one when it links the other source notes there, so it is only
-    warned about: it must be committed. Fragments and other schemes stay with
-    ``audit``, whose anchor check renders each cited note.
+    Returns the errors, then the warnings. The generated workflows gate on
+    ``check`` and run ``audit`` only as a report, and render publishes a missing
+    or escaping target broken: a page a strict MkDocs build cannot find, a
+    repository URL that 404s for a hidden note under ``sources/``, or the link's
+    text alone. Render omits hidden files, so a hidden target is refused too,
+    unless it is a note under ``sources/`` that exists. Only a repository link
+    reaches that note, and render writes one when it links the other source
+    notes there, so it is only warned about: it must be committed. Fragments and
+    other schemes stay with ``audit``, whose anchor check renders each cited
+    note.
     """
     rejected = {
         "source-not-found": "does not resolve to a file",
@@ -651,13 +677,13 @@ def _source_link_issues(graph: Graph) -> tuple[list[str], list[str]]:
 def _formalizable_container_warnings(graph: Graph) -> list[str]:
     """Name each article that sets ``declaration`` and also contains articles.
 
-    The generated workflows run ``check`` but not ``audit``, which reports these
-    as ``formalizable-container``. Nothing counts or schedules a container's own
-    declaration, yet its scope is drawn complete once its leaves are proved.
-    The site still builds, so ``check`` warns rather than fails. The message
-    names the move because deleting only ``declaration:`` silences both
-    commands, and a container left with ``lean:`` and ``statement:`` is still
-    drawn complete while its own proof is open.
+    The generated workflows gate on ``check`` and run ``audit``, which reports
+    these as ``formalizable-container``, only as a report. Nothing counts or
+    schedules a container's own declaration, yet its scope is drawn complete
+    once its leaves are proved. The site still builds, so ``check`` warns rather
+    than fails. The message names the move because deleting only
+    ``declaration:`` silences both commands, and a container left with ``lean:``
+    and ``statement:`` is still drawn complete while its own proof is open.
     """
     containers = {node.parent for node in graph.nodes.values() if node.parent is not None}
     return [
@@ -1285,6 +1311,7 @@ def _work_impact(args: argparse.Namespace) -> int:
                 args.module,
                 lean_root=args.lean_root,
                 timeout=args.timeout,
+                module_scope=args.module_scope,
             )
     except (GraphValidationError, RuntimeProjectionError) as error:
         for issue in error.issues:
@@ -1482,20 +1509,14 @@ def _shell_quote_one_line(value: str) -> str:
 
 
 def _claim(args: argparse.Namespace) -> int:
+    if args.claim_command == "list":
+        return _claim_list(args)
     try:
         board = _claim_board(args)
         operation = args.claim_command
-        if operation == "list":
-            print(json.dumps(board.list(), sort_keys=True, separators=(",", ":")))
-        elif operation == "cleanup":
+        if operation == "cleanup":
             print(f"removed {board.cleanup()} expired claim(s)")
-        if operation in {"list", "cleanup"}:
-            # Lock files are not refs, so neither command's own output can show one.
-            for lock in board.ref_locks():
-                print(
-                    f"warning: {lock.describe()}; if no Git process is using the claim board, delete it",
-                    file=sys.stderr,
-                )
+            _warn_about_ref_locks(board)
             return 0
 
         past_tense = {"acquire": "acquired", "renew": "renewed", "release": "released"}
@@ -1542,6 +1563,51 @@ def _claim(args: argparse.Namespace) -> int:
     except (ClaimTransportError, ValueError) as exc:
         print(f"error: {exc}")
         return 1
+
+
+def _claim_list(args: argparse.Namespace) -> int:
+    """List claims; stdout carries only the JSON, and a failure's line on stderr says what kind it is."""
+    targets: dict[str, str] = {}
+    for node_id in args.node_id:
+        key = author_claim_key(node_id)
+        if key in targets:
+            print(f"error: duplicate claim target: {node_id}", file=sys.stderr)
+            return 2
+        targets[key] = node_id
+
+    def progress(step: str) -> None:
+        print(f"claim list: {step}...", file=sys.stderr, flush=True)
+
+    try:
+        board = _claim_board(args)
+        leases = board.list(list(targets) or None, timeout=args.timeout, progress=progress)
+    except ClaimTimeoutError as exc:
+        print(
+            f"error: timeout: no answer from the claim board within {args.timeout:g}s while {exc.step}",
+            file=sys.stderr,
+        )
+        return 1
+    except ClaimContentionError as exc:
+        print(f"error: contention: {exc}", file=sys.stderr)
+        return 1
+    except ClaimTransportError as exc:
+        print(f"error: transport: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(leases, sort_keys=True, separators=(",", ":")))
+    _warn_about_ref_locks(board)
+    return 0
+
+
+def _warn_about_ref_locks(board: ClaimBoard) -> None:
+    # Lock files are not refs, so neither list's nor cleanup's own output can show one.
+    for lock in board.ref_locks():
+        print(
+            f"warning: {lock.describe()}; if no Git process is using the claim board, delete it",
+            file=sys.stderr,
+        )
 
 
 def _migrate(args: argparse.Namespace) -> int:
