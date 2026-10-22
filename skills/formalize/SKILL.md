@@ -45,7 +45,11 @@ first build or Lean tool call, so the worktrees unpack from a full cache instead
 of downloading into it together. If the rerun fails too, ask the user before
 creating worktrees, since each would then fetch or build Mathlib on its own.
 Builds take no claim, so workers on one machine may build at the same time:
-dispatch no more at once than its memory can build for.
+dispatch no more at once than its memory can build for. When the lakefile sets
+`enableArtifactCache` and `restoreAllArtifacts`, as `project new` writes it, a
+worktree can reuse the modules another checkout already built from the same
+sources and dependencies instead of rebuilding them; if it lacks them, Setup
+offers to add them.
 
 Claims are optional. Within one run the lead keeps its workers apart, so the run
 needs none: no two workers, the lead included, hold the same target at once. A

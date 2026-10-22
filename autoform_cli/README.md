@@ -323,6 +323,10 @@ concurrent creator wins. A failure or interrupt after staging can leave a
 hidden `.autoform-new-*` directory in the parent, and the error says so;
 inspect it before removing it. The published tree has modes 0755 for
 directories and executables and 0644 for other files, whatever the umask.
+Its `lakefile.toml` sets `enableArtifactCache = true` and
+`restoreAllArtifacts = true`, so checkouts on the same toolchain share builds
+through Lake's artifact cache while each module's `.olean` stays in
+`.lake/build`, where Autoform's probes load it.
 Package names cannot shadow Mathlib libraries such as `Archive` or
 `Counterexamples`.
 Generated workflows are pinned as `init` pins them: `--autoform-ref` must be a

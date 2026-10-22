@@ -17,6 +17,11 @@ date when the release is tagged.
   commands, and a listing that runs out of time or is interrupted no longer
   leaves its transport running. Formalize treats a labelled `claim list`
   failure as an unreadable board, not as a board without claims (#432).
+- **Builds.** `project new` turns on Lake's artifact cache with
+  `enableArtifactCache` and `restoreAllArtifacts`, so checkouts and worktrees
+  on one toolchain reuse each other's builds; Setup offers the same two lines
+  to an existing project. A probe that finds no `.olean` for a module Lake
+  calls built now names the cache-without-restore cause (#431).
 
 ## 0.6.0 (2026-10-22)
 
