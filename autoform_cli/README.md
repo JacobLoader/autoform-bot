@@ -2454,7 +2454,10 @@ deadlocking.
 
 `claim list` copies the whole board with one fetch and reads every lease at
 once, so its cost hardly grows with the number of claims. Each lease it prints
-is the one its ref named when the board answered. A peer's renewal meanwhile
+is the one its ref named when the board answered. The listing is not a proven
+consistent snapshot of the whole board: Git can read the refs it advertises one
+by one, so a peer's multi-claim acquire or release made while the board answers
+can show some of its claims changed and others not. A peer's renewal meanwhile
 changes nothing, except that a server speaking Git's older stateless HTTP
 protocol may refuse the fetch, which is then repeated up to three times. A
 board with claim keys that differ only in case, which a case-insensitive
@@ -2464,18 +2467,25 @@ renew, and release checks ownership again.
 
 `claim list TARGET...` lists only those targets' claims, in the same JSON; a
 target without a claim is left out, and a duplicate target exits 2. It names
-the targets' refs, fetches only those and reads their leases, so neither the
-board's size nor changes to other claims affect it, and a target released
-meanwhile has the targets named again, never the whole board. `--timeout
-SECONDS`, 120 by default, bounds the whole listing, and a step still running
-after five seconds is named on stderr as `claim list: <step>...`. A listing
+the targets' refs, fetches only those and reads their leases, so changes to
+other claims never make it retry and no other claim's lease is copied, and a
+target released meanwhile has the targets named again, never the whole board.
+Naming the targets still downloads the board's list of refs, branches
+included, so over a network its cost grows with that list. `--timeout SECONDS`,
+120 by default, bounds the whole listing, however long it is set, and a step
+still running after five seconds is named on stderr as `claim list: <step>...`. A listing
 that fails exits 1 with nothing on stdout and one line on stderr: `error:
 timeout:` when the board did not answer in time, naming the step; `error:
 contention:` when the board refused every fetch because claims kept moving; or
-`error: transport:` for any other failure to reach or read the board. Claim
-commands run Git without a terminal and with `GIT_TERMINAL_PROMPT=0`, so a
-missing credential fails at once instead of waiting for a prompt, and a Git
-command that runs out of time is ended together with everything it started.
+`error: transport:` for any other failure to reach or read the board. Every
+claim command runs Git with `GIT_TERMINAL_PROMPT=0` and no input, so Git itself
+never waits for a password, though a credential helper or `GIT_ASKPASS` program
+it is configured to use still can, until the time limit. `claim list` also
+runs Git in its own process group, without a terminal on Linux and macOS so
+`ssh` cannot prompt either, and stops a Git command that runs out of time or is
+interrupted together with everything it started. The other claim commands run
+Git in the caller's process group, so a terminal's interrupt reaches Git, which
+then removes the ref lock it holds.
 
 A Git process that stops while updating a claim ref leaves a lock file in the
 board, and Git then refuses the updates it guards:
