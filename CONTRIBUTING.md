@@ -44,6 +44,14 @@ does; a missing toolchain or a failed download then fails them. Run
 `lake build` in `skills/setup/assets/cabannes-thesis-project` when you change
 the example's Lean sources or declarations.
 
+The verify workflow's kernel-trust probe is Lean, kept in
+`autoform_cli/probes/audit_probe.lean`. Projects get one self-contained helper,
+`.github/autoform_audit.py`, which carries a verbatim copy of that file, so edit
+the `.lean` file and then run `python3 scripts/sync_audit_probe.py` to rewrite
+the copy in the template and the bundled example. The probe imports only the
+toolchain's Lean, so `lean autoform_cli/probes/audit_probe.lean` checks it
+without a project.
+
 `tests/test_real_repl.py` skips unless `AUTOFORM_RUN_REAL_REPL_TESTS=1`. To run
 it locally, build its fixture and install the oldest supported toolchain first:
 
