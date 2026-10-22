@@ -2172,12 +2172,14 @@ def test_slash_inside_the_explorer_opens_its_search_but_an_input_keeps_its_keys(
 def test_the_explorer_typesets_the_math_it_draws_in_its_rail_and_details(desktop_page: object, site_url: str) -> None:
     """MathJax typesets the page once when it starts, so authored TeX the explorer draws later stayed raw."""
     page = desktop_page
-    # The site's mathjax.js assigns its configuration to window.MathJax, and offline the CDN script that
-    # would replace it is aborted, so a stub behind an accessor stands in for MathJax once started.
+    # The site's mathjax.js keeps its configuration in window.MathJax until MathJax starts and replaces it
+    # with itself, and offline the CDN script is aborted, so a stub takes over as MathJax would, once the
+    # page's scripts have run and before the explorer draws.
     page.add_init_script(
         """
         window.typesetContainers = [];
         const stub = {
+          version: "3.2.2",
           startup: {promise: Promise.resolve()},
           typesetClear() {},
           typesetPromise(elements) {
@@ -2186,7 +2188,10 @@ def test_the_explorer_typesets_the_math_it_draws_in_its_rail_and_details(desktop
             return Promise.resolve();
           },
         };
-        Object.defineProperty(window, "MathJax", {configurable: true, get: () => stub, set() {}});
+        document.addEventListener("DOMContentLoaded", () => {
+          stub.config = window.MathJax;
+          window.MathJax = stub;
+        });
         """
     )
     _open_site(page, site_url, "dependencies/chapters/algebra.html")
