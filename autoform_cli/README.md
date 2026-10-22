@@ -2179,10 +2179,11 @@ without running Lean.
 Run it in the library's CI after the build, with the same `--lib` flags, and
 pin the Autoform revision: the bytes of an index depend on it.
 
-The generator is tested on Lean 4.34.1 and 4.35.0 only and is not supported on
-Windows: it exits 2, before it runs Lean, when the package's `lean-toolchain` is
-neither `leanprover/lean4:v4.34.1` nor `leanprover/lean4:v4.35.0`, nor a spelling
-elan resolves to one of them, such as `v4.35.0`.
+The generator has been tested on Lean 4.34.1 and 4.35.0 only, CI runs its real
+tests on 4.35.0, and it is not supported on Windows: it exits 2, before it runs
+Lean, when the package's `lean-toolchain` is neither `leanprover/lean4:v4.34.1`
+nor `leanprover/lean4:v4.35.0`, nor a spelling elan resolves to one of them,
+such as `v4.35.0`.
 The index's `package` is the name in the package's `lake-manifest.json`, else in its
 `lakefile.toml`, and the command exits 2 when neither gives one; the folder it
 is checked out in never matters.
