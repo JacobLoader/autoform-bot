@@ -44,12 +44,14 @@ def test_the_readme_installs_the_release_tag(repo_root: Path) -> None:
 
     tag = f"v{_project_version(repo_root)[1]}"
     readme = (repo_root / "README.md").read_text(encoding="utf-8")
+    installation = readme.split("\n## Installation\n", 1)[1].split("\n## ", 1)[0]
+    commands = "".join(re.findall(r"^```bash\n(.*?)^```$", installation, re.M | re.S)).splitlines()
     for command in (
         f"claude plugin marketplace add facebookresearch/autoform-bot@{tag}",
         f"codex plugin marketplace add facebookresearch/autoform-bot --ref {tag}",
         f"muse plugins marketplace add autoform 'https://github.com/facebookresearch/autoform-bot.git#{tag}'",
     ):
-        assert command in readme, command
+        assert command in commands, command
 
 
 def test_the_changelog_names_the_project_version_as_its_newest_release(repo_root: Path) -> None:
