@@ -105,9 +105,10 @@ theme. Each group names the pull requests to read for detail.
   one left behind after its article is proved (#172, #296).
 - **Unpublished folders.** The `README.md` of a folder below `roadmap/` can
   say `published: false`: `check` and `audit` still validate the folder, and
-  render leaves it out. Elsewhere, as in `blueprint/sources/README.md`, the key
-  has no effect. A link from a published article into the folder fails
-  `check`, so remove those links, the parent's included, first (#381).
+  render leaves it out. On an article or `roadmap/README.md`, `check` rejects
+  the key; outside `roadmap/`, as in `blueprint/sources/README.md`, it has no
+  effect. A link from a published article into the folder fails `check`, so
+  remove those links, the parent's included, first (#381).
 - **CI audit.** The generated verify workflow checks `lean:` targets,
   non-root axioms and a kernel replay, without running project code in its
   probe (#156, #190, #247). `check --lean-root` and `audit` index Batteries'
@@ -156,7 +157,7 @@ theme. Each group names the pull requests to read for detail.
   it, as before, and now so do manual runs, which deployed in 0.5.0. The
   homepage metric counts progress within the scoped roadmap from proof
   semantics, and a finished scope shows as complete (#45, #196).
-- **Checks that fail.** Where 0.5.0 passed, these fail `check`, and so both
+- **Checks that fail.** Where 0.5.0 passed, these fail `check`, and so the
   generated workflows once CI's `AUTOFORM_REF` moves:
   - `proof: formalized` without `statement: formalized`, or either without a
     `lean:` name (#158);
@@ -164,8 +165,11 @@ theme. Each group names the pull requests to read for detail.
     `sources/` (#321), or a generated view such as `../structure.md` (#380);
   - a dependency on a hidden page, or a dependency or Sources link that steps
     through a hidden folder and back out (#380, #409);
-  - with `--lean-root`, which the Pages workflow passes, a name declared with a
-    universe binder (`def f.{u}`) in one file and plainly in another (#90).
+  - a symbolic link under `roadmap/` outside hidden paths, such as a linked
+    image (#197);
+  - with `--lean-root`, which only the Pages workflow runs, a `lean:` name
+    declared in more than one file unless exactly one occurrence is public,
+    such as `def f.{u}` in one file and plain `f` in another (#348, #90).
 - **Checks.** `check` and `audit` now read the blueprint render publishes, so
   hidden files and folders under `roadmap/` are no part of the roadmap (#380).
   Only the article graph must be acyclic: a cycle that appears only when
@@ -240,10 +244,11 @@ Public CLI and JSON shapes are contracts. Since 0.5.0, `autoform-runtime` has
 moved from v1 to v4 (#92, #138, #90), `autoform-publication` from v1 to v3
 (#165, #90), and `autoform-coverage` from v1 to v2 (#90). Coverage, which
 `publication.json` and `audit --json` carry, adds the `INVENTORIED`
-disposition, and its `counts` always holds that key. New commands bring
-`autoform-skeleton/v5`, `autoform-work/v2`, `autoform-search/v1` (and
-`autoform-search/v2` for `search --library` output only) and
-`autoform-impact/v1`.
+disposition, and its `counts` always holds that key. New schema ids include
+`autoform-skeleton/v5`, `autoform-work/v2`, `autoform-assumptions/v1` (which
+the generated verify workflow reads), `autoform-search/v1` (and
+`autoform-search/v2` for `search --library` output only), `autoform-impact/v1`
+and `autoform-atlas/v1` for an authored `blueprint/atlas.json`.
 
 ### Dependencies
 

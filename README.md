@@ -30,10 +30,10 @@ muse plugins marketplace add autoform 'https://github.com/facebookresearch/autof
 muse plugins install autoform@autoform
 ```
 
-These commands install release 0.6.0. Claude Code reads the `@v0.6.0` form
-from version 2.1.71; older versions take
-`facebookresearch/autoform-bot#v0.6.0`. To move an install that follows `main`
-onto the release, remove the `autoform` marketplace first, with `claude plugin
+These commands install release 0.6.0. Claude Code reads the `@v0.6.0` form from
+version 2.1.71; older versions take `'facebookresearch/autoform-bot#v0.6.0'`,
+quoted for shells that read `#`. To move an install that follows `main` onto the
+release, remove the `autoform` marketplace first, with `claude plugin
 marketplace remove autoform`, `codex plugin marketplace remove autoform`, or
 `muse plugins remove autoform` and then `muse plugins marketplace remove
 autoform`, and run the commands again. To follow `main` instead, drop the
