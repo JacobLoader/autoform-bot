@@ -39,6 +39,9 @@ case aliases change. As in elan, only the trimmed first line of
 Catalog matching treats elan's stable Lean release aliases, URI scheme and host
 case, and Mathlib's explicit `./` root subdirectory as equivalent while
 preserving the authored values in the report.
+A project that `project new` wrote without `lake-manifest.json` is
+`indeterminate`, with `missing-lake-manifest`, until `lake update` writes one;
+then it is `unlisted`, or `supported` when Lake locks a catalog commit.
 
 This predicts an ordinary Lake invocation. CLI `--packages` / `--file`
 overrides, `LAKE_PKG_URL_MAP`, and edits inside an already-materialized checkout
@@ -74,7 +77,7 @@ prints `{"error": {"code": "project-catalog-invalid", "message": ...},
 | `lean_toolchain` | the trimmed first line of `lean-toolchain`, or `null` when it is missing or invalid |
 | `lake` | `null` when the Lake configuration is missing, unreadable or invalid; otherwise `config` (`"lakefile.toml"` or `"lakefile.lean"`), the package `name` and `version` (both `null` for `lakefile.lean`, which is not evaluated), and `targets`, a list of `{kind, name}` for each `lean_lib` and `lean_exe` |
 | `mathlib` | the Mathlib entry the manifest or overrides select; `null` when there is none, when either file cannot be decoded, or when Autoform cannot establish that it is active (`lakefile.lean`, or a `mathlib-manifest-unused` warning). It is still reported when another error makes the status `indeterminate`; see below |
-| `compatibility` | `status` (`supported`, `unlisted` or `indeterminate`, defined under [Commands](../README.md#commands)), `release` (the matching catalog id, or `null`), and `recommended_release` (the catalog's recommended id) |
+| `compatibility` | `status` (`supported`, `unlisted` or `indeterminate`, defined under [Scope and resolver rules](#scope-and-resolver-rules)), `release` (the matching catalog id, or `null`), and `recommended_release` (the catalog's recommended id) |
 | `autoform_paths` | which of `blueprint`, `mkdocs.yml`, `.github/workflows/autoform-verify.yml` and `.github/workflows/blueprint-pages.yml` exist under the project root, with that exact spelling |
 | `diagnostics` | a list of `{severity, code, message, path}`, sorted by severity (`error` first), then code, then path; `path` is the file concerned, relative to the project root, or `null` |
 

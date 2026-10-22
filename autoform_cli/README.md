@@ -240,6 +240,8 @@ uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform check blueprint --lean-root .
 checkout's commit when it runs from one, as in `autoform 0.6.0 (745a88599469)`;
 a debrief records the same string.
 
+### init
+
 Create a new project's vault, site configuration, and CI. The layout is fixed,
 so it is written rather than described; existing files are left alone, which
 makes the same command the repair path:
@@ -249,135 +251,97 @@ autoform init . --title "Finite Flat Group Schemes" \
   --repository-url https://github.com/owner/repo
 ```
 
-Pass `--autoform-ref <sha>` to pin the generated workflows at an immutable
-commit, `--force` to overwrite, and `--json` for machine-readable output.
 An existing root `.gitignore` must be a regular file with one link; `init`
-appends the missing Autoform rules to it. If an append cannot be verified, the
-error says it may be partial: inspect the file before retrying. Before writing
-anything, even with `--force`, `init` refuses an existing entry that differs
-from a path it manages only in letter case or Unicode form, such as a
-`Blueprint/` Lean library or `MkDocs.yml`: Git and Linux CI see only the
-exact spelling, while a case-insensitive filesystem resolves the managed path
-to the variant. `init` also refuses when it cannot list a directory on a path
-it manages. A root `Readme.md` or `readme.md` is refused, not skipped like an
-existing `README.md`.
-The vault is always `blueprint/`, so a Lean library named `Blueprint` needs a
-different library name (its lakefile `lean_lib`, root module and imports), not
-a lowercase rename.
+appends the missing Autoform rules to it, and when it cannot verify the append
+the error says the file may be partial: inspect it before retrying. Even with
+`--force`, `init` refuses before writing anything an entry that differs from a
+path it manages only in letter case or Unicode form (a `Blueprint/` Lean
+library, `MkDocs.yml`), a managed directory it cannot list, and a root
+`Readme.md` or `readme.md`. The vault is always `blueprint/`, so a Lean library
+named `Blueprint` needs a different library name (its lakefile `lean_lib`, root
+module and imports), not a lowercase rename.
 
-Create or inspect a Lean project and list Autoform's bundled known-good release pairs:
+Generated workflows pin `--autoform-ref` or, by default, the HEAD commit of the
+Autoform checkout running the command (or of the marketplace checkout an
+installed plugin was copied from), when a safe remote has a cached tracking ref
+containing it, tracked files are clean, and the templates match it; an explicit
+`--autoform-source` gets no default ref. Without a ref the CI workflows are
+omitted.
+
+### project
+
+Create or inspect a Lean project and list Autoform's bundled known-good release
+pairs:
 
 ```bash
 autoform project versions
 autoform project new ./FiniteFlat --package FiniteFlat
 autoform project new ./FiniteFlat430 --package FiniteFlat --lean-toolchain v4.30.0
 autoform project new ./Gauss --package Gauss --library atlas
-autoform project inspect .
 autoform project inspect path/inside/project --json
-autoform project versions --json
 ```
 
-`project new` requires an absent target and uses the catalog's recommended
-release unless `--release` names another listed one. It builds a complete Lean
-shell, with the release's Lake-generated resolved dependency manifest,
-blueprint, and site, in a private sibling directory, validates it, and
-publishes it with an atomic no-replace rename: it never overwrites an existing
-path, a failed or concurrent creation leaves no partial target, and exactly one
-concurrent creator wins. A failure or interrupt after staging can leave a
-hidden `.autoform-new-*` directory in the parent, and the error says so;
-inspect it before removing it. The published tree has modes 0755 for
-directories and executables and 0644 for other files, whatever the umask.
-Its `lakefile.toml` sets `enableArtifactCache = true` and
-`restoreAllArtifacts = true`, so checkouts on the same toolchain share builds
-through Lake's artifact cache while each module's `.olean` stays in
-`.lake/build`, where Autoform's probes load it.
-Package names cannot shadow Mathlib libraries such as `Archive` or
-`Counterexamples`.
-Generated workflows are pinned as `init` pins them: `--autoform-ref` must be a
-full commit SHA, an explicit `--autoform-source` carries its own ref or none,
-and without flags the workflows pin the HEAD commit of the Autoform checkout
-running the command, or of the marketplace checkout an installed plugin was
-copied from. That pin is inferred only when a safe remote (Autoform's canonical
-repository, then `origin`, then `upstream`, then a unique remaining one) has a
-cached tracking ref containing HEAD, tracked files are clean, and the scaffold
-renderer and templates match that commit; an installed copy must match the
-checkout too. Without a ref the local project is complete but the workflows are
-omitted. Apart from local Git reads, the command runs no subprocesses, Lake,
-Lean, or network operations.
-
-Its errors name a code and what to do:
+`project new` builds a complete Lean shell (the release's resolved dependency
+manifest, blueprint, and site) in a private sibling directory and publishes it
+atomically: the target must be absent, nothing is overwritten, and a failed or
+concurrent creation leaves no partial target. A failure or interrupt after
+staging can leave a hidden `.autoform-new-*` directory in the parent, which the
+error mentions; inspect it before removing it. Its `lakefile.toml` sets
+`enableArtifactCache = true` and `restoreAllArtifacts = true`, so checkouts on
+the same toolchain share builds through Lake's artifact cache while each
+module's `.olean` stays in `.lake/build`. Package names cannot shadow Mathlib
+libraries such as `Archive` or `Counterexamples`. Workflows are pinned as
+[`init`](#init) pins them. Apart from local Git reads, the command runs no
+subprocesses, Lake, Lean, or network operations. Its errors name a code:
 
 - `project-parent-inaccessible` or `project-path-is-symlink`: the parent and
-  each of its ancestors must be readable real directories, since no path
-  component is followed through a link. On macOS, use the canonical
-  `/private/tmp` path rather than the `/tmp` symlink.
+  its ancestors must be readable real directories, not links; on macOS, use
+  `/private/tmp` rather than the `/tmp` symlink.
 - `project-parent-unsafe`: the parent is group- or world-writable and not a
-  sticky directory owned by you or root; `chmod g-w,o-w` on the parent fixes it.
-- `project-parent-busy`: another creation in the same parent held its lock for
-  30 seconds; retry once it is done.
-- `project-parent-changed`: the parent path stopped naming the locked directory
-  before publication. Nothing was published, but an `.autoform-new-*` stage may
-  remain in the original directory; inspect it before removing it.
+  sticky directory owned by you or root; run `chmod g-w,o-w` on it.
+- `project-parent-busy`: another creation held the parent's lock for 30
+  seconds; retry once it is done.
+- `project-parent-changed`: the parent path stopped naming the locked
+  directory. Nothing was published, but an `.autoform-new-*` stage may remain
+  in the original directory; inspect it before removing it.
 - `project-create-commit-uncertain`: publication started but its outcome could
-  not be confirmed, for example because the parent path changed after the
-  project was published; locate the project before retrying.
+  not be confirmed; locate the project before retrying.
 
-Creation fails closed where POSIX descriptor traversal, advisory locking,
-directory sync, or atomic no-replace rename is unavailable, including on
-Windows.
+Creation fails closed, including on Windows, where POSIX descriptor traversal,
+advisory locking, directory sync, or atomic no-replace rename is unavailable.
 
-`--lean-toolchain` takes a Lean release tag (`v4.30.0`, `v4.30.0-rc1`, or
-`leanprover/lean4:v4.30.0`) and `--mathlib-rev` a Mathlib tag, branch, or
-commit, defaulting to the same tag; `--mathlib-rev` requires `--lean-toolchain`,
-and neither combines with `--release`. A pair equal to a catalog entry gets that
-entry's bundled manifest. Any other pair is written without
-`lake-manifest.json` and reported with a `project-release-unlisted` warning:
-run `lake update` in the project, which needs network access, resolves and
-locks Mathlib, and downloads the Mathlib build cache, then commit the manifest.
-Use the toolchain that Mathlib revision declares in its own `lean-toolchain`;
-otherwise Lake may rewrite the project's toolchain, warn, or fail to build.
-Until the manifest exists, `project inspect` reports `indeterminate` with
-`missing-lake-manifest`; afterwards, `unlisted`, or `supported` when Lake locks a
-catalog commit. Autoform needs Lean v4.27.0 or
-newer (the skeleton probe uses that release's `String` API and the generated
-audit reads ILean `decls`); older toolchains get a `project-lean-below-minimum`
-warning. With `--json`, such a pair reports `"release": null` and its warnings
-go to the `warnings` array; otherwise warnings go to stderr. Either way the
-exit status stays 0. Successful JSON uses schema
-`autoform-project-creation/v1`.
+`--lean-toolchain` also accepts `v4.30.0-rc1` and `leanprover/lean4:v4.30.0`;
+`--mathlib-rev` requires it, and neither combines with `--release`. A pair equal
+to a catalog entry gets that entry's bundled manifest. Any other pair is written
+without `lake-manifest.json`, with a `project-release-unlisted` warning: run
+`lake update` in the project (it needs network access, locks Mathlib and
+downloads its build cache), then commit the manifest. Use the toolchain that Mathlib revision declares in its own
+`lean-toolchain`, or Lake may rewrite the project's toolchain or fail to build.
+A toolchain older than v4.27.0 gets a `project-lean-below-minimum` warning.
+Warnings go to stderr, or with `--json` to the `warnings` array, where such a
+pair reports `"release": null`; the exit status stays 0. Successful JSON uses
+schema `autoform-project-creation/v1`.
 
-`--library NAME` names an entry of the bundled library catalog,
-`autoform_cli/project/libraries.json`. Each entry pins a shared Lean library
-to a full commit on a listed release. The project is created on that release,
-its `lakefile.toml` gains the library's `[[require]]` after the existing
-blocks, and its `lake-manifest.json` is the release's bundled manifest plus the
-library's resolved packages, so it needs no `lake update`. The first Lake
-command clones the packages the manifest locks, which needs network access.
-`--library` combines with no version option. An unknown name is
+`--library NAME` names an entry of `autoform_cli/project/libraries.json`, which
+pins a shared Lean library to a full commit on a listed release. The project is
+created on that release with the library's `[[require]]`, and its manifest
+already locks the library's packages, so it needs no `lake update`; the first
+Lake command clones them, which needs network access. An unknown name is
 `project-library-unknown`, and a package name that is one of the library's
 module roots or packages is `project-name-invalid`. The JSON result adds
 `library: {name, git, rev}`.
 
-`project inspect` is local and read-only. It inspects the nearest enclosing Lean
-project without running Lake, Lean, Git, or the network. For automation, use
-`--json`; accept only `autoform-project-inspection/v1`, then branch on `ok`,
-`compatibility.status`, and `diagnostics[].code`, not message text.
+`project inspect` is local and read-only: it inspects the nearest enclosing Lean
+project without running Lake, Lean, Git, or the network. Automation should use
+`--json`, accept only `autoform-project-inspection/v1`, and branch on `ok`,
+`compatibility.status`, and `diagnostics[].code`, not message text. `ok` and
+compatibility are independent, and `supported` certifies release identity, not
+build validity. Exit 0 means `ok: true`, exit 1 an inspection or catalog error,
+and exit 2 invalid CLI usage. The [project-inspection reference](project/README.md)
+defines the statuses, JSON fields, and diagnostic codes. `project versions`
+lists the bundled pairs, the ones `project new` can lock offline.
 
-Treat `ok` and compatibility independently:
-
-- `ok` reports whether inspection found errors.
-- `compatibility.status` is `supported` when the active Lean/Mathlib release
-  identity matches the bundled catalog, `unlisted` when comparable but absent,
-  and `indeterminate` when Autoform cannot establish that identity.
-
-Exit 0 means `ok: true`, exit 1 an inspection or catalog error, and exit 2
-invalid CLI usage. `supported` certifies release identity, not build validity.
-See the [project-inspection reference](project/README.md) for resolver rules,
-scope limits, JSON fields, nullability, and diagnostic codes.
-
-`project versions` lists the bundled catalog of known-good Lean and Mathlib
-pairs. These are the pairs `project new` can lock offline; it does not resolve
-others, which it writes unlocked for `lake update`.
+### Publishing and the dashboard
 
 Publishing a project runs four steps in order: validate, refresh the vault's
 dependency summary, render the site source, then strict-build the site.
@@ -391,221 +355,153 @@ uv run --with mkdocs --with mkdocs-material --with mkdocs-literate-nav \
   --with pymdown-extensions mkdocs build --strict
 ```
 
-`autoform dashboard . --site-dir site` then serves the built site locally, with
-live claims, until you stop it.
-
 Drop `--require-declarations` when reviewing work in progress, where a
 statement may name a Lean declaration that does not exist yet. On native
-Windows, run `check` and `render` without `--lean-root`: the site then has no
-code links (see the publication contract below). A Lake project in a
-subdirectory of the repository, such as `v1/`, is passed as `--lean-root v1`.
-Links name paths from the repository's top level, so its files link under `v1/`,
-and a blueprint beside it, such as `blueprint/`, under `blueprint/`. The
-generated `blueprint-pages.yml` passes `--lean-root .` to `check`, `audit` and
-`render`; edit each to match.
+Windows, run `check` and `render` without `--lean-root`; the site then has no
+code links ([publication contract](reference/runtime-and-publication.md#publication-contract)).
+A Lake project in a subdirectory, such as `v1/`, is passed as `--lean-root v1`,
+and links name paths from the repository's top level; edit the `--lean-root .`
+that the generated `blueprint-pages.yml` passes to `check`, `audit` and
+`render` to match.
 
-`dashboard` serves the exact built MkDocs site on `127.0.0.1`, choosing an
-available port unless `--port` is supplied, and adds a read-only live overlay
-from current author claims. Static content remains the
-same artifact deployed to GitHub Pages; only the loopback server exposes
-`/__autoform/live.json`. The overlay is ephemeral, matches claims taken on
-either an article's path-derived node ID or its `article_id`, reports in that
-JSON the `claim_target` each lease used, and is never written into the vault,
-publication manifest, or public site. Re-run render and the MkDocs build to
-refresh durable content; claim badges update while the local server is running.
+`autoform dashboard . --site-dir site` then serves the built site on
+`127.0.0.1` until you stop it, with a read-only live overlay of current author
+claims at `/__autoform/live.json`, which only the loopback server exposes. The
+overlay matches claims on an article's node ID or its `article_id`, reports the
+`claim_target` each lease used, and is never written into the vault,
+publication manifest, or public site. Claim badges update while it runs; re-run
+render and the MkDocs build to refresh everything else.
+
+The generated `blueprint-pages.yml` deploys only a commit that the project's
+own `.github/workflows/autoform-verify.yml` (matched by file, not name) passed
+on a push to `main`, with code links rendered at that commit by `--ref`. A
+failed verification deploys nothing, so the last verified site stays up. Pull
+requests and manual runs build the site but never deploy, and cannot cancel a
+waiting deploy. To redeploy, re-run the Pages run that the newest successful
+verify run on `main` started; re-running an older one deploys the older commit.
+A project scaffolded before this rule deploys every push: delete
+`.github/workflows/blueprint-pages.yml` and run `autoform init` again, which
+writes only missing files. No pin has to move: every `AUTOFORM_REF` since 0.5.0
+has `render --ref`.
+
+Pages gates on `check` and `render`, and runs `audit` after `check` only as a
+report, with `continue-on-error`: the log lists every finding, or
+`OK: roadmap audit passed`. An invalid coverage contract fails `render` before
+it writes anything, but `MAPPED` rows (each an audit `declared-coverage-gap`;
+a new project lists the template's row) and coverage-role issues, which
+`render` prints as warnings, still publish. A project scaffolded before the
+report step can add, after `check`, a `continue-on-error: true` step running
+`autoform audit blueprint --lean-root .` from the same `uvx --from` source. To
+block merges on findings, run `autoform audit` in CI without it.
+
+### check
 
 Validate structure, and optionally check that every `lean:` name really exists
 in the project's Lean sources:
 
 ```bash
 autoform check blueprint --lean-root .
+```
+
+`check` validates the graph contract ([Validation](reference/validation-and-audit.md#validation)).
+With `--lean-root` it resolves names only in the project's own Lean files, not
+in Mathlib or other dependencies under `.lake`; when a name is not found, a note
+at the end of the output says that a shared library's declaration belongs in
+the article's implementation note.
+
+With `--lean-root`, `check` also warns about each declaration of a usable,
+checked-out shared library (see `autoform library list`) whose own docstring
+cites an arXiv paper or DOI that an unproved article reaches through its
+`## Sources` links, or through a blueprint Markdown page such a link names
+(pages over 4 MiB are not read). Silence it by naming the declaration in full
+in an implementation note, a page under `blueprint/sources/` or one a
+`## Sources` link names, or in project Lean, in full or by its last name
+component. Declarations citing a source only through their module docstring
+share one warning, silenced by naming the module, or in full a citing
+declaration; importing the module names it, importing only an umbrella module
+above it does not. Reuse such a declaration and name it in the note of each
+article using it; when it does not apply, name it on the source's page under
+`blueprint/sources/` with why, which outlasts the notes.
+
+`check` also warns when a library's index cannot be read or parsed, when a
+library with a citing declaration fails verification against its checkout, and
+when the project's Lake files cannot be used. None of these warnings changes the
+exit status.
+
+### audit and coverage
+
+```bash
 autoform audit blueprint --lean-root .
 ```
 
-`check` validates the graph contract. With `--lean-root` it resolves names only
-in the project's own Lean files, not in Mathlib or other dependencies under
-`.lake`; when a name is not found, a note at the end of the output says that a
-shared library's declaration belongs in the article's implementation note.
+`audit` adds deterministic completeness, provenance, coverage, checked-fact,
+and optional Lean-target checks ([Audit contract](reference/validation-and-audit.md#audit-contract)).
+It is local and read-only: it neither contacts network services nor writes
+findings back into the blueprint. Pass `--json` for stable machine-readable
+output. A nonzero exit status means the audit found at least one finding;
+[warnings](reference/validation-and-audit.md#warnings) never change it.
 
-With `--lean-root`, `check` also compares the blueprint's sources with each
-usable shared library whose package is checked out (see
-`autoform library list`). An unproved article reaches the arXiv papers and DOIs
-that its `## Sources` link targets cite, and those cited by a Markdown page
-under the blueprint that such a link names, up to 4 MiB; link text is not read.
-A container stops reaching them once every formalizable article in its scope,
-and every leaf marked `not_ready` beneath it, is proved, and there is at least
-one: when audit asks for its implementation note to be deleted, and a module
-catalog, which inventories existing Lean, never counts. For each complete
-declaration whose own docstring cites a reached source, `check` warns
-unless an implementation note, a Markdown page under `blueprint/sources/` or a
-page an article's `## Sources` links names it in full, or a project Lean file
-names it in full or by its last name component, since `open` shortens names; any
-identifier with that component counts, comments and strings included, so a
-generic one such as `symm` can hide the warning. Declarations that cite a
-reached source only through their module's docstring share one warning for the
-module, which naming the module, or in full one of its declarations citing that
-source, silences; a Lean file that imports the module names it, but one that
-imports only an umbrella module above it does not. Such a declaration usually
-proves part of the source being formalized: reuse it and name it in the
-implementation note of each article that uses it, or, when it does not apply or
-no article concerns it, name it on the source's page under `blueprint/sources/`
-with why. That record outlasts the implementation notes, which audit asks to
-delete once their article is proved, and covers every article that reaches the
-source, including ones added later.
+The machine-checkable `coverage/README.md` contract contains one
+`Area | Coverage | Evidence` table, one disposition per row:
 
-Identifiers match across their usual forms: versions; `abs`, `pdf`, `html`,
-`e-print` and `src` URLs, with or without a trailing slash; old-style
-identifiers such as `math.AG/0210149`; arXiv's own DOIs; `https://doi.org/` and
-`dx.doi.org` links, percent-encoded or not, up to a query or fragment; and the
-labels `arXiv:`, `arXiv`, `doi:` and `DOI`, with the label or the identifier in
-backticks, emphasis or a table cell. A bare number cites nothing. `check` also
-warns when a library's index cannot be read or parsed, when one with a citing
-declaration fails verification against its checkout, and when the project's Lake
-files cannot be used. None of these warnings changes the exit status, and a
-library's sources are hashed only when one of its declarations cites a reached
-source.
+- `MAPPED` is nonterminal.
+- `INVENTORIED` is terminal for exact source accounting and links a
+  `catalog: module` record, directly or through a containing roadmap scope:
+  `coverage-role-mismatch` names a link that reaches none, and
+  `unclassified-inventory` the first catalogs no such row reaches.
+- `DECOMPOSED` links source-grounded declaration articles, directly or through
+  a containing scope. Links that reach only catalogs are a
+  `coverage-role-mismatch`; any other link reaching no declaration leaf, such as
+  prose or `not_ready` leaves that declare nothing yet, is a
+  `decomposed-without-declaration` warning.
+- `DEFERRED` and `OUT` record an explicit later milestone or exclusion.
 
-`audit` adds deterministic completeness,
-provenance, coverage, checked-fact, and optional Lean-target checks. It is local
-and read-only: it neither contacts network services nor writes findings back
-into the blueprint. Pass `--json` for stable machine-readable output. A nonzero
-exit status means the audit found at least one finding; [warnings](reference/validation-and-audit.md#warnings)
-never change it. The machine-checkable
-`coverage/README.md` contract contains one `Area | Coverage | Evidence` table
-with `MAPPED`, `INVENTORIED`, `DECOMPOSED`, `DEFERRED`, or `OUT` dispositions.
-`MAPPED` is nonterminal. `INVENTORIED` is the terminal disposition for exact
-source accounting and must link to a `catalog: module` record, directly or
-through a containing roadmap scope: `coverage-role-mismatch` names a link that
-reaches none, and `unclassified-inventory` the first catalogs no such row
-reaches. CI's `render` at an older `AUTOFORM_REF` rejects `INVENTORIED` as an
-unknown disposition, so move the pin first. `DECOMPOSED` is reserved for
-source-grounded declaration articles and links to them, directly or through a
-containing roadmap scope. A row whose links reach nothing but catalogs is a
-`coverage-role-mismatch`. Any other link that reaches no declaration leaf, such
-as one to prose or to leaves marked `not_ready` that declare nothing yet, is a
-`decomposed-without-declaration` [warning](reference/validation-and-audit.md#warnings), since earlier versions
-accepted it. `DEFERRED` and `OUT` record an explicit later milestone or
-exclusion. Audit JSON includes canonical rows, counts, and the
-exact coverage source hash, while `publication.json` records aggregate counts
-without duplicating the authored rows. The `counts` object always includes an
-integer `INVENTORIED` key, zero when no row uses it.
+Audit JSON includes canonical rows, the exact coverage source hash, and counts,
+which always have an integer `INVENTORIED` key; `publication.json` records only
+aggregate counts. To record both axes of one source area, use distinct
+axis-qualified `Area` labels, unrelated to an article's `area:` field:
+`Repository inventory / MathlibExt` may be `INVENTORIED` while
+`Mathematical exposition / MathlibExt` is still `MAPPED`. Duplicate exact area
+labels are invalid. A broad inventory row may link a container and classify
+every catalog below it.
 
-One row carries one disposition, so represent both axes with distinct,
-axis-qualified `Area` labels; these name source areas and are unrelated to an
-article's `area:` field. For example, `Repository inventory / MathlibExt`
-may be `INVENTORIED` while `Mathematical exposition / MathlibExt` remains
-`MAPPED` and later becomes `DECOMPOSED`; duplicate exact area labels are
-invalid. A broad inventory row may link a container and classify every catalog
-below it while finer exposition rows evolve independently.
+The contract is read as published Markdown and fails closed; `coverage.py`
+gives the edge cases:
 
-The contract is read as published Markdown and fails closed; the reasons are
-in `coverage.py` and `markdown.py`:
+- A table in an HTML comment, a code block, or under a `hidden` attribute is not
+  the contract. A table that does not publish, such as one a paragraph runs
+  into, is rejected, and a published one the audit does not recognise, such as
+  one without outer pipes, is named.
+- A comment or code block between rows is reported, with the rows stranded
+  below it, rather than truncating the contract. A row holding an unclosed
+  `<style>`, or evidence with a raw `<table>`, is refused.
+- Evidence holding only a code span, a comment, emphasis, an HTML tag, an
+  entity, an empty link such as `[ ](notes.md)`, or hidden text is rejected,
+  and so is evidence that is only `TODO`, `TBD`, `pending`, `placeholder`, or
+  `unknown`, or opens with one as a marker (`TODO: choose a milestone`).
+  "Pending Mathlib PR 1234" passes.
+- `INVENTORIED` and `DECOMPOSED` evidence needs a complete inline link to an
+  existing roadmap article, and each linked scope must contain the claimed role;
+  audit reports a row that does not, and `render` warns. Every local link must
+  resolve, fragments included.
 
-- A table inside an HTML comment, a fenced block, or a four-space-indented
-  block is documentation, not contract, and is not discovered. A closing fence
-  carries nothing but its marker.
-- A comment or code block written between rows, and every row-shaped line
-  stranded below it, is reported rather than silently truncating the contract.
-  A table that does not publish, such as one a paragraph runs straight into, is
-  rejected, and a published contract table the audit does not recognise, such
-  as one without outer pipes, is named.
-- Only what a reader sees counts: a table, row, or cell hidden by a `hidden`
-  attribute, its own or an ancestor's, is not published. Hiding is read from
-  HTML, not CSS, so a stylesheet class or inline `display: none` still counts
-  as published.
-- A row whose removal would change the rest of the page, such as one holding an
-  unclosed `<style>` or evidence with a raw `<table>`, is refused.
-- Evidence must say something to a reader. A cell holding only a code span, a
-  comment, emphasis, an HTML tag, an entity, an empty link such as
-  `[ ](notes.md)`, or text a browser hides is rejected, and so is evidence that
-  is nothing but `TODO`, `TBD`, `pending`, `placeholder`, or `unknown`, or opens
-  with one as a marker, such as `TODO: choose a milestone`. "Pending Mathlib PR
-  1234" names something a reader can check and passes.
-- `INVENTORIED` and `DECOMPOSED` evidence must contain at least one complete
-  inline link to an existing roadmap article, and every linked scope must
-  contain the role the row claims: a module inventory for `INVENTORIED`, or a
-  declaration-bearing leaf for `DECOMPOSED`. Audit reports a row that does not,
-  and `render` warns. Every local link must resolve, fragments included, and a
-  link missing its closing parenthesis does not count. Fragments are checked
-  against the heading IDs Python-Markdown produces with the extensions the
-  generated `mkdocs.yml` enables.
+#### What coverage completeness does and does not claim
 
-### What coverage completeness does and does not claim
+`coverage.complete` in audit and `publication.json` means only that no declared
+row is still `MAPPED`. `INVENTORIED` closes exact source accounting and
+`DECOMPOSED` says the area has source-grounded declaration articles; neither
+implies the other. It does **not** claim the rows cover the source
+exhaustively, which no local check can judge, nor that linked articles are
+formalized or proved.
 
-`coverage.complete` in audit and `publication.json` means exactly one thing:
-every row the author declared has reached a terminal disposition, so no row is
-still `MAPPED`. It is a statement about the contract, not a measurement of the
-project. Terminal dispositions close different questions: `INVENTORIED` closes
-exact source accounting, while `DECOMPOSED` says the area has source-grounded
-declaration articles. One does not imply the other.
-
-It does **not** claim that the declared rows cover the source exhaustively, and
-it says nothing about whether the linked roadmap articles are formalized or
-proved. A project that declares one narrow area and disposes of it reports
-`complete` while most of its source remains undeclared. Exhaustiveness is an
-authoring judgement that no local check can make.
-
-Module inventory counts are reported separately from formalization-target
-completion. The target denominator, readiness count, declaration-kind totals,
-and the progress-state breakdowns in the book and in `autoform check` use
-non-container articles carrying `declaration`; a `catalog: module` record
-counts toward none of them. A scope's status ring and item count, and the
-legend beside each dependency map, also count a leaf marked `not_ready` that
-declares nothing yet, so deferred work holds its scope open. All three also
-count every catalog, under a neutral status: `inventory checked` once the
-catalog is fully proved, which records inspection rather than a completed
-result, and `inventory pending` until then, whatever its derived state. Neither
-status changes a scope's rolled-up status or completion, though a target that
-depends on a catalog waits for it like any prerequisite.
-
-The generated `blueprint-pages.yml` deploys only a commit that the generated
-`autoform verify` workflow passed on a push to `main`. It runs when that
-workflow completes, checks that the run is the project's own
-`.github/workflows/autoform-verify.yml` by file, not a workflow that only shares
-its name, checks out the run's exact commit, and renders code links at it with
-`--ref`. A failed verification deploys nothing, so the last verified site stays
-up while `main` is red. Pull requests and manual runs build the site to check
-it and never deploy, and they cannot cancel a deploy waiting in its
-concurrency group.
-
-Projects scaffolded before this rule keep a workflow that deploys every push to
-`main`, since `init` leaves existing files alone and `--force` also rewrites
-`README.md`, `mkdocs.yml` and the blueprint READMEs. To switch, delete
-`.github/workflows/blueprint-pages.yml` and run `autoform init` again, which
-writes only missing files. No pin has to move: `render --ref` exists at every
-pin since 0.5.0, so the new file's `AUTOFORM_REF` may be set back to the
-project's own.
-
-Since a manual run never deploys, redeploy by re-running the Pages run that the
-newest successful verify run on `main` started. A re-run keeps its original
-event and so deploys the same commit. By the same rule, re-running an older
-verify run, or its Pages run, deploys that older commit, which stays up until
-the next deploy.
-
-Publication and audit are deliberately different gates. The generated
-`blueprint-pages.yml` gates on `check` and `render`, and runs `audit` after
-`check` only as a report: the step lists every finding in the run's log, or
-`OK: roadmap audit passed`, and `continue-on-error` keeps a finding from failing
-the build or stopping a deploy. An invalid coverage contract fails `render`
-before any output is written, but a valid contract with `MAPPED` rows publishes
-normally even though `audit` reports each one as a `declared-coverage-gap`; a
-freshly scaffolded project's first run lists one, for the template's row. That
-is intended: a roadmap is published while it is still being decomposed, and the
-published `coverage.complete: false` is how a reader sees that. Coverage-role
-issues take the same path: `render` prints each one as a warning and publishes,
-and `audit` reports it. A project scaffolded before the report step can add it
-after `check`:
-
-```yaml
-      - name: Audit the roadmap (report only)
-        continue-on-error: true
-        run: >-
-          uvx --from "git+${AUTOFORM_SOURCE}@${AUTOFORM_REF}"
-          autoform audit blueprint --lean-root .
-```
-
-Run `autoform audit` without `continue-on-error` in your own CI when you want
-mapped rows or role findings to block a merge.
+Target metrics (the denominator, readiness count, declaration-kind totals, and
+progress breakdowns in the book and `autoform check`) count non-container
+articles carrying `declaration`, never a `catalog: module` record. A scope's
+status ring, item count, and dependency-map legend also count `not_ready`
+leaves that declare nothing yet, so deferred work holds its scope open, and
+each catalog under a neutral status, `inventory checked` once fully proved and
+`inventory pending` until then, which never changes the scope's rolled-up
+status; a target that depends on a catalog still waits for it.
 
 Extract what a reader must trust for each formalized statement:
 
