@@ -455,10 +455,11 @@ class ClaimBoard:
                 return oid
         return None
 
-    def _remote_oids(self, keys: Sequence[str]) -> dict[str, str]:
+    def _remote_oids(self, keys: Sequence[str], git: _Git | None = None) -> dict[str, str]:
         """Read every present key's object ID with one ``ls-remote``."""
+        git = self._git if git is None else git
         keys_by_ref = {self._ref(key): key for key in keys}
-        proc = self._git(["ls-remote", self.repo_url, *keys_by_ref])
+        proc = git(["ls-remote", self.repo_url, *keys_by_ref], step="naming the claim refs")
         oids: dict[str, str] = {}
         for line in proc.stdout.splitlines():
             oid, separator, ref = line.partition("\t")
@@ -867,11 +868,12 @@ class ClaimBoard:
 
     def list(
         self,
+        keys: Sequence[str] | None = None,
         *,
         timeout: float | None = None,
         progress: Callable[[str], None] | None = None,
     ) -> list[dict[str, Any]]:
-        """Return all claim refs, including malformed and expired entries.
+        """Return all claim refs, or those of ``keys``, including malformed and expired entries.
 
         One fetch copies every claim ref and its commit into refs private to
         this call, so each listed lease is the one its ref named when the board
@@ -880,35 +882,59 @@ class ClaimBoard:
         changes meanwhile is listed as it was; every update checks ownership
         again.
 
+        With ``keys``, only their refs are named, fetched and read, so neither
+        the board's size nor changes to other claims affect the listing; a key
+        without a claim ref is left out.
+
         With ``timeout``, the listing gets that many seconds in all, and running
         out raises ``ClaimTimeoutError`` naming the step it was on.
         ``progress`` hears the name of each step still running after five
         seconds.
         """
+        targets = None if keys is None else _validate_keys(keys)
         deadline = None if timeout is None else time.monotonic() + _validate_timeout(timeout)
         git = functools.partial(self._git, deadline=deadline, progress=progress)
         self._ensure_scratch(git)
         written: dict[str, dict[str, str] | None] = {}
         try:
-            return self._read_listed(self._fetch_claims(written, git), git)
+            return self._read_listed(self._fetch_claims(written, git, targets), git)
         finally:
             # Deleting the private refs gets its own time limit, even after the deadline.
             for namespace, refs in written.items():
                 self._delete_refs(namespace, refs)
 
-    def _fetch_claims(self, written: dict[str, dict[str, str] | None], git: _Git) -> dict[str, str]:
-        """Fetch every claim ref into refs private to this call; return each claim's object ID, by key.
+    def _fetch_claims(
+        self,
+        written: dict[str, dict[str, str] | None],
+        git: _Git,
+        targets: tuple[str, ...] | None = None,
+    ) -> dict[str, str]:
+        """Fetch every claim ref, or those of ``targets``, into refs private to this call; return each claim's object ID, by key.
 
         Each fetch's namespace goes into ``written`` before it runs, with the refs
         it wrote once they are read. A private ref is named after its claim key,
         which a case-insensitive scratch cannot do for two keys that differ only
         in case; the board's keys are then fetched again by name into numbered refs.
+        With ``targets``, only the present targets are fetched by name, and a
+        target released meanwhile has the targets named again, never the board.
         A board that refuses every attempt because claim refs moved raises
         ``ClaimContentionError``.
         """
         keys: list[str] | None = None
+        if targets is None:
+
+            def name() -> list[str]:
+                return self._remote_keys(git)
+        else:
+
+            def name() -> list[str]:
+                return list(self._remote_oids(targets, git))
+
+            keys = name()
         failures = 0
         while True:
+            if keys is not None and not keys:
+                return {}
             namespace = f"{_LIST_REF_PREFIX}{uuid.uuid4().hex}/"
             written[namespace] = None
             # Negotiate only from this fetch's refs, which do not exist yet: the
@@ -936,7 +962,7 @@ class ClaimBoard:
                 numbered = ((key, refs.get(f"{namespace}{index}")) for index, key in enumerate(keys))
                 return {key: oid for key, oid in numbered if oid is not None}
             if keys is None and any(marker in fetch.stderr for marker in _CASE_COLLISION):
-                keys = self._remote_keys(git)
+                keys = name()
                 continue
             failures += 1
             # A claim released after `ls-remote` named it is no longer there to fetch.
@@ -949,7 +975,7 @@ class ClaimBoard:
                     f"{_fetch_failure(fetch.stderr)}"
                 )
             if keys is not None:
-                keys = self._remote_keys(git)
+                keys = name()
 
     def _remote_keys(self, git: _Git) -> list[str]:
         """Return every validly named claim key the board advertises."""

@@ -1997,3 +1997,162 @@ def test_list_reports_contention_when_every_fetch_is_refused_because_refs_moved(
     with pytest.raises(claims.ClaimContentionError, match="not our ref"):
         reader.list()
     assert len(fetches) == 3
+
+
+def _counting(reader: claims.ClaimBoard, monkeypatch: pytest.MonkeyPatch) -> list[tuple[list[str], dict[str, object]]]:
+    git = reader._git
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def counting_git(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((args, kwargs))
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(reader, "_git", counting_git)
+    return calls
+
+
+def test_list_of_targets_returns_only_their_leases_as_a_full_listing_does(
+    tmp_path: Path, board_repo: Path
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire_many(["a", "b", "c"], ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+
+    full = {lease["_key"]: lease for lease in reader.list()}
+    targeted = reader.list(["c", "a", "absent"])
+
+    assert [lease["_key"] for lease in targeted] == ["a", "c"]
+    assert targeted == [full["a"], full["c"]]
+
+
+def test_list_of_absent_targets_is_empty_without_fetching(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire("a", ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    calls = _counting(reader, monkeypatch)
+
+    assert reader.list(["absent"]) == []
+    assert not any(args[0] == "fetch" for args, _ in calls)
+
+
+def test_list_of_targets_fetches_only_their_refs_whatever_the_board_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counts = []
+    for size in (1, 30):
+        repo = tmp_path / f"board-{size}.git"
+        _git("init", "--bare", "--quiet", str(repo))
+        owner = claims.ClaimBoard(repo, "worker-a", tmp_path / f"owner-{size}")
+        assert owner.acquire_many([f"k{index}" for index in range(size)], ttl=600)
+        reader = claims.ClaimBoard(repo, "worker-b", tmp_path / f"reader-{size}")
+        calls = _counting(reader, monkeypatch)
+
+        assert [lease["_key"] for lease in reader.list(["k0"])] == ["k0"]
+        fetches = [kwargs for args, kwargs in calls if args[0] == "fetch"]
+        assert len(fetches) == 1
+        [refspec] = str(fetches[0]["input_text"]).splitlines()
+        assert refspec.startswith(f"+{claims.CLAIM_REF_PREFIX}k0:")
+        assert not any(f"{claims.CLAIM_REF_PREFIX}*" in args for args, _ in calls)
+        counts.append(len(calls))
+
+    assert counts[0] == counts[1]
+
+
+def test_list_of_targets_ignores_a_peer_renewing_another_claim(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire_many(["a", "b"], ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+    fetches = 0
+
+    def renew_b_after_each_git_command(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal fetches
+        fetches += args[0] == "fetch"
+        proc = git(args, **kwargs)
+        assert owner.renew("b")
+        return proc
+
+    monkeypatch.setattr(reader, "_git", renew_b_after_each_git_command)
+
+    assert [lease["_key"] for lease in reader.list(["a"])] == ["a"]
+    assert fetches == 1
+
+
+def test_list_of_targets_names_only_the_targets_again_when_one_is_released_meanwhile(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire_many(["a", "b"], ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+    calls: list[list[str]] = []
+
+    def release_b_before_the_first_fetch(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "fetch" and not any(call[0] == "fetch" for call in calls):
+            assert owner.release("b")
+        calls.append(args)
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(reader, "_git", release_b_before_the_first_fetch)
+
+    assert [lease["_key"] for lease in reader.list(["a", "b"])] == ["a"]
+    assert sum(call[0] == "fetch" for call in calls) == 2
+    assert not any(f"{claims.CLAIM_REF_PREFIX}*" in call for call in calls)
+
+
+def test_list_of_targets_reports_a_malformed_target_as_an_entry(tmp_path: Path, board_repo: Path) -> None:
+    blob = _git("hash-object", "-w", "--stdin", cwd=board_repo, input_text="not a lease")
+    _git("update-ref", f"{claims.CLAIM_REF_PREFIX}m", blob, cwd=board_repo)
+
+    [lease] = _board(tmp_path, board_repo, "worker-b").list(["m"])
+
+    assert lease["_key"] == "m"
+    assert lease["_malformed"] is True
+
+
+@pytest.mark.parametrize("ignorecase", ["true", "false"])
+def test_list_of_targets_lists_keys_that_differ_only_in_case_on_any_filesystem(
+    tmp_path: Path, board_repo: Path, ignorecase: str
+) -> None:
+    # A case-sensitive board can hold both refs; a case-insensitive scratch cannot store them under their names.
+    oids = _plant_packed_leases(board_repo, ["lean/Foo", "lean/foo"])
+    reader = _board(tmp_path, board_repo, "worker-b")
+    reader._ensure_scratch()
+    reader._git(["config", "core.ignorecase", ignorecase])
+
+    listed = reader.list(["lean/Foo", "lean/foo"])
+
+    assert [(item["_key"], item["_oid"], item["_malformed"]) for item in listed] == [
+        ("lean/Foo", oids["lean/Foo"], False),
+        ("lean/foo", oids["lean/foo"], False),
+    ]
+
+
+def test_list_of_targets_refuses_invalid_targets_before_running_git(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reader = _board(tmp_path, board_repo, "worker-b")
+    calls = _counting(reader, monkeypatch)
+
+    with pytest.raises(ValueError, match="duplicate"):
+        reader.list(["a", "a"])
+    with pytest.raises(ValueError, match="at least one"):
+        reader.list([])
+    with pytest.raises(ValueError, match="invalid claim key"):
+        reader.list(["../x"])
+    with pytest.raises(TypeError):
+        reader.list("a")
+    assert calls == []
+
+
+def test_list_of_targets_stops_at_its_timeout_while_naming_them(tmp_path: Path, hanging_board: str) -> None:
+    reader = claims.ClaimBoard(hanging_board, "worker-b", tmp_path / "scratch")
+
+    with pytest.raises(claims.ClaimTimeoutError) as timed_out:
+        reader.list(["a"], timeout=1)
+
+    assert timed_out.value.step == "naming the claim refs"
