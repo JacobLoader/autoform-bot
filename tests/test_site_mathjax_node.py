@@ -143,6 +143,10 @@ main.init({}).then(async () => {
   await (then === "explorer" ? listeners["autoform:typeset"]() : shown());
   report.passes.push(describe());
   report.startup = Array.from(MathJax.startup.document.math).length;
+  // Each glyph on the page needs its rule in the renderer's one style sheet.
+  const sheet = adaptor.textContent(MathJax.startup.output.chtmlStyles);
+  const glyphs = new Set(Array.from(adaptor.outerHTML(body).matchAll(/class="(mjx-c[0-9A-F]+)/g), (match) => match[1]));
+  report.unstyled = Array.from(glyphs).filter((glyph) => !sheet.includes("." + glyph));
 }).catch((error) => {
   report.errors.push("harness: " + error.stack);
 }).finally(() => {
@@ -300,6 +304,7 @@ def test_the_explorer_s_titles_and_summaries_are_typeset_as_articles_are(tmp_pat
         '<h1 class="bp-dag-navigation-title arithmatex">Groups $\\mathbb{Z}/n$</h1>'
         '<p class="bp-dag-navigation-summary arithmatex">Cyclic groups $C_n \\cong \\RR$ have \\(\\varphi(n)\\) generators.</p>'
         '<p class="bp-dag-navigation-counts">2 items, and $x$ in text the explorer did not mark</p>'
+        '<a class="bp-dag-navigation-link" href="#base"><span class="arithmatex">Order of $g^k$</span></a>'
         "</div></aside></body></html>"
     )
 
@@ -310,11 +315,17 @@ def test_the_explorer_s_titles_and_summaries_are_typeset_as_articles_are(tmp_pat
     first, explorer = report["passes"]
     assert [document["card"] for document in first] == [None, "c1", "c2"]
     # A new page input, which finds only the explorer's marked text: the
-    # article's formulas and the cards were typeset by the first pass.
-    page = explorer[0]
+    # article's formulas and the cards were typeset by the first pass. A
+    # formula in a link gets a page input of its own, in a document without
+    # MathJax's menu, which would make it a control inside the control.
+    page, link = explorer[:2]
     assert page["card"] is None and page["packages"] == _PAGE_PACKAGES
     assert [math["tex"] for math in page["math"]] == ["\\mathbb{Z}/n", "C_n \\cong \\RR", "\\varphi(n)"]
     assert "merror" not in page["math"][1]["mml"] and 'mathcolor="red"' not in page["math"][1]["mml"]
-    assert all(document["math"] == [] for document in explorer[1:])
+    assert link["card"] is None and link["packages"] == _PAGE_PACKAGES
+    assert [math["tex"] for math in link["math"]] == ["g^k"]
+    assert all(document["math"] == [] for document in explorer[2:])
     # MathJax's own document, which a call to MathJax.typesetPromise would use, holds nothing.
     assert report["startup"] == 0
+    # The pass added to the page, so the glyphs the first pass drew keep their rules.
+    assert report["unstyled"] == []

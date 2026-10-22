@@ -2209,6 +2209,14 @@ def test_the_explorer_typesets_the_math_it_draws_in_its_rail_and_details(desktop
     playwright.expect(page.locator(".bp-dag-inspector-inner h2 mjx-container")).to_have_count(1)
     playwright.expect(page.locator(".bp-dag-inspector-inner .bp-dag-summary mjx-container")).to_have_count(1)
     playwright.expect(page.locator(".bp-dag-sheet-handle mjx-container")).to_have_count(1)
+    # The details' pass added to the page, so the rail's glyphs keep the style rules that draw them.
+    assert page.evaluate(
+        "Array.from(document.querySelectorAll('.bp-dag-navigation-inner mjx-c')).every((glyph) =>"
+        " !['none', 'normal', ''].includes(getComputedStyle(glyph, '::before').content))"
+    )
+    # A formula in a rail link is part of the link, not a tab stop with MathJax's menu of its own.
+    assert page.locator('[data-navigation-node-id="algebra/result"] [tabindex]').count() == 0
+    assert page.locator('.bp-dag-navigation-title mjx-container[tabindex="0"]').count() == 1
     # Map cards are not typeset, and MathJax's own document, which MathJax.typesetPromise reads, holds nothing.
     assert page.locator(".bp-dag-node mjx-container").count() == 0
     assert page.evaluate("Array.from(MathJax.startup.document.math).length") == 0
