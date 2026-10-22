@@ -82,18 +82,21 @@ subagent so, and follow the [claim rules](references/claims.md) at each step.
 
 Lean imports are allowed; do not pre-block a proof because it needs one. Before
 an effective module header or import change, run `autoform work import-impact`
-as documented in the CLI reference. When the run uses claims, follow the [import
-claims](references/claims.md#import-edits) from then on; otherwise send the lead
-the report's `claim_targets` and `affected_claim_targets` and wait for its
-answer, as above. Capture baseline skeleton evidence for the report's currently
-built, named affected articles. The report covers added imports, so when an edit
-removes an import, also baseline the articles of modules only that import kept
-in the build. The report's affected articles are not a lock. Do not acquire or
-edit them merely because they are listed; treat reported unresolved declarations
-as unknown validation scope, not proof they are unaffected. Disclosure alone is
-not a conflict or failed validation. After rebuilding, repeat the skeleton
-evidence and use Agent Review to judge semantic changes. If any article actually
-needs changes, then repair each under the review gates of the [revision
+as documented in the CLI reference. When the default scope cannot build or load
+every root library, rerun it with `--module-scope import-closure`; its affected
+articles may include more than the default scope's, never fewer. When the run
+uses claims, follow the [import claims](references/claims.md#import-edits) from
+then on; otherwise send the lead the report's `claim_targets` and
+`affected_claim_targets` and wait for its answer, as above. Capture baseline
+skeleton evidence for the report's currently built, named affected articles. The
+report covers added imports, so when an edit removes an import, also baseline
+the articles of modules only that import kept in the build. The report's
+affected articles are not a lock. Do not acquire or edit them merely because
+they are listed; treat reported unresolved declarations as unknown validation
+scope, not proof they are unaffected. Disclosure alone is not a conflict or
+failed validation. After rebuilding, repeat the skeleton evidence and use Agent
+Review to judge semantic changes. If any article actually needs changes, then
+repair each under the review gates of the [revision
 contract](../../autoform_cli/README.md#revision-contract). Stop for an active
 conflict (an affected target another worker holds, or another owner's live claim
 on one) or failed validation, not for a blanket import rule.

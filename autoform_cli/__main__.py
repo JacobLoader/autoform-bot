@@ -32,6 +32,8 @@ from .dashboard import publication_bound_live_state, serve_dashboard
 from .graph import Graph, GraphValidationError, atlas_omissions, catalogs_without_ledger, load_graph
 from .graph_views import _countable, _module_inventories
 from .impact import (
+    IMPORT_CLOSURE_SCOPE,
+    MODULE_IMPORT_SCOPE,
     ImpactError,
     format_impact,
     format_module_import_impact,
@@ -286,6 +288,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="SECONDS",
         help=f"seconds the Lean probe may run (default {DEFAULT_PROBE_TIMEOUT:g}); "
         "the Lake freshness check before it has its own budget",
+    )
+    work_import_impact.add_argument(
+        "--module-scope",
+        choices=(MODULE_IMPORT_SCOPE, IMPORT_CLOSURE_SCOPE),
+        default=MODULE_IMPORT_SCOPE,
+        metavar="SCOPE",
+        help=f"{MODULE_IMPORT_SCOPE} (default) loads every root library; {IMPORT_CLOSURE_SCOPE} loads only "
+        "files that may import MODULE, reports affected modules exactly and over-reports articles",
     )
     search = subparsers.add_parser(
         "search", help="find articles by title, Lean name, or statement text before adding one"
@@ -1301,6 +1311,7 @@ def _work_impact(args: argparse.Namespace) -> int:
                 args.module,
                 lean_root=args.lean_root,
                 timeout=args.timeout,
+                module_scope=args.module_scope,
             )
     except (GraphValidationError, RuntimeProjectionError) as error:
         for issue in error.issues:
