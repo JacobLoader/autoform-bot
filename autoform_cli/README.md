@@ -2689,6 +2689,7 @@ asset whose target the site does not contain, a fragment that matches no `id`
 on its target page, a link that is not a valid URL, and, with `--source`, each
 statement card that render wrote into a source page but the page built from it
 lacks. A link with a scheme or a network location, or a path from the site
-root, depends on where the site is served and is not checked. The exit status
-is 0 whatever it finds; it is 1 only when the site or the source is not a
-directory.
+root, depends on where the site is served and is not checked, and neither is a
+fragment of `name=value` pairs, such as the dependency explorer's `#node=`,
+which the page's script reads. The exit status is 0 whatever it finds; it is 1
+only when the site or the source is not a directory.

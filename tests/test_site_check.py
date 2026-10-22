@@ -48,6 +48,7 @@ def test_check_reports_dead_links_missing_anchors_and_links_that_leave_the_site(
             "index.html": (
                 '<link rel="stylesheet" href="missing.css"><script src="missing.js"></script>'
                 '<a href="a.html">a</a> <a href="a.html#kept">kept</a> <a href="a.html#named">named</a>'
+                '<a href="a.html#node=ch%2Fx&amp;view=list">explorer</a> <a href="a.html#a%3Db">encoded</a>'
                 '<a href="a.html#gone">gone</a>'
                 '<a href="missing.html">missing</a> <a href="roadmap/ch/README.html#x">readme</a>'
                 '<a href="../outside.html">outside</a> <img src="figure.svg"> <a href="#top">top</a>'
@@ -67,6 +68,7 @@ def test_check_reports_dead_links_missing_anchors_and_links_that_leave_the_site(
         "a.html: index.html#named names no anchor #named on index.html",
         "index.html: missing.css names missing.css, which the site does not contain",
         "index.html: missing.js names missing.js, which the site does not contain",
+        "index.html: a.html#a%3Db names no anchor #a=b on a.html",
         "index.html: a.html#gone names no anchor #gone on a.html",
         "index.html: missing.html names missing.html, which the site does not contain",
         "index.html: roadmap/ch/README.html#x names roadmap/ch/README.html, which the site does not contain",
@@ -210,7 +212,7 @@ def test_cli_prints_problems_as_warnings_and_never_fails_on_them(tmp_path: Path,
         check_site(site, tmp_path / "no-source")
 
 
-def test_check_finds_only_the_known_broken_links_in_a_rendered_project_mkdocs_built(tmp_path: Path) -> None:
+def test_check_reports_only_the_broken_anchor_in_a_rendered_project_mkdocs_built(tmp_path: Path) -> None:
     mkdocs_build = pytest.importorskip("mkdocs.commands.build")
     from mkdocs.config import load_config
 
@@ -248,8 +250,8 @@ def test_check_finds_only_the_known_broken_links_in_a_rendered_project_mkdocs_bu
 
     landing = (project / "site-src/README.md").read_text(encoding="utf-8")
     assert '<div class="bp-next-target" data-autoform-node-id="ch/third">' in landing
+    # The dependency explorer selects a node from its #node= parameter, which no element is named for.
+    published = (project / "site/index.html").read_text(encoding="utf-8")
+    assert 'href="dependencies/chapters/ch.html#node=ch%2Fthird"' in published
     assert report.pages > 0
-    # Until #90, Next up links a chapter as README.html, which MkDocs publishes as index.html.
-    assert [issue for issue in report.issues if not issue.startswith("index.html: roadmap/ch/README.html")] == [
-        "roadmap/ch/index.html: #nowhere names no anchor #nowhere on roadmap/ch/index.html",
-    ]
+    assert report.issues == ("roadmap/ch/index.html: #nowhere names no anchor #nowhere on roadmap/ch/index.html",)
