@@ -11,7 +11,7 @@ date when the release is tagged.
 
 ## 0.6.0 (2026-10-22)
 
-What has landed since 0.5.0, across 231 merged pull requests, grouped by
+What has landed since 0.5.0, across 236 merged pull requests, grouped by
 theme. Each group names the pull requests to read for detail.
 
 ### Added
@@ -33,7 +33,8 @@ theme. Each group names the pull requests to read for detail.
   searches that index, and the skills reuse its results: Roadmap searches each
   intermediate result a proof uses, and records a reused library declaration
   in the implementation note, leaving `lean:` unset (#204, #278, #311, #343,
-  #366, #373, #379, #400, #408).
+  #366, #373, #379, #400, #408). `autoform library index` runs its probe on
+  Lean v4.34.1 and v4.35.0 (#440).
 - **Dependency explorer.** One explorer replaces the site's generated Mermaid
   dependency maps, the full theorem DAG page among them. It runs on the landing
   page and on every project, chapter and scope page. It opens on chapter cards
@@ -41,7 +42,8 @@ theme. Each group names the pull requests to read for detail.
   drawer and addressable `#node=` focus. Old `/dependencies/full.html#node=`
   links still resolve. Authored `area:` values or `blueprint/atlas.json` group
   topic cards into regions, and overview containers can set a `navigation:`
-  role. Authored Mermaid diagrams still render (#90).
+  role. Authored Mermaid diagrams still render (#90). A design pass gave it one
+  type scale and quieter chrome (#411).
 - **Module catalogs.** A `catalog: module` leaf inventories an existing Lean
   module. It lists the module's public names in `lean:` and links a
   declaration ledger under `blueprint/sources/`. It is never dispatched, and it
@@ -72,6 +74,9 @@ theme. Each group names the pull requests to read for detail.
   project code in its probe (#156, #190, #247, #264). It accepts a Batteries
   wanted target (`theorem_wanted` and its kin) whose article is not yet proved
   (#395).
+- **Roadmap audit report.** The generated Pages workflow runs `autoform audit`
+  after `check` and lists its findings in the step's log, without failing the
+  build or stopping a deploy (#437).
 - **Statement status.** Open statements and conditional proofs (#138). Under
   `open_statements: allowed`, the skills state a cited open prerequisite as a
   `theorem` with a `sorry` proof, not with `theorem_wanted` (#398).
@@ -120,6 +125,13 @@ theme. Each group names the pull requests to read for detail.
   `mathlib_file` that is not a portable relative path, passes `check` with a
   warning, and the runtime projection leaves it out (#314, #325). `audit`
   reports an unclosed code fence (#202).
+- **Vault dependency page.** `autoform-visualize` writes
+  `blueprint/dependencies.md` as a Markdown summary of the explorer's project
+  map instead of a Mermaid graph: statuses, one row per chapter with its
+  counts, ready work and dependencies, and the articles while the roadmap has
+  at most 120. It replaces only a missing page, its own, or the Mermaid page
+  earlier versions wrote. Authored Mermaid diagrams draw locked down, and only
+  pages that have one load Mermaid (#378).
 - **Skills.** Every skill that runs the CLI says how to launch it (#319). A
   direct Roadmap run finishes one complete planning pass (#44). Before a
   revision lands, Roadmap re-checks retraction on the branch Formalize works
@@ -129,6 +141,8 @@ theme. Each group names the pull requests to read for detail.
 
 - `autoform unused-hypotheses`, in favor of Batteries' `unusedArguments`
   linter (#198, #352).
+- `autoform-visualize --link-extension`, since the vault's dependency page is
+  read in the vault (#378).
 - The language server's diagnostics path (#306), the project routers and
   resident-era REPL pool (#316), and code nothing called (#114, #341, #344).
 
