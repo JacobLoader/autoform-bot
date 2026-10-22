@@ -265,6 +265,7 @@ def test_claims_are_optional_and_builds_take_none(repo_root: Path) -> None:
     assert "Before choosing none, run `autoform claim list` once" in formalize
     assert "an unexpired claim on the board means another session uses them" in formalize
     assert "if the command fails, as it does in a checkout without an `origin`, tell the user" in formalize
+    assert "means the board exists but could not be read, not that it holds no claims" in formalize
     assert "the lead checks them when it confirms the edit's new targets and again before the edit lands" in formalize
     assert "If workers would wait on each other, the lead has one of them give up what it holds" in formalize
     assert "re-run `autoform work import-impact` on the result; if integration brought in a change" in formalize

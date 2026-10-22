@@ -70,7 +70,10 @@ Use claims only when other people or sessions may work on the same project at
 the same time, or when the user asks for them. Before choosing none, run
 `autoform claim list` once, with any `--worker-id`: an unexpired claim on the
 board means another session uses them, and if the command fails, as it does in a
-checkout without an `origin`, tell the user and go on without claims. A claim
+checkout without an `origin`, tell the user and go on without claims. A failure
+labelled `error: timeout:`, `error: transport:` or `error: contention:` means the
+board exists but could not be read, not that it holds no claims: run the command
+once more, then ask the user before going on without them. A claim
 excludes only workers that also claim, and `work list` does not read the board,
 so on such a project every worker uses them. When the run uses claims, tell each
 subagent so, and follow the [claim rules](references/claims.md) at each step.
