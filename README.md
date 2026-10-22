@@ -12,23 +12,30 @@ v4.27.0 or newer with Lake.
 **Claude Code**
 
 ```bash
-claude plugin marketplace add facebookresearch/autoform-bot
+claude plugin marketplace add facebookresearch/autoform-bot@v0.6.0
 claude plugin install autoform@autoform
 ```
 
 **Codex**
 
 ```bash
-codex plugin marketplace add facebookresearch/autoform-bot --ref main
+codex plugin marketplace add facebookresearch/autoform-bot --ref v0.6.0
 codex plugin add autoform@autoform
 ```
 
 **Muse Code**
 
 ```bash
-muse plugins marketplace add autoform https://github.com/facebookresearch/autoform-bot.git
+muse plugins marketplace add autoform 'https://github.com/facebookresearch/autoform-bot.git#v0.6.0'
 muse plugins install autoform@autoform
 ```
+
+These commands install release 0.6.0. To move an install that follows `main`
+onto the release, remove the `autoform` marketplace first, with `claude plugin
+marketplace remove autoform`, `codex plugin marketplace remove autoform`, or
+`muse plugins remove autoform` and then `muse plugins marketplace remove
+autoform`, and run the commands again. To follow `main` instead, leave out the
+version.
 
 After installing, start a new session in the repository you want to inspect or
 set up.
