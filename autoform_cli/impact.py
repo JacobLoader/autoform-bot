@@ -1205,13 +1205,15 @@ def compute_module_import_impact(
     unresolved_articles.sort(key=lambda article: article.id)
 
     module_claim_target = _module_claim_target(module)
+    # Helpers keep the parent-chain rule under either scope: a narrowed chain
+    # is only shorter, so every helper the default scope reports keeps its key.
     affected_helpers = tuple(
         ModuleImpactedHelper(record.name, record.module, _helper_claim_target(record.name))
         for record in sorted(records.values(), key=lambda record: record.name)
         if record.module in affected_set
         and not record.internal
         and record.name not in named
-        and not owners(record)
+        and not _owners(record, records, named)
     )
     affected_claim_targets = tuple(
         sorted(

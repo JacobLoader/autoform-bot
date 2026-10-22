@@ -335,7 +335,11 @@ def test_import_closure_scope_owns_records_by_name_prefix_even_without_the_paren
     )
 
     assert [article.id for article in report.affected_articles] == ["chapter/sel", "chapter/x"]
-    assert report.affected_unowned_helpers == ()
+    # Helpers keep the default parent-chain rule, so the default scope's helper
+    # claim key for the parentless lemma is still reported.
+    default = compute_module_import_impact(records, modules, articles, articles[0], "Demo.B", source_revision="rev")
+    assert [helper.name for helper in default.affected_unowned_helpers] == ["Demo.Foo.lemma"]
+    assert report.affected_unowned_helpers == default.affected_unowned_helpers
     assert report.as_dict()["module_scope"] == "import-closure"
     assert "Module scope: import-closure" in format_module_import_impact(report)
 
@@ -3278,7 +3282,7 @@ def test_import_closure_scope_matches_the_default_modules_on_a_built_project(tmp
 
     assert narrow.affected_modules == default.affected_modules
     assert {a.id for a in narrow.affected_articles} >= {a.id for a in default.affected_articles}
-    assert {h.name for h in narrow.affected_unowned_helpers} <= {h.name for h in default.affected_unowned_helpers}
+    assert {h.name for h in narrow.affected_unowned_helpers} >= {h.name for h in default.affected_unowned_helpers}
 
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
