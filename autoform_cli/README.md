@@ -1548,7 +1548,9 @@ Breadcrumbs return through the explorer hierarchy to the book (to the home page
 for a roadmap with neither a root article nor root leaves), and every formal
 statement links to the smallest explorer scope containing that item. Render
 writes no Mermaid graph of its own, so every diagram on the site is one an
-article holds. The explorer shows a title as typed, and a link render
+article holds. The explorer shows a title as text, never as markup, and
+typesets the TeX in the titles and summaries of its rail and details, while
+its map cards, search and head show it as typed; a link render
 writes from file and folder names, such as the book's previous and next links
 and the links between statements, is percent-encoded, so a name can make no
 link a `javascript:` URL; a Markdown link render moves keeps its decoded
@@ -1599,7 +1601,10 @@ typeset with a TeX input of its own that knows only base, ams, and
 noundefined, so nothing an article, another card, or the project's macros
 define reaches it. The articles' input, and `check`, read only the formulas
 the site's Markdown marks, such as
-`$...$` or `$$...$$` in an article. Other text, such as a
+`$...$` or `$$...$$` in an article; the articles' input also reads the titles
+and summaries the dependency explorer marks in its rail and details, which
+`check` does not. A formula inside a link or a button is typeset without
+MathJax's menu, so it is not a tab stop of its own. Other text, such as a
 statement's title in its heading, a `discussion:` value, the lead on the home
 page, the navigation, and a table of contents, is shown as typed, TeX and all.
 Every formula paints only within its own line and the block that holds it,

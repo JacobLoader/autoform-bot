@@ -29,6 +29,10 @@ date when the release is tagged.
   articles that proof uses, and keeps the source's route in the proof sketch,
   so the article is not blocked on steps its proof never needs; Agent Review
   checks the same (#443).
+- **Dependency explorer.** The rail and the details typeset the TeX in titles
+  and summaries, with the articles' input and the project's macros; the
+  explorer's own MathJax calls typeset nothing on a generated site. Map cards,
+  search and the explorer's head still show a title as typed (#455).
 
 ## 0.6.0 (2026-10-22)
 
