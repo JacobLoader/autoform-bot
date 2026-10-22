@@ -412,6 +412,45 @@ def _module_source_paths(
     return paths
 
 
+def _may_import(data: bytes, module: str) -> bool:
+    """Whether ``data`` could import ``module``: it contains each component, however the import spells it."""
+
+    return all(part.encode("utf-8") in data for part, _quoted in _lean_name_parts(module))
+
+
+def import_closure(
+    module: str,
+    sources: Mapping[str, bytes],
+    outside: Iterable[tuple[str, bytes]],
+) -> set[str]:
+    """``module`` and every root-package module that may import it, transitively.
+
+    The test is textual, so it can admit a module that does not import one in
+    the closure but never misses one that does. A file outside the captured
+    inventory that may import the closure has no module name to load, so the
+    narrowed scope is refused rather than incomplete.
+    """
+
+    closure = {module}
+    work = [module]
+    while work:
+        target = work.pop()
+        for name, data in sources.items():
+            if name not in closure and _may_import(data, target):
+                closure.add(name)
+                work.append(name)
+    firsts = {_lean_name_parts(name)[0][0].encode("utf-8") for name in closure}
+    for path, data in outside:
+        if any(first in data for first in firsts):
+            for name in sorted(closure):
+                if _may_import(data, name):
+                    raise ImpactError(
+                        f"{path} may import {name} but is outside the captured root-package sources; "
+                        "rerun with the default --module-scope"
+                    )
+    return closure
+
+
 def _validated_module_evidence(
     text: str,
     *,

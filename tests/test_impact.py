@@ -28,6 +28,7 @@ from autoform_cli.impact import (
     compute_module_import_impact,
     format_impact,
     format_module_import_impact,
+    import_closure,
     parse_impact_output,
     parse_module_evidence,
     project_modules,
@@ -1489,6 +1490,28 @@ def test_project_modules_fail_closed(tmp_path: Path, glob: str, message: str) ->
 
     with pytest.raises(SkeletonError, match=message):
         project_modules([_library(src, glob)], snapshot)
+
+
+def test_import_closure_over_approximates_every_spelling_of_an_import() -> None:
+    sources = {
+        "Q.M": b"def m := 1\n",
+        "Q.Guillemets": "import «Q».«M»\n".encode(),
+        "Q.Unicode": "import Q.MΣ\n".encode(),
+        "Q.DocComment": b"/-- header -/\nimport Q.M\n",
+        "Q.Later": b"import Q.Unicode\n",
+        "Q.Apart": b"import Q.Other\n",
+    }
+
+    assert import_closure("Q.M", sources, ()) == {"Q.M", "Q.Guillemets", "Q.Unicode", "Q.DocComment", "Q.Later"}
+
+
+def test_import_closure_refuses_a_file_outside_the_inventory_that_may_import_it() -> None:
+    sources = {"Q.M": b"", "Q.U": b"import Q.M\n"}
+    outside = [(".lake/packages/D/D/X.lean", b"import Q.U\n")]
+
+    with pytest.raises(ImpactError, match=r"\.lake/packages/D/D/X\.lean may import Q\.U"):
+        import_closure("Q.M", sources, outside)
+    assert import_closure("Q.M", sources, [(".lake/packages/D/D/Y.lean", b"import Mathlib\n")]) == {"Q.M", "Q.U"}
 
 
 def test_lean_libraries_read_one_glob_or_an_array(tmp_path: Path) -> None:
