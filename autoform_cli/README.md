@@ -527,96 +527,37 @@ may be `INVENTORIED` while `Mathematical exposition / MathlibExt` remains
 invalid. A broad inventory row may link a container and classify every catalog
 below it while finer exposition rows evolve independently.
 
-The contract is read as published Markdown and fails closed. A table inside an
-HTML comment, a fenced block, or a four-space-indented block is documentation
-rather than contract, and is not discovered at all. A closing fence must carry
-nothing but its marker, so a table below ```` ``` trailing ```` stays inside the
-code block for the checker exactly as it does for the reader.
+The contract is read as published Markdown and fails closed; the reasons are
+in `coverage.py` and `markdown.py`:
 
-Because hidden content ends a table for every renderer, a comment or code block
-written *between* rows is reported rather than silently truncating the contract.
-This holds for multi-line constructs too: a blank line inside a comment or fence
-belongs to that construct rather than ending the table. Any row-shaped line
-stranded below such a break is named, including malformed rows and rows written
-without their outer pipes, since Python-Markdown accepts `A | OUT | reason` as a
-row just as readily as the canonical form.
-
-Whether the table publishes at all is settled by rendering the document and
-looking for it, not by inspecting its two structural lines. That distinction
-matters because a table's fate depends on its surroundings: a comment can break
-the delimiter row while leaving its column count intact, and a paragraph running
-straight into the header makes the whole thing one lazy paragraph. Both publish
-nothing and both are rejected. A comment *inside* a header cell does still render,
-so that contract stands. If the page publishes a contract table the audit does not
-recognise -- one written without outer pipes, say -- it says so rather than
-claiming there is no table.
-
-Finding a matching header on the page is not enough to conclude it came from the
-lines just read, and neither is finding matching rows. A canonical-looking table
-that renders as a paragraph, sitting above an unrelated raw-HTML table with
-identical rows, satisfies any comparison of values while publishing nothing
-itself. So provenance is established rather than inferred: the source rows are
-rendered again carrying a marker, and the published table has to be the one that
-marker turns up in. The marker is grown until neither the source nor any
-published cell contains it. Checking the source alone is not enough, because
-rendering synthesises text the source never held literally: `&#97;utoform...`
-and `autoform<span></span>...` both normalise to the same cell a reader sees. The
-comparison is against published cell text, so that is what the marker has to be
-absent from.
-
-Substituting rows is only sound if it changes nothing else, which is not
-something to assume: an unclosed `<style>` inside a row swallows the rest of the
-document, so removing that row *exposes* tables the page never published, and one
-of those can then supply the marker. So the trace has to leave the page's
-topology intact -- same tables in the same order, same headers, identical rows
-everywhere except the one position being traced. A row that fails this is
-refused, and named as such, because the trace says nothing about a document the
-substitution changed. One honest consequence: evidence that itself contains a raw
-`<table>` disappears along with the row and is refused for the same reason. That
-is fail-closed on a cell no contract needs, which is the right side to err on.
-
-Only what a reader can see counts. Visibility propagates from ancestors, so a
-table inside `<div hidden>` is no more published than one carrying `hidden`
-itself; a hidden row drops out while its siblings remain; and a hidden cell is
-treated as no column rather than an empty one, since keeping it invents a column
-that both disguises a table whose visible headers match and manufactures
-mismatches in one whose rows do. The boundary here is deliberate: hiding is read
-from HTML, not from CSS. An element hidden by a stylesheet class or an inline
-`display: none` still counts as published, because following that faithfully
-would mean resolving the site's stylesheets, and a check that resolves them
-badly is worse than one whose limit is written down.
-
-Evidence must say something to a reader, judged on rendered text rather than
-Markdown source. A cell holding only a code span, only a comment, only emphasis,
-only an HTML tag, only an entity, or only an empty link such as `[ ](notes.md)`
-is rejected: each carries word characters in the source and shows the reader
-nothing. Text a browser hides is treated the same way. That check runs on an
-HTML5 tree rather than on a pattern or a token stream, because what a reader ends
-up seeing is decided by the repair a browser performs on malformed markup:
-`<span hidden>reason` and `<span hidden />Reason` both stay hidden, since an
-unclosed non-void element stays open, while `<p hidden>aside<p>Real reason` shows
-its second paragraph, since that one implicitly closes the first. `title="hidden"`
-hides nothing at all. So is evidence that is nothing but `TODO`, `TBD`, `pending`,
-`placeholder`, or `unknown`, or that opens with one of those as a marker such as
-`TODO: choose a milestone`. A status word that merely begins a sentence is fine:
-"Pending Mathlib PR 1234" names something a reader can check. `INVENTORIED` and
-`DECOMPOSED` evidence must contain at least one complete inline link to an
-existing roadmap article. Every linked roadmap scope must contain the role the
-row claims: a module inventory for `INVENTORIED`, or a declaration-bearing leaf
-for `DECOMPOSED`; audit reports a row that does not, and `render` warns. Every
-local link it offers must resolve, fragments included, under the same rules the
-audit applies. A link missing its closing parenthesis does not render and does
-not count.
-
-Fragment checking uses the renderer rather than predicting it. Anchors come from
-running Python-Markdown with the extensions the generated `mkdocs.yml` enables
-and reading the heading IDs back out of its HTML. Heading IDs turn out to depend
-on much more than the heading line -- whether it sits in a blockquote or a list
-item, whether a raw HTML block swallows it, how `attr_list` treats an escaped
-brace, what `arithmatex` leaves behind for the slugger -- and every attempt to
-predict that got some cases wrong in both directions. The extension list lives in
-one place in Python, and a test binds it to the shipped `mkdocs.yml` so enabling
-a heading-affecting extension cannot silently invalidate the audit.
+- A table inside an HTML comment, a fenced block, or a four-space-indented
+  block is documentation, not contract, and is not discovered. A closing fence
+  carries nothing but its marker.
+- A comment or code block written between rows, and every row-shaped line
+  stranded below it, is reported rather than silently truncating the contract.
+  A table that does not publish, such as one a paragraph runs straight into, is
+  rejected, and a published contract table the audit does not recognise, such
+  as one without outer pipes, is named.
+- Only what a reader sees counts: a table, row, or cell hidden by a `hidden`
+  attribute, its own or an ancestor's, is not published. Hiding is read from
+  HTML, not CSS, so a stylesheet class or inline `display: none` still counts
+  as published.
+- A row whose removal would change the rest of the page, such as one holding an
+  unclosed `<style>` or evidence with a raw `<table>`, is refused.
+- Evidence must say something to a reader. A cell holding only a code span, a
+  comment, emphasis, an HTML tag, an entity, an empty link such as
+  `[ ](notes.md)`, or text a browser hides is rejected, and so is evidence that
+  is nothing but `TODO`, `TBD`, `pending`, `placeholder`, or `unknown`, or opens
+  with one as a marker, such as `TODO: choose a milestone`. "Pending Mathlib PR
+  1234" names something a reader can check and passes.
+- `INVENTORIED` and `DECOMPOSED` evidence must contain at least one complete
+  inline link to an existing roadmap article, and every linked scope must
+  contain the role the row claims: a module inventory for `INVENTORIED`, or a
+  declaration-bearing leaf for `DECOMPOSED`. Audit reports a row that does not,
+  and `render` warns. Every local link must resolve, fragments included, and a
+  link missing its closing parenthesis does not count. Fragments are checked
+  against the heading IDs Python-Markdown produces with the extensions the
+  generated `mkdocs.yml` enables.
 
 ### What coverage completeness does and does not claim
 
@@ -1360,44 +1301,27 @@ earlier site.
 
 `render` also writes `javascripts/mathjax.js`, the site's MathJax
 configuration, on every build; `mkdocs.yml` lists it before the MathJax
-bundle, as `autoform init` writes both. It expects MathJax 3.2.2, the release
-its TeX settings were checked against, loads it itself when no bundle is
-listed, and leaves formulas as typed under any other release. The articles on
-a page share one TeX input, with the packages base, ams, noundefined,
-boldsymbol, mathtools, braket, mhchem, and amscd (`CD` diagrams), and the
-project's macros from
-`blueprint/tex-macros.json`, written as MathJax's `tex.macros` is: a name maps
-to a body, `[body, arguments]`, or `[body, arguments, default]`. So that no
-formula changes another or colors a
-symbol like the site's status marks, that input turns off `\label`,
-`\mmlToken`, `\DeclareMathOperator`, the paired-delimiter and tag-form
-commands of mathtools, and `\mathtoolsset`: each shows in red and does nothing,
-however a formula or a macro reaches it, as `\newcommand`, `\def`, `\require`,
-and any other command those packages do not define already do. The other
-packages MathJax would load on demand stay off: cancel, bbox, and enclose take
-a color, as color does; html sets classes, styles, and links; unicode picks
-fonts; action adds tooltips and toggles; newcommand and extpfeil define
-commands; and verb and bussproofs are not loaded either. So `\cancel`,
-`\bbox`, `\color`, `\href`, `\unicode`, and the rest show in red too. A macro may not
-take one of their names; `check` and `render` warn about a macro they leave
-out. They judge and build the script from
-the copy of `tex-macros.json` that `render` reads once and publishes beside it,
-so an edit made during a render reaches neither. That input reads only the
-formulas the site's Markdown marks, such as
-`$...$` or `$$...$$` in an article. Other text, such as a
-statement's title in its heading, a `discussion:` value, the lead on the home
-page, the navigation, and a table of contents, is shown as typed, TeX and all.
-Every formula paints only within its own line and the block that holds it,
-with either renderer and any theme, so no article formula can cover a card, a
-mark, or the text beside it. An inline formula wider than its paragraph is cut
+bundle, as `autoform init` writes both. It expects MathJax 3.2.2, loads it
+itself when no bundle is listed, and leaves formulas as typed under any other
+release. The project's macros go in `blueprint/tex-macros.json`, written as
+MathJax's `tex.macros` is: a name maps to a body, `[body, arguments]`, or
+`[body, arguments, default]`. A formula cannot define, color, link, or label:
+`\newcommand`, `\def`, `\DeclareMathOperator`, `\label`, `\color`, `\href`,
+and the other commands of packages the site leaves off show in red and do
+nothing, however a formula or a macro reaches them. A macro may not take one of
+their names; `check` and `render` warn about a macro they leave out. Only the
+formulas the site's Markdown marks, such as `$...$` or `$$...$$` in an
+article, are typeset; a statement's title in its heading, a `discussion:`
+value, the home page's lead, the navigation, and a table of contents show TeX
+as typed. Every
+formula paints only within its own line and block, so none can cover a card, a
+mark, or the text beside it; an inline formula wider than its paragraph is cut
 at the paragraph's edge, so write one that wide as a display, which scrolls.
 
 A project scaffolded before `render` wrote that file keeps a
-`blueprint/javascripts/mathjax.js` and lists the MathJax bundle in `mkdocs.yml`
-after it. It needs no edits: `render` replaces a copy `autoform init` wrote
-with its own, and the script finds MathJax already loaded and checks its
-version instead of loading it. A copy edited since is replaced too, with a
-warning, since its edits are lost; move its macros to `tex-macros.json` and
+`blueprint/javascripts/mathjax.js` and needs no edits: `render` replaces it
+with its own, with a warning if the copy was edited since `autoform init`
+wrote it, since those edits are lost; move its macros to `tex-macros.json` and
 delete it.
 
 `render` writes `stylesheets/blueprint.css`, `javascripts/blueprint-mermaid.js`,
@@ -1500,45 +1424,42 @@ escaping paths, symbolic links under `roadmap/`, self-dependencies,
 missing or multiple H1 titles, unsupported frontmatter keys, assertion values
 it does not recognize, and assertions the Lean cannot back: `proof: formalized`
 without `statement: formalized`, or either without a `lean:` name, even beside
-`mathlib: true`. Hidden files and folders under `roadmap/`, those with a part
-starting with `.`, are no part of the roadmap, since render omits them: they
-hold no articles, need no chapter page, and may be symbolic links, such as an
-editor's lock file. A dependency on a hidden page fails, naming the hidden
-path, as does one that steps through a hidden folder and back out, and so does
-an `.implementation-notes` folder under `roadmap/`, which nothing reads there.
-A `## Sources` link to a local path must name a file
-inside the blueprint, as `audit` also requires: a missing file, a directory, an
-invalid path or URL, or a target outside the blueprint fails. The path must open
-as written, so one through a missing folder or a symbolic link loop fails too,
-even where its `..` steps would cancel that part as text (Windows itself applies
-`..` as text). So does a target
-whose path names a part starting with `.`, even one its `..` steps leave
-again, because render omits hidden files and directories. Under `sources/`,
-a hidden note
-passes `check` with a warning instead, and `audit` still reports it:
-only a repository link reaches the note, and render writes one when it links
-the other source notes there, so the note must be committed. A `## Sources`
-link to a view generated at the blueprint root, such as `dependencies.md` or
-`structure.md`, fails as well, because render omits the vault's copy; `audit`
-and render reject coverage evidence that names one. `audit` alone checks
-fragments and fails links with other schemes or a network location. Such a link
-passes `check` with a warning, because work and search leave it out; so does a
-`mathlib_file` that is not a portable relative path, which search reports as
-null. A byte-order mark at the start of an article hides whatever opens its
-first line: frontmatter there is read as text, so its keys are ignored, and
-`check` warns about the mark when the article otherwise loads; an H1 title
-there is missed, and `check` fails the article as missing one.
-A `declaration` on a container article passes `check` with a warning, because
-nothing counts or schedules a container's own declaration; `audit` reports it
-as `formalizable-container`.
-With `--lean-root`, `check`
-also fails on a `lean:` name that is absent from the sources (as
-`leanblueprint checkdecls` does for LaTeX blueprints) or defined more than
-once in them (see below). It validates structure and leaves mathematical
-correctness to the agent and the Lean kernel.
+`mathlib: true`. With `--lean-root`, `check` also fails on a `lean:` name that
+is absent from the sources (as `leanblueprint checkdecls` does for LaTeX
+blueprints) or defined more than once in them (see below). It validates
+structure and leaves mathematical correctness to the agent and the Lean
+kernel. Only the article graph must be acyclic, so project, chapter, and scope
+maps can relate two containers in both directions.
 
-Only the article graph must be acyclic, so project, chapter, and scope maps can
-relate two containers in both directions.
+Render omits hidden paths, those with a part starting with `.`, so:
+
+- Hidden files and folders under `roadmap/` are no part of the roadmap: they
+  hold no articles, need no chapter page, and may be symbolic links, such as
+  an editor's lock file. A dependency on a hidden page fails, naming the hidden
+  path, as does one that steps through a hidden folder and back out, and so
+  does an `.implementation-notes` folder under `roadmap/`.
+- A `## Sources` link to a local path must name a file inside the blueprint
+  that opens as written, as `audit` also requires: a missing file or a missing
+  folder on its path, a directory, an invalid path or URL, a symbolic link
+  loop, a target outside the blueprint, or a path with a hidden part, even one
+  its `..` steps leave again, fails. Under `sources/`, a hidden note passes
+  `check` with a warning instead and `audit` still reports it: only a
+  repository link reaches it, so it must be committed.
+- A `## Sources` link to a view generated at the blueprint root, such as
+  `dependencies.md` or `structure.md`, fails too, and `audit` and render reject
+  coverage evidence that names one.
+
+These pass `check` with a warning:
+
+- A `## Sources` link with another scheme or a network location, which work
+  and search leave out; only `audit` checks fragments and fails such links.
+- A `mathlib_file` that is not a portable relative path, which search reports
+  as null.
+- A byte-order mark at the start of an article, which hides whatever opens its
+  first line: frontmatter there is read as text, so its keys are ignored, and
+  an H1 title there is missed, so `check` fails the article as missing one.
+- A `declaration` on a container article, since nothing counts or schedules a
+  container's own declaration; `audit` reports it as `formalizable-container`.
 
 `check` also warns, naming the file and the line, about what a published page
 could use to run script or pass for the site's own markup. None of it fails
@@ -1577,32 +1498,16 @@ off, such as `\label`. The site's MathJax ignores notation an article defines
 (see above), so such a formula shows an error in red and the rest of the page
 is published as written; put the project's notation in
 `blueprint/tex-macros.json`.
-`check` reads each page as `render` publishes it: its relative links pointed at
-the pages and anchors they land on, every line break Python reads (a form feed
-or U+2028 among them) as a new line, its frontmatter replaced by a header of
-`render`'s own, since the theme prints a page's metadata unescaped (the
-published page's header names its title as text: its H1's, or else its
-file's name, so MkDocs takes no title from the page itself), a statement
-in its box with its indentation kept, and a chapter's narrative in the
-stretches between the statements `render` puts in place of their links. Every
-Markdown page the site publishes is read this way: articles, the landing page
-`blueprint/README.md` (the text you wrote, before `render` adds its
-dashboard), `coverage/README.md`, source notes, and any other. So the site
-never publishes markup that an article's reviewer read as text and the owners
-of its theme never saw.
+`check` reads every Markdown page the site publishes as `render` publishes
+it, the landing page, `coverage/README.md`, and source notes included, so the
+site never publishes markup that an article's reviewer read as text and the
+owners of its theme never saw.
 
-Source-aware `--lean-root` inspection requires directory-descriptor traversal.
-Platforms without that capability, including Windows, fail closed instead of
-treating repeated pathname reads as one filesystem generation. Declaration
-locations and source revisions come from the same retained capture. Recognized
-skeleton packet/passages directories are identified by their bounded managed
-manifest before descendants are read; publication-output policy remains with
-the publication feature rather than this source layer.
-
-Automatically detected Git permalinks are emitted only for captured files whose
-bytes equal the blob at the stable detected commit. Dirty, untracked, missing,
-or concurrently checked-out files keep local declaration locations but receive
-no URL. An explicitly supplied ref remains a caller attestation.
+`--lean-root` inspection needs directory-descriptor traversal, so platforms
+without it, including Windows, fail closed. A detected Git permalink is emitted
+only for a file whose bytes equal its blob at the detected commit; dirty,
+untracked, or missing files keep local declaration locations but get no URL.
+An explicitly supplied ref is the caller's attestation.
 
 Lean indexing reads the whole Lean root or nothing. It stops with an error,
 rather than indexing what it could, when an entry it must read cannot be read
@@ -1631,60 +1536,43 @@ command-line option to exclude other folders. The skipped folder names and the
 except `build`, which must be lowercase. The `.lean` suffix must match
 exactly, so `A.LEAN` is not indexed.
 
-A capture rechecks only what the index uses: each captured `.lean` file must
-keep its metadata, and each folder that holds `.lean` entries must keep its
-device, inode, file type and the names of the `.lean` entries and folders it
-holds for the index. Any other folder, such as a generated site, `mkdocs`
-output, skeleton output or a nested Git checkout, may change, vanish or be
-rebuilt during a capture, and files other than `.lean` sources may change
-anywhere. Whatever is at such a path when it is rechecked must be a folder the
-walk skips or hold no `.lean` entry, so a folder that loses its marker and
-exposes `.lean` files is a change. A capture that sees Lean inputs change is
-retried; when every attempt changes, the error names the changed paths it can
-attribute, relative to the Lean root, for example `Lean sources kept changing
-while they were indexed; changed: Proj/A.lean`. A change seen only as a failed
-lookup, such as a file removed just before it is rechecked, carries no path.
-A capture is not one atomic filesystem generation: a `.lean` file or marker
-that appears at a path after the capture last looked there, or in a folder
-after the final check listed it, is not seen, so coordinated moves across
-folders can yield a set of sources that no single state had.
+A capture that sees Lean inputs change while it indexes is retried; when every
+attempt changes, the error names the changed paths it can attribute, relative
+to the Lean root, for example `Lean sources kept changing while they were
+indexed; changed: Proj/A.lean`. Folders the walk skips, such as a generated
+site or a nested Git checkout, and files other than `.lean` sources may change
+during a capture.
 
 Within each file, up to an `#exit` line, the index records the declarations
-written with `theorem`,
-`lemma`, `def`, `abbrev`, `instance`, `structure`, `class`, `inductive`,
-`opaque`, `axiom`, `irreducible_def`, Batteries' wanted commands
-(`Batteries.Util.ProofWanted`) `theorem_wanted`, `proof_wanted`, `def_wanted`,
-and `instance_wanted`, and Batteries' `alias`. The command may follow `@[...]`
-attribute lists and the modifiers `public`, `private`, `protected`,
-`noncomputable`, `partial`, `unsafe`, `scoped`, and `local`; a declaration
-behind any other modifier, such as `meta` or `nonrec`, is not indexed, and
-neither is an unnamed `instance` or `instance_wanted`. A name written
-`_root_.X` is recorded as `X`, whatever namespace it is declared in. A wanted
-command states a result whose proof or construction is deferred. `alias b :=
-a` records `b`, and `alias ⟨mp, mpr⟩ := a_iff` records each of its two names
-that is not `_`; the `:=` must be on the alias's line, and the target on that
-line or the next nonblank one.
+written with `theorem`, `lemma`, `def`, `abbrev`, `instance`, `structure`,
+`class`, `inductive`, `opaque`, `axiom`, `irreducible_def`, Batteries' `alias`,
+and Batteries' wanted commands `theorem_wanted`, `proof_wanted`, `def_wanted`,
+and `instance_wanted`, which state a result whose proof or construction is
+deferred. The command may follow `@[...]` attribute lists and the modifiers
+`public`, `private`, `protected`, `noncomputable`, `partial`, `unsafe`,
+`scoped`, and `local`; a declaration behind any other modifier, such as `meta`
+or `nonrec`, is not indexed, and neither is an unnamed `instance` or
+`instance_wanted`. `_root_.X` is recorded as `X`. `alias b := a` records `b`,
+and `alias ⟨mp, mpr⟩ := a_iff` each of its names that is not `_`; the `:=` must
+be on the alias's line, and the target on that line or the next nonblank one.
 
 A name declared once has that declaration, even a private one. A name declared
-more than once has the one declaration among them that is neither written
-`private` nor a wanted command, which Batteries makes a private placeholder:
-a private declaration is local to its file, so every other module sees the
-public one. With two or more public declarations (a file no library builds
-counts too), or only private and wanted ones, the name has none. Then
-`check --lean-root` fails with `declaration defined more than once`,
-`render` warns (`--require-declarations` exits 1),
-`audit` reports `lean-target-ambiguous`, `skeleton` leaves it
-unresolved, and work and search report no `source_file`; each
-diagnostic lists the `path:line` of every declaration of the name, by path and
-then line. `work impact` locates a compiled constant
-in its own module's file among the declarations of its name. The rule sees
-only indexed declarations: a public one behind an unindexed prefix such as
-`open X in`, or written `«main»` where the article writes `main`, leaves a
-private one as the name's only declaration. In a file that starts with
-`module`, a declaration outside a `public section` and without `public` is
-private to Lean but public to the index, so such a name may be reported as
-defined more than once where Lean accepts it, or selected where Lean binds it
-nowhere outside its file.
+more than once has the one declaration that is neither `private` nor a wanted
+command (Batteries makes those private placeholders), since every other module
+sees the public one. With two or more public declarations (a file no library
+builds counts too), or only private and wanted ones, the name has none:
+`check --lean-root` fails with `declaration defined more than once`, `render`
+warns (`--require-declarations` exits 1), `audit` reports
+`lean-target-ambiguous`, `skeleton` leaves it unresolved, and work and search
+report no `source_file`; each diagnostic lists the `path:line` of every
+declaration of the name. `work impact` locates a compiled constant in its own
+module's file. The rule sees only indexed declarations: a public one behind an
+unindexed prefix such as `open X in`, or written `«main»` where the article
+writes `main`, leaves a private one as the name's only declaration. In a file
+that starts with `module`, a declaration outside a `public section` and
+without `public` is private to Lean but public to the index, so such a name may
+be reported as defined more than once where Lean accepts it, or selected where
+Lean binds it nowhere outside its file.
 
 The Markdown files are the source of truth. Graphs and sites are derived views
 that may be regenerated at any time.
