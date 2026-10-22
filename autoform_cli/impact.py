@@ -585,6 +585,7 @@ def render_impact_probe(
     *,
     imports: Iterable[str],
     project_modules: Iterable[str],
+    selected_modules: Iterable[str] = (),
     artifact_dir: Path | None = None,
     glob_directories: Iterable[tuple[Path, str, str]] = (),
     emit_module_evidence: bool = False,
@@ -594,8 +595,8 @@ def render_impact_probe(
     Given ``artifact_dir``, the root package's Lean artifact directory, the
     probe refuses a root-package module the captured inventory lacks: a loaded
     module outside ``project_modules`` whose OLean lies under ``artifact_dir``,
-    or a module the probe did not load that it finds by walking a
-    ``glob_directories`` entry. Each entry is the directory of an ``M.*`` or
+    or a module outside ``selected_modules`` (every module a library's globs or
+    roots select) that it finds by walking a ``glob_directories`` entry. Each entry is the directory of an ``M.*`` or
     ``M.+`` glob, with ``M`` and the glob. ``emit_module_evidence`` also
     records every loaded project module's source, artifact and direct imports.
     """
@@ -617,6 +618,7 @@ def render_impact_probe(
         output_env=skeleton.PROBE_OUTPUT_ENV,
         output_limit=skeleton.DEFAULT_PROBE_OUTPUT_LIMIT,
         project_modules=_lean_requests(tuple(sorted(set(project_modules)))),
+        selected_modules=_lean_requests(tuple(sorted(set(selected_modules)))),
     )
 
 
@@ -1418,6 +1420,7 @@ def _load_impact_evidence(
                 render_impact_probe(
                     imports=imports,
                     project_modules=local_modules,
+                    selected_modules=imports,
                     artifact_dir=_root_artifact_dir(libraries),
                     glob_directories=_glob_directories(libraries),
                     emit_module_evidence=require_modules,

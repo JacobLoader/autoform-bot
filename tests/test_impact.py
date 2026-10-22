@@ -1994,6 +1994,7 @@ def test_cli_import_impact_has_the_probe_walk_each_glob_directory(tmp_path: Path
     # modules the inventory lacks.
     directory = str(lean_root.resolve() / "Demo" / "Sub")
     assert _glob_walks(str(calls[0]["probe"])) == [[directory, ["Demo", "Sub"], "Demo.Sub.+"]]
+    assert "unless selectedModules.contains (base ++ sub) do" in str(calls[0]["probe"])
 
 
 def test_cli_import_impact_reports_an_empty_loaded_module_without_false_locality(
