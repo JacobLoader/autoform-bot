@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import io
 import json
 import re
@@ -880,6 +881,12 @@ _UNSHIPPED_SCHEMAS = {
 
 def test_documented_schema_ids_exist_in_code(repo_root: Path) -> None:
     code = _shipped_code(repo_root)
+    # The generated verify workflow checks the review policy marker by the sha256 of its line.
+    workflow = (repo_root / "autoform_cli/templates/github/workflows/autoform-verify.yml").read_text(encoding="utf-8")
+    code += "".join(
+        f'"{schema}"' for schema in ("autoform-review-policy/v1",)
+        if hashlib.sha256(f"{schema}\n".encode()).hexdigest() in workflow
+    )
     named = [
         (page.relative_to(repo_root), schema)
         for page in _tracked_markdown(repo_root)
