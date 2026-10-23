@@ -304,7 +304,10 @@ def test_the_explorer_s_titles_and_summaries_are_typeset_as_articles_are(tmp_pat
         '<h1 class="bp-dag-navigation-title arithmatex">Groups $\\mathbb{Z}/n$</h1>'
         '<p class="bp-dag-navigation-summary arithmatex">Cyclic groups $C_n \\cong \\RR$ have \\(\\varphi(n)\\) generators.</p>'
         '<p class="bp-dag-navigation-counts">2 items, and $x$ in text the explorer did not mark</p>'
+        '<ol class="bp-dag-navigation-path"><li><a class="arithmatex" href="#up">Up to $t_0$</a></li></ol>'
         '<a class="bp-dag-navigation-link" href="#base"><span class="arithmatex">Order of $g^k$</span></a>'
+        '<button class="bp-dag-sheet-handle arithmatex">Handle $h_1$</button>'
+        '<button class="bp-dag-relation-button arithmatex">Relation $r^2$</button>'
         "</div></aside></body></html>"
     )
 
@@ -316,14 +319,15 @@ def test_the_explorer_s_titles_and_summaries_are_typeset_as_articles_are(tmp_pat
     assert [document["card"] for document in first] == [None, "c1", "c2"]
     # A new page input, which finds only the explorer's marked text: the
     # article's formulas and the cards were typeset by the first pass. A
-    # formula in a link gets a page input of its own, in a document without
-    # MathJax's menu, which would make it a control inside the control.
+    # formula in a link or a button, or marked on one, gets a page input of
+    # its own, in a document without MathJax's menu, which would make it a
+    # control inside the control.
     page, link = explorer[:2]
     assert page["card"] is None and page["packages"] == _PAGE_PACKAGES
     assert [math["tex"] for math in page["math"]] == ["\\mathbb{Z}/n", "C_n \\cong \\RR", "\\varphi(n)"]
     assert "merror" not in page["math"][1]["mml"] and 'mathcolor="red"' not in page["math"][1]["mml"]
     assert link["card"] is None and link["packages"] == _PAGE_PACKAGES
-    assert [math["tex"] for math in link["math"]] == ["g^k"]
+    assert sorted(math["tex"] for math in link["math"]) == ["g^k", "h_1", "r^2", "t_0"]
     assert all(document["math"] == [] for document in explorer[2:])
     # MathJax's own document, which a call to MathJax.typesetPromise would use, holds nothing.
     assert report["startup"] == 0

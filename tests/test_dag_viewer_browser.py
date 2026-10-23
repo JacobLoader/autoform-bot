@@ -2194,8 +2194,12 @@ def test_the_explorer_typesets_the_math_it_draws_in_its_rail_and_details(desktop
     def with_tex(route: object) -> None:
         payload = route.fetch().json()
         payload["title"], payload["view"]["summary"] = "Algebra over $\\mathbb{Q}$", "Groups and $x^2$."
+        # The rail's trail lists the scope's ancestors, each a link.
+        payload["view"]["breadcrumbs"][-2]["label"] = "Roadmap over $\\mathbb{N}$"
         result = next(node for node in payload["nodes"] if node["id"] == "algebra/result")
         result["title"], result["summary"] = "Result $y^2$", "The main result for $\\alpha$."
+        # The result's prerequisite, a relation row in its details.
+        next(node for node in payload["nodes"] if node["id"] == "algebra/base")["title"] = "Base $z_1$"
         route.fulfill(json=payload)
 
     page.route("**/algebra.json", with_tex)
@@ -2214,8 +2218,12 @@ def test_the_explorer_typesets_the_math_it_draws_in_its_rail_and_details(desktop
         "Array.from(document.querySelectorAll('.bp-dag-navigation-inner mjx-c')).every((glyph) =>"
         " !['none', 'normal', ''].includes(getComputedStyle(glyph, '::before').content))"
     )
-    # A formula in a rail link is part of the link, not a tab stop with MathJax's menu of its own.
-    assert page.locator('[data-navigation-node-id="algebra/result"] [tabindex]').count() == 0
+    # A formula in a rail link, the trail, a relation row or the sheet handle is part of that control, not a
+    # tab stop with MathJax's menu of its own; the rail's title keeps the menu.
+    for control in ('[data-navigation-node-id="algebra/result"]', ".bp-dag-navigation-path a", ".bp-dag-relation-button",
+                    ".bp-dag-sheet-handle"):
+        playwright.expect(page.locator(f"{control} mjx-container").first).to_be_attached()
+        assert page.locator(f"{control} [tabindex]").count() == 0, control
     assert page.locator('.bp-dag-navigation-title mjx-container[tabindex="0"]').count() == 1
     # Map cards are not typeset, and MathJax's own document, which MathJax.typesetPromise reads, holds nothing.
     assert page.locator(".bp-dag-node mjx-container").count() == 0
