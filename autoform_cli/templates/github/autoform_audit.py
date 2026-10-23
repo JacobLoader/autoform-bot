@@ -2,8 +2,8 @@
 """Build a kernel-trust probe from the root package's packed ILean artifacts.
 
 The CI audit's user-facing contract, its status lines and its error messages
-are in ``autoform_cli/reference/open-statements.md``. What follows is how the
-probe this script writes reaches its verdict.
+are in Autoform's open-statements reference. What follows is how the probe this
+script writes reaches its verdict.
 
 A ``sorry`` is accepted only inside the proof of a theorem an open article's
 ``lean:`` names. Lean-generated auxiliaries count as helpers, so a ``sorry``

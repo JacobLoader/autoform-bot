@@ -125,10 +125,10 @@ work resolves to local source material without escaping the blueprint.
 Coverage files are checked for broken links and explicitly declared gaps. With
 `--lean-root`, local declaration names and kinds are checked against the Lean
 source index, along with the elaboration limits each target runs under, and
-`node-too-large` reports a node whose resolved `lean:` declarations span more
-than both 200 lines and four times this project's median, each measured from
-its first line to the line before the next declaration; the finding's reason
-gives every measurement. `review_approved` is left to `review check`.
+`node-too-large` reports a node whose resolved `lean:` declarations span at
+least 200 lines and at least four times this project's median, each measured
+from its first line to the line before the next declaration; the finding's
+reason gives every measurement. `review_approved` is left to `review check`.
 
 An alias has its target's kind, size, and elaboration limits when the index can
 be sure what the target is (`alias_target` in `lean.py`); otherwise it matches
@@ -197,8 +197,9 @@ most one per catalog and code: `catalog-unbounded-limit` and
 `catalog-unscoped-limit`. An alias is read as the declaration it reaches. The
 message counts the affected declarations against all those the catalog's
 resolved names reach, names the options, locates the first `set_option`, and
-says to change existing code only on request and that a finite limit must
-pass a rebuild. A name that does not resolve is a `lean-target-not-found` or
+says to change existing code only on request and that a finite limit, or for
+an unscoped one `set_option X N in` on the declarations that need it, must pass
+a rebuild. A name that does not resolve is a `lean-target-not-found` or
 `lean-target-ambiguous` finding and is not counted.
 
 ### Statement text
