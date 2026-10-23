@@ -11,25 +11,25 @@ from pathlib import Path
 BUDGETS = {
     "AGENTS.md": 55,
     "CONTRIBUTING.md": 82,
-    "README.md": 117,
-    "autoform_cli/README.md": 1149,
-    "autoform_cli/project/README.md": 127,
-    "autoform_cli/reference/claims-and-revisions.md": 159,
-    "autoform_cli/reference/open-statements.md": 179,
-    "autoform_cli/reference/runtime-and-publication.md": 118,
+    "README.md": 113,
+    "autoform_cli/README.md": 1129,
+    "autoform_cli/project/README.md": 114,
+    "autoform_cli/reference/claims-and-revisions.md": 157,
+    "autoform_cli/reference/open-statements.md": 177,
+    "autoform_cli/reference/runtime-and-publication.md": 117,
     "autoform_cli/reference/search.md": 162,
-    "autoform_cli/reference/validation-and-audit.md": 228,
-    "servers/README.md": 115,
-    "skills/agent-review/SKILL.md": 62,
+    "autoform_cli/reference/validation-and-audit.md": 227,
+    "servers/README.md": 114,
+    "skills/agent-review/SKILL.md": 61,
     "skills/debrief-orchestrator/SKILL.md": 44,
     "skills/develop-plugin/SKILL.md": 32,
-    "skills/formalize/SKILL.md": 246,
-    "skills/human-review/SKILL.md": 109,
-    "skills/roadmap/SKILL.md": 234,
-    "skills/setup/SKILL.md": 173,
+    "skills/formalize/SKILL.md": 241,
+    "skills/human-review/SKILL.md": 107,
+    "skills/roadmap/SKILL.md": 232,
+    "skills/setup/SKILL.md": 161,
 }
 # All skills/*/references/*.md together, so a new reference file cannot dodge a budget.
-REFERENCES_BUDGET = 900
+REFERENCES_BUDGET = 887
 
 
 def _lines(path: Path) -> int:
