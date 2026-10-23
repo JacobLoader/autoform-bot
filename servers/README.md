@@ -86,7 +86,9 @@ under `config`.
   (default 240).
 - `AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` (default 15 minutes): project admission,
   the tool operation, and a safety margin. Each client also reads it from its
-  own environment as its wait for a response.
+  own environment as its wait for a response. Cleanup that fails within it
+  passes to a background reaper, which may run past it; that project's
+  replacement Lean processes wait until the reaper finishes.
 - `AUTOFORM_RUNTIME_DIR`: where the private socket and the rotating runtime log
   live, by default below `$XDG_RUNTIME_DIR/autoform`, falling back to a
   uid-specific directory in `/tmp`. Every client reads it from its own
