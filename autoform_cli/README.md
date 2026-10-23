@@ -263,10 +263,11 @@ module and imports), not a lowercase rename.
 
 Generated workflows pin `--autoform-ref` or, by default, the HEAD commit of the
 Autoform checkout running the command (or of the marketplace checkout an
-installed plugin was copied from), when a safe remote has a cached tracking ref
-containing it, tracked files are clean, and the templates match it; an explicit
-`--autoform-source` gets no default ref. Without a ref the CI workflows are
-omitted.
+installed plugin was copied from), when a safe remote (Autoform's canonical
+repository, then `origin`, then `upstream`, then a unique remaining one) has a
+cached tracking ref containing it, tracked files are clean, and the templates
+and any installed plugin copy match it; an explicit `--autoform-source` gets no
+default ref. Without a ref the CI workflows are omitted.
 
 ### project
 
@@ -286,13 +287,15 @@ manifest, blueprint, and site) in a private sibling directory and publishes it
 atomically: the target must be absent, nothing is overwritten, and a failed or
 concurrent creation leaves no partial target. A failure or interrupt after
 staging can leave a hidden `.autoform-new-*` directory in the parent, which the
-error mentions; inspect it before removing it. Its `lakefile.toml` sets
-`enableArtifactCache = true` and `restoreAllArtifacts = true`, so checkouts on
-the same toolchain share builds through Lake's artifact cache while each
-module's `.olean` stays in `.lake/build`. Package names cannot shadow Mathlib
-libraries such as `Archive` or `Counterexamples`. Workflows are pinned as
-[`init`](#init) pins them. Apart from local Git reads, the command runs no
-subprocesses, Lake, Lean, or network operations. Its errors name a code:
+error mentions; inspect it before removing it. The published tree has modes
+0755 for directories and executables and 0644 for other files, whatever the
+umask. Its `lakefile.toml` sets `enableArtifactCache = true` and
+`restoreAllArtifacts = true`, so checkouts on the same toolchain share builds
+through Lake's artifact cache while each module's `.olean` stays in
+`.lake/build`. Package names cannot shadow Mathlib libraries such as `Archive`
+or `Counterexamples`. Workflows are pinned as [`init`](#init) pins them. Apart
+from local Git reads, the command runs no subprocesses, Lake, Lean, or network
+operations. Its errors name a code:
 
 - `project-parent-inaccessible` or `project-path-is-symlink`: the parent and
   its ancestors must be readable real directories, not links; on macOS, use
@@ -419,7 +422,10 @@ in an implementation note, a page under `blueprint/sources/` or one a
 component. Declarations citing a source only through their module docstring
 share one warning, silenced by naming the module, or in full a citing
 declaration; importing the module names it, importing only an umbrella module
-above it does not. Reuse such a declaration and name it in the note of each
+above it does not. A module catalog, or a container whose scope is all proved,
+reaches nothing; a bare number cites nothing; and a last-component match counts
+any identifier, comments and strings included, so a generic one such as `symm`
+can hide the warning. Reuse such a declaration and name it in the note of each
 article using it; when it does not apply, name it on the source's page under
 `blueprint/sources/` with why, which outlasts the notes.
 
@@ -468,10 +474,11 @@ every catalog below it.
 The contract is read as published Markdown and fails closed; `coverage.py`
 gives the edge cases:
 
-- A table in an HTML comment, a code block, or under a `hidden` attribute is not
-  the contract. A table that does not publish, such as one a paragraph runs
-  into, is rejected, and a published one the audit does not recognise, such as
-  one without outer pipes, is named.
+- A table in an HTML comment or a code block is not the contract, nor is a
+  table, row, or cell under its own or an ancestor's `hidden` attribute; CSS,
+  such as a class or `display: none`, hides nothing. A table that does not
+  publish, such as one a paragraph runs into, is rejected, and a published one
+  the audit does not recognise, such as one without outer pipes, is named.
 - A comment or code block between rows is reported, with the rows stranded
   below it, rather than truncating the contract. A row holding an unclosed
   `<style>`, or evidence with a raw `<table>`, is refused.
@@ -525,12 +532,12 @@ whose definitions are the trusted base and are not expanded.
 This is the one command that runs Lean: for each module that declares a
 selected target it runs a probe with `lake env lean` against the built project,
 so a packet reads as it does to a file importing that module, without the
-declaration's local notation, `open`, or `set_option`. Lake must first confirm,
-without rebuilding, that every probed module is fresh: a missing
-`lake-manifest.json`, stale artifacts, or a source tree that changes during
-extraction fails the command, and since the check rewrites Lake's `.hash` files,
-`.lake` must be writable. The helper module `autoform-skeleton-helper` and its
-`AutoformSkeleton` namespace are reserved; a module that takes one, on
+declaration's local notation, local instances, `open`, or `set_option`. Lake
+must first confirm, without rebuilding, that every probed module is fresh: a
+missing `lake-manifest.json`, stale artifacts, or a source tree that changes
+during extraction fails the command, and since the check rewrites Lake's `.hash`
+files, `.lake` must be writable. The helper module `autoform-skeleton-helper`
+and its `AutoformSkeleton` namespace are reserved; a module that takes one, on
 `LEAN_PATH` or not, breaks the probes that import it.
 
 A `partial def` in a trusted closure is refused, and so is a declaration with
@@ -580,19 +587,20 @@ its value), and the source of every project definition the statement rests on,
 with comments and docstrings removed. Source that may hide a comment the probe
 cannot find, such as a body using `local notation`, is withheld, as is an
 equation-style statement that cannot be parsed outside its file; both are
-marked `-- source not shown`, and the article stays resolved. Source text is
-not notation-proof; only the kernel material is.
+marked `-- source not shown`, and the article stays resolved. A `local` token,
+or a token the file had in scope differently from the probe, can make the probe
+show code as a comment or a comment as code. Source text is not notation-proof;
+only the kernel material is.
 
-A `## Sources` link to a non-Markdown file inside the blueprint with a
-`#L<start>-L<end>` fragment, such as
+A local `## Sources` link with a `#L<start>-L<end>` fragment, such as
 `../../../sources/lebl-ra/ch-real-nums.tex#L693-L714`, is a locator naming the
-statement's source passage; the same link to a Markdown file is a note. A first
-local locator that names no readable, regular, UTF-8 lines inside the
-blueprint leaves its article's declarations unresolved. `--passages DIR`, which
-requires `--packets`, writes each article's passage to its own managed
-directory beside `article.lean`, the joint packet of the article's
-declarations: a faithfulness judge gets the article packet and passage, an
-auditor of one declaration only its packet.
+statement's source passage, unless it names an existing regular Markdown file
+in the blueprint, which is a note. A first local locator that names no
+readable, regular, UTF-8 lines inside the blueprint leaves its article's
+declarations unresolved. `--passages DIR`, which requires `--packets`, writes
+each article's passage to its own managed directory beside `article.lean`, the
+joint packet of the article's declarations: a faithfulness judge gets the
+article packet and passage, an auditor of one declaration only its packet.
 
 #### Skeleton hashes
 
@@ -755,7 +763,8 @@ article recording `statement: retracted` is a revision: JSON `revision` is true,
 and the text adds a `revision:` (list) or `Revision:` (context) line saying to
 start from `autoform work impact` (see the [revision
 contract](reference/claims-and-revisions.md#revision-contract)). Both commands
-are read-only.
+are read-only, and refuse an article whose bytes changed after the graph loaded;
+rerun once the project is idle.
 
 Under the open policy the text of `work list` starts with an `Open statements:
 allowed` line and adds an `assumes:` line under each item resting on open
@@ -778,9 +787,11 @@ assumes open statements. `--json` writes the `autoform-assumptions/v1` contract
 CI audits the build against: every article whose `lean:` names a declaration,
 with `open`, `assumes`, and `allowed_open_declarations` (the open declarations
 its Lean may reach, plus its own when it is open). A `mathlib: true` article
-(state `mathlib`) and a module catalog are never open and are allowed nothing,
-nor is any article under the strict policy; CI checks that every listed name
-exists. It reads Markdown only and needs no Lean build.
+(state `mathlib`) is never open and is allowed nothing, nor is any article under
+the strict policy. A module catalog is never open; under the open policy, one
+that is not proved keeps only the names no non-catalog article's `lean:` lists,
+and is left out when none remain. CI checks that every listed name exists. It
+reads Markdown only and needs no Lean build.
 
 #### work impact
 
@@ -1022,9 +1033,12 @@ to the bundled viewer, and their schemas may change. Every generated site
 projection uses the same JSON-derived explorer. A formal statement links to the
 smallest scope holding it, as `<scope>.html#node=<id>`; only a legacy
 `dependencies/full.html#node=<id>` link redirects. A `lean:` declaration that
-resolves to a repository permalink gets a source link. The explorer shows a
-title as typed, and render percent-encodes each link it writes from file and
-folder names, so no name can make a `javascript:` URL.
+resolves to a repository permalink gets a source link; a catalog's Lean row
+shows its first eight names and counts the rest. The explorer shows a title as
+typed, and render percent-encodes each link it writes from file and folder
+names, such as the book's previous and next links, while a Markdown link it
+moves keeps its decoded spelling and starts with `./` when its first segment
+holds a colon, so no name can make a `javascript:` URL.
 
 Render writes no Mermaid graph of its own. Authored Mermaid remains supported in
 the vault and book, drawn in strict mode with plain-text labels and loaded only
