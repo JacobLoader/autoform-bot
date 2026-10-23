@@ -12,7 +12,7 @@ and compute node, which owns one REPL slot pool and LSP session per active Lean
 project. It outlives the session that started it, starts again on the next tool
 call after a crash, and is replaced gracefully by an in-place upgrade.
 
-LSP sessions stay warm; each public REPL call gets a fresh child and no
+LSP sessions stay warm; each public REPL call gets a fresh child, and no
 process-owned environment or proof-state handle survives the response. Before
 that child starts, Lean's own header parser, run by the selected Lake
 toolchain, reads the submitted source. Every import it reports must have one of
@@ -26,15 +26,13 @@ provides file and process IO, for example `#eval IO.Process.run`.
 
 REPL children and LSP processes start lazily, and a tool call stays pending
 while Lean starts, so no `/repl-start`, `/lsp-start`, or model-side sleep is
-needed. Every REPL call starts Lean afresh and, unless its header starts with
-`module` or `prelude`, imports Mathlib, so it takes at least as long as
-`import Mathlib` on the node. Calls to the same project run one at a time
-unless `AUTOFORM_REPL_WORKERS_PER_PROJECT` is raised. The REPL `timeout` is one
-total budget for waiting for an idle slot, the header check, child startup,
-imports, and the submitted code; admitting the project counts against
-`AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` instead. Idle project state is closed after
-30 minutes, while the small runtime stays available. A `warm` REPL project
-means its slot pool is cached, not that a REPL subprocess remains resident.
+needed. A REPL call whose header does not start with `module` or `prelude`
+imports Mathlib, so it takes at least as long as `import Mathlib` on the node.
+The REPL `timeout` is one total budget for waiting for an idle slot, the header
+check, child startup, imports, and the submitted code; admitting the project
+counts against `AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` instead. A `warm` REPL
+project means its slot pool is cached, not that a REPL subprocess remains
+resident.
 
 ```bash
 uv run autoform-lean-runtime start
@@ -42,8 +40,8 @@ uv run autoform-lean-runtime status
 uv run autoform-lean-runtime stop
 ```
 
-`stop` is graceful: it waits for admitted tool calls and Lean children to
-finish shutting down before a subsequent `start` can replace the runtime.
+`stop` is graceful: a later `start` replaces the runtime only after admitted
+tool calls and Lean children finish shutting down.
 
 ## LSP tools
 
@@ -75,9 +73,10 @@ under `config`.
 
 - `AUTOFORM_MAX_LEAN_PROJECTS` (default 4): projects with loaded Lean state.
 - `AUTOFORM_REPL_TOTAL_WORKERS` (default one per 32 GB of memory, at least 1)
-  and `AUTOFORM_REPL_WORKERS_PER_PROJECT` (default 1): concurrent REPL calls.
-  A worker is one call slot; an idle slot holds no Lean process.
-- `AUTOFORM_LEAN_IDLE_SECONDS` (default 1800): when idle project state closes.
+  and `AUTOFORM_REPL_WORKERS_PER_PROJECT` (default 1): concurrent REPL calls,
+  one slot each.
+- `AUTOFORM_LEAN_IDLE_SECONDS` (default 1800): when idle project state closes;
+  the runtime itself stays up.
 - `LEAN_LSP_TIMEOUT` (default 60 seconds), at most
   `AUTOFORM_MAX_LSP_REQUEST_SECONDS` (default 600). Raising that maximum to 745
   seconds or more also needs `AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` raised.

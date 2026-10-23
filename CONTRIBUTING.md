@@ -13,8 +13,8 @@ make check-example  # validate, render, and build the bundled example site
 ```
 
 CI ([`tests.yml`](.github/workflows/tests.yml) lists every job and its tests)
-runs these steps on Python 3.10 and 3.13 for pull requests, pushes to `main`,
-and pushes to `scratch/` branches, which run CI without a pull request. CI sets
+runs these steps on Python 3.10 and 3.13 for pull requests and for pushes to
+`main` and to `scratch/` branches, which run CI without a pull request. CI sets
 each `AUTOFORM_REQUIRE_*` variable below, so it fails where a local run skips:
 
 - Browser tests skip without the `browser` extra and WebKit; `make test-browser`
@@ -34,8 +34,8 @@ each `AUTOFORM_REQUIRE_*` variable below, so it fails where a local run skips:
 The kernel-trust probe `autoform_cli/probes/audit_probe.lean` has a verbatim
 copy in `.github/autoform_audit.py`: edit the `.lean` file, then run
 `python3 scripts/sync_audit_probe.py` to rewrite the template's and the bundled
-example's copies. This checks it without a project and prints nothing when it
-is clean: `elan run "$(cat tests/fixtures/library-project/lean-toolchain)" lean
+example's copies. To check it without a project (silent when clean), run
+`elan run "$(cat tests/fixtures/library-project/lean-toolchain)" lean
 autoform_cli/probes/audit_probe.lean`.
 
 `tests/test_real_repl.py` skips unless `AUTOFORM_RUN_REAL_REPL_TESTS=1`. To run
@@ -58,8 +58,8 @@ We actively welcome your pull requests.
 6. If you haven't already, complete the Contributor License Agreement ("CLA").
 
 ## Contributor License Agreement ("CLA")
-In order to accept your pull request, we need you to submit a CLA. You only need
-to do this once to work on any of Meta's open source projects.
+To accept your pull request, we need you to submit a CLA. You only need to do
+this once to work on any of Meta's open source projects.
 
 Complete your CLA here: <https://code.facebook.com/cla>
 
@@ -73,8 +73,8 @@ outlined on that page and do not file a public issue.
 
 ## Coding Style
 * Python uses 4-space indentation and a 120-character line length
-  (`[tool.ruff]`), which ruff's default rules, the only ones `make lint` and CI
-  run, do not enforce.
+  (`[tool.ruff]`); `make lint` and CI run only ruff's default rules, which do
+  not enforce them.
 * There is no formatter: match the surrounding code and leave unrelated lines.
 
 ## License

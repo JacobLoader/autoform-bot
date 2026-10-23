@@ -13,19 +13,18 @@ date when the release is tagged.
 
 - **Docs.** The CLI reference's contracts moved to `autoform_cli/reference/`
   (validation and audit, search, open statements, claims and revisions,
-  runtime and publication), and the reference, the skills and the contributor
-  docs were cut to the rules users and agents act on; internals moved into
-  module docstrings, and upgrade notes into this file.
-  `tests/test_doc_budgets.py` fails when one of these docs grows past its line
-  budget (#458).
-- **Claims.** `claim list TARGET...` lists only those claims, without
-  fetching or reading any other claim. `--timeout` (120 seconds by default)
-  bounds a listing, a slow step is named on stderr, and a failure goes to
-  stderr labelled `timeout:`, `contention:` or `transport:` with nothing on
-  stdout. Git no longer waits for a terminal password prompt in claim
-  commands, and a listing that runs out of time or is interrupted no longer
-  leaves its transport running. Formalize treats a labelled `claim list`
-  failure as an unreadable board, not as a board without claims (#432).
+  runtime and publication). The reference, skills and contributor docs keep
+  only the rules users and agents act on; internals moved to module
+  docstrings, and upgrade notes to this file. `tests/test_doc_budgets.py`
+  fails when one of these docs grows past its line budget (#458).
+- **Claims.** `claim list TARGET...` fetches and reads only those claims.
+  `--timeout` (120 seconds by default) bounds a listing, a slow step is named on
+  stderr, and a failure goes to stderr labelled `timeout:`, `contention:` or
+  `transport:` with nothing on stdout. Git no longer waits for a terminal
+  password prompt in claim commands, and a listing that runs out of time or is
+  interrupted no longer leaves its transport running. Formalize treats a
+  labelled `claim list` failure as an unreadable board, not as a board without
+  claims (#432).
 - **Builds.** `project new` turns on Lake's artifact cache with
   `enableArtifactCache` and `restoreAllArtifacts`, so checkouts and worktrees
   on one toolchain reuse each other's builds; Setup offers the same two lines
@@ -76,8 +75,8 @@ theme. Each group names the pull requests to read for detail.
   `\DeclareMathOperator`, `\label`, `\color`, `\cancel`, `\href` and the like
   show in red, and `check` warns about a formula that defines a command. Put
   the project's macros in `blueprint/tex-macros.json`; render replaces an
-  edited `blueprint/javascripts/mathjax.js`, with a warning, and its edits are
-  lost, so move its macros to `tex-macros.json` and delete it (#215).
+  edited `blueprint/javascripts/mathjax.js`, with a warning, so move its macros
+  there and delete it (#215).
 - **Mermaid.** Authored diagrams lose click callbacks, HTML labels and the
   status palette's `classDef` colours, such as `A:::fully_proved`. A
   `mkdocs.yml` that loads Mermaid from the CDN may drop that line once CI's

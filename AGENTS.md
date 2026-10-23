@@ -1,16 +1,16 @@
 # AutoformBot agent guidance
 
-User instructions override this file. Use [CONTRIBUTING.md](CONTRIBUTING.md)
-for contribution, style, and validation practices. Use the
-[development skill](skills/develop-plugin/SKILL.md) for product-development
+User instructions override this file. [CONTRIBUTING.md](CONTRIBUTING.md)
+covers contribution, style, and validation; the
+[development skill](skills/develop-plugin/SKILL.md) covers product-development
 workflow and cross-file maintenance.
 
 ## Product judgment
 
 - Name the user outcome or maintenance burden before fixing, restacking, or
   merging a proposal; a request to resolve review blockers does not justify it.
-- Optimize for repository quality and a simple product, not PR count or green
-  checks, and not docs or tests that only validate their own planning state.
+- Optimize for repository quality and a simple product, not PR count, green
+  checks, or docs and tests that only validate their own planning state.
 - Closing or replacing a proposal that removes duplication is a success. Keep
   reusable insight in the owning skill or an issue; remove an artifact only when
   authorized.
@@ -45,11 +45,11 @@ workflow and cross-file maintenance.
 ## Inform, don't break
 
 Autoform's commands inform the orchestrator; they must not break a codebase
-(#325). A new check that a repository could fail reports a warning and keeps the
-exit status, so a repository that passed before still passes, and the
-orchestrator decides what to do. A command exits nonzero only when it cannot
-give a correct answer: input it cannot read, a stale or missing build it would
-otherwise misreport, a contract it cannot honor, or evidence it would have to
-forge. Never add a refusal to the graph loader, where it stops every command.
-The [CLI reference](autoform_cli/README.md) gives each command's exit statuses
-and warnings.
+(#325). A new check that a repository could fail warns and keeps the exit
+status, so a repository that passed before still passes and the orchestrator
+decides. A command exits nonzero only when it cannot give a correct answer:
+unreadable input, a stale or missing build it would otherwise misreport, a
+contract it cannot honor, or evidence it would have to forge. Never add a
+refusal to the graph loader, where it stops every command. The
+[CLI reference](autoform_cli/README.md) gives each command's exit statuses and
+warnings.
