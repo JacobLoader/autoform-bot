@@ -107,11 +107,12 @@ result and for each intermediate result its proof proves or cites, as the
   repeats it for what parallel agents added.
 
 Enumerate the entire adopted boundary in `blueprint/coverage/README.md`, with
-the dispositions the [CLI reference](../../autoform_cli/README.md#commands)
-defines. `DEFERRED` needs an explicit user decision or concrete external
-blocker; treat any other `DEFERRED` row as queued work, and never defer merely
-to shorten the run. `coverage.complete` only checks declared rows, so compare
-the table with the source structure yourself.
+the dispositions the
+[CLI reference](../../autoform_cli/README.md#audit-and-coverage) defines.
+`DEFERRED` needs an explicit user decision or concrete external blocker; treat
+any other `DEFERRED` row as queued work, and never defer merely to shorten the
+run. `coverage.complete` only checks declared rows, so compare the table with
+the source structure yourself.
 
 Write milestone pages under `blueprint/roadmap/` by mathematical significance,
 then one fine article per coherent unit with one unique main result. For an

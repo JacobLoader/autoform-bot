@@ -153,7 +153,8 @@ statement without changing that statement.
 
 Under the open policy a proof may use the open statements its Markdown
 dependencies reach; `autoform work assumptions --json` lists the exact
-`allowed_open_declarations`, and the article then shows as conditionally proved.
+`allowed_open_declarations`, and the article then shows as conditionally proved;
+`#print axioms` lists the `sorryAx` it inherits without saying from where.
 Before landing, record `proof: formalized` in the worktree (until then the audit
 treats the article as open), reproduce the CI audit as the open statements
 reference shows, and require a `conditional` or `sorry-free` line for each

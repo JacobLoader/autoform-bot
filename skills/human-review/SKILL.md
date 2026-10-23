@@ -32,7 +32,11 @@ in Obsidian. For browser review, run
 `autoform dashboard <PROJECT> --site-dir site`, which serves the deployed site
 on loopback with local-only live claim badges, and give the overview plus the
 relevant project, chapter, nested-scope, and statement-context links. Every
-generated site route uses the same Canvas plus semantic-DOM viewer.
+generated site route uses the same Canvas plus semantic-DOM viewer. Drill from
+the project's topics to a chapter, a nested scope, then a searched statement, in
+a window wider than 1,100 px so open details leave the hierarchy rail visible;
+at project scale, select one topic to see its dependency neighborhood. A level
+with no authored dependency edges says so.
 
 Guide the review from coarse to fine: declared scope and exclusions, milestone
 book, landing-page progress summary, cross-chapter graph, chapter graph, then
@@ -80,7 +84,7 @@ one judge of whether cards and approvals are current.
 2. Obtain a read-back for every packet that has none or whose card
    `review check` reports invalid. Never write one yourself: you know what the
    code is meant to say. Launch an independent sub-agent in a fresh workspace
-   containing only that packet and
+   containing only that packet, under its opaque hash filename, and
    [the read-back reference](references/readback.md). Do not give it the
    repository, article, source passage, packet manifest, or a revealing task
    description. Ask for testimony only.
