@@ -16,9 +16,10 @@ date when the release is tagged.
   bounds a listing, a slow step is named on stderr, and a failure goes to
   stderr labelled `timeout:`, `contention:` or `transport:` with nothing on
   stdout. Git no longer waits for a terminal password prompt in claim
-  commands, and a listing that runs out of time or is interrupted no longer
-  leaves its transport running. Formalize treats a labelled `claim list`
-  failure as an unreadable board, not as a board without claims (#432).
+  commands, and a `claim list` or `claim cleanup` listing that runs out of
+  time or is interrupted no longer leaves its transport running. Formalize
+  treats a labelled `claim list` failure as an unreadable board, not as a
+  board without claims (#432).
 - **Builds.** `project new` turns on Lake's artifact cache with
   `enableArtifactCache` and `restoreAllArtifacts`, so checkouts and worktrees
   on one toolchain reuse each other's builds; Setup offers the same two lines
@@ -29,6 +30,16 @@ date when the release is tagged.
   articles that proof uses, and keeps the source's route in the proof sketch,
   so the article is not blocked on steps its proof never needs; Agent Review
   checks the same (#443).
+
+### Fixed
+
+- **Claims.** `autoform dashboard` runs its claim listing's Git in the
+  dashboard's process group again, so Ctrl+C or a signal to that group stops
+  Git along with the dashboard (#447). On macOS and Windows, a listing shows both of two claims
+  whose keys, or folders in them, differ only in case, including with Apple's
+  Git, which stored one key's name holding the other's lease (#452). The
+  claim contract now says what `--timeout` bounds and which listings run Git
+  apart from their caller (#448).
 
 ## 0.6.0 (2026-10-22)
 

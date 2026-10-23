@@ -916,7 +916,7 @@ def test_list_on_a_case_insensitive_scratch_lists_both_keys_when_git_keeps_one_r
 
     def keeps_one_ref_without_a_word(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         proc = git(args, **kwargs)
-        if args[0] == "fetch" and "--stdin" not in args:
+        if args[0] == "fetch" and "--stdin" not in args and proc.returncode == 0:
             # What Apple's Git 2.50 leaves on a case-insensitive filesystem: exit 0, one ref, the other's lease.
             namespace = args[-1].rpartition(":")[2].removesuffix("*")
             git(["update-ref", f"{namespace}lean/Foo", oids["lean/foo"]])
@@ -939,6 +939,60 @@ def test_scratch_ignores_case_as_its_filesystem_does(tmp_path: Path) -> None:
     (tmp_path / "Probe").touch()
 
     assert board._scratch_ignores_case() is (tmp_path / "probe").exists()
+
+
+@pytest.mark.parametrize(
+    ("keys", "collide"),
+    [
+        (["lean/Foo", "lean/foo"], True),
+        (["Lean/Foo", "lean/Bar"], True),
+        (["lean/Foo", "lean/foo/bar"], True),
+        (["lean/foo", "lean/bar", "other"], False),
+        (["lean/foo"], False),
+    ],
+)
+def test_keys_collide_ignoring_case_when_they_or_their_folders_differ_only_in_case(
+    keys: list[str], collide: bool
+) -> None:
+    assert claims._collide_ignoring_case(keys) is collide
+
+
+@pytest.mark.parametrize("ignores_case", [False, True])
+def test_list_names_the_claims_after_its_fetch_only_on_a_case_insensitive_scratch(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch, ignores_case: bool
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire_many(["a", "b"], ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    monkeypatch.setattr(reader, "_scratch_ignores_case", lambda: ignores_case)
+    calls = _counting(reader, monkeypatch)
+
+    assert [lease["_key"] for lease in reader.list()] == ["a", "b"]
+
+    commands = [args[0] for args, _ in calls if args[0] in {"fetch", "ls-remote"}]
+    # Without colliding keys the fetch's result stands: no second fetch by name.
+    assert commands == (["fetch", "ls-remote"] if ignores_case else ["fetch"])
+
+
+def test_list_that_cannot_name_the_claims_after_its_fetch_leaves_no_refs(
+    tmp_path: Path, board_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _board(tmp_path, board_repo, "worker-a")
+    assert owner.acquire("a", ttl=600)
+    reader = _board(tmp_path, board_repo, "worker-b")
+    git = reader._git
+
+    def unreachable_after_the_fetch(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "ls-remote":
+            raise claims.ClaimTransportError("git ls-remote failed against claim board: gone")
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(reader, "_git", unreachable_after_the_fetch)
+    monkeypatch.setattr(reader, "_scratch_ignores_case", lambda: True)
+
+    with pytest.raises(claims.ClaimTransportError, match="gone"):
+        reader.list()
+    assert git(["for-each-ref", "refs/"]).stdout == ""
 
 
 def test_list_of_keys_that_differ_only_in_case_drops_a_claim_released_after_naming_it(
@@ -2247,7 +2301,7 @@ def test_git_off_the_main_thread_shares_its_callers_process_group_even_isolated(
     board = _scratch_board(tmp_path)
     probe = _alias("pgid", "ps -o pgid= -p $$")
     groups: list[int] = []
-    worker = threading.Thread(target=lambda: groups.append(int(board._git(probe, isolated=True).stdout)))
+    worker = threading.Thread(target=lambda: groups.append(int(board._git(probe, isolated=True).stdout)), daemon=True)
     worker.start()
     worker.join(timeout=30)
 
@@ -2276,15 +2330,24 @@ def test_git_ends_with_its_caller_when_a_worker_thread_runs_it(tmp_path: Path, s
         start_new_session=True,
         stderr=subprocess.DEVNULL,
     )
-    started_by = time.monotonic() + 10
-    while not (pid_file.exists() and pid_file.read_text().strip()):
-        assert time.monotonic() < started_by, "git never started its command"
-        time.sleep(0.05)
+    try:
+        started_by = time.monotonic() + 10
+        while not (pid_file.exists() and pid_file.read_text().strip()):
+            assert time.monotonic() < started_by, "git never started its command"
+            time.sleep(0.05)
 
-    os.killpg(caller.pid, signum)
+        os.killpg(caller.pid, signum)
 
-    assert caller.wait(timeout=10) != 0
-    _assert_gone(int(pid_file.read_text()))
+        assert caller.wait(timeout=10) != 0
+        _assert_gone(int(pid_file.read_text()))
+    except BaseException:
+        # A failed run leaves the caller, or git and its command in their own session.
+        with contextlib.suppress(OSError):
+            os.killpg(caller.pid, signal.SIGKILL)
+        with contextlib.suppress(OSError, ValueError):
+            os.kill(int(pid_file.read_text()), signal.SIGKILL)
+        caller.wait(timeout=10)
+        raise
 
 
 def test_list_runs_every_git_command_isolated_except_cleanup(

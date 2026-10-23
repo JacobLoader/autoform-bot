@@ -2610,11 +2610,13 @@ can show some of its claims changed and others not. A peer's renewal meanwhile
 changes nothing, except that a server speaking Git's older stateless HTTP
 protocol may refuse the fetch, which is then repeated up to three times. A
 scratch on a case-insensitive filesystem, as macOS and Windows use by default,
-cannot store two claim keys that differ only in case under their names. Git
-refuses such a fetch, except that some versions keep one of the two refs
-without a word, so there the listing also names the board's claims, with one
-more command. A board holding such keys is fetched again by name. A listing is
-a report, not a lock: every acquire, renew, and release checks ownership again.
+cannot store two claim keys, or two folders they name, that differ only in case
+under their names. Git refuses such a fetch, except that some versions store
+one key's name holding the other key's lease without a word. So on such a
+scratch, a listing whose fetch wrote any ref also names the board's claims,
+with one more command that downloads the board's list of refs, and fetches the
+claims again by name when two of them collide. A listing is a report, not a
+lock: every acquire, renew, and release checks ownership again.
 
 `claim list TARGET...` lists only those targets' claims, in the same JSON; a
 target without a claim is left out, and a duplicate target exits 2. It names
@@ -2623,9 +2625,11 @@ other claims never make it retry and no other claim's lease is copied, and a
 target released meanwhile has the targets named again, never the whole board.
 Naming the targets still downloads the board's list of refs, branches
 included, so over a network its cost grows with that list. `--timeout SECONDS`,
-120 by default, bounds every step that talks to the board, however long it is
-set; stopping a step that runs out takes up to six seconds more, and removing
-the listing's own refs from the local scratch afterwards is not counted. A step
+120 by default, is one deadline for the listing's Git commands, however long it
+is set; stopping the command that runs out takes up to six seconds more on
+Linux and macOS. Removing the listing's own refs from the local scratch
+afterwards is not counted, nor, on a local board, the check for leftover lock
+files. A step
 still running after five seconds is named on stderr as `claim list: <step>...`. A listing
 that fails exits 1 with nothing on stdout and one line on stderr: `error:
 timeout:` when the board did not answer in time, naming the step; `error:
@@ -2637,12 +2641,15 @@ it is configured to use still can, until the time limit. A listing, by `claim
 list` or the one `claim cleanup` starts with, also runs Git in its own process
 group, without a terminal on Linux and macOS so `ssh` cannot prompt either, and
 stops a Git command that runs out of time or is interrupted together with
-everything it started. That holds on a program's main thread, where the CLI
-always lists; off it, as in `autoform dashboard`, a listing runs Git in the
-caller's process group, so a signal that ends the caller reaches Git too.
-`acquire`, `renew`, `release`, and `cleanup`'s pushes run Git in the caller's
-process group, so a terminal's interrupt reaches Git, which then removes the
-ref lock it holds.
+everything it started; only removing its own refs afterwards runs in the
+caller's group. That holds on a program's main thread, where `claim list` and
+`claim cleanup` always list. Off it, as in `autoform dashboard`, a listing runs
+Git in the caller's process group and with its terminal: a signal sent to that
+group, such as a terminal's interrupt, reaches Git, but one sent only to the
+caller does not, `ssh` can prompt on that terminal, and a command that runs out
+of time is stopped without what it started. `acquire`, `renew`, `release`, and
+`cleanup`'s pushes run Git in the caller's process group, so a terminal's
+interrupt reaches Git, which then removes the ref lock it holds.
 
 A Git process that stops while updating a claim ref leaves a lock file in the
 board, and Git then refuses the updates it guards:
