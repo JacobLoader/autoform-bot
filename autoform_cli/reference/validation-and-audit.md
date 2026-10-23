@@ -44,7 +44,8 @@ how to fix it. It reads every page the site publishes, as `render` publishes
 it, the landing page, `coverage/README.md`, and source notes included. None of
 it fails `check` or stops `render`, which publishes such a page, or such a
 statement in its box, as typed (every character escaped in one preformatted
-block under a note) until the warning is fixed. It warns about raw HTML (a tag,
+block under a note; a flagged landing page shows only its title and opening
+sentence, as text) until the warning is fixed. It warns about raw HTML (a tag,
 a character reference, an unclosed comment, or anything the site's Markdown
 would pass through as HTML; a complete `<!-- ... -->` comment outside code is
 left out of the page, and a reference a browser shows as typed, such as the
@@ -66,21 +67,23 @@ an entry it must read cannot be read safely: a `.lean` file that cannot be
 read, a folder that cannot be listed or searched, a `.lean` entry that is a
 symbolic link or a special file (editor lock links named `.#*.lean` are
 skipped), or an unreadable `manifest.json` or `publication.json` below the
-root, in any folder the walk enters, even one of unrelated files. To clear a
-stop, fix the permissions, or move the entry out of the Lean root or into a
-folder every command skips: `.direnv`, `.git`, `.lake`, `.obsidian`, `.trash`,
-`.venv`, `build`, a folder below the root that holds a `.git` entry, a
-skeleton or review packet output folder, or a folder below the root that holds
-a complete `publication.json`, such as a rendered site or the `mkdocs` copy of
-one. There is no command-line option to exclude other folders. These names
-match in any letter case, except `build`, which must be lowercase; the `.lean`
-suffix must match exactly, so `A.LEAN` is not indexed. `render` without
-`--lean-root` uses the blueprint's parent folder as the Lean root. A command
-that indexes while `mkdocs build` runs can read the site's copies before its
-`publication.json`, so run it again once the build is done. When Lean inputs
-keep changing, indexing retries and then fails naming the changed paths
-relative to the Lean root, for example `Lean sources kept changing while they
-were indexed; changed: Proj/A.lean`.
+root, in any folder the walk enters, even one of unrelated files; other files
+are never read. To clear a stop, fix the permissions, or move the entry out of
+the Lean root or into a folder every command skips: `.direnv`, `.git`, `.lake`,
+`.obsidian`, `.trash`, `.venv`, `build`, a folder below the root that holds a
+`.git` entry, a skeleton or review packet output folder, or a folder below the
+root that holds a complete `publication.json`, such as a rendered site or the
+`mkdocs` copy of one. There is no command-line option to exclude other
+folders. These names match in any letter case, except `build`, which must be
+lowercase; the `.lean` suffix must match exactly, so `A.LEAN` is not indexed.
+`render` without `--lean-root` uses the blueprint's parent folder as the Lean
+root. A command that indexes during a `render` skips the site being written,
+but one that indexes while `mkdocs build` runs can read the site's copies
+before its `publication.json`, so run it again once the build is done. When
+Lean inputs keep changing, indexing retries and then fails naming the changed
+paths relative to the Lean root, for example `Lean sources kept changing while
+they were indexed; changed: Proj/A.lean`. Skipped folders and files other than
+`.lean` sources may change during a capture.
 
 Within each file, up to an `#exit` line, the index records the declarations
 written with `theorem`, `lemma`, `def`, `abbrev`, `instance`, `structure`,
@@ -91,8 +94,9 @@ deferred. The command may follow `@[...]` attribute lists and the modifiers
 `public`, `private`, `protected`, `noncomputable`, `partial`, `unsafe`,
 `scoped`, and `local`; a declaration behind any other modifier, such as `meta`
 or `nonrec`, is not indexed, and neither is an unnamed `instance` or
-`instance_wanted`. `_root_.X` is recorded as `X`, and an `alias` records each
-name it introduces (`lean.py` gives the line rules).
+`instance_wanted`. `_root_.X` is recorded as `X`. `alias b := a` records `b`,
+and `alias ⟨mp, mpr⟩ := a_iff` each of its names that is not `_`; the `:=` must
+be on the alias's line, and the target on that line or the next nonblank one.
 
 A name declared once has that declaration, even a private one. A name declared
 more than once has the one declaration that is neither `private` nor a wanted
@@ -104,8 +108,12 @@ exits 1), `audit` reports `lean-target-ambiguous`, `skeleton` leaves it
 unresolved, and work and search report no `source_file`; each diagnostic lists
 the `path:line` of every declaration of the name. `work impact` locates a
 compiled constant in its own module's file. The rule sees only indexed
-declarations and ignores the module system's visibility, so it can disagree
-with Lean (`lean.py` lists the cases).
+declarations: a public one behind an unindexed prefix such as `open X in`, or
+written `«main»` where the article writes `main`, leaves a private one as the
+name's only declaration. In a file that starts with `module`, a declaration
+outside a `public section` and without `public` is private to Lean but public
+to the index, so such a name may be reported as defined more than once where
+Lean accepts it, or selected where Lean binds it nowhere outside its file.
 
 ## Audit contract
 
@@ -179,8 +187,10 @@ target is elaborated under, including a catalog's. For a declaration article,
 force at the declaration or inside its proof. `lean-target-unscoped-limit`
 reports a target whose raised limit comes from a file- or section-wide
 `set_option`. A raised limit put on the declaration itself with
-`set_option ... in` is not reported. `elaboration_limits.py` gives the nesting
-rules.
+`set_option ... in` is not reported. The pass is lexical: it follows
+`namespace`, `mutual`, `end`, and `section` nesting, including
+`noncomputable section` and `@[expose] public section`, and treats a more
+deeply indented `set_option` as part of the proof above it.
 
 A catalog's declarations get the same two checks as [warnings](#warnings), at
 most one per catalog and code: `catalog-unbounded-limit` and

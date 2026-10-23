@@ -36,14 +36,15 @@ target without a claim is left out, and a duplicate target exits 2. It fetches
 only those refs but still downloads the board's list of refs, branches
 included. `--timeout SECONDS`, 120 by default, bounds the whole listing, and a
 step still running after five seconds is named on stderr as `claim list:
-<step>...`. A listing that fails exits 1 with nothing on stdout and one line on
-stderr: `error: timeout:` when the board did not answer in time, naming the
-step; `error: contention:` when the board refused every fetch because claims
-kept moving; or `error: transport:` for any other failure to reach or read the
-board. Claim commands run Git with `GIT_TERMINAL_PROMPT=0` and no input, and
-`claim list` runs it without a terminal on Linux and macOS, but a credential
-helper or `GIT_ASKPASS` program Git is configured to use can still prompt,
-until the time limit.
+<step>...`. A Git command that runs out of time or is interrupted is stopped
+with everything it started. A listing that fails exits 1 with nothing on stdout
+and one line on stderr: `error: timeout:` when the board did not answer in
+time, naming the step; `error: contention:` when the board refused three
+fetches because claims kept moving; or `error: transport:` for any other
+failure to reach or read the board. Claim commands run Git with
+`GIT_TERMINAL_PROMPT=0` and no input, and `claim list` runs it without a
+terminal on Linux and macOS, but a credential helper or `GIT_ASKPASS` program
+Git is configured to use can still prompt, until the time limit.
 
 A Git process that stops while updating a claim ref leaves a lock file that
 blocks updates: `refs/autoform-claims/<key>.lock` blocks that claim,
@@ -53,10 +54,13 @@ path, or as a `file://` URL except on Windows, a push such a file still blocks
 two seconds later exits 1 naming the file and when it was modified (one gone
 within two seconds counts as a lost race); `claim cleanup` leaves a lease whose
 release a lock file blocks in place and still exits 0; and `claim list` and
-`claim cleanup` warn on stderr about each lock file older than two seconds.
+`claim cleanup` warn on stderr about each lock file not modified within two
+seconds of the current time.
 Over any other transport a lock file shows up as a lost race or as Git's own
-error, which also stops `claim cleanup`. Autoform never deletes a lock file:
-once no Git process is using the board, delete it and retry.
+error, which also stops `claim cleanup`. A terminal's interrupt reaches Git,
+which then removes its lock, in every claim command but `claim list`. Autoform
+never deletes a lock file: once no Git process is using the board, delete it
+and retry.
 
 Claims are temporary operational state, never article frontmatter.
 

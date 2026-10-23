@@ -91,7 +91,8 @@ directory is a symbolic link. One refused library refuses the whole call,
 blueprint hits included. A package replaced with `lake --packages=` is not
 detected. Search verifies module names, files, and digests and the header's
 toolchain, dependencies, and source directories, but not the declaration
-records, so hit content can be forged.
+records, a module's `module_doc` or `module_system`, or the header's
+`generator`, `probe`, or `package`, so these can be forged.
 
 A declaration matches when every term occurs in its last name component
 (`lean`), docstring, module header (`module_doc`), full name (also without
@@ -155,5 +156,7 @@ folder's; the command exits 2 when neither gives one. Module names must be
 ASCII identifiers. A Lean file under an indexed directory that no indexed
 library builds is refused, and so are two modules that declare the same public
 name in two ways, which Lean cannot import together. A theorem two modules
-state the same way is indexed once, with a warning on standard error naming
-the modules; a record is identified by its name and module together.
+state the same way is indexed once, under the first of its modules in name
+order, with a warning on standard error naming the modules; each module's copy
+of a wanted name is indexed, and a record is identified by its name and module
+together.

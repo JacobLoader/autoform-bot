@@ -86,19 +86,25 @@ declarations failed the open-statement audit`.
 
 Both audits also require a `lean:` name outside the root package, as a Mathlib
 article's is, to be neither unsafe nor partial (a `partial def` counts) and to
-use no axiom beyond `propext`, `Classical.choice`, and `Quot.sound`; refuse
-every unsafe or partial root-package declaration; and, once every other check
-has passed, replay every root-package declaration through the kernel on a fresh
-import of the modules outside the root package. The workflow's scan for the
-kernel-check bypass option is only lexical. The probe runs no project code: the
-workflow runs it with plain `lean`, not `lake env lean`, with the project's
-search path in `AUTOFORM_AUDIT_LEAN_PATH` and `LEAN_ABORT_ON_PANIC=1`, and fails
-the step unless the probe's last line is its success line, even on exit 0.
+use no axiom beyond `propext`, `Classical.choice`, and `Quot.sound`; hold every
+root-package declaration to the same three (the open-statement audit also
+allows `sorryAx` by the rules above), so `native_decide` fails through
+`Lean.trustCompiler`; refuse every unsafe or partial root-package declaration;
+and, once every other check has passed, replay every root-package declaration
+through the kernel on a fresh import of the modules outside the root package,
+logging `kernel replay of the root package skipped: it runs once every other
+check passes` until then. The workflow's scan for the kernel-check bypass
+option is only lexical. The probe runs no project code: the workflow runs it
+with plain `lean`, not `lake env lean`, with the project's search path in
+`AUTOFORM_AUDIT_LEAN_PATH` and `LEAN_ABORT_ON_PANIC=1`, and fails the step
+unless the probe's last line is its success line, even on exit 0.
 
 The audits' errors, each naming what to change:
 
-- `NAME depends on unexpected axiom sorryAx` (strict), ending with
-  `root-package declarations failed the kernel-trust audit`.
+- `NAME depends on unexpected axiom AX` for a root-package declaration, with
+  `AX` such as `Lean.trustCompiler`, or `sorryAx` under the strict audit; the
+  strict audit ends with `root-package declarations failed the kernel-trust
+  audit`.
 - `NAME [ID] is not a declaration of the Lean build; fix the article's lean:
   name or build the module that declares it`: a theorem in a file no target
   imports, or inside a string, passes `autoform check --lean-root` but not this.
@@ -113,9 +119,8 @@ The audits' errors, each naming what to change:
   name.
 - `NAME [ID] is Lean's compiled copy of a recursive definition; name the
   definition itself`, for a `lean:` name that is a `NAME._unsafe_rec` copy.
-- `kernel replay of the root package skipped: it runs once every other check
-  passes`, and `kernel replay of the root package failed: ...`, naming the
-  first declaration the kernel rejects.
+- `kernel replay of the root package failed: ...`, naming the first
+  declaration the kernel rejects.
 - `environment already contains 'propext'`: the build declares a core name
   itself, differently from the toolchain.
 - `M declares a theorem N in place of the axiom K declares; rename one of them

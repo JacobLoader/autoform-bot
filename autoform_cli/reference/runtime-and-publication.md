@@ -30,11 +30,15 @@ Autoform never creates, synchronizes, or treats `graph.json` as an authority. A
 source target that is neither an http(s) link nor a path inside the blueprint,
 and a `mathlib_file` that is not a portable relative path, are left out of the
 projection; `check` fails on a local path outside the blueprint and warns about
-the rest. Temporary claims and local dashboard hooks may fall back to an
-article's path-derived `id`, but durable execution records and routes must
-require `article_id` until the path-move migration is complete. Operational
-state is excluded from runtime snapshots and publication. The `runtime` module
-docstring describes the projection for Python consumers.
+the rest. Each v4 node carries `article_id`, a nullable `catalog`,
+`assertions.statement_retracted`, and `status.assumes` and `status.waiting_on`,
+and the graph its `open_statements` policy. Temporary claims and local
+dashboard hooks may fall back to an article's path-derived `id`, but durable
+execution records and routes must require `article_id` until the path-move
+migration is complete. Operational state is excluded from runtime snapshots and
+publication. Projection fails with `the article changed after the graph was
+loaded` when an article's bytes no longer match the digest recorded at load.
+The `runtime` module docstring describes the projection for Python consumers.
 
 ## Publication contract
 
@@ -66,10 +70,11 @@ capture and the end of the extraction fails the render instead (see `render
 --review` under statement review).
 
 Repository links appear only when the Lean bytes match one locally available
-Git commit, recorded by its full object ID. Otherwise the render stays local,
-keeps source notes in the site, records no Git ref, and warns with the first
-mismatch. Links into the blueprint (an article's Markdown source, a source
-note) also need the blueprint's bytes in that commit; when they differ, render
+Git commit, recorded by its full object ID; a clean checkout that Git converts
+on checkout still matches. Otherwise the render stays local, keeps source
+notes in the site, records no Git ref, and warns with the first mismatch.
+Links into the blueprint (an article's Markdown source, a source note) also
+need the blueprint's bytes in that commit; when they differ, render
 keeps the code links, keeps source notes in the site, and warns with the first
 mismatch, or, for a blueprint outside the repository or in a nested checkout,
 does the same without a warning. When render reads no Lean file (native
@@ -81,14 +86,18 @@ or v3 site whose files match its inventory (`.DS_Store` and `._*` are ignored),
 and refuses anything else, including a legacy v1 output, which you remove once
 by hand. A failed or refused render leaves the output as it was. The site is
 built in a hidden `.autoform-publication-*` directory beside the output (the
-repository root for `--output site-src`) and swapped in at once; one that a
-killed render leaves behind is covered by the setup ignore rules but may hold
-the previous site, so inspect it before deleting it. On filesystems without an
+repository root for `--output site-src`) and swapped in at once, renders into
+one parent directory taking turns when it can be locked; one that a killed
+render leaves behind is covered by the setup ignore rules but may hold the
+previous site, so inspect it before deleting it. On filesystems without an
 atomic exchange the previous site is first renamed to
 `.autoform-publication-backup-<name>`, which the next render moves back if the
-swap died midway. Native Windows reads the Lean sources only for an explicit
-`--lean-root`, which then fails closed. Without one it publishes no code links;
-when a published statement names a `lean:` declaration it warns, and
+swap died midway. On macOS `fsync` does not flush the drive's cache, so a power
+loss can still lose the newest site. Native Windows reads the blueprint and the
+output as two pathname captures that must agree, commits through the backup swap
+without a lock, and reads the Lean sources only for an explicit `--lean-root`,
+which then fails closed. Without one it publishes no code links; when a
+published statement names a `lean:` declaration it warns, and
 `--require-declarations` makes it exit 1.
 
 Check the site MkDocs builds from render's output for what the build broke:
