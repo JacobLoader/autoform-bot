@@ -7,7 +7,7 @@ read-only, and drafting a post does not authorize sending or editing one.
 ## Discover community context
 
 Look for `.zuliprc` in standard local locations without printing or copying its
-credentials. If none exists, ask the user for its path or to configure one.
+credentials. If none is usable, ask the user for its path or to configure one.
 Search only relevant topics and report overlapping work, active contributors,
 design rationale, and useful references.
 

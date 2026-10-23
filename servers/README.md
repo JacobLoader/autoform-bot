@@ -40,8 +40,8 @@ uv run autoform-lean-runtime status
 uv run autoform-lean-runtime stop
 ```
 
-`stop` is graceful: a later `start` replaces the runtime only after admitted
-tool calls and Lean children finish shutting down.
+`stop` is graceful: it returns once admitted tool calls and Lean children have
+shut down, so a later `start` replaces the runtime cleanly.
 
 ## LSP tools
 
@@ -73,8 +73,8 @@ under `config`.
 
 - `AUTOFORM_MAX_LEAN_PROJECTS` (default 4): projects with loaded Lean state.
 - `AUTOFORM_REPL_TOTAL_WORKERS` (default one per 32 GB of memory, at least 1)
-  and `AUTOFORM_REPL_WORKERS_PER_PROJECT` (default 1): concurrent REPL calls,
-  one slot each.
+  and `AUTOFORM_REPL_WORKERS_PER_PROJECT` (default 1): concurrent REPL calls;
+  a worker is one call slot.
 - `AUTOFORM_LEAN_IDLE_SECONDS` (default 1800): when idle project state closes;
   the runtime itself stays up.
 - `LEAN_LSP_TIMEOUT` (default 60 seconds), at most

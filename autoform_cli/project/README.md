@@ -22,7 +22,8 @@ every requirement, direct or transitive, from the root manifest, but the report
 certifies Mathlib only when `lakefile.toml` requires it directly; otherwise the
 selected entry, including an `inherited` one, is unused for this report, with a
 `mathlib-manifest-unused` warning and an `indeterminate` answer. A require of
-the root package's own name is satisfied by the root and is not looked up.
+the root package's own name is satisfied by the root, so it is never looked up
+in the manifest or overrides and never draws `lake-manifest-incomplete`.
 `lakefile.lean` takes precedence, as in Lake, but is never evaluated, so its
 projects stay `indeterminate`. The decision files are size-bounded and read as
 one snapshot; inspection retries or fails if their bytes, identities, presence,
@@ -48,7 +49,7 @@ need to consult is an error with `ok: false`.
 ## Exit codes, JSON, and diagnostics
 
 `autoform project inspect` exits 0 when the report has no error diagnostic
-(`ok: true`) and 1 when it has one (`ok: false`) or the bundled release catalog
+(`ok: true`) and 1 when it has any (`ok: false`) or the bundled release catalog
 cannot be loaded; with `--json` the latter prints
 `{"error": {"code": "project-catalog-invalid", "message": ...}, "ok": false}`
 instead of a report. A command-line usage error exits 2.

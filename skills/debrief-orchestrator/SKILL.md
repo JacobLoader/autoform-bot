@@ -16,7 +16,8 @@ they reported to you into your own answer.
 There is no `autoform` on `PATH` in a Lean project. Run it from `<PROJECT>` as
 `uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform`, where the root is the
 absolute plugin directory holding `skills/`, `pyproject.toml`, and
-`autoform_cli/`; give a subagent that prefix with its task.
+`autoform_cli/`; give a subagent that prefix, with the root filled in, and its
+task.
 
 Run `autoform debrief orchestrator form <PROJECT> --skill
 setup|roadmap|formalize`, naming the skill that ran (see the

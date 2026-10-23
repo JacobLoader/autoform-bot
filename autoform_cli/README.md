@@ -54,19 +54,20 @@ An article's statement, which `autoform audit` and the published theorem box
 read, is its body from the end of the frontmatter to the first `##` heading,
 without the H1 line. The first H1 (the title), if written below a `##` section,
 ends that section and resumes the statement; a later H1 stays in its section.
-Deeper headings, and a `##` line inside a fenced code block or an HTML comment,
-do not end the statement. Close each fence with its own bare line of the same
-character, length and indent: on a chapter page an unclosed fence can hide
-later articles, so `check` warns, the site shows that page as typed (see
+Headings deeper than `##`, and a `##` line inside a fenced code block or an HTML
+comment, do not end the statement. Close each fence with its own bare line of
+the same character, length and indent: on a chapter page an unclosed fence can
+pair with a later article's fence and hide what lies between, so `check` warns,
+the site shows that page as typed (see
 [Validation](reference/validation-and-audit.md#validation)), and the audit
-reports `unclosed-code-fence`. For the graph and the audit, an unclosed fence
-is plain text that hides no heading or link, and a later bare line of its
-character at least as long closes it. On the page, an unclosed backtick fence
-can pair with a later backtick run in its paragraph as inline code; a link
-there is still a dependency. An HTML comment that never closes, even one opened
-in inline code or an indented code block, hides every later heading and
-dependency link: the graph loses those edges, one opened in the statement puts
-the rest of the article in the theorem box, and nothing reports it.
+reports `unclosed-code-fence`. For the graph and the audit, an unclosed fence is
+plain text that hides no heading or link, and a later bare line of its character
+at least as long closes it. On the page, an unclosed backtick fence can pair
+with a later backtick run in its paragraph as inline code; a link there is still
+a dependency. An HTML comment that never closes, even one opened in inline code
+or an indented code block, hides every later heading and dependency link: the
+graph loses those edges, one opened in the statement puts the rest of the
+article in the theorem box, and nothing reports it.
 
 `## Depends on` lists what the article needs to be *stated*;
 `## Proof depends on` lists what only its *proof* needs. Links under them are
@@ -75,7 +76,7 @@ other links are navigation or citations. Dependencies resolve relative to the
 article and must point at another roadmap article.
 
 The optional `declaration` field marks a formalizable leaf and names its
-intended Lean declaration command, unconstrained, such as `def`, `theorem`,
+intended Lean declaration command, any one, such as `def`, `theorem`,
 `structure`, or `instance`; containers and exposition articles omit it. A
 declaration that introduces data rather than a proposition has no separate
 proof obligation, whatever its modifiers (such as `noncomputable`); an `axiom`
@@ -276,18 +277,17 @@ autoform project inspect path/inside/project --json
 
 `project new` builds a complete Lean shell (the release's resolved dependency
 manifest, blueprint, and site) in a private sibling directory and publishes it
-atomically: the target must not exist, and a failed or concurrent creation
-leaves no partial target. A failure or interrupt after staging can leave a
-hidden `.autoform-new-*` directory in the parent, which the error mentions;
-inspect it before removing it. The published tree has modes 0755 for
-directories and executables and 0644 for other files, whatever the umask. Its
-`lakefile.toml` sets `enableArtifactCache = true` and
-`restoreAllArtifacts = true`, so checkouts on the same toolchain share builds
-through Lake's artifact cache while each module's `.olean` stays in
-`.lake/build`. Package names cannot shadow Mathlib libraries such as `Archive`
-or `Counterexamples`. Workflows are pinned as [`init`](#init) pins them. Apart
-from local Git reads, the command runs no subprocess, Lake, Lean, or network
-operation. Its errors name a code:
+atomically: the target must not exist and is never overwritten, and a failed or
+concurrent creation leaves no partial target. A failure or interrupt after
+staging can leave a hidden `.autoform-new-*` directory in the parent, which the
+error mentions; inspect it before removing it. The published tree has modes 0755
+for directories and executables and 0644 for other files, whatever the umask.
+Its `lakefile.toml` sets `enableArtifactCache = true` and `restoreAllArtifacts =
+true`, so checkouts on the same toolchain share builds through Lake's artifact
+cache while each module's `.olean` stays in `.lake/build`. Package names cannot
+shadow Mathlib libraries such as `Archive` or `Counterexamples`. Workflows are
+pinned as [`init`](#init) pins them. Apart from local Git reads, the command
+runs no subprocess, Lake, Lean, or network operation. Its errors name a code:
 
 - `project-parent-inaccessible` or `project-path-is-symlink`: the parent and
   its ancestors must be readable real directories, not links; on macOS, use
@@ -368,16 +368,16 @@ overlay matches claims on an article's node ID or its `article_id`, reports the
 publication manifest, or public site. Claim badges update while it runs; re-run
 render and the MkDocs build to refresh everything else.
 
-The generated `blueprint-pages.yml` deploys only a commit that the project's
-own `.github/workflows/autoform-verify.yml` (matched by file, not name) passed
-on a push to `main`, with code links rendered at that commit by `--ref`. A
-failed verification deploys nothing, so the last verified site stays up. Pull
-requests and manual runs build the site but never deploy, and cannot cancel a
-waiting deploy. To redeploy, re-run the Pages run that the newest successful
-verify run on `main` started; re-running an older one deploys the older commit.
-A project scaffolded before this rule deploys every push (see
-[Upgrading](../CHANGELOG.md#upgrading-from-050)). No pin has to move: every
-`AUTOFORM_REF` since 0.5.0 has `render --ref`.
+The generated `blueprint-pages.yml` deploys only a commit that the project's own
+`.github/workflows/autoform-verify.yml` (matched by file, not name) passed on a
+push to `main`, with code links rendered at that commit by `--ref`. A failed
+verification deploys nothing, so the last verified site stays up. Pull requests
+and manual runs build the site but never deploy, and cannot cancel a waiting
+deploy. To redeploy, re-run the Pages run that the newest successful verify run
+on `main` started; re-running an older one deploys the older commit. A project
+scaffolded before this rule deploys every push;
+[Upgrading](../CHANGELOG.md#upgrading-from-050) says how to switch. No pin has
+to move: every `AUTOFORM_REF` since 0.5.0 has `render --ref`.
 
 Pages gates on `check` and `render`, and runs `audit` after `check` only as a
 report, with `continue-on-error`: the log lists every finding, or
@@ -518,12 +518,12 @@ autoform skeleton blueprint --lean-root . --output skeleton.json --packets revie
 
 The skeleton of a `lean:` declaration is its elaborated signature, then every
 project declaration its *statement* rests on, transitively, quoted from the
-sources in dependency order: a definition with its body, a theorem with its
-type only. Proofs are never emitted, though Lean's axiom analysis reads them,
-so a proof edit can change the reported trust context. Each skeleton reports
-the axioms the declaration rests on (a `sorry` shows as `sorryAx`) and, by
-name, the non-core constants it assumes from Mathlib or another dependency,
-which are trusted and not expanded.
+sources in dependency order: a definition with its body, a theorem with its type
+only. A theorem's proof is never emitted, though Lean's axiom analysis reads it,
+so a proof edit can change the reported trust context. Each skeleton reports the
+axioms the declaration rests on (a `sorry` shows as `sorryAx`) and, by name, the
+non-core constants it assumes from Mathlib or another dependency, which are
+trusted and not expanded.
 
 For each module that declares a selected target, `skeleton` runs a probe with
 `lake env lean` against the built project, so a packet reads as it does to a
@@ -599,8 +599,8 @@ A local `## Sources` link with a `#L<start>-L<end>` fragment, such as
 `../../../sources/lebl-ra/ch-real-nums.tex#L693-L714`, is a locator naming the
 statement's source passage, unless it names an existing regular Markdown file
 in the blueprint, `.md` in any letter case, which is a note. A first local
-locator that names no readable, regular, UTF-8 lines inside the blueprint, or a
-file over 64 MiB, leaves its article's declarations unresolved.
+locator that names no readable, regular, UTF-8 lines inside the blueprint, or
+names a file over 64 MiB, leaves its article's declarations unresolved.
 `--passages DIR`, which requires `--packets`, writes each article's passage to
 its own managed directory beside `article.lean`, the joint packet of the
 article's declarations: a faithfulness judge gets the article packet and
@@ -692,7 +692,7 @@ prepare and record again.
 
 `review check` derives its evidence from its own extraction, never a committed
 file, and fails until every Lean-mapped article has current cards and a
-`review_approved` equal to the review hash it prints. An approval binds the
+`review_approved` equal to the review hash it prints. An approval also binds the
 macros in `blueprint/tex-macros.json` its statement uses, directly or through
 another macro, so a macro edit stales only those approvals. The run compares the
 articles, cited sources, and cards it read before Lean with what it sees after,
@@ -851,7 +851,8 @@ modules were checked, and the first one Lake found unbuilt. `affected_modules`
 is `MODULE` and every loaded module that imports it, transitively, complete over
 the root libraries' Lake roots and globs. Modules that removing an import drops
 from the build are not listed. Like `work impact`, the probe refuses a
-root-package module the captured inventory lacks.
+root-package module the captured inventory lacks, and one whose loaded source
+or artifact is not the captured root one, so a dependency cannot shadow it.
 
 Under `--module-scope import-closure` the candidates are `MODULE` and every
 root-package module whose source contains each component of a candidate's name,

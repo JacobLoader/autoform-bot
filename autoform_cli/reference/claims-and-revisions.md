@@ -14,8 +14,9 @@ shared resource, or a Lean helper no article owns (under the
 `lean/<slug>-<digest>` key `work impact` reports), is locked like a node.
 Parallel agents get one Git worktree each; builds take no claim.
 
-Since a multi-target command changes all its targets or none
-([claim](../README.md#claim)), a board that cannot push atomically is refused.
+`acquire`, `renew`, and `release` change all their targets in one atomic push,
+or none; malformed targets fail before any push, and a board that cannot push
+atomically is refused.
 A refusal exits 1 with one line such as `error: could not acquire af_y, af_z;
 no claim was acquired: held by another worker: af_y`, naming the blocking
 targets when known; a duplicate target exits 2. Workers that need several
@@ -53,7 +54,8 @@ path, or as a `file://` URL except on Windows, a push such a file still blocks
 two seconds later exits 1 naming the file and its modification time (one gone
 within two seconds counts as a lost race); `claim cleanup` leaves a lease whose
 release a lock file blocks in place and still exits 0; and `claim list` and
-`claim cleanup` warn on stderr about each lock file older than two seconds.
+`claim cleanup` warn on stderr about each lock file not modified within two
+seconds of the current time.
 Over any other transport a lock file shows up as a lost race or as Git's own
 error, which also stops `claim cleanup`. A terminal's interrupt reaches Git,
 which then removes its lock, in every claim command but `claim list`. Autoform
@@ -137,9 +139,9 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
    commit. `contained` is not enough: it ignores an X' built from X.
 5. `autoform audit --lean-root` reports `lean-target-deprecated` when a
    declaration article's `lean:` names a declaration with `deprecated` in its
-   own `@[...]` list; point it at the replacement. The check is lexical, so
-   it misses a later `attribute [deprecated] X`, which `work impact` sees.
-   Under the open policy it is expected for the X that step 2 keeps in R's
+   own `@[...]` list; point it at the replacement. The check is lexical, so it
+   misses a later `attribute [deprecated] X`, which `work impact` sees. Under
+   the open policy the finding is expected for the X that step 2 keeps in R's
    `lean:` until step 4, so `autoform audit --lean-root` and `autoform doctor
    --lean-root` fail until then, while CI, which runs neither, passes.
 6. When Roadmap revises an article, its statement text or only its Lean, it

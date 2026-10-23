@@ -16,7 +16,7 @@ subagent that prefix.
 Treat `blueprint/roadmap/**/*.md` as the sole durable work graph; the [CLI
 reference](../../autoform_cli/README.md#commands) documents the commands.
 `<PROJECT>` is the absolute path of the checkout being edited (for a subagent,
-its own worktree). Run `autoform work list <PROJECT> --lean-root <PROJECT>
+its own worktree). First run `autoform work list <PROJECT> --lean-root <PROJECT>
 --json`, then inspect a selected leaf with `autoform work context <NODE>
 <PROJECT> --lean-root <PROJECT> --json`. The phase is derived; never author
 ready, running, retrying, failed, or blocked scheduler states. If `work list`
@@ -45,7 +45,7 @@ would then fetch or build Mathlib itself. Builds take no claim: dispatch no more
 workers at once than the machine's memory can build for. If the lakefile lacks
 the artifact cache `project new` writes, Setup offers to add it.
 
-Claims are optional. Within one run the lead needs none: it keeps workers,
+Claims are optional. Within one run no one needs them: the lead keeps workers,
 itself included, from holding the same target at once. A worker holds its
 article's `claim_target` and the `claim_targets` the lead confirmed until its
 work lands or it abandons the leaf without a candidate; a handoff keeps them. To
@@ -147,8 +147,8 @@ open. In both policies the proof phase completes the proof of an already
 recorded statement without changing that statement.
 
 Under the open policy a proof may use the open statements its Markdown
-dependencies reach, which `autoform work assumptions --json` lists exactly as
-`allowed_open_declarations`; the article then shows as conditionally proved, and
+dependencies reach; `autoform work assumptions --json` lists the exact
+`allowed_open_declarations`, and the article then shows as conditionally proved;
 `#print axioms` lists the inherited `sorryAx` without saying from where.
 Before landing, record `proof: formalized` in the worktree (until then the audit
 treats the article as open), reproduce the CI audit as the open statements

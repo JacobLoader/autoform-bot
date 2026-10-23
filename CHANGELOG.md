@@ -76,7 +76,7 @@ theme. Each group names the pull requests to read for detail.
   show in red, and `check` warns about a formula that defines a command. Put
   the project's macros in `blueprint/tex-macros.json`; render replaces an
   edited `blueprint/javascripts/mathjax.js`, with a warning, so move its macros
-  there and delete it (#215).
+  to `tex-macros.json` and delete it (#215).
 - **Mermaid.** Authored diagrams lose click callbacks, HTML labels and the
   status palette's `classDef` colours, such as `A:::fully_proved`. A
   `mkdocs.yml` that loads Mermaid from the CDN may drop that line once CI's

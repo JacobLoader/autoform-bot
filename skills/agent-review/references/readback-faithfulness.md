@@ -107,7 +107,9 @@ rather than carding around hidden content.
 | `unreadable` | `disagrees` | The text cannot be carded as supplied, including content hidden from rendered output. |
 | `evidence-missing` | `unknown` | The passage, a read-back, or required provenance is absent or malformed. |
 
-Use `elaboration` for an added assumption only when it is plainly redundant or
+Spelling out binders, conventions, and degenerate behavior the claim already
+determines is `elaboration`. Use it for an added assumption only when it is
+plainly redundant or
 an implementation-level restatement and the detail line says why it changes no
 mathematical instance; otherwise use `hypothesis-added`.
 
