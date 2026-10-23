@@ -23,16 +23,16 @@ certifies Mathlib only when `lakefile.toml` requires it directly; otherwise the
 selected entry, including an `inherited` one, is unused for this report, with a
 `mathlib-manifest-unused` warning and an `indeterminate` answer. A require of
 the root package's own name is satisfied by the root, so it is never looked up
-in the manifest or overrides and never draws `lake-manifest-incomplete`.
-`lakefile.lean` takes precedence, as in Lake, but is never evaluated, so its
-projects stay `indeterminate`. The decision files are size-bounded and read as
-one snapshot; inspection retries or fails if their bytes, identities, presence,
-or case aliases change. Catalog matching treats elan's stable Lean release
-aliases, URI scheme and host case, and Mathlib's explicit `./` root subdirectory
-as equivalent while preserving the authored values in the report. A project that
-`project new` wrote without `lake-manifest.json` is `indeterminate`, with
-`missing-lake-manifest`, until `lake update` writes one; then it is `unlisted`,
-or `supported` when Lake locks a catalog commit.
+in the manifest or overrides. `lakefile.lean` takes precedence, as in Lake, but
+is never evaluated, so its projects stay `indeterminate`. The decision files are
+size-bounded and read as one snapshot; inspection retries or fails if their
+bytes, identities, presence, or case aliases change. Catalog matching treats
+elan's stable Lean release aliases, URI scheme and host case, and Mathlib's
+explicit `./` root subdirectory as equivalent while preserving the authored
+values in the report. A project that `project new` wrote without
+`lake-manifest.json` is `indeterminate`, with `missing-lake-manifest`, until
+`lake update` writes one; then it is `unlisted`, or `supported` when Lake locks
+a catalog commit.
 
 This predicts an ordinary Lake invocation. CLI `--packages` / `--file`
 overrides, `LAKE_PKG_URL_MAP`, and edits inside an already-materialized checkout
