@@ -62,7 +62,7 @@ it.
 The skeleton hashes bind elaborated meaning and trust context; the packet hash
 and article packet hash bind the declaration packet its auditor saw and the
 joint packet; the article review hash also binds the joint packet to the cited
-passage and locator (see the [CLI reference](../../../autoform_cli/README.md#commands)).
+passage and locator (see the [CLI reference](../../../autoform_cli/README.md#skeleton-hashes)).
 None binds the read-back, so the read-back hash is required. These are drift
 checksums, not reviewer authentication or an approval key.
 
