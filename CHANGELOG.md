@@ -11,6 +11,13 @@ date when the release is tagged.
 
 ### Changed
 
+- **Docs.** The CLI reference's contracts moved to `autoform_cli/reference/`
+  (validation and audit, search, open statements, claims and revisions,
+  runtime and publication), and the reference, the skills and the contributor
+  docs were cut to the rules users and agents act on; internals moved into
+  module docstrings, and upgrade notes into this file.
+  `tests/test_doc_budgets.py` fails when one of these docs grows past its line
+  budget (#458).
 - **Claims.** `claim list TARGET...` lists only those claims, without
   fetching or reading any other claim. `--timeout` (120 seconds by default)
   bounds a listing, a slow step is named on stderr, and a failure goes to
