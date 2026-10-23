@@ -2,8 +2,7 @@
 
 Follow these rules when a [Formalize](../SKILL.md) run uses claims. They replace
 asking the lead before editing beyond what a worker holds and before an import
-edit lands, because a refused acquire or a recheck conflict gives the same
-answer. The [claim contract](../../../autoform_cli/reference/claims-and-revisions.md#claim-contract)
+edit lands. The [claim contract](../../../autoform_cli/reference/claims-and-revisions.md#claim-contract)
 defines the board.
 
 ## Worker IDs and the board
@@ -48,8 +47,8 @@ rule](../../../autoform_cli/reference/claims-and-revisions.md#claim-contract) be
 targets. Keep the complete acquired set until every checkout on the claim board
 can see the verified commit: on the shared branch and, for an `origin` board,
 pushed, since other clones read their frontier from the remote. For a handoff,
-keep the set and also report it and the worker ID instead of making the leaf
-look free. The integrator renews, integrates, and releases a handed-off set with
+keep the set and report it with the worker ID instead of making the leaf look
+free. The integrator renews, integrates, and releases a handed-off set with
 `--worker-id` set to the reported ID; if the lease has lapsed, it acquires the
 complete set under its own ID and, before integrating, repeats Formalize's
 pre-edit reload of `work context`. Release the complete set once the result is

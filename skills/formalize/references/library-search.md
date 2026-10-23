@@ -3,9 +3,8 @@
 A project may depend on a shared Lean library, such as ATLAS, that publishes a
 search index. Search it in the same call as the blueprint, as the
 [library search reference](../../../autoform_cli/reference/search.md#searching-a-library-the-project-depends-on)
-describes, so a result the library already has is reused, not proved again.
-Wherever these rules say to tell the user, a subagent puts it in its report to
-the lead instead.
+describes. Wherever these rules say to tell the user, a subagent puts it in its
+report to the lead instead.
 
 ## Search steps
 
@@ -37,19 +36,18 @@ not fetched any other way (never `lake update`, never a new `require`). Pass
 every package it reports as usable to each search, even while the blueprint is
 empty, as `--library NAME`, together with `--lean-root` naming the same Lake
 project root: search refuses `--library` without it. Do not pass a package it
-reports as not usable, such as a dependency that publishes no index, not even to
-try. A package left out, as not usable or not checked out, is unchecked, as for
-a refused library: tell the user once which package was left out and the reason
-the listing gives, and that whether it has the result is unknown.
+reports as not usable, such as a dependency that publishes no index. A package
+left out, as not usable or not checked out, is unchecked, as for a refused
+library: tell the user once which package was left out and the reason the
+listing gives, and that whether it has the result is unknown.
 
 ## A refusal that names a library
 
 A refusal that names a library (the CLI prints `error: library NAME: ...`) is
-not a blocker. You cannot change another repository's index or a pin, so rerun
-the same search without that library, continue, and tell the user which library
-was not searched and why. A library that was not searched has not been checked:
-"no library has it" is unknown for that library, and the report says so. Any
-other refusal is handled as the skill says for any refusal.
+not a blocker: rerun the same search without that library, continue, and tell
+the user which library was not searched and why. A library that was not
+searched has not been checked: "no library has it" is unknown for that library,
+and the report says so.
 
 ## Queries
 
@@ -100,12 +98,12 @@ and tell the user that the library lists it as wanted.
 ## Differences, module files, and build cost
 
 A hit from a library whose `differences` are not empty (`differs:` lines in the
-text output) may still be used: add the import and build the focused target,
-and let the build decide. If the build fails, report the differences to the
-user; a different Lean release is the one most likely to matter.
+text output) may still be used: add the import and let the focused build
+decide. If the build fails, report the differences to the user; a different
+Lean release is the one most likely to matter.
 
-A hit with `module_system: false`, shown only in the JSON output, cannot be
-imported by a Lean module file. Use it only from a file that is not one.
+A hit with `module_system: false` (JSON output only) cannot be imported by a
+Lean module file; use it only from a file that is not one.
 
 Each worktree compiles the library modules it imports, and everything they
 import, unless the library ships a build cache. Say so to the user when the

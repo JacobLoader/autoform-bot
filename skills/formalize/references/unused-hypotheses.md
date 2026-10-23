@@ -1,16 +1,15 @@
 # Unused hypotheses in a Formalize run
 
-[Formalize](../SKILL.md) treats Lean's `unusedVariables` and
-`unusedSectionVars` warnings on the article's theorems as findings. Once the
-proof is complete and its focused build passes, also run Batteries' linter:
+[Formalize](../SKILL.md) runs Batteries' linter as
 `#lint only unusedArguments in <Module>` after `import <Module>`, where
-`<Module>` declares the article's theorems, and act only on its findings for
-those theorems. From its release for Lean v4.32.0 it skips an argument named
-with a leading `_` and an unnamed one other than an instance, such as the
-antecedent of `p → q`; its releases for Lean v4.30.0 and v4.31.0 check no
-theorem at all, so a clean run there is not evidence.
+`<Module>` declares the article's theorems; act only on its findings for those
+theorems. From its release for Lean v4.32.0 it skips an argument named with a
+leading `_` and an unnamed one other than an instance, such as the antecedent of
+`p → q`; its releases for Lean v4.30.0 and v4.31.0 check no theorem at all, so a
+clean run there is not evidence.
 
-A finding means the proof never uses that argument:
+A finding, from Lean's warnings or the linter, means the proof never uses that
+argument:
 
 - If the statement assumes something the source derives, such as a supremum
   the source obtains from boundedness, restate it to conclude what the source
@@ -24,5 +23,4 @@ A finding means the proof never uses that argument:
   the general one as a separate lemma that it follows from.
 
 Name a hypothesis you keep with a leading `_` and add one sentence to the
-article giving the reason in mathematical or source terms, so a later reviewer
-sees the decision.
+article giving the reason in mathematical or source terms.

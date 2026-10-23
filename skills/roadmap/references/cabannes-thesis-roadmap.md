@@ -6,7 +6,7 @@ models the start of a formalization project for Vivien Cabannes's thesis,
 ([arXiv:2209.11629](https://arxiv.org/abs/2209.11629)). Confirm the actual
 source revision adopted by the project before relying on its paths or labels.
 
-The example stays intentionally small:
+The example is small:
 
 - the roadmap maps all six mathematical chapters at coarse granularity;
 - two decomposed chapters make the book navigation and cross-chapter DAG
@@ -30,16 +30,15 @@ The detailed slice uses labels verified in `infimum/core.tex` from the public
 
 | Node | Source label | Prerequisites |
 | --- | --- | --- |
-| Eligibility | `il:def:eligibility` | — |
-| Non-ambiguity | `il:def:non-ambiguity` | — |
+| Eligibility | `il:def:eligibility` | None |
+| Non-ambiguity | `il:def:non-ambiguity` | None |
 | Infimum loss | `il:thm:infimum-loss` | Eligibility |
 | Non-ambiguity determinism | `il:thm:ambiguity` | Non-ambiguity |
 | Supervision recovery | `il:thm:non-ambiguity` | Infimum loss; Non-ambiguity determinism |
 
-Two supporting nodes are kept in a separate formalization chapter: full
-supervision and the proof that it is non-ambiguous. They are grounded in the
-existing Lean declarations and feed the source-level supervision-recovery
-target without being presented as additional thesis statements.
+Two supporting nodes sit in a separate formalization chapter: full supervision
+and the proof that it is non-ambiguous. Grounded in existing Lean declarations,
+they feed the supervision-recovery target without posing as thesis statements.
 
 Existing and planned mathematics coexist in one book here: five of the seven
 nodes are already formalized, both supporting declarations and three of the

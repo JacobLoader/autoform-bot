@@ -50,15 +50,14 @@ choosing one would discard accepted work.
 
 When the adopted boundary is a repository-wide library, global wiki, or other
 existing codebase, project-owned Lean is a primary mathematical source rather
-than implementation prior art to omit. Before planning future work:
-
-inventory every in-scope tracked module and public mathematical declaration,
-plus declaration-like wishlist or conjecture entries and adopted planning
-sources; state how private helpers, tests, generated code, aggregate import
-roots, and imported dependencies are treated; reconcile each in-scope
-declaration to a roadmap article, an exact grouped ledger, or an evidenced
-coverage disposition; and record each module and declaration name, with any
-separate literary provenance, under `blueprint/sources/`.
+than implementation prior art to omit. Before planning future work, inventory
+every in-scope tracked module and public mathematical declaration, plus
+declaration-like wishlist or conjecture entries and adopted planning sources;
+state how private helpers, tests, generated code, aggregate import roots, and
+imported dependencies are treated; reconcile each in-scope declaration to a
+roadmap article, an exact grouped ledger, or an evidenced coverage disposition;
+and record each module and declaration name, with any separate literary
+provenance, under `blueprint/sources/`.
 
 Inventory and exposition are independent axes: a catalog ledger can close the
 inventory axis but does not make an area `DECOMPOSED`. A future-work slice
@@ -71,14 +70,14 @@ grounding; do not invent an external citation or historical-source claim.
 ## Ground and decompose
 
 Inspect the repository and existing vault before writing. Preserve accepted
-material and unrelated changes; send missing infrastructure to Setup. Formalize
-owns Lean execution after this skill produces a validated ready frontier.
+material and unrelated changes; send missing infrastructure to Setup and Lean
+execution to Formalize.
 
 Work from exact source passages. When the boundary includes existing Lean, first
 extract module and declaration docstrings and nearby source comments alongside
 the Lean signatures; they locate and describe code but never replace the adopted
 source. Record stable source locations, assumptions, and uncovered prerequisites
-under `blueprint/sources/`, labelling project-authored specifications honestly.
+under `blueprint/sources/`, labelling project-authored specifications as such.
 External research is read-only, and contacting people requires permission. Do
 not invent a statement, motivation, proof narrative, dependency, citation, or
 historical attribution the sources do not support. Read [Setup's Zulip
@@ -118,12 +117,11 @@ Write milestone pages under `blueprint/roadmap/` by mathematical significance,
 then one fine article per coherent unit with one unique main result. For an
 existing repository, coherent grouping is allowed only when the exact ledger
 still reconciles every public declaration. Do not turn existing formalization
-into fictional future work. Ground each statement and proof sketch in the
-source. Put genuine statement prerequisites under `## Depends on` and proof-only
-prerequisites under `## Proof depends on`. Never delete or reverse a genuine
-article edge to make a chapter-level or scope-level projection acyclic. After
-creating pages, run `autoform migrate article-ids blueprint --write` to give new
-articles durable `article_id` metadata.
+into fictional future work. Put genuine statement prerequisites under
+`## Depends on` and proof-only prerequisites under `## Proof depends on`. Never
+delete or reverse a genuine article edge to make a chapter-level or scope-level
+projection acyclic. After creating pages, run `autoform migrate article-ids
+blueprint --write` to give new articles a durable `article_id`.
 
 Articles hold only frontmatter and informal mathematics. Put Lean-side findings
 such as Mathlib gaps, prior art, and candidate declaration names in
@@ -148,18 +146,18 @@ remote, which is outward-facing, so make sure the request covers them.
 When a revision changes a statement, or Human Review requests a Lean revision,
 retract the article as step 6 of the [revision
 contract](../../autoform_cli/reference/claims-and-revisions.md#revision-contract)
-says; this skill edits only Markdown and leaves the Lean change to Formalize. An
-article without `lean:` just loses `statement` and `proof`, a Human-Review Lean
-revision is recorded in the implementation note, and retracted dependents are
-claimed in one acquire when the project uses claims. Formalize may land `lean:`
-on the branch it works from after your checkout, with or without claims. Before
-the revision lands on that branch, and so before releasing any claim, bring it
-up to date with that branch by rebase or merge, retract any revised article that
-gained `lean:` there, repeat the Finish step's final validation, and commit the
-retraction as a new commit. When the revision lands later through a pull
-request, report the revised articles that had no `lean:` on that branch at your
-last update, and list them in the pull request's description if you open it, so
-whoever merges it retracts any that have gained `lean:` by then.
+says. An article without `lean:` just loses `statement` and `proof`, a
+Human-Review Lean revision is recorded in the implementation note, and retracted
+dependents are claimed in one acquire when the project uses claims. Formalize
+may land `lean:` on the branch it works from after your checkout, with or
+without claims. Before the revision lands on that branch, and so before
+releasing any claim, bring it up to date with that branch by rebase or merge,
+retract any revised article that gained `lean:` there, repeat the Finish step's
+final validation, and commit the retraction as a new commit. When the revision
+lands later through a pull request, report the revised articles that had no
+`lean:` on that branch at your last update, and list them in the pull request's
+description if you open it, so whoever merges it retracts any that have gained
+`lean:` by then.
 
 `open_statements` in `roadmap/README.md` is a project policy; absent means
 strict, and [open
@@ -193,9 +191,9 @@ When the project's CI pins an older `AUTOFORM_REF`, it rejects the keys and
 markers that ref predates, such as `catalog:`, `area:`, `INVENTORIED` and
 `statement: retracted`, and still rejects a rolled-up dependency cycle that
 newer refs allow. Move the pin, or report it, before relying on one; until it
-moves, leave out the edge that closes such a cycle, retract by removing
-`statement` and `proof` and keeping `lean:`, and report the old pin and each
-change it held back.
+moves, omit the edge that closes such a cycle, retract by removing `statement`
+and `proof` but keeping `lean:`, and report the old pin and each change it held
+back.
 
 For a large source, divide independent sections among available agents while
 retaining one owner for global coverage, status semantics, and dependency
@@ -204,21 +202,21 @@ contract, `blueprint/README.md`, and the repository `README.md`.
 
 ## Finish
 
-After the final edit, use the CLI reference to run `autoform check` with
-`--lean-root .` and `autoform audit`, refresh the dependency summary with
-`autoform-visualize`, and resolve every finding introduced by this work or
-inside the adopted boundary. A `check` warning that a shared library
-declaration's docstring, or its module's, cites one of the blueprint's sources
-usually means a library search was skipped: reuse or record the declaration as
-the [CLI reference](../../autoform_cli/README.md#commands) says, with a reason
-that holds for every article reaching the source, revisited when the boundary
+After the final edit, run `autoform check` with `--lean-root .` and `autoform
+audit`, refresh the dependency summary with `autoform-visualize`, and resolve
+every finding introduced by this work or inside the adopted boundary. A `check`
+warning that a shared library declaration's docstring, or its module's, cites
+one of the blueprint's sources usually means a library search was skipped:
+reuse or record the declaration as the [CLI
+reference](../../autoform_cli/README.md#commands) says, with a reason that
+holds for every article reaching the source, revisited when the boundary
 changes; review a module when its warning first appears. Report unrelated
 pre-existing findings instead of widening scope. A `catalog-unbounded-limit` or
 `catalog-unscoped-limit` warning describes existing Lean code and never fails
 the audit: report it, and change that code only when the user asks, through
 Formalize, rebuilding before anything is recorded. Fix the other `warning:`
-lines inside the adopted boundary as you would a finding. Commit the vault, with
-the refreshed summary where the repository tracks it, only after this final
+lines inside the adopted boundary as findings. Commit the vault, with the
+refreshed summary where the repository tracks it, only after this final
 validation; pushing is outward-facing and requires a user request.
 
 Finish only when the adopted boundary has no `MAPPED` rows, every `DECOMPOSED`
