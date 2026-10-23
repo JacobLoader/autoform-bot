@@ -83,15 +83,17 @@ Ask when either is unknown, and report the pair and why. Do not add the
 `require` or fetch the library into the project: that stays the user's decision.
 
 `project new` writes the complete Autoform vault, site, ignore rules, and CI, so
-no later `init` is needed. For an incomplete existing repository, preserve its
-authored configuration and run `autoform init` through the same
-`uv run --project "$AUTOFORM_PLUGIN_ROOT"` prefix: it writes the whole vault,
-keeps existing files, and reports what it left alone. Do not hand-build any of
-the vault. Without `--autoform-ref`, both write CI only when they can verify
-the Autoform commit that ran them; otherwise find the commit the plugin was
-installed from and run `init` on the target with `--autoform-ref <40-char-sha>`,
-or say plainly that CI was not configured. Never invent a ref or workflow
-source; `init` refuses a branch, a tag, or an abbreviated sha.
+no later `init` is needed. The rules ignore the derived `site/`, `site-src/`,
+`.autoform-publication-*/`, and `blueprint/dependencies.md`. For an incomplete
+existing repository, preserve its authored configuration and run `autoform init`
+through the same `uv run --project "$AUTOFORM_PLUGIN_ROOT"` prefix: it writes
+the whole vault, keeps existing files, and reports what it left alone. Do not
+hand-build any of the vault. Without `--autoform-ref`, both write CI only when
+they can verify the Autoform commit that ran them; otherwise find the commit the
+plugin was installed from and run `init` on the target with
+`--autoform-ref <40-char-sha>`, or say plainly that CI was not configured. Never
+invent a ref or workflow source; `init` refuses a branch, a tag, or an
+abbreviated sha.
 
 Neither `project new` nor `init` adds the Lean REPL that the REPL tool runs.
 Require `leanprover-community/repl` under the name `repl` (the runtime runs
