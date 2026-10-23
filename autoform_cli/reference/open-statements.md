@@ -25,8 +25,7 @@ stated, so restate or prove such a prerequisite before a dependent cites it.
 What is open:
 
 - A retracted theorem (`statement: retracted`) stays open, `sorry` or not,
-  since its `lean:` still compiles into whatever uses it, until Formalize
-  restates and proves it or the marker and `lean:` are removed.
+  until Formalize restates and proves it or the marker and `lean:` are removed.
 - A theorem never stated is not open even with `lean:`; CI rejects its `sorry`.
 - A definition is never open: CI rejects a `sorry` in it, and its statement
   phase waits until its proof prerequisites are stated. A retracted definition
@@ -100,8 +99,7 @@ root package skipped: it runs once every other check passes` until then. The
 workflow's scan for the kernel-check bypass option is only lexical. The probe
 runs no project code: the workflow runs it with plain `lean`, not `lake env
 lean`, with the project's search path in `AUTOFORM_AUDIT_LEAN_PATH` and
-`LEAN_ABORT_ON_PANIC=1`, and fails the step unless the probe's last line is its
-success line, even on exit 0.
+`LEAN_ABORT_ON_PANIC=1`.
 
 The audits' errors, each naming what to change:
 
@@ -176,4 +174,4 @@ AUTOFORM_AUDIT_LEAN_PATH="$(lake env printenv LEAN_PATH)" LEAN_ABORT_ON_PANIC=1 
 ```
 
 The audit passes only when `lean` exits 0 and the last line it prints is the
-`kernel trust clean ...` line; the workflow checks both.
+`kernel trust clean ...` line; the workflow fails the step otherwise.

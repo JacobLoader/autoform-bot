@@ -83,16 +83,16 @@ Before an index is used, search checks, by reading files, that the checkout
 is at the locked revision and pins the index's toolchain and direct
 dependencies, that the Lean files under the indexed directories are exactly
 the indexed modules with the recorded digests, and that the index is one
-generation. It refuses, with exit 2 and a message
-that begins `library NAME:`, a package that is not locked, not checked out, a
-path dependency, replaced by `.lake/package-overrides.json`, without an index,
-or failing a check, and every library of a project whose `.lake` or packages
-directory is a symbolic link. One refused library refuses the whole call,
-blueprint hits included. A package replaced with `lake --packages=` is not
-detected. Search verifies module names, files, and digests and the header's
-toolchain, dependencies, and source directories, but not the declaration
-records, a module's `module_doc` or `module_system`, or the header's
-`generator`, `probe`, or `package`, so these can be forged.
+generation. It refuses, with exit 2 and a message that begins `library NAME:`,
+a package that is not locked, not checked out, a path dependency, replaced by
+`.lake/package-overrides.json`, without an index, or failing a check, and every
+library of a project whose `.lake` or packages directory is a symbolic link.
+One refused library refuses the whole call, blueprint hits included. A package
+replaced with `lake --packages=` is not detected. Search verifies module names,
+files, and digests and the header's toolchain, dependencies, and source
+directories, but not the declaration records, a module's `module_doc` or
+`module_system`, or the header's `generator`, `probe`, or `package`, so these
+can be forged.
 
 A declaration matches when every term occurs in its last name component
 (`lean`), docstring, module header (`module_doc`), full name (also without
@@ -122,7 +122,7 @@ Without `--library` the output stays `autoform-search/v1`, byte for byte.
 `autoform library index ROOT` writes `autoform-library-index.jsonl` at the
 package root of a built library, from the modules of every `lean_lib` of the
 package, or of those `--lib` names. It is the only library command that runs
-Lean and Lake. It imports the library's modules, so run it on a trusted
+Lean and Lake, and it imports the library's modules, so run it on a trusted
 checkout or in a sandbox. It does not build: a missing or stale build exits 2
 with the `lake build` command for the indexed targets and the first module
 Lake found unbuilt. The freshness check rewrites Lake's `.hash` files, so

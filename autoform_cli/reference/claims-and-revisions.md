@@ -10,20 +10,19 @@ cleanup. A heartbeat verifies ownership on entry and permanently records any
 later refusal or transport uncertainty as lost ownership.
 
 A claim key is a slug and digest of any string, not a validated node id, so a
-shared resource, or a Lean helper no article owns under the
-`lean/<slug>-<digest>` key `work impact` reports, is locked the same way as a
-node. Parallel agents get one Git worktree each, and builds take no claim.
+shared resource, or a Lean helper no article owns (under the
+`lean/<slug>-<digest>` key `work impact` reports), is locked like a node.
+Parallel agents get one Git worktree each; builds take no claim.
 
-`acquire`, `renew`, and `release` accept several targets and change all of them
-in one atomic push, or none. Malformed targets fail before any push, and a board
-that cannot push atomically is refused. A refusal exits 1 with one line such as
-`error: could not acquire af_y, af_z; no claim was acquired: held by another
-worker: af_y`, naming the blocking targets when known; a duplicate target exits
-2. Workers that need several claims follow a no-hold-and-wait rule: acquire the
-whole set in one command and, when it is refused, release everything already
-held and retry with the whole set, never holding some claims while waiting for
-others. The CLI does not enforce the rule; it is what keeps two multi-article
-revisions from deadlocking.
+Since a multi-target command changes all its targets or none
+([claim](../README.md#claim)), a board that cannot push atomically is refused.
+A refusal exits 1 with one line such as `error: could not acquire af_y, af_z;
+no claim was acquired: held by another worker: af_y`, naming the blocking
+targets when known; a duplicate target exits 2. Workers that need several
+claims follow a no-hold-and-wait rule, which the CLI does not enforce: acquire
+the whole set in one command and, when it is refused, release everything
+already held and retry with the whole set, never holding some claims while
+waiting for others.
 
 `claim list` copies the board with one fetch and prints each lease as its ref
 named it when the board answered. It is not a consistent snapshot: a peer's
@@ -31,17 +30,17 @@ multi-claim acquire or release made meanwhile can show some of its claims
 changed and others not. A listing is a report, not a lock: every acquire,
 renew, and release checks ownership again.
 
-`claim list TARGET...` lists only those targets' claims, in the same JSON; a
-target without a claim is left out, and a duplicate target exits 2. It fetches
+`claim list TARGET...` lists only those targets' claims, in the same JSON,
+leaving out a target without a claim; a duplicate target exits 2. It fetches
 only those refs but still downloads the board's list of refs, branches
-included. `--timeout SECONDS`, 120 by default, bounds the whole listing, and a
+included. `--timeout SECONDS` (default 120) bounds the whole listing, and a
 step still running after five seconds is named on stderr as `claim list:
-<step>...`. A Git command that runs out of time or is interrupted is stopped
-with everything it started. A listing that fails exits 1 with nothing on stdout
-and one line on stderr: `error: timeout:` when the board did not answer in
-time, naming the step; `error: contention:` when the board refused three
-fetches because claims kept moving; or `error: transport:` for any other
-failure to reach or read the board. Claim commands run Git with
+<step>...`. A Git command that times out or is interrupted is stopped with
+everything it started. A failed listing exits 1 with nothing on stdout and one
+line on stderr: `error: timeout:` when the board did not answer in time,
+naming the step; `error: contention:` when the board refused three fetches
+because claims kept moving; or `error: transport:` for any other failure to
+reach or read the board. Claim commands run Git with
 `GIT_TERMINAL_PROMPT=0` and no input, and `claim list` runs it without a
 terminal on Linux and macOS, but a credential helper or `GIT_ASKPASS` program
 Git is configured to use can still prompt, until the time limit.
@@ -51,11 +50,10 @@ blocks updates: `refs/autoform-claims/<key>.lock` blocks that claim,
 `packed-refs.lock` every release, and on a reftable board
 `reftable/tables.list.lock` every claim update. On a board given as a local
 path, or as a `file://` URL except on Windows, a push such a file still blocks
-two seconds later exits 1 naming the file and when it was modified (one gone
+two seconds later exits 1 naming the file and its modification time (one gone
 within two seconds counts as a lost race); `claim cleanup` leaves a lease whose
 release a lock file blocks in place and still exits 0; and `claim list` and
-`claim cleanup` warn on stderr about each lock file not modified within two
-seconds of the current time.
+`claim cleanup` warn on stderr about each lock file older than two seconds.
 Over any other transport a lock file shows up as a lost race or as Git's own
 error, which also stops `claim cleanup`. A terminal's interrupt reaches Git,
 which then removes its lock, in every claim command but `claim list`. Autoform
@@ -75,8 +73,8 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
    `--declaration` when only some of R's declarations, or a helper, change.
 2. Choose the route:
    - **Contained** (`contained: true`): revise X in place, under R's claim when
-     using claims. `contained` ignores R's own declarations, so re-check R's
-     other declarations that use X as well.
+     using claims. `contained` ignores R's own declarations, so also re-check
+     R's other declarations that use X.
    - **Expand, migrate, contract**, the default whenever anything uses X: add
      X' with the revised statement, leave X unchanged and mark it
      `@[deprecated X' (since := "YYYY-MM-DD")]`, and point R's `lean:` at X'.
@@ -136,16 +134,14 @@ Markdown (step 6); Formalize carries out the Lean side (steps 1 to 5).
 4. Contract: delete a deprecated X once it appears in `deprecated_unused` of
    `work impact R . --lean-root .`, meaning no declaration uses it and no
    other article's `lean:` names it, and drop it from R's `lean:` in the same
-   commit. `contained` is not enough: it ignores R's own declarations, such as
-   an X' built from X.
+   commit. `contained` is not enough: it ignores an X' built from X.
 5. `autoform audit --lean-root` reports `lean-target-deprecated` when a
    declaration article's `lean:` names a declaration with `deprecated` in its
    own `@[...]` list; point it at the replacement. The check is lexical, so
    it misses a later `attribute [deprecated] X`, which `work impact` sees.
-   Under the open policy the finding is expected for the X that step 2 keeps in
-   R's `lean:` until step 4, so `autoform audit --lean-root` and `autoform doctor
-   --lean-root` fail in that window by design, while CI, which runs neither,
-   passes.
+   Under the open policy it is expected for the X that step 2 keeps in R's
+   `lean:` until step 4, so `autoform audit --lean-root` and `autoform doctor
+   --lean-root` fail until then, while CI, which runs neither, passes.
 6. When Roadmap revises an article, its statement text or only its Lean, it
    retracts only that article and the dependents whose text the revision
    rewrites (`statement: retracted`, no `proof`, `lean:` kept for `work

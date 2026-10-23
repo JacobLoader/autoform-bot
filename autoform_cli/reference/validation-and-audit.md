@@ -152,19 +152,18 @@ not a declaration of the Lean build.
 
 ### Warnings
 
-A finding is a problem the audit fails on. A warning never fails the audit:
-`clean` and the exit status depend on findings alone. The text output prints a
-`warning: <path>: <code>: <message>` line for each, after the error lines.
-`--json` lists them after `findings` as `warnings`, sorted by `article_path`
-and `code`. Each also carries a `message` and `declarations`, one object per
-affected declaration and setting with its `name`, `option`, `value`,
-`location` (the `set_option` as `path:line` relative to the Lean root), and
-`scope` (`file`, `section`, `declaration`, or `proof`), sorted by name. The
-catalog limit warnings under [Elaboration limits](#elaboration-limits) fill
-`declarations`. Two warnings leave it empty: `atlas-omission`, at `atlas.json`,
-names what loading ignored in that file, and `decomposed-without-declaration`,
-at `coverage/README.md`, names a `DECOMPOSED` row's links that reach no
-declaration leaf.
+A warning never fails the audit: `clean` and the exit status depend on findings
+alone. The text output prints a `warning: <path>: <code>: <message>` line for
+each, after the error lines. `--json` lists them after `findings` as
+`warnings`, sorted by `article_path` and `code`. Each also carries a `message`
+and `declarations`, one object per affected declaration and setting with its
+`name`, `option`, `value`, `location` (the `set_option` as `path:line` relative
+to the Lean root), and `scope` (`file`, `section`, `declaration`, or `proof`),
+sorted by name. The catalog limit warnings under [Elaboration
+limits](#elaboration-limits) fill `declarations`. Two warnings leave it empty:
+`atlas-omission`, at `atlas.json`, names what loading ignored in that file, and
+`decomposed-without-declaration`, at `coverage/README.md`, names a `DECOMPOSED`
+row's links that reach no declaration leaf.
 
 ### Structure
 
