@@ -519,21 +519,20 @@ autoform skeleton blueprint --lean-root . --output skeleton.json --packets revie
 The skeleton of a `lean:` declaration is its elaborated signature, then every
 project declaration its *statement* rests on, transitively, quoted from the
 sources in dependency order: a definition with its body, a theorem with its
-type only. Proof bodies are never emitted, though Lean's axiom analysis reads
-them, so a proof edit can change the reported trust context. Each skeleton
-reports the axioms the declaration rests on (a `sorry` shows as `sorryAx`) and,
-by name, the non-core constants it assumes from Mathlib or another dependency,
-whose definitions are the trusted base and are not expanded.
+type only. Proofs are never emitted, though Lean's axiom analysis reads them,
+so a proof edit can change the reported trust context. Each skeleton reports
+the axioms the declaration rests on (a `sorry` shows as `sorryAx`) and, by
+name, the non-core constants it assumes from Mathlib or another dependency,
+which are trusted and not expanded.
 
-This is the one command that runs Lean: for each module that declares a
-selected target it runs a probe with `lake env lean` against the built project,
-so a packet reads as it does to a file importing that module, without the
-declaration's local notation, local instances, `open`, or `set_option`. Lake
-must first confirm, without rebuilding, that every probed module is fresh: a
-missing `lake-manifest.json`, stale artifacts, or a source tree that changes
-during extraction fails the command, and since the check rewrites Lake's `.hash`
-files, `.lake` must be writable. The helper module `autoform-skeleton-helper`
-and its `AutoformSkeleton` namespace are reserved; a module that takes one, on
+For each module that declares a selected target, `skeleton` runs a probe with
+`lake env lean` against the built project, so a packet reads as it does to a
+file importing that module, without the declaration's local notation, local
+instances, `open`, or `set_option`. Lake must first confirm, without
+rebuilding, that every probed module is fresh (a missing `lake-manifest.json`
+or stale artifacts fail the check); the check rewrites Lake's `.hash` files, so
+`.lake` must be writable. The helper module `autoform-skeleton-helper` and its
+`AutoformSkeleton` namespace are reserved; a module that takes either, on
 `LEAN_PATH` or not, breaks the probes that import it.
 
 Generated companions, such as constructors, projections, recursors and matchers,
@@ -542,34 +541,34 @@ fold onto the declaration the reader sees, so a structure appears once, as its
 ordinary declaration with no source of its own, such as one a metaprogram adds
 under an existing name; a theorem or axiom shows only its type, and an internal
 helper such as `f._unary` is marked `-- source not shown`. A `lean:` name is
-unresolved when it is absent from the sources or the built environment, when
-Lean declares it in another module than the one whose source holds it, when the
-sources define it more than once with no single declaration chosen by the rules
-under [Validation](reference/validation-and-audit.md#validation), when it
-reaches a refused declaration, or when its probe fails on its own (the reason
-quotes Lean's output). That affects only its article: the others still extract,
-the command exits nonzero, and nothing is written into the vault. Limits apply
-per probe, so a declaration that resolves alone can be unresolved beside its
+unresolved when it is absent from the sources or the built environment, Lean
+declares it in another module than the one whose source holds it, the sources
+define it more than once and the rules under
+[Validation](reference/validation-and-audit.md#validation) choose none, it
+reaches a refused declaration, or its probe fails on its own (the reason quotes
+Lean's output). That affects only its article: the others still extract, the
+command exits nonzero, and nothing is written into the vault. Limits apply per
+probe, so a declaration that resolves alone can be unresolved beside its
 module's other targets; one that resolves has the same hash under any selection.
 A missing `lake`, a failed freshness check or helper build, a dependency library
 rooted at `Init`, `Lean`, or `Std`, or a blueprint or source tree that changes
 during extraction stops the whole command.
 
 `--output` records the `autoform-skeleton/v5` report, with no timestamp or
-absolute path. It names the exact blueprint, by a hash of every article and
-the passage each cites, the target set, and whether it covers every target or
-a `--node` selection; a report whose selection, articles and unresolved
-declarations disagree is neither built nor loaded. Review evidence comes only
-from a report that selects every article and whose targets are the
-blueprint's `lean:` names; the report never copies a theorem proof.
+absolute path. It names the target set, whether it covers every target or a
+`--node` selection, and the exact blueprint, by a hash of every article and the
+passage each cites; a report whose selection, articles and unresolved
+declarations disagree is neither built nor loaded. Only a report that selects
+every article, with the blueprint's `lean:` names as targets, is review
+evidence.
 
 Run skeleton extraction only in a trusted checkout or an operating-system
-sandbox. Lake evaluates `lakefile.lean`, and the probe imports project code
-whose initializers, macros, and metaprograms may perform arbitrary IO and can
-forge probe output. The Lake freshness check, the helper's build, and each
-probe have their own 600-second budget; `--timeout SECONDS` sets the helper's
-and each probe's. Probes run in parallel, at most eight at a time. These limits
-are resource controls, not a security or authenticity boundary.
+sandbox: Lake evaluates `lakefile.lean`, and the probe imports project code
+that may perform arbitrary IO and can forge probe output. The Lake freshness
+check, the helper's build, and each probe have their own 600-second budget;
+`--timeout SECONDS` sets the helper's and each probe's. At most eight probes
+run at a time. These limits are resource controls, not a security or
+authenticity boundary.
 
 `--packets DIR` writes one comment-stripped packet per skeleton, named after
 its article and declaration, with a manifest of articles and hashes; a blind
@@ -579,10 +578,10 @@ the whole managed tree, aborts if the tree changes before commit, and preserves
 an old tree that changes later at a reported recovery path. Packet and passage
 manifests use their v2 schemas; v1 trees are recognized and replaced. An
 unresolved selected declaration blocks all packet and passage output, though
-`--output` alone still records the report. Destinations must be disjoint and
-not symlinks, on filesystems with hard links and atomic renames. Combined
-outputs are staged together and a failed commit restores the previous set, but
-a reader may briefly see outputs of different generations.
+`--output` still records the report. Destinations must be disjoint, not
+symlinks, and on filesystems with hard links and atomic renames. Combined
+outputs commit together and a failed commit restores the previous set, but a
+reader may briefly see outputs of different generations.
 
 A packet holds the signature, the same signature printed raw past project
 notation, the canonical kernel material, the statement as written (cut before
@@ -600,8 +599,8 @@ A local `## Sources` link with a `#L<start>-L<end>` fragment, such as
 `../../../sources/lebl-ra/ch-real-nums.tex#L693-L714`, is a locator naming the
 statement's source passage, unless it names an existing regular Markdown file
 in the blueprint, `.md` in any letter case, which is a note. A first local
-locator that names no readable, regular, UTF-8 lines inside the blueprint, or
-names a file over 64 MiB, leaves its article's declarations unresolved.
+locator that names no readable, regular, UTF-8 lines inside the blueprint, or a
+file over 64 MiB, leaves its article's declarations unresolved.
 `--passages DIR`, which requires `--packets`, writes each article's passage to
 its own managed directory beside `article.lean`, the joint packet of the
 article's declarations: a faithfulness judge gets the article packet and
@@ -632,8 +631,8 @@ A read-back is a blind agent's mathematical-English account of one packet,
 recorded with `review record`. Cards live at
 `blueprint/readbacks/<article_id>/<encoded-declaration>.md` and hold the exact
 packet, its evidence hash as `packet:`, the statement hash as `statement:` (a
-record, never compared), a `model:` label the coordinator supplies, not
-authenticated, and the testimony. Loading rejects missing or unknown fields,
+record, never compared), an unauthenticated `model:` label the coordinator
+supplies, and the testimony. Loading rejects missing or unknown fields,
 altered packets, identity mismatches, non-canonical cards, and malformed or
 empty testimony.
 
@@ -693,11 +692,9 @@ prepare and record again.
 
 `review check` derives its evidence from its own extraction, never a committed
 file, and fails until every Lean-mapped article has current cards and a
-`review_approved` equal to the review hash it prints. Cards and approvals bind
-packets, not statement hashes, so a Lean or Mathlib bump that leaves a packet
-unchanged keeps both. An approval also binds the macros in
-`blueprint/tex-macros.json` the statement uses, directly or through another
-macro, so a macro edit stales only those approvals. The run compares the
+`review_approved` equal to the review hash it prints. An approval binds the
+macros in `blueprint/tex-macros.json` its statement uses, directly or through
+another macro, so a macro edit stales only those approvals. The run compares the
 articles, cited sources, and cards it read before Lean with what it sees after,
 and a difference fails with `review-snapshot-changed`; rerun once the blueprint
 is idle. These are comparisons, not a lock: an edit restored between them goes
@@ -752,8 +749,7 @@ is unblocked, by the rule behind the derived `can_state` and `can_prove` states
 and the site's Next up card (see [Open
 statements](reference/open-statements.md#open-statements)). Under
 `open_statements: allowed` a theorem's statement phase waits only for its
-statement prerequisites to be stated, and a proof phase for every prerequisite
-to be stated.
+statement prerequisites, and a proof phase for every prerequisite, to be stated.
 
 `work context` takes the path-derived node ID or an `article_id` and reports the
 article, dependencies, source and Lean targets, blockers, article and graph
@@ -771,7 +767,7 @@ article recording `statement: retracted` is a revision: JSON `revision` is true,
 and the text adds a `revision:` (list) or `Revision:` (context) line saying to
 start from `autoform work impact` (see the [revision
 contract](reference/claims-and-revisions.md#revision-contract)). Both commands
-are read-only, and refuse an article whose bytes changed after the graph loaded;
+are read-only and refuse an article whose bytes changed after the graph loaded;
 rerun once the project is idle.
 
 Under the open policy the text of `work list` starts with an `Open statements:
@@ -796,9 +792,9 @@ CI audits the build against: every article whose `lean:` names a declaration,
 with `open`, `assumes`, and `allowed_open_declarations` (the open declarations
 its Lean may reach, plus its own when it is open). A `mathlib: true` article
 (state `mathlib`) is never open and is allowed nothing, nor is any article under
-the strict policy. A module catalog is never open; under the open policy, one
-that is not proved keeps only the names no non-catalog article's `lean:` lists,
-and is left out when none remain. CI checks that every listed name exists. It
+the strict policy. Under the open policy, a module catalog that is not proved
+keeps only the names no non-catalog article's `lean:` lists, and is left out
+when none remain. CI checks that every listed name exists. It
 reads Markdown only and needs no Lean build.
 
 #### work impact
@@ -823,12 +819,11 @@ no article names, is claimed under every nearest owner's target or a stable
 `lean/<slug>-<digest>` target. `unused_statement_dependencies`, the stated
 articles whose Markdown statement rests on the revised declarations, directly or
 through other statement dependencies, but that the probe does not find
-statement-impacted (as when their Lean inlines a revised definition's body),
-join `claim_targets` too. `mathlib: true` articles are left out. The probe
-refuses a loaded root-package module missing from the repository's source
-inventory, which skips nested Git checkouts, ignored directories such as
-`build`, and symlinked directories, and a module an `M.*` or `M.+` glob finds
-that it did not load.
+statement-impacted, join `claim_targets` too. `mathlib: true` articles are
+left out. The probe refuses a loaded root-package module missing from the
+repository's source inventory, which skips nested Git checkouts, ignored
+directories such as `build`, and symlinked directories, and a module an `M.*`
+or `M.+` glob finds that it did not load.
 
 The command refuses if the roadmap or the Lean sources change during the probe.
 JSON uses `autoform-impact/v1`, bound to the Markdown `source_revision`, the
@@ -856,9 +851,7 @@ modules were checked, and the first one Lake found unbuilt. `affected_modules`
 is `MODULE` and every loaded module that imports it, transitively, complete over
 the root libraries' Lake roots and globs. Modules that removing an import drops
 from the build are not listed. Like `work impact`, the probe refuses a
-root-package module the captured inventory lacks, and it binds each loaded root
-module to its captured source and configured artifact, so a dependency cannot
-shadow it.
+root-package module the captured inventory lacks.
 
 Under `--module-scope import-closure` the candidates are `MODULE` and every
 root-package module whose source contains each component of a candidate's name,
@@ -946,15 +939,13 @@ autoform claim list af_5b0e4d3c2a1f09e8d7c6b5a4 af_0123456789abcdef01234567
 Claims are optional: use them when other people or sessions may work on the same
 project at once, or when the user asks; a single Formalize run needs none. A
 claim excludes only workers that also claim. Claim an article by the
-`claim_target` that `work context` reports: the board hashes whatever string it
-is given, so claims on a path ID and on the `article_id` do not exclude each
-other. Each concurrent agent needs its own worker ID, since a second acquire by
-the same owner succeeds; where shell state does not persist, pass `--worker-id`
-on every command. Leases expire after 1500 seconds unless `--ttl` sets another
-length; renew well within that, and confirm a claim with `renew`, not `acquire`,
-which also succeeds on an expired or released lease. Several targets in one
-command change all or nothing, and duplicate or malformed targets fail before
-any push, so acquire a whole set in one command (see the [claim
+`claim_target` that `work context` reports: claims on its path ID and on its
+`article_id` do not exclude each other. Each concurrent agent needs its own
+worker ID, since a second acquire by the same owner succeeds; where shell state
+does not persist, pass `--worker-id` on every command. Leases expire after 1500
+seconds unless `--ttl` sets another length; renew well within that, and confirm
+a claim with `renew`, not `acquire`, which also succeeds on an expired or
+released lease. Acquire a whole set in one command (see the [claim
 contract](reference/claims-and-revisions.md#claim-contract)).
 
 Claims are fail-closed compare-and-swap leases under `refs/autoform-claims/` on
@@ -981,7 +972,7 @@ AutoformBot itself (`autoform_friction`). `record` reads one JSON object
 answering the form from `--answer` or standard input, refuses anything else, and
 stores it under `runs/` with the installed AutoformBot version; a directory
 without a roadmap, as during Setup, is accepted. When `autoform_friction` is not
-empty, `record` also writes a draft issue for `facebookresearch/autoform-bot`
+empty, `record` writes a draft issue for `facebookresearch/autoform-bot`
 under `issues/` and prints its path. The draft holds only that friction and the
 environment, with the project path replaced by `$PROJECT` and home directories
 by `~`, and ends, below a `---` footer, with a link to GitHub's new-issue form
