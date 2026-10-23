@@ -5,11 +5,10 @@ source evidence, generated files, or dependency pins.
 
 ## Knowledge-map publication
 
-Full-viewport knowledge maps use authored mathematical areas and prose to drive
-regions and reading panels. Keep containment and dependency distinct; regions
-come only from authored areas, never from folders or paths. Never fit the whole
-repository.
-Run `make test-browser` for any explorer change: `make test` skips the WebKit
+Full-viewport knowledge maps draw regions only from authored mathematical areas,
+never from folders or paths, and reading panels from authored prose. Keep
+containment and dependency distinct. Never fit the whole repository. Run
+`make test-browser` for any explorer change: `make test` skips the WebKit
 suite, which CI runs with `AUTOFORM_REQUIRE_BROWSER_TESTS=1`.
 
 ## Coordination and local views

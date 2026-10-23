@@ -13,11 +13,10 @@ The agent that led the run debriefs once, after its final validation and before
 its final report. Subagents do not run this skill; fold the AutoformBot friction
 they reported to you into your own answer.
 
-There is no `autoform` on `PATH` in a Lean project. Run every `autoform`
-command from `<PROJECT>` as `uv run --project "<AUTOFORM_PLUGIN_ROOT>"
-autoform` followed by its arguments, where `<AUTOFORM_PLUGIN_ROOT>` is the
+There is no `autoform` on `PATH` in a Lean project. Run it from `<PROJECT>` as
+`uv run --project "<AUTOFORM_PLUGIN_ROOT>" autoform`, where the root is the
 absolute plugin directory holding `skills/`, `pyproject.toml`, and
-`autoform_cli/`. Give a subagent that root and this prefix with its task.
+`autoform_cli/`; give a subagent that prefix with its task.
 
 Run `autoform debrief orchestrator form <PROJECT> --skill
 setup|roadmap|formalize`, naming the skill that ran (see the
@@ -26,8 +25,8 @@ debriefs are disabled, stop: there is nothing to do.
 
 Otherwise answer the form from your own experience of the run and store the
 answer with `autoform debrief orchestrator record <PROJECT> --skill <SKILL>`,
-passing it with `--answer FILE` or on standard input. If `record` rejects the
-answer, correct it and resubmit.
+from `--answer FILE` or standard input. If `record` rejects it, correct it and
+resubmit.
 
 When the answer reports friction with AutoformBot, `record` writes a draft issue
 for `facebookresearch/autoform-bot` outside the working tree and prints its

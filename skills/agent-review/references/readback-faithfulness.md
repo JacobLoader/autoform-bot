@@ -79,14 +79,12 @@ rather than carding around hidden content.
 
 ## Procedure
 
-1. Copy the item's provenance fields into the verdict without changing them.
-2. Card the passage: objects and kinds, numbered hypotheses, conclusion, and
+1. Card the passage: objects and kinds, numbered hypotheses, conclusion, and
    quantifier order. Mark a hypothesis implicit only when the passage actually
    relies on it.
-3. Card the combined read-backs in the same form.
-4. List every discrepancy with exactly one category from the table. The worst
-   category determines the decision; implication in one direction is not
-   equivalence.
+2. Card the combined read-backs in the same form.
+3. List every discrepancy with exactly one category from the table;
+   implication in one direction is not equivalence.
 
 ## Categories and decisions
 
@@ -109,12 +107,9 @@ rather than carding around hidden content.
 | `unreadable` | `disagrees` | The text cannot be carded as supplied, including content hidden from rendered output. |
 | `evidence-missing` | `unknown` | The passage, a read-back, or required provenance is absent or malformed. |
 
-Spelling out binders, conventions, and degenerate behavior the claim already
-determines is `elaboration`. Use it for an added assumption only when that is
-plainly redundant or an implementation-level restatement and the detail line
-says why it changes no mathematical instance; otherwise use `hypothesis-added`.
-Use `equivalent-reformulation` when equivalence itself needs an argument. A
-missing hypothesis that generalizes the source gets no special pass.
+Use `elaboration` for an added assumption only when it is plainly redundant or
+an implementation-level restatement and the detail line says why it changes no
+mathematical instance; otherwise use `hypothesis-added`.
 
 An item takes the worst decision among its discrepancies:
 `disagrees` outranks `unknown`, which outranks `review`, which outranks `agrees`.

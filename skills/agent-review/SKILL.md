@@ -38,18 +38,17 @@ return insufficient evidence rather than guessing. A proof resting on declared
 open statements is conditional: name them and never call it axiom-clean.
 
 Except in the isolated read-back-judge role, regenerate skeleton evidence from
-the exact candidate after its Lean build.
-Do that only in a trusted checkout or an operating-system sandbox: the command
-evaluates Lake configuration and project Lean metaprograms, and its resource
-bounds are not a security boundary.
+the exact candidate after its Lean build. Do that only in a trusted checkout or
+an operating-system sandbox: the command evaluates Lake configuration and
+project Lean metaprograms, and its resource bounds are not a security boundary.
 Candidate code runs during extraction and can forge process output, so treat
-its report as advisory when the checkout is not trusted.
-Treat a stale-build refusal as insufficient evidence; never approve a current
-source excerpt paired with an older compiled declaration. Record the skeleton
-hash, the evidence hash of the packet that was read, and, for a
-source-faithfulness verdict, the article review hash; the
-[CLI reference](../../autoform_cli/README.md#skeleton-hashes) says what each binds.
-These hashes are provenance evidence, not reviewer authentication or an
+its report as advisory when the checkout is not trusted. Treat a stale-build
+refusal as insufficient evidence; never approve a current source excerpt paired
+with an older compiled declaration. Record the skeleton hash, the evidence hash
+of the packet that was read, and, for a source-faithfulness verdict, the
+article review hash; the
+[CLI reference](../../autoform_cli/README.md#skeleton-hashes) says what each
+binds. These hashes are provenance evidence, not reviewer authentication or an
 approval key.
 
 Report findings first, ordered by severity and tied to files or nodes. Then give

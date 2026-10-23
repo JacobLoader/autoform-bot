@@ -27,8 +27,8 @@ scope against the sources, then inspect the fine DAG and its coarse roadmap.
      is a duplicate. A hit whose `catalog` is `module` is an inventory listing
      the declaration, not a duplicate of the article that expounds it, and a
      library hit is not a duplicate of an article either.
-   - Finding none, even after a retry with fewer words, is not proof, because
-     matching is literal: also compare the statements read for item 3.
+   - Matching is literal, so finding none, even after a retry with fewer
+     words, proves nothing: also compare the statements read for item 3.
    - A `complete` library hit for a result in scope or an intermediate result
      is a missed reuse unless the article that states or uses it is proved, its
      implementation note names the declaration, or the source's page records

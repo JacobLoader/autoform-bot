@@ -22,8 +22,7 @@ and `pyproject.toml`; give a subagent that prefix.
 
 Regenerate the review views from `<PROJECT>` with the publication sequence in
 the [CLI reference](../../autoform_cli/README.md#commands), but omit
-`--require-declarations`: a missing declaration is something for the reviewer
-to see, not a reason to refuse to render.
+`--require-declarations` so the reviewer sees missing declarations.
 
 Stop on structural failures and present them before asking for mathematical
 judgment. For vault review, point the user to `blueprint/README.md`, coverage,
@@ -62,11 +61,10 @@ open statements in its `Assumes` row, never as proved or sorry-free.
 
 ## Review formalized statements through blind read-backs
 
-A compiled proof says nothing about whether the statement means what the book
-says. The person compares the article statement and cited passage, the
-elaborated Lean signature, and the project definitions it rests on with a
-*read-back*: a blind rendering in mathematical English of what one exact Lean
-packet literally asserts. Use the `review` commands in the
+The person compares the article statement and cited passage, the elaborated
+Lean signature, and the project definitions it rests on with a *read-back*: a
+blind rendering in mathematical English of what one exact Lean packet literally
+asserts. Use the `review` commands in the
 [CLI reference](../../autoform_cli/README.md#commands); `review check` is the
 one judge of whether cards and approvals are current.
 

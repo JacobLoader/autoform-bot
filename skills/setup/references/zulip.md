@@ -7,9 +7,9 @@ read-only, and drafting a post does not authorize sending or editing one.
 ## Discover community context
 
 Look for `.zuliprc` in standard local locations without printing or copying its
-credentials. If none is available, ask the user to provide its path or configure
-one. Search only relevant topics and report overlapping work, active
-contributors, design rationale, and useful references.
+credentials. If none exists, ask the user for its path or to configure one.
+Search only relevant topics and report overlapping work, active contributors,
+design rationale, and useful references.
 
 Before tagging contributors, resolve their exact active Zulip identities; do not
 guess from GitHub names or handles. Confirm the intended stream and whether the
@@ -30,7 +30,6 @@ AI-polishing disclosure the user requests.
 
 Send, edit, or otherwise mutate Zulip only after explicit user approval. Use the
 authenticated API or CLI without exposing credentials. After sending, fetch the
-message and verify the stream, topic, links, and rendered mentions; a successful
-API response does not prove that names resolved or that the social framing is
-correct. Edit misleading wording when authorized, and report the final topic or
-message identifier.
+message and verify the stream, topic, links, rendered mentions, and social
+framing; a successful API response proves none of them. Edit misleading wording
+when authorized, and report the final topic or message identifier.

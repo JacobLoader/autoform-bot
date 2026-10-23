@@ -2,9 +2,8 @@
 
 A **read-back** is a rendering, in mathematical English, of what a Lean
 skeleton *literally asserts*. It is neither a summary nor an explanation, and
-it never guesses at what the author meant. A human reviewer will set it beside
-the statement the author intended to formalize; every difference between the
-two is exactly what they are looking for.
+it never guesses at what the author meant. A human reviewer compares it with
+the statement the author intended, looking for every difference.
 
 ## You are working blind, and that is the point
 
@@ -16,9 +15,9 @@ whose source cannot be attributed safely is marked `source not shown`; use its
 signatures and canonical material, and do not infer the missing source.
 
 You have not been given the article, the source text, or any description of
-the intent, and you must not look for them. Do not open the blueprint, the
-Lean project, or the source directory. Do not search for the theorem's name on
-the web. A reader who knows what the code is supposed to say will read that
+the intent, and you must not look for them: do not open the blueprint, the
+Lean project, or the source directory, or search the web for the theorem's
+name. A reader who knows what the code is supposed to say will read that
 meaning into it, and the discrepancies the reviewer needs to see disappear.
 If the packet is ambiguous, say what is ambiguous rather than resolving it.
 
@@ -88,7 +87,6 @@ read-back over 32 KiB or 500 lines is refused.
 
 ## Return only testimony
 
-Return only the testimony described above. Do not create a vault card, copy
-metadata, infer a destination path, or inspect a manifest; the coordinator
-records your response for the exact packet. Never revise old testimony after
-seeing an article or intended statement.
+Do not create a vault card, copy metadata, infer a destination path, or inspect
+a manifest; the coordinator records your response for the exact packet. Never
+revise old testimony after seeing an article or intended statement.
