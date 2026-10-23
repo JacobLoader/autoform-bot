@@ -66,12 +66,12 @@ less) after waiting behind other hovers is refused before it starts.
 
 ## Settings
 
-Every setting below is node-wide and read only when the runtime starts, from
-the environment of the process that starts it (an MCP adapter serving a tool
-call, or `uv run autoform-lean-runtime start`). After changing one, run
-`uv run autoform-lean-runtime stop` and make sure the next starter has the new
-value; `uv run autoform-lean-runtime status` shows the resolved values under
-`config`.
+Unless noted, every setting below is node-wide and read only when the runtime
+starts, from the environment of the process that starts it (an MCP adapter
+serving a tool call, or `uv run autoform-lean-runtime start`). After changing
+one, run `uv run autoform-lean-runtime stop` and make sure the next starter has
+the new value; `uv run autoform-lean-runtime status` shows the resolved values
+under `config`.
 
 - `AUTOFORM_MAX_LEAN_PROJECTS` (default 4): projects with loaded Lean state.
 - `AUTOFORM_REPL_TOTAL_WORKERS` (default one per 32 GB of memory, at least 1)
@@ -85,10 +85,13 @@ value; `uv run autoform-lean-runtime status` shows the resolved values under
   seconds or the cap if lower), at most `AUTOFORM_MAX_REPL_REQUEST_SECONDS`
   (default 240).
 - `AUTOFORM_RUNTIME_RESPONSE_TIMEOUT` (default 15 minutes): project admission,
-  the tool operation, and a safety margin.
+  the tool operation, and a safety margin. Each client also reads it from its
+  own environment as its wait for a response.
 - `AUTOFORM_RUNTIME_DIR`: where the private socket and the rotating runtime log
   live, by default below `$XDG_RUNTIME_DIR/autoform`, falling back to a
-  uid-specific directory in `/tmp`.
+  uid-specific directory in `/tmp`. Every client reads it from its own
+  environment to find the socket, so every adapter and `autoform-lean-runtime`
+  command must have the same value.
 - `LEAN_REPL_CMD` (default `lake exe @repl/repl`): the disposable child
   command, for every project the runtime serves. The default finds the REPL
   only through a require named `repl`; rename another require to `repl`, or set
