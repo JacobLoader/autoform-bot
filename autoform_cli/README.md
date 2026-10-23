@@ -63,7 +63,11 @@ its own bare line of the same character, length and indent: on a chapter page
 an unclosed fence can pair with a later article's fence and hide everything
 between them, so `check` warns about it, the site shows that page as typed (see
 [Validation](reference/validation-and-audit.md#validation)), and the audit
-reports `unclosed-code-fence`. An HTML comment that never closes, even one
+reports `unclosed-code-fence`. For the graph and the audit, an unclosed fence
+is plain text that hides no heading or link, and a later bare line of its
+character at least as long closes it. On the page, an unclosed backtick fence
+can pair with a later backtick run in its paragraph as inline code; a link
+there is still a dependency. An HTML comment that never closes, even one
 opened in inline code or an indented code block, hides every heading and
 dependency link after it: the graph loses those edges, one opened in the
 statement puts the rest of the article in the theorem box, and nothing reports
@@ -416,18 +420,22 @@ With `--lean-root`, `check` also warns about each declaration of a usable,
 checked-out shared library (see `autoform library list`) whose own docstring
 cites an arXiv paper or DOI that an unproved article reaches through its
 `## Sources` links, or through a blueprint Markdown page such a link names
-(pages over 4 MiB are not read). Silence it by naming the declaration in full
-in an implementation note, a page under `blueprint/sources/` or one a
-`## Sources` link names, or in project Lean, in full or by its last name
-component. Declarations citing a source only through their module docstring
-share one warning, silenced by naming the module, or in full a citing
-declaration; importing the module names it, importing only an umbrella module
-above it does not. A module catalog, or a container whose scope is all proved,
-reaches nothing; a bare number cites nothing; and a last-component match counts
-any identifier, comments and strings included, so a generic one such as `symm`
-can hide the warning. Reuse such a declaration and name it in the note of each
-article using it; when it does not apply, name it on the source's page under
-`blueprint/sources/` with why, which outlasts the notes.
+(link text, and pages over 4 MiB, are not read). Identifiers match in their
+usual forms: versions; `abs`, `pdf`, `html`, `e-print` and `src` URLs;
+old-style ids such as `math.AG/0210149`; arXiv's DOIs; `https://doi.org/` and
+`dx.doi.org` links, percent-encoded or not; and the labels `arXiv:`, `arXiv`,
+`doi:` and `DOI`, also in backticks, emphasis or a table cell. Silence it by
+naming the declaration in full in an implementation note, a page under
+`blueprint/sources/` or one a `## Sources` link names, or in project Lean, in
+full or by its last name component. Declarations citing a source only through
+their module docstring share one warning, silenced by naming the module, or in
+full a citing declaration; importing the module names it, importing only an
+umbrella module above it does not. A module catalog, or a container whose scope
+is all proved, reaches nothing; a bare number cites nothing; and a
+last-component match counts any identifier, comments and strings included, so a
+generic one such as `symm` can hide the warning. Reuse such a declaration and
+name it in the note of each article using it; when it does not apply, name it on
+the source's page under `blueprint/sources/` with why, which outlasts the notes.
 
 `check` also warns when a library's index cannot be read or parsed, when a
 library with a citing declaration fails verification against its checkout, and
@@ -540,25 +548,32 @@ files, `.lake` must be writable. The helper module `autoform-skeleton-helper`
 and its `AutoformSkeleton` namespace are reserved; a module that takes one, on
 `LEAN_PATH` or not, breaks the probes that import it.
 
-A `partial def` in a trusted closure is refused, and so is a declaration with
-no source of its own, such as one a metaprogram adds. A `lean:` name is
+Generated companions, such as constructors, projections, recursors and matchers,
+fold onto the declaration the reader sees, so a structure appears once, as its
+`structure` block. A `partial def` in a trusted closure is refused, and so is an
+ordinary declaration with no source of its own, such as one a metaprogram adds
+under an existing name; a theorem or axiom shows only its type, and an internal
+helper such as `f._unary` is marked `-- source not shown`. A `lean:` name is
 unresolved when it is absent from the sources or the built environment, when
-Lean declares it in another module than the one whose source holds it, when
-the sources define it more than once with no single declaration chosen by the
-rules under [Validation](reference/validation-and-audit.md#validation), when it
+Lean declares it in another module than the one whose source holds it, when the
+sources define it more than once with no single declaration chosen by the rules
+under [Validation](reference/validation-and-audit.md#validation), when it
 reaches a refused declaration, or when its probe fails on its own (the reason
-quotes Lean's output). That affects only its article: the others still
-extract, the command exits nonzero, and nothing is written into the vault.
-Limits apply per probe, so a declaration that resolves alone can be unresolved
-beside its module's other targets. A missing `lake`, a failed freshness check
-or helper build, a dependency library rooted at `Init`, `Lean`, or `Std`, or a
-blueprint or source tree that changes during extraction stops the whole
-command.
+quotes Lean's output). That affects only its article: the others still extract,
+the command exits nonzero, and nothing is written into the vault. Limits apply
+per probe, so a declaration that resolves alone can be unresolved beside its
+module's other targets; one that resolves has the same hash under any selection.
+A missing `lake`, a failed freshness check or helper build, a dependency library
+rooted at `Init`, `Lean`, or `Std`, or a blueprint or source tree that changes
+during extraction stops the whole command.
 
 `--output` records the `autoform-skeleton/v5` report, with no timestamp or
-absolute path. It names the exact blueprint, the target set, and whether it
-covers every target or a `--node` selection. Review evidence comes only from a
-report that selects every article; the report never copies a theorem proof.
+absolute path. It names the exact blueprint, by a hash of every article and
+the passage each cites, the target set, and whether it covers every target or
+a `--node` selection; a report whose selection, articles and unresolved
+declarations disagree is neither built nor loaded. Review evidence comes only
+from a report that selects every article and whose targets are the
+blueprint's `lean:` names; the report never copies a theorem proof.
 
 Run skeleton extraction only in a trusted checkout or an operating-system
 sandbox. Lake evaluates `lakefile.lean`, and the probe imports project code
@@ -587,20 +602,22 @@ its value), and the source of every project definition the statement rests on,
 with comments and docstrings removed. Source that may hide a comment the probe
 cannot find, such as a body using `local notation`, is withheld, as is an
 equation-style statement that cannot be parsed outside its file; both are
-marked `-- source not shown`, and the article stays resolved. A `local` token,
-or a token the file had in scope differently from the probe, can make the probe
-show code as a comment or a comment as code. Source text is not notation-proof;
-only the kernel material is.
+marked `-- source not shown`, and the article stays resolved, so editing a
+theorem's proof changes its packet only when that makes such a statement parse
+or stop parsing outside its file. A `local` token, or a token the file had in
+scope differently from the probe, can make the probe show code as a comment or a
+comment as code. Source text is not notation-proof; only the kernel material is.
 
 A local `## Sources` link with a `#L<start>-L<end>` fragment, such as
 `../../../sources/lebl-ra/ch-real-nums.tex#L693-L714`, is a locator naming the
 statement's source passage, unless it names an existing regular Markdown file
-in the blueprint, which is a note. A first local locator that names no
-readable, regular, UTF-8 lines inside the blueprint leaves its article's
-declarations unresolved. `--passages DIR`, which requires `--packets`, writes
-each article's passage to its own managed directory beside `article.lean`, the
-joint packet of the article's declarations: a faithfulness judge gets the
-article packet and passage, an auditor of one declaration only its packet.
+in the blueprint, `.md` in any letter case, which is a note. A first local
+locator that names no readable, regular, UTF-8 lines inside the blueprint, or
+names a file over 64 MiB, leaves its article's declarations unresolved.
+`--passages DIR`, which requires `--packets`, writes each article's passage to
+its own managed directory beside `article.lean`, the joint packet of the
+article's declarations: a faithfulness judge gets the article packet and
+passage, an auditor of one declaration only its packet.
 
 #### Skeleton hashes
 
@@ -616,7 +633,7 @@ reaches, which is all the packet shows.
 | statement hash | The same without the axioms and what only they reach | Meaning changes, a proof inside a trusted definition included; not a theorem's own proof |
 | evidence hash | The exact packet bytes | The packet text changes |
 | article review hash | Joint packet, cited passage and locator, drift hash | Any of those changes |
-| `review_approved` | Title, statement as the site shows it, passage and locator, joint and per-declaration packets, TeX macros the statement uses, each valid read-back's model and testimony | Any of those changes; not a proof edit or a Lean or Mathlib bump that leaves the packets unchanged |
+| `review_approved` | Title, statement as the site shows it, passage and locator, joint and per-declaration packets, TeX macros the statement uses, each valid read-back's model and testimony | Any of those changes; not a proof edit, or a Lean or Mathlib bump, that leaves the packets unchanged |
 
 None is a stable statement identifier, reviewer authentication, or an approval
 key; all are advisory checksums when candidate code controls the checkout.
@@ -641,20 +658,20 @@ Python's Unicode data. A formula never invalidates testimony: one
 `readback.formula_problems` cannot typeset is shown as typed, and render warns
 without changing its exit status.
 
-A card file holds at most 4 MiB. A larger, non-UTF-8, or unreadable file, or a
-directory or FIFO, at a card path is reported as an invalid card, as is a card
-recording another declaration than its path names or whose `.md` is in another
-case; linked cards are skipped, and an unlistable directory under `readbacks/`
-stops loading. An oversized card must be removed by hand. A write refuses a
-link on the way to the card directory, refuses `--expected-card-hash` for a
-missing card, and takes the directory's `flock`, giving up after ten seconds;
-it is refused before creating anything where `flock` is missing, Windows
-included, though cards still load there. A crash can leave a
-`.autoform-readback-*.tmp` file, which the loader ignores; the committed card
-is the durable copy. Do not edit cards while a write runs. A write gives
-`readbacks/` a `.gitattributes` of `* -text`, since a card with CRLF line ends
-is invalid, and Git for Windows needs `core.longpaths` for the paths of long
-declaration names.
+A card file holds at most 4 MiB, and its frontmatter is read from its first 32
+lines. A larger, non-UTF-8, or unreadable file, or a directory or FIFO, at a
+card path is reported as an invalid card, as is a card recording another
+declaration than its path names or whose `.md` is in another case; linked cards
+are skipped, and an unlistable directory under `readbacks/` stops loading. An
+oversized card must be removed by hand. A write refuses a link on the way to the
+card directory, refuses `--expected-card-hash` for a missing card, and takes the
+directory's `flock`, giving up after ten seconds; it is refused before creating
+anything where `flock` is missing, Windows included, though cards still load
+there. A crash can leave a `.autoform-readback-*.tmp` file, which the loader
+ignores; the committed card is the durable copy. Do not edit cards while a write
+runs. A write gives `readbacks/` a `.gitattributes` of `* -text`, since a card
+with CRLF line ends is invalid, and Git for Windows needs `core.longpaths` for
+the paths of long declaration names.
 
 ### review
 
@@ -692,10 +709,13 @@ file, and fails until every Lean-mapped article has current cards and a
 packets, not statement hashes, so a Lean or Mathlib bump that leaves a packet
 unchanged keeps both. An approval also binds the macros in
 `blueprint/tex-macros.json` the statement uses, directly or through another
-macro, so a macro edit stales only those approvals. An edit to the articles,
-cited sources, or cards during the run fails with `review-snapshot-changed`;
-rerun once the blueprint is idle. `review prepare`, `review check`, and
-`render --review` take the same `--timeout SECONDS` as `skeleton`.
+macro, so a macro edit stales only those approvals. The run compares the
+articles, cited sources, and cards it read before Lean with what it sees after,
+and a difference fails with `review-snapshot-changed`; rerun once the blueprint
+is idle. These are comparisons, not a lock: an edit restored between them goes
+unseen, and `tex-macros.json` is read once and compared with nothing.
+`review prepare`, `review check`, and `render --review` take the same
+`--timeout SECONDS` as `skeleton`.
 
 `review prepare` and `review record` exit 2 on input they cannot derive, read,
 or trust, on refused testimony, and on a card conflict. `review check` exits 1
@@ -805,11 +825,13 @@ autoform work impact chapter/result . --lean-root . --declaration MyProject.help
 
 `work impact` runs a bounded Lean probe against a fresh build and reports
 statement-impacted and proof-impacted articles, unnamed helpers, missing
-Markdown dependency paths, deprecated declarations and their users, whether the
-revision is contained (the selected article's target is its only claim target),
-and the complete `claim_targets` set. A helper shared by several articles adds
-every owner's claim; an unowned helper, or a revised declaration no article
-names, is claimed under every nearest owner's target or a stable
+Markdown dependency paths (`undeclared_dependencies`: impacted articles with no
+Markdown path to the revised article, to one naming a revised declaration, or,
+when none names it, to an owner), deprecated declarations and their users,
+whether the revision is contained (the selected article's target is its only
+claim target), and the complete `claim_targets` set. A helper shared by several
+articles adds every owner's claim; an unowned helper, or a revised declaration
+no article names, is claimed under every nearest owner's target or a stable
 `lean/<slug>-<digest>` target. `unused_statement_dependencies`, the stated
 articles whose Markdown statement rests on the revised declarations, directly or
 through other statement dependencies, but that the probe does not find
@@ -845,17 +867,23 @@ stale build exits 2 with the `lake build` command for those libraries, how many
 modules were checked, and the first one Lake found unbuilt. `affected_modules`
 is `MODULE` and every loaded module that imports it, transitively, complete over
 the root libraries' Lake roots and globs. Modules that removing an import drops
-from the build are not listed.
+from the build are not listed. Like `work impact`, the probe refuses a
+root-package module the captured inventory lacks, and it binds each loaded root
+module to its captured source and configured artifact, so a dependency cannot
+shadow it.
 
-Under `--module-scope import-closure` only the modules that scope loads must be
-built, and an article owns a declaration when one of its `lean:` names equals it
-or is a dotted prefix of it, so `affected_articles` may list more articles and
-`article_local` is always `false`; `affected_unowned_helpers` keep the
-parent-chain rule, and `unresolved_articles` leaves out a name the source index
-places outside `affected_modules`. A `.lean` file outside the captured sources,
-as in `.lake/packages` or a path dependency, that may import a candidate makes
-the command exit 2 and ask for the default scope; use the default scope too when
-a component of a module name is a common word.
+Under `--module-scope import-closure` the candidates are `MODULE` and every
+root-package module whose source contains each component of a candidate's name,
+repeated until none is added; Lean loads them and what they import. Only those
+modules must be built, and stale-build advice names only them. An article owns a
+declaration when one of its `lean:` names equals it or is a dotted prefix of it,
+so `affected_articles` may list more articles and `article_local` is always
+`false`; `affected_unowned_helpers` keep the parent-chain rule, and
+`unresolved_articles` leaves out a name the source index places outside
+`affected_modules`. A `.lean` file outside the captured sources, as in
+`.lake/packages` or a path dependency, that may import a candidate makes the
+command exit 2 and ask for the default scope; use the default scope too when a
+component of a module name is a common word.
 
 JSON uses `autoform-module-import-impact/v1`, with `module_graph_revision` and
 `module_scope` (`loaded-root-library-graph` or `import-closure`). `article` is
@@ -1118,4 +1146,4 @@ Each area's contract has its own page:
 - [Search](reference/search.md): `autoform search`, and searching a library the project depends on.
 - [Open statements](reference/open-statements.md): conditional results and the open-statement policy.
 - [Claims and revisions](reference/claims-and-revisions.md): leases and revising a published statement.
-- [Runtime and publication](reference/runtime-and-publication.md): `doctor`, the runtime file and the published site.
+- [Runtime and publication](reference/runtime-and-publication.md): `doctor`, the in-memory runtime projection and the published site.
