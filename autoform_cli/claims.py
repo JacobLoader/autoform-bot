@@ -11,19 +11,31 @@ once, so its cost hardly grows with the number of claims. Git can read the refs
 it advertises one by one, which is why a listing is not a consistent snapshot.
 A peer's renewal during a listing changes nothing, except that a server
 speaking Git's older stateless HTTP protocol may refuse the fetch, which is then
-repeated up to three times. A board with claim keys that differ only in case,
-which a case-insensitive scratch cannot store under their names, is listed with
-one more command that names its claims first. ``claim list TARGET...`` names
+repeated up to three times. A case-insensitive scratch cannot store two claim
+keys, or two folders they name, that differ only in case under their names. Git
+refuses such a fetch, except that some versions, such as Apple's 2.50, store one
+key's name holding the other key's lease without a word. So on such a scratch a
+listing whose fetch wrote any ref also names the board's claims, with one more
+command that downloads the board's list of refs, and fetches the claims again
+by name when two of them collide. ``claim list TARGET...`` names
 the targets' refs and fetches only those, so changes to other claims never make
 it retry and no other claim's lease is copied, and a target released meanwhile
 has the targets named again, never the whole board; over a network its cost
 still grows with the board's list of refs.
 
-``claim list`` runs Git in its own process group, without a controlling
-terminal on Linux and macOS so ``ssh`` cannot prompt, and stops a Git command
-that runs out of time or is interrupted together with everything it started.
-The other claim commands run Git in the caller's process group, so a
-terminal's interrupt reaches Git, which then removes the ref lock it holds.
+A listing, by ``claim list`` or the one ``claim cleanup`` starts with, runs Git
+in its own process group, without a controlling terminal on Linux and macOS so
+``ssh`` cannot prompt, and stops a Git command that runs out of time or is
+interrupted together with everything it started; only removing its own refs
+afterwards runs in the caller's group. That holds on the main thread, where
+``claim list`` and ``claim cleanup`` list. Off it, as in ``autoform dashboard``,
+a listing runs Git in the caller's process group and with its terminal: a
+signal sent to that group, such as a terminal's interrupt, reaches Git, but one
+sent only to the caller does not, ``ssh`` can prompt on that terminal, and a
+command that runs out of time is stopped without what it started. ``acquire``,
+``renew``, ``release`` and ``cleanup``'s pushes run Git in the caller's process
+group, so a terminal's interrupt reaches Git, which then removes the ref lock
+it holds.
 """
 
 from __future__ import annotations
@@ -250,6 +262,19 @@ def _claims_by_key(refs: Mapping[str, str], namespace: str) -> dict[str, str]:
     return claims
 
 
+def _collide_ignoring_case(keys: Sequence[str]) -> bool:
+    """Whether two of ``keys``, or two folders they name, differ only in case.
+
+    Either pair is one name on a case-insensitive filesystem, so a scratch
+    there cannot store both keys' refs under their names.
+    """
+    paths = set()
+    for key in keys:
+        parts = key.split("/")
+        paths.update("/".join(parts[:end]) for end in range(1, len(parts) + 1))
+    return len({path.lower() for path in paths}) < len(paths)
+
+
 def _fetch_failure(stderr: str) -> str:
     """Why a fetch failed, without the warning every listing's fetch prints."""
     lines = (line for line in stderr.splitlines() if not line.startswith(_NEGOTIATION_TIP_WARNING))
@@ -463,6 +488,9 @@ class ClaimBoard:
         controlling terminal, so stopping it ends everything it started.
         Otherwise it shares the caller's process group, as a push must: a
         terminal's interrupt then reaches git, which removes its ref locks.
+        Off the main thread an isolated command shares the caller's process
+        group too, since nothing there could stop it when the caller is
+        signalled.
         """
         if deadline is None:
             limit = _GIT_CALL_TIMEOUT_S
@@ -471,6 +499,7 @@ class ClaimBoard:
             if limit <= 0:
                 raise ClaimTimeoutError(step)
         data = input_text if input_bytes is None else input_bytes
+        isolated = isolated and threading.current_thread() is threading.main_thread()
         guard = _git_ends_with_its_caller() if isolated else contextlib.nullcontext()
         with guard:
             return self._run_git(args, data, check, input_bytes is None, limit, step, progress, deadline, isolated)
@@ -995,8 +1024,9 @@ class ClaimBoard:
         claims never make the listing retry; a key without a claim ref is left
         out.
 
-        With ``timeout``, the listing gets that many seconds in all, and running
-        out raises ``ClaimTimeoutError`` naming the step it was on.
+        With ``timeout``, the listing's git commands share that many seconds,
+        and running out raises ``ClaimTimeoutError`` naming the step it was on;
+        deleting the private refs afterwards has its own time limit.
         ``progress`` hears the name of each step still running after five
         seconds.
         """
@@ -1022,8 +1052,12 @@ class ClaimBoard:
 
         Each fetch's namespace goes into ``written`` before it runs, with the refs
         it wrote once they are read. A private ref is named after its claim key,
-        which a case-insensitive scratch cannot do for two keys that differ only
-        in case; the board's keys are then fetched again by name into numbered refs.
+        which a case-insensitive scratch cannot do for two keys, or two folders
+        they name, that differ only in case; the board's keys are then fetched
+        again by name into numbered refs. Git refuses such a fetch, except that
+        some versions, such as Apple's 2.50, store one key's name holding the
+        other key's lease without a word, so a case-insensitive scratch names
+        the board's keys after a fetch that wrote any ref.
         With ``targets``, only the present targets are fetched by name, and a
         target released meanwhile has the targets named again, never the board.
         A board that refuses every attempt because claim refs moved raises
@@ -1067,6 +1101,11 @@ class ClaimBoard:
             if fetch.returncode == 0:
                 refs = written[namespace] = self._refs_in(namespace, git)
                 if keys is None:
+                    if refs and self._scratch_ignores_case():
+                        named = name()
+                        if _collide_ignoring_case(named):
+                            keys = named
+                            continue
                     return _claims_by_key(refs, namespace)
                 numbered = ((key, refs.get(f"{namespace}{index}")) for index, key in enumerate(keys))
                 return {key: oid for key, oid in numbered if oid is not None}
@@ -1085,6 +1124,14 @@ class ClaimBoard:
                 )
             if keys is not None:
                 keys = name()
+
+    def _scratch_ignores_case(self) -> bool:
+        """Whether the scratch's filesystem takes two names that differ only in case for one.
+
+        ``head`` names the scratch's ``HEAD`` exactly when it does. ``lexists``
+        does not follow ``HEAD``, which Git can write as a symbolic link.
+        """
+        return os.path.lexists(self.scratch / "head")
 
     def _remote_keys(self, git: _Git) -> list[str]:
         """Return every validly named claim key the board advertises."""

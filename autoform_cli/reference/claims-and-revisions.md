@@ -34,17 +34,17 @@ renew, and release checks ownership again.
 `claim list TARGET...` lists only those targets' claims, in the same JSON,
 leaving out a target without a claim; a duplicate target exits 2. It fetches
 only those refs but still downloads the board's list of refs, branches
-included. `--timeout SECONDS` (default 120) bounds the whole listing, and a
-step still running after five seconds is named on stderr as `claim list:
-<step>...`. A Git command that times out or is interrupted is stopped with
-everything it started. A failed listing exits 1 with nothing on stdout and one
-line on stderr: `error: timeout:` when the board did not answer in time,
-naming the step; `error: contention:` when the board refused three fetches
-because claims kept moving; or `error: transport:` for any other failure to
-reach or read the board. Claim commands run Git with
-`GIT_TERMINAL_PROMPT=0` and no input, and `claim list` runs it without a
-terminal on Linux and macOS, but a credential helper or `GIT_ASKPASS` program
-Git is configured to use can still prompt, until the time limit.
+included. `--timeout SECONDS` (default 120) bounds the listing's Git commands,
+not the removal of its own refs afterwards, and a step still running after five
+seconds is named on stderr as `claim list: <step>...`. `claim list` and `claim
+cleanup` run Git without a terminal on Linux and macOS, and stop a command that
+times out or is interrupted with everything it started. A failed listing exits
+1 with nothing on stdout and one line on stderr: `error: timeout:` when the
+board did not answer in time, naming the step; `error: contention:` when the
+board refused three fetches because claims kept moving; or `error: transport:`
+for any other failure to reach or read the board. Claim commands run Git with
+`GIT_TERMINAL_PROMPT=0` and no input, but a credential helper or `GIT_ASKPASS`
+program Git is configured to use can still prompt, until the time limit.
 
 A Git process that stops while updating a claim ref leaves a lock file that
 blocks updates: `refs/autoform-claims/<key>.lock` blocks that claim,
