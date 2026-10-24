@@ -1550,7 +1550,7 @@ statement links to the smallest explorer scope containing that item. Render
 writes no Mermaid graph of its own, so every diagram on the site is one an
 article holds. The explorer shows a title as text, never as markup, and
 typesets the TeX in the titles and summaries of its rail and details, while
-its map cards, search and head show it as typed; a link render
+its map cards, Contents list, search and head show it as typed; a link render
 writes from file and folder names, such as the book's previous and next links
 and the links between statements, is percent-encoded, so a name can make no
 link a `javascript:` URL; a Markdown link render moves keeps its decoded

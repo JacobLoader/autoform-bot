@@ -603,6 +603,7 @@ body.bp-dag-app-page .md-content__inner > p { display: none; }
 .bp-dag-filter-popover fieldset + fieldset { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--dag-border); }
 .bp-dag-filter-popover legend { margin-bottom: 6px; }
 .bp-dag-filter-popover legend, .bp-dag-viewer.bp-dag-viewer .bp-dag-navigation-group h2 { color: var(--dag-muted); font-size: 11px; font-weight: 600; letter-spacing: .06em; line-height: 1.3; text-transform: uppercase; }
+.bp-dag-viewer mjx-container { text-transform: none; }
 .bp-dag-check { display: flex; align-items: center; gap: 7px; min-height: 32px; padding: 3px 5px; border-radius: var(--dag-radius-row); }
 .bp-dag-check:hover { background: var(--dag-panel); }
 .bp-dag-check input { accent-color: var(--dag-link); }

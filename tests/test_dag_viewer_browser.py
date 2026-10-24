@@ -2176,7 +2176,7 @@ def _open_typeset(page: object, site_url: str, path: str) -> object:
     """Open a page of the built site offline, but with MathJax 3.2.2 served from the pinned package
     that AUTOFORM_MATHJAX_DIR names, as the CDN would serve it."""
     _offline(page, site_url)
-    es5 = mathjax_package() / "es5"
+    es5 = mathjax_package(node=False) / "es5"
     page.route(
         f"{MATHJAX_BASE}/**",
         lambda route: route.fulfill(path=str(es5 / urlsplit(route.request.url).path.split("/es5/", 1)[1])),
@@ -2228,6 +2228,34 @@ def test_the_explorer_typesets_the_math_it_draws_in_its_rail_and_details(desktop
     # Map cards are not typeset, and MathJax's own document, which MathJax.typesetPromise reads, holds nothing.
     assert page.locator(".bp-dag-node mjx-container").count() == 0
     assert page.evaluate("Array.from(MathJax.startup.document.math).length") == 0
+
+
+def test_a_formula_in_an_explorer_control_takes_no_keys_with_the_accessibility_explorer_on(
+    desktop_page: object, site_url: str
+) -> None:
+    """A reader can turn on MathJax's accessibility explorer in the menu of a formula, for every page of the
+    site; it would make each formula a tab stop that takes Enter, so a formula in a rail link, the trail, a
+    relation row or the sheet handle would come before the page in tab order and keep Enter from its control."""
+    page = desktop_page
+    page.add_init_script("localStorage.setItem('MathJax-Menu-Settings', JSON.stringify({explorer: true}))")
+
+    def with_tex(route: object) -> None:
+        payload = route.fetch().json()
+        payload["title"], payload["view"]["breadcrumbs"][-2]["label"] = "Algebra over $\\mathbb{Q}$", "Roadmap $\\mathbb{N}$"
+        for node in payload["nodes"]:
+            node["title"] = {"algebra/result": "Result $y^2$", "algebra/base": "Base $z_1$"}.get(node["id"], node["title"])
+        route.fulfill(json=payload)
+
+    page.route("**/algebra.json", with_tex)
+    _open_typeset(page, site_url, "dependencies/chapters/algebra.html")
+    page.locator('[data-autoform-node-id="algebra/result"]').click()
+    # The explorer has loaded once the rail's title, outside any control, is one of its applications.
+    playwright.expect(page.locator('.bp-dag-navigation-title mjx-container[role="application"]')).to_have_count(1)
+    for control in ('[data-navigation-node-id="algebra/result"]', ".bp-dag-navigation-path a", ".bp-dag-relation-button",
+                    ".bp-dag-sheet-handle"):
+        playwright.expect(page.locator(f"{control} mjx-container").first).to_be_attached()
+        assert page.locator(f"{control} [tabindex]").count() == 0, control
+        assert page.locator(f"{control} [role=application]").count() == 0, control
 
     def many_dependents(route: object) -> None:
         payload = route.fetch().json()

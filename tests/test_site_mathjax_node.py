@@ -27,13 +27,14 @@ MATHJAX_VERSION = "3.2.2"
 NODE = shutil.which("node")
 
 
-def mathjax_package() -> Path:
+def mathjax_package(*, node: bool = True) -> Path:
     """The MathJax package root ``AUTOFORM_MATHJAX_DIR`` names, after checking
-    that Node.js is installed and the package is MathJax 3.2.2."""
+    that the package is MathJax 3.2.2 and, with ``node``, that Node.js is
+    installed to run it; a browser that is served the package needs no Node."""
 
     # CI sets AUTOFORM_REQUIRE_MATHJAX_TESTS, so a missing Node or package fails there instead of skipping.
     unavailable = pytest.fail if os.environ.get("AUTOFORM_REQUIRE_MATHJAX_TESTS") == "1" else pytest.skip
-    if NODE is None:
+    if node and NODE is None:
         unavailable("Node.js is not on PATH")
     setting = os.environ.get("AUTOFORM_MATHJAX_DIR", "")
     if not setting:

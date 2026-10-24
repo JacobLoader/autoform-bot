@@ -379,6 +379,8 @@ def test_explorer_host_is_escaped_responsive_and_accessible() -> None:
     # Relation rows that Show more appends to the details are typeset too.
     assert 'more.addEventListener("click", function () { appendNextBatch(); typeset(); });' in script
     assert script.count("typeset();") == 3
+    # A formula keeps its letters' case under the rail's group headings, which are set in capitals.
+    assert ".bp-dag-viewer mjx-container { text-transform: none; }" in dag_viewer._STYLE
     assert 'refs.announcement.setAttribute("aria-live", "polite")' in script
     assert "control.dataset.autoformNodeId = node.id" in script
     assert "new ResizeObserver(resize)" in script
