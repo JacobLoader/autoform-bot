@@ -381,15 +381,15 @@ scaffolded before this rule deploys every push;
 [Upgrading](../CHANGELOG.md#upgrading-from-050) says how to switch. No pin has
 to move: every `AUTOFORM_REF` since 0.5.0 has `render --ref`.
 
-Pages gates on `check` and `render`, and runs `audit` after `check` only as a
-report, with `continue-on-error`: the log lists every finding, or
-`OK: roadmap audit passed`. An invalid coverage contract fails `render` before
-it writes anything, but `MAPPED` rows (each an audit `declared-coverage-gap`;
-a new project lists the template's row) and coverage-role issues, which
-`render` prints as warnings, still publish. A project scaffolded before the
-report step can add, after `check`, a `continue-on-error: true` step running
-`autoform audit blueprint --lean-root .` from the same `uvx --from` source. To
-block merges on findings, run `autoform audit` in CI without it.
+Pages gates on `check` and `render`, and runs `audit` after `check` and
+`site check` after the MkDocs build only as reports, with `continue-on-error`:
+`audit` logs every finding, or `OK: roadmap audit passed`. An invalid coverage
+contract fails `render` before it writes anything, but `MAPPED` rows (each an
+audit `declared-coverage-gap`; a new project lists the template's row) and
+coverage-role issues, which `render` prints as warnings, still publish. A
+project scaffolded before a report step can add it by hand, with
+`continue-on-error: true` and the same `uvx --from` source (for `site check`,
+from 0.6.0). To block merges on findings, run `autoform audit` in CI without it.
 
 ### check
 
