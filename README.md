@@ -68,8 +68,8 @@ an accessible path):
 Setup changes local files by default. Creating or pushing a remote repository,
 enabling GitHub Pages, and publishing blueprint content require an explicit
 request; content published through Pages is public. Each Setup, Roadmap, and
-Formalize run ends with a debrief that drafts an AutoformBot issue under
-`.git/autoform/` for you to review and send; `AUTOFORM_DEBRIEF=0` turns it off.
+Formalize run includes a debrief, and a run that hit AutoformBot friction
+drafts an issue, usually in `.git/autoform/`; `AUTOFORM_DEBRIEF=0` turns it off.
 
 ## Run several sessions
 

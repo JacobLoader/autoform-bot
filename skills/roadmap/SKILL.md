@@ -83,7 +83,7 @@ not invent a statement, motivation, proof narrative, dependency, citation, or
 historical attribution the sources do not support. Read [Setup's Zulip
 workflow](../setup/references/zulip.md) only for requested Zulip work.
 
-### Search before adding
+### Search and library reuse
 
 Before adding a formalizable article, search the pinned Mathlib checkout, and
 run `autoform search` over the blueprint and every usable shared library for its
@@ -167,7 +167,7 @@ lands later through a pull request, report the revised articles that had no
 description if you open it, so whoever merges it retracts any that have gained
 `lean:` by then.
 
-### Statuses and catalogs
+### Policies, statuses and catalogs
 
 `open_statements` in `roadmap/README.md` is a project policy; absent means
 strict, and [open

@@ -1,7 +1,7 @@
 # Lean servers
 
-Autoform's four Lean tools, the REPL's `run_lean_code` and `get_repl_status`
-and the LSP's `lean_diagnostic_messages` and `lean_hover`, require an absolute
+Autoform's four Lean tools (the REPL's `run_lean_code` and `get_repl_status`,
+and the LSP's `lean_diagnostic_messages` and `lean_hover`) require an absolute
 `project_dir`, so the plugin directory is never mistaken for the user's Lean
 project. Mathlib and community search are not server tools; use host-native
 tools for them.
@@ -28,9 +28,9 @@ shut down, so a later `start` replaces the runtime cleanly.
 ## REPL tools
 
 `run_lean_code` runs code in a fresh REPL child for each call, so no
-process-owned environment or proof-state handle survives the response; LSP
-sessions, by contrast, stay warm. Before that child starts, Lean's own header
-parser, run by the selected Lake toolchain, reads the submitted source. Every
+process-owned environment or proof-state handle survives the response. Before
+that child starts, Lean's own header parser, run by the selected Lake
+toolchain, reads the submitted source. Every
 import it reports must have one of the allowlisted roots `Mathlib`, `Aesop`,
 `Batteries`, or `LeanSearchClient` (a plain `Init` import is ignored); quoted or
 path-like module names are refused, and a rejected or unrecognized parser
@@ -55,8 +55,8 @@ until Lean exits. When `LEAN_LSP_CMD` ends in `serve`, that command runs with
 `--no-build lean` in place of `serve`; otherwise the `lake` on `PATH` runs.
 Unbuilt or stale imports are reported, not built, and Lake names only the first
 modules to build. At most `AUTOFORM_MAX_LEAN_PROJECTS` checks run at once.
-`lean_hover` uses the project's Lean server, which builds stale imports inside
-the call.
+`lean_hover` uses the project's Lean server, which stays warm between calls and
+builds stale imports inside the call.
 
 `LEAN_LSP_TIMEOUT` bounds each `lean_diagnostic_messages` call, including
 waiting for a free Lean slot. For `lean_hover` its clock starts once the
