@@ -8,14 +8,6 @@ writes a draft issue for AutoformBot's tracker, with local paths replaced by
 placeholders, and returns a link that opens it pre-filled. Nothing is sent: the
 user reviews, edits, and submits the issue themselves.
 
-Configuration (environment):
-
-``AUTOFORM_DEBRIEF``
-    On by default. ``0`` / ``false`` / ``no`` / ``off`` makes ``form`` say
-    orchestrator debriefs are disabled, and the agent skips the step.
-``AUTOFORM_DEBRIEF_DIR``
-    The store, shared with subagent debriefs (see :func:`debrief.debrief_root`).
-
 Store layout::
 
     runs/<run_id>.json      one RunRecord per run, schema_version 1
