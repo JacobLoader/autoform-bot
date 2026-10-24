@@ -1044,11 +1044,11 @@ projection uses the same JSON-derived explorer. A formal statement links to the
 smallest scope holding it, as `<scope>.html#node=<id>`; only a legacy
 `dependencies/full.html#node=<id>` link redirects. A `lean:` declaration that
 resolves to a repository permalink gets a source link; a catalog's Lean row
-shows its first eight names and counts the rest. The explorer shows a title as
-typed, and render percent-encodes each link it writes from file and folder
-names, such as the book's previous and next links, while a Markdown link it
-moves keeps its decoded spelling and starts with `./` when its first segment
-holds a colon, so no name can make a `javascript:` URL.
+shows its first eight names and counts the rest. The explorer typesets only the
+TeX in its rail's and details' titles and summaries. Render percent-encodes each
+link it writes from file and folder names, such as the book's previous and next
+links; a Markdown link it moves keeps its decoded spelling and starts with `./`
+when its first segment holds a colon, so no name can make a `javascript:` URL.
 
 Render writes no Mermaid graph of its own. Authored Mermaid remains supported in
 the vault and book, drawn in strict mode with plain-text labels and loaded only
@@ -1107,12 +1107,12 @@ do nothing, however a formula or macro reaches them. A macro may not take one of
 their names; `check` and `render` warn about a macro they leave out, judging the
 copy of `tex-macros.json` that `render` reads once and publishes. Each read-back
 card has its own TeX input with only base, ams, and noundefined. Only formulas
-the site's Markdown marks, such as `$...$` or `$$...$$` in an article, are
-typeset; a statement's heading title, a `discussion:` value, the home page's
-lead, the navigation, and a table of contents show as typed. A formula paints
-only within its own line and block, and an inline formula wider than its
-paragraph is cut at its edge, so write one that wide as a display, which
-scrolls.
+the site's Markdown marks, such as `$...$`, and the explorer's rail and details
+titles and summaries are typeset, with no MathJax tab stop or menu in a link or
+button; a heading's title, a `discussion:` value, the home page's lead, the
+navigation, and a table of contents show as typed. A formula paints only within
+its own line and block, and an inline formula wider than its paragraph is cut at
+its edge, so write one that wide as a display, which scrolls.
 
 ### Upgrading from an earlier Autoform
 

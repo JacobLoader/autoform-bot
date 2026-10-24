@@ -27,13 +27,14 @@ MATHJAX_VERSION = "3.2.2"
 NODE = shutil.which("node")
 
 
-def mathjax_package() -> Path:
+def mathjax_package(*, node: bool = True) -> Path:
     """The MathJax package root ``AUTOFORM_MATHJAX_DIR`` names, after checking
-    that Node.js is installed and the package is MathJax 3.2.2."""
+    that the package is MathJax 3.2.2 and, with ``node``, that Node.js is
+    installed to run it; a browser that is served the package needs no Node."""
 
     # CI sets AUTOFORM_REQUIRE_MATHJAX_TESTS, so a missing Node or package fails there instead of skipping.
     unavailable = pytest.fail if os.environ.get("AUTOFORM_REQUIRE_MATHJAX_TESTS") == "1" else pytest.skip
-    if NODE is None:
+    if node and NODE is None:
         unavailable("Node.js is not on PATH")
     setting = os.environ.get("AUTOFORM_MATHJAX_DIR", "")
     if not setting:
@@ -54,27 +55,32 @@ def mathjax_package() -> Path:
 # the next page as Material's instant navigation shows it, "new" or "old":
 # whether mkdocs.yml also lists the bundle, after the script, and "after" when
 # a project script listed after it assigns the configuration Material's
-# documentation gives. The bundle's menu needs a browser, so each document gets
-# one with what the script uses of it.
+# documentation gives, and "explorer" when the next page is instead what the
+# dependency explorer draws into the first, after which it asks for a pass.
+# The bundle's menu needs a browser, so each document gets one with what the
+# script uses of it.
 _HARNESS = r"""
 "use strict";
 const fs = require("fs");
 const path = require("path");
-const [scriptPath, firstPath, secondPath, project, override] = process.argv.slice(2);
-const report = {injected: [], errors: [], passes: [], version: null, base: null, load: null};
+const [scriptPath, firstPath, secondPath, project, override, then] = process.argv.slice(2);
+const report = {injected: [], errors: [], passes: [], version: null, base: null, load: null, early: null};
 global.window = globalThis;
 let contentLoaded = null;
+const listeners = {};
 global.document = {
   readyState: project === "old" ? "loading" : "complete",
   head: {appendChild: (element) => report.injected.push(element.src)},
   createElement: () => ({}),
-  addEventListener: (type, listener) => { if (type === "DOMContentLoaded") contentLoaded = listener; },
+  addEventListener: (type, listener) => { listeners[type] = listener; if (type === "DOMContentLoaded") contentLoaded = listener; },
 };
 console.error = (...args) => report.errors.push(args.map(String).join(" "));
 let shown = null;
 global.document$ = {subscribe: (listener) => { shown = listener; }};
 
 (0, eval)(fs.readFileSync(scriptPath, "utf8"));
+// The explorer can ask for a pass before MathJax has started.
+if (then === "explorer") report.early = String(listeners["autoform:typeset"]());
 report.base = MathJax.loader.paths.mathjax;
 report.load = MathJax.loader.load.slice();
 // The bundle carries these, and the menu, which needs a browser.
@@ -132,11 +138,16 @@ main.init({}).then(async () => {
   docs = [];
   const adaptor = MathJax.startup.adaptor;
   const body = adaptor.body(MathJax.startup.document.document);
-  for (const child of adaptor.childNodes(body).slice()) adaptor.remove(child);
+  if (then !== "explorer") for (const child of adaptor.childNodes(body).slice()) adaptor.remove(child);
   const next = adaptor.body(adaptor.parse(fs.readFileSync(secondPath, "utf8"), "text/html"));
   for (const child of adaptor.childNodes(next).slice()) adaptor.append(body, child);
-  await shown();
+  await (then === "explorer" ? listeners["autoform:typeset"]() : shown());
   report.passes.push(describe());
+  report.startup = Array.from(MathJax.startup.document.math).length;
+  // Each glyph on the page needs its rule in the renderer's one style sheet.
+  const sheet = adaptor.textContent(MathJax.startup.output.chtmlStyles);
+  const glyphs = new Set(Array.from(adaptor.outerHTML(body).matchAll(/class="(mjx-c[0-9A-F]+)/g), (match) => match[1]));
+  report.unstyled = Array.from(glyphs).filter((glyph) => !sheet.includes("." + glyph));
 }).catch((error) => {
   report.errors.push("harness: " + error.stack);
 }).finally(() => {
@@ -166,7 +177,13 @@ _OVERRIDDEN = (
 
 
 def _node_report(
-    tmp_path: Path, script: str, project: str, first: str = _FIRST_PAGE, second: str = _SECOND_PAGE, override: str = "none"
+    tmp_path: Path,
+    script: str,
+    project: str,
+    first: str = _FIRST_PAGE,
+    second: str = _SECOND_PAGE,
+    override: str = "none",
+    then: str = "page",
 ) -> dict:
     """Run the harness on ``script`` and the two pages, and decode the JSON it prints."""
 
@@ -174,7 +191,7 @@ def _node_report(
     for name, text in files.items():
         (tmp_path / name).write_text(text, encoding="utf-8")
     done = subprocess.run(
-        [NODE, "harness.js", "mathjax.js", "first.html", "second.html", project, override],
+        [NODE, "harness.js", "mathjax.js", "first.html", "second.html", project, override, then],
         cwd=tmp_path,
         env=dict(os.environ, AUTOFORM_MATHJAX_DIR=str(mathjax_package())),
         capture_output=True,
@@ -275,3 +292,45 @@ def test_no_card_formula_gives_its_output_a_class_style_id_or_link(tmp_path: Pat
     assert card["card"] == "c1"
     assert len(card["math"]) == 1
     assert "<mi>x</mi>" in card["math"][0]["mml"], card["math"][0]["mml"]
+
+
+def test_the_explorer_s_titles_and_summaries_are_typeset_as_articles_are(tmp_path: Path) -> None:
+    """The dependency explorer draws authored titles and summaries after the
+    page's pass, marked with the site's formula class, and asks for another
+    pass; that pass reads only what it marked, with the articles' input and
+    the project's macros, and an ask before MathJax starts does nothing."""
+
+    drawn = (
+        '<html><head></head><body><aside class="bp-dag-navigation"><div class="bp-dag-navigation-inner">'
+        '<h1 class="bp-dag-navigation-title arithmatex">Groups $\\mathbb{Z}/n$</h1>'
+        '<p class="bp-dag-navigation-summary arithmatex">Cyclic groups $C_n \\cong \\RR$ have \\(\\varphi(n)\\) generators.</p>'
+        '<p class="bp-dag-navigation-counts">2 items, and $x$ in text the explorer did not mark</p>'
+        '<ol class="bp-dag-navigation-path"><li><a class="arithmatex" href="#up">Up to $t_0$</a></li></ol>'
+        '<a class="bp-dag-navigation-link" href="#base"><span class="arithmatex">Order of $g^k$</span></a>'
+        '<button class="bp-dag-sheet-handle arithmatex">Handle $h_1$</button>'
+        '<button class="bp-dag-relation-button arithmatex">Relation $r^2$</button>'
+        "</div></aside></body></html>"
+    )
+
+    report = _node_report(tmp_path, _node_script(tmp_path, json.dumps(_MACROS)), "new", second=drawn, then="explorer")
+
+    assert report["errors"] == []
+    assert report["early"] == "undefined"
+    first, explorer = report["passes"]
+    assert [document["card"] for document in first] == [None, "c1", "c2"]
+    # A new page input, which finds only the explorer's marked text: the
+    # article's formulas and the cards were typeset by the first pass. A
+    # formula in a link or a button, or marked on one, gets a page input of
+    # its own, in a document without MathJax's menu, which would make it a
+    # control inside the control.
+    page, link = explorer[:2]
+    assert page["card"] is None and page["packages"] == _PAGE_PACKAGES
+    assert [math["tex"] for math in page["math"]] == ["\\mathbb{Z}/n", "C_n \\cong \\RR", "\\varphi(n)"]
+    assert "merror" not in page["math"][1]["mml"] and 'mathcolor="red"' not in page["math"][1]["mml"]
+    assert link["card"] is None and link["packages"] == _PAGE_PACKAGES
+    assert sorted(math["tex"] for math in link["math"]) == ["g^k", "h_1", "r^2", "t_0"]
+    assert all(document["math"] == [] for document in explorer[2:])
+    # MathJax's own document, which a call to MathJax.typesetPromise would use, holds nothing.
+    assert report["startup"] == 0
+    # The pass added to the page, so the glyphs the first pass drew keep their rules.
+    assert report["unstyled"] == []
