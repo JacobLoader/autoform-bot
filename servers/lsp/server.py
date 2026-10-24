@@ -41,8 +41,7 @@ from typing import Any, TypeVar
 
 from fastmcp.server import FastMCP
 
-from servers.lean_client import LeanRuntimeClient
-from servers.repl.core import (
+from servers._process import (
     REPL_ABORT_KILL_SECONDS,
     REPL_ABORT_TERM_SECONDS,
     _process_group_has_live_members,
@@ -50,6 +49,7 @@ from servers.repl.core import (
     _terminate_process_group,
     _wait_for_live_process_group_exit,
 )
+from servers.lean_client import LeanRuntimeClient
 
 logger = getLogger(__name__)
 # Bound at import: tests swap subprocess.Popen for factories, and non-Popen
