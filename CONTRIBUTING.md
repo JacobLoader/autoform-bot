@@ -19,9 +19,9 @@ each `AUTOFORM_REQUIRE_*` variable below, so it fails where a local run skips:
 
 - Browser tests skip without the `browser` extra and WebKit; `make test-browser`
   installs both and runs them as CI does (`AUTOFORM_REQUIRE_BROWSER_TESTS=1`).
-- MathJax read-back card tests skip unless `node` is on `PATH` and
-  `AUTOFORM_MATHJAX_DIR` names an unpacked MathJax 3.2.2 package
-  (`AUTOFORM_REQUIRE_MATHJAX_TESTS=1`).
+- MathJax tests skip unless `AUTOFORM_MATHJAX_DIR` names an unpacked MathJax
+  3.2.2 package, and the Node ones unless `node` is on `PATH`; CI's MathJax and
+  WebKit jobs unpack it (`AUTOFORM_REQUIRE_MATHJAX_TESTS=1`).
 - Lean tests skip without `lake` on `PATH`, and most without the toolchain in
   `tests/fixtures/skeleton-project/lean-toolchain`, which only the real-Lake
   test in `tests/test_project_inspect.py` lets elan download

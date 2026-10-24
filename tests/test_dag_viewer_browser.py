@@ -8,13 +8,16 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
 from autoform_cli import dag_viewer
+from autoform_cli.mathjax import MATHJAX_BASE
 from autoform_cli.graph_views import GraphView, ViewEdge, ViewNode
 from autoform_cli.render import render_site
 from autoform_cli.scaffold import scaffold_project
+from tests.test_site_mathjax_node import mathjax_package
 
 # CI sets this, so a missing browser fails the job instead of skipping every case.
 _REQUIRED = os.environ.get("AUTOFORM_REQUIRE_BROWSER_TESTS") == "1"
@@ -2169,64 +2172,107 @@ def test_slash_inside_the_explorer_opens_its_search_but_an_input_keeps_its_keys(
     playwright.expect(isolates).to_be_focused()
 
 
+def _open_typeset(page: object, site_url: str, path: str) -> object:
+    """Open a page of the built site offline, but with MathJax 3.2.2 served from the pinned package
+    that AUTOFORM_MATHJAX_DIR names, as the CDN would serve it."""
+    _offline(page, site_url)
+    es5 = mathjax_package(node=False) / "es5"
+    page.route(
+        f"{MATHJAX_BASE}/**",
+        lambda route: route.fulfill(path=str(es5 / urlsplit(route.request.url).path.split("/es5/", 1)[1])),
+    )
+    page.goto(f"{site_url}/{path}")
+    page.locator(".bp-dag-node").first.wait_for()
+    return page
+
+
 def test_the_explorer_typesets_the_math_it_draws_in_its_rail_and_details(desktop_page: object, site_url: str) -> None:
-    """MathJax typesets the page once when it starts, so authored TeX the explorer draws later stayed raw."""
+    """The site's MathJax reads only formulas the site marks, so the authored TeX the explorer drew stayed
+    raw; it marks its titles and summaries and asks for a pass, which typesets them with the real MathJax."""
     page = desktop_page
-    # The site's mathjax.js keeps its configuration in window.MathJax until MathJax starts and replaces it
-    # with itself, and offline the CDN script is aborted, so a stub takes over as MathJax would, once the
-    # page's scripts have run and before the explorer draws.
-    page.add_init_script(
-        """
-        window.typesetContainers = [];
-        const stub = {
-          version: "3.2.2",
-          startup: {promise: Promise.resolve()},
-          typesetClear() {},
-          typesetPromise(elements) {
-            elements.forEach((element) =>
-              window.typesetContainers.push({name: element.classList[0], text: element.textContent}));
-            return Promise.resolve();
-          },
-        };
-        document.addEventListener("DOMContentLoaded", () => {
-          stub.config = window.MathJax;
-          window.MathJax = stub;
-        });
-        """
-    )
-    _open_site(page, site_url, "dependencies/chapters/algebra.html")
-    # The rail is empty until its first render, so text in the typeset container means it ran after the render.
-    page.wait_for_function(
-        "window.typesetContainers.some(({name, text}) => name === 'bp-dag-navigation-inner' && text.trim())"
-    )
-    page.evaluate("window.typesetContainers = []")
+
+    def with_tex(route: object) -> None:
+        payload = route.fetch().json()
+        payload["title"], payload["view"]["summary"] = "Algebra over $\\mathbb{Q}$", "Groups and $x^2$."
+        # The rail's trail lists the scope's ancestors, each a link.
+        payload["view"]["breadcrumbs"][-2]["label"] = "Roadmap over $\\mathbb{N}$"
+        result = next(node for node in payload["nodes"] if node["id"] == "algebra/result")
+        result["title"], result["summary"] = "Result $y^2$", "The main result for $\\alpha$."
+        # The result's prerequisite, a relation row in its details.
+        next(node for node in payload["nodes"] if node["id"] == "algebra/base")["title"] = "Base $z_1$"
+        route.fulfill(json=payload)
+
+    page.route("**/algebra.json", with_tex)
+    _open_typeset(page, site_url, "dependencies/chapters/algebra.html")
+    # The rail's title, summary and rows.
+    playwright.expect(page.locator(".bp-dag-navigation-title mjx-container")).to_have_count(1)
+    playwright.expect(page.locator(".bp-dag-navigation-summary mjx-container")).to_have_count(1)
+    playwright.expect(page.locator('[data-navigation-node-id="algebra/result"] mjx-container')).to_have_count(1)
+    # The details, drawn after a click, and the phone sheet's handle, which repeats the title.
     page.locator('[data-autoform-node-id="algebra/result"]').click()
-    playwright.expect(page.locator(".bp-dag-inspector-inner h2")).to_have_text("Result")
-    # The whole drawer is typeset, so the phone sheet's handle, which repeats the title, is too.
-    page.wait_for_function(
-        "window.typesetContainers.some(({name, text}) => name === 'bp-dag-inspector' && text.includes('Result'))"
+    playwright.expect(page.locator(".bp-dag-inspector-inner h2 mjx-container")).to_have_count(1)
+    playwright.expect(page.locator(".bp-dag-inspector-inner .bp-dag-summary mjx-container")).to_have_count(1)
+    playwright.expect(page.locator(".bp-dag-sheet-handle mjx-container")).to_have_count(1)
+    # The details' pass added to the page, so the rail's glyphs keep the style rules that draw them.
+    assert page.evaluate(
+        "Array.from(document.querySelectorAll('.bp-dag-navigation-inner mjx-c')).every((glyph) =>"
+        " !['none', 'normal', ''].includes(getComputedStyle(glyph, '::before').content))"
     )
-    # Map cards and search results are not typeset.
-    assert {entry["name"] for entry in page.evaluate("window.typesetContainers")} == {"bp-dag-inspector"}
+    # A formula in a rail link, the trail, a relation row or the sheet handle is part of that control, not a
+    # tab stop with MathJax's menu of its own; the rail's title keeps the menu.
+    for control in ('[data-navigation-node-id="algebra/result"]', ".bp-dag-navigation-path a", ".bp-dag-relation-button",
+                    ".bp-dag-sheet-handle"):
+        playwright.expect(page.locator(f"{control} mjx-container").first).to_be_attached()
+        assert page.locator(f"{control} [tabindex]").count() == 0, control
+    assert page.locator('.bp-dag-navigation-title mjx-container[tabindex="0"]').count() == 1
+    # Map cards are not typeset, and MathJax's own document, which MathJax.typesetPromise reads, holds nothing.
+    assert page.locator(".bp-dag-node mjx-container").count() == 0
+    assert page.evaluate("Array.from(MathJax.startup.document.math).length") == 0
+
+
+def test_a_formula_in_an_explorer_control_takes_no_keys_with_the_accessibility_explorer_on(
+    desktop_page: object, site_url: str
+) -> None:
+    """A reader can turn on MathJax's accessibility explorer in the menu of a formula, for every page of the
+    site; it would make each formula a tab stop that takes Enter, so a formula in a rail link, the trail, a
+    relation row or the sheet handle would come before the page in tab order and keep Enter from its control."""
+    page = desktop_page
+    page.add_init_script("localStorage.setItem('MathJax-Menu-Settings', JSON.stringify({explorer: true}))")
+
+    def with_tex(route: object) -> None:
+        payload = route.fetch().json()
+        payload["title"], payload["view"]["breadcrumbs"][-2]["label"] = "Algebra over $\\mathbb{Q}$", "Roadmap $\\mathbb{N}$"
+        for node in payload["nodes"]:
+            node["title"] = {"algebra/result": "Result $y^2$", "algebra/base": "Base $z_1$"}.get(node["id"], node["title"])
+        route.fulfill(json=payload)
+
+    page.route("**/algebra.json", with_tex)
+    _open_typeset(page, site_url, "dependencies/chapters/algebra.html")
+    page.locator('[data-autoform-node-id="algebra/result"]').click()
+    # The explorer has loaded once the rail's title, outside any control, is one of its applications.
+    playwright.expect(page.locator('.bp-dag-navigation-title mjx-container[role="application"]')).to_have_count(1)
+    for control in ('[data-navigation-node-id="algebra/result"]', ".bp-dag-navigation-path a", ".bp-dag-relation-button",
+                    ".bp-dag-sheet-handle"):
+        playwright.expect(page.locator(f"{control} mjx-container").first).to_be_attached()
+        assert page.locator(f"{control} [tabindex]").count() == 0, control
+        assert page.locator(f"{control} [role=application]").count() == 0, control
 
     def many_dependents(route: object) -> None:
         payload = route.fetch().json()
         key = next(node["status"] for node in payload["nodes"] if node["id"] == "topology/result")
         payload["nodes"] += [
-            {"id": f"later/{n}", "kind": "node", "status": key, "status_counts": [[key, 1]], "title": f"Later {n}"}
+            {"id": f"later/{n}", "kind": "node", "status": key, "status_counts": [[key, 1]], "title": f"Later $n_{{{n}}}$"}
             for n in range(55)
         ]
         payload["edges"] += [{"source": "topology/result", "target": f"later/{n}"} for n in range(55)]
         route.fulfill(json=payload)
 
-    # Relation rows past the first 50, which Show more appends to the drawer later, stayed raw.
+    # Relation rows past the first 50, which Show more appends to the details later.
     page.route("**/topology.json", many_dependents)
-    _open_site(page, site_url, "dependencies/chapters/topology.html#node=topology%2Fresult")
+    _open_typeset(page, site_url, "dependencies/chapters/topology.html#node=topology%2Fresult")
     more = page.get_by_role("button", name="Show 5 more", exact=True)
     playwright.expect(more).to_be_visible()
-    page.evaluate("window.typesetContainers = []")
     more.click()
-    playwright.expect(page.get_by_role("button", name="Later 54", exact=True)).to_be_visible()
-    page.wait_for_function(
-        "window.typesetContainers.some(({name, text}) => name === 'bp-dag-relation-list' && text.includes('Later 54'))"
-    )
+    rows = page.locator(".bp-dag-relation-list").last.locator(".bp-dag-relation-button")
+    playwright.expect(rows).to_have_count(55)
+    playwright.expect(rows.last.locator("mjx-container")).to_have_count(1)
