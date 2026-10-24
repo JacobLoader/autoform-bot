@@ -2579,6 +2579,10 @@ def _rewrite_links(
         return f"<{href}>" if re.search(r"[\s()]", href) else href
 
     def rewrite(line: str) -> str:
+        # A link, an image and a definition each contain a bracket, which
+        # masking never adds, so a line without one has nothing to move.
+        if "[" not in line:
+            return line
         # A reference definition carries the destination for every `[x][label]`
         # on the page. Rewriting only inline links leaves it pointing at the
         # unpublished path and the rendered link dangles.
