@@ -31,7 +31,7 @@ jobs:
           version: "0.12.1"
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-      - run: uv sync --extra dev --extra repl
+      - run: uv sync --locked --extra dev --extra repl
       - run: uv run ruff check autoform_cli servers tests
       - run: uv run pytest -q
       - run: make check-example
