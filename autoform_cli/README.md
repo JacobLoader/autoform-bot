@@ -186,6 +186,8 @@ An article asserts only facts a human or agent verified:
 | `statement: retracted` | A revision retracted the statement while `lean:` still names the old declaration, which stays in the build until Formalize restates the article and records `statement: formalized` in its place. Requires `lean:`; invalid with `proof: formalized` or `mathlib: true`. |
 | `proof: formalized` | The Lean proof compiles. Requires `statement: formalized` and `lean:`. Under the open policy it may rest on open statements, and the article is then conditional; only the derived `fully_proved` means complete and `sorry`-free. |
 | `mathlib: true` | The result is upstreamed into Mathlib. |
+| `mathlib_declaration: Nat.exists_infinite_primes` | Mathlib name(s) the article restates; `audit` requires one on a `mathlib: true` article. Render lists each in a Mathlib row of the article's statement box, as text without a link, since nothing checks it against the pinned Mathlib. |
+| `mathlib_file: Mathlib/Data/Nat/Prime/Infinite.lean` | The Mathlib file that declares the `mathlib_declaration` name(s), as a portable relative path; `search` reports it. |
 | `not_ready: true` | Needs more blueprint work before it can be attempted. |
 | `lean: Ns.decl` | Declaration name(s) that discharge the article. |
 | `discussion: 42` | Issue number or URL where the article is being discussed. |
@@ -214,7 +216,7 @@ open statement, a theorem stated or retracted but not proved (see
 dependencies; an open dependency counts together with whatever its statement
 prerequisites reach, and a proved dependency passes on everything it reaches.
 The site colours it violet and lists those open statements in an `Assumes`
-row.
+row of its statement box.
 
 ## Commands
 

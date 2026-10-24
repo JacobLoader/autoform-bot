@@ -12,7 +12,7 @@ BUDGETS = {
     "AGENTS.md": 55,
     "CONTRIBUTING.md": 82,
     "README.md": 113,
-    "autoform_cli/README.md": 1129,
+    "autoform_cli/README.md": 1131,
     "autoform_cli/project/README.md": 114,
     "autoform_cli/reference/claims-and-revisions.md": 157,
     "autoform_cli/reference/open-statements.md": 177,

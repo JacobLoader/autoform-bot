@@ -158,6 +158,7 @@ import warnings
 from collections.abc import Callable, Iterator
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, fields
+from dataclasses import field as dataclass_field
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
@@ -267,6 +268,9 @@ class _ProbeEnvironmentError(SkeletonError):
 #: and canonical kernel material above it still state the meaning.
 _NOT_SHOWN = "-- source not shown: no reliable standalone source is available"
 
+#: A report's ``trusted``, ``semantics``, and ``boundary_modules`` tables.
+_Tables = tuple[dict[str, dict[str, object]], dict[str, dict[str, object]], dict[str, object]]
+
 
 @dataclass(frozen=True, slots=True)
 class TrustedDeclaration:
@@ -328,6 +332,9 @@ class DeclarationSkeleton(TrustedDeclaration):
     statement: str | None = None
     #: UTF-8 byte ranges of the comments in ``statement``.
     statement_comments: tuple[tuple[int, int], ...] = ()
+    #: Hashes and packet text, each computed once: a report states them
+    #: several times, and each fingerprint encodes the whole trusted closure.
+    _cache: dict[str, str] = dataclass_field(default_factory=dict, init=False, repr=False, compare=False)
 
     @property
     def defines(self) -> bool:
@@ -376,8 +383,10 @@ class DeclarationSkeleton(TrustedDeclaration):
     def hash(self) -> str:
         """Fingerprint the probe's canonical elaborated meaning and trust boundary."""
 
-        modules = {module for module, _, _ in self.boundary_modules}
-        return self._fingerprint(self.trusted, self.assumed, modules, axioms=True)
+        if "hash" not in self._cache:
+            modules = {module for module, _, _ in self.boundary_modules}
+            self._cache["hash"] = self._fingerprint(self.trusted, self.assumed, modules, axioms=True)
+        return self._cache["hash"]
 
     @property
     def statement_hash(self) -> str:
@@ -385,9 +394,11 @@ class DeclarationSkeleton(TrustedDeclaration):
         and what only they reach. Unlike :attr:`hash`, editing only a theorem's
         proof, ``sorry`` to a proof included, leaves it unchanged."""
 
-        return self._fingerprint(
-            self.statement_trusted, self.statement_assumed, set(self.statement_boundary_modules), axioms=False
-        )
+        if "statement_hash" not in self._cache:
+            self._cache["statement_hash"] = self._fingerprint(
+                self.statement_trusted, self.statement_assumed, set(self.statement_boundary_modules), axioms=False
+            )
+        return self._cache["statement_hash"]
 
     def _fingerprint(
         self, trusted: tuple[TrustedDeclaration, ...], assumed: tuple[str, ...], modules: set[str], *, axioms: bool
@@ -413,7 +424,9 @@ class DeclarationSkeleton(TrustedDeclaration):
     def evidence_hash(self) -> str:
         """Fingerprint the exact proof-free text presented to a reviewer."""
 
-        return _sha256_id(self.blind_text().encode("utf-8"))
+        if "evidence_hash" not in self._cache:
+            self._cache["evidence_hash"] = _sha256_id(self.blind_text().encode("utf-8"))
+        return self._cache["evidence_hash"]
 
     def blind_text(self) -> str:
         """The skeleton with every comment removed, for an auditor who must not see intent.
@@ -428,6 +441,11 @@ class DeclarationSkeleton(TrustedDeclaration):
         unless it decides whether an equation-style statement can be cut at all.
         """
 
+        if "packet" not in self._cache:
+            self._cache["packet"] = self._packet()
+        return self._cache["packet"]
+
+    def _packet(self) -> str:
         lines = [
             f"-- {self.kind} {self.name}",
             f"-- assumed from libraries: {', '.join(self.statement_assumed) or 'none'}",
@@ -469,7 +487,7 @@ class DeclarationSkeleton(TrustedDeclaration):
         shown = {
             item.name: getattr(self, item.name)
             for item in fields(self)
-            if not item.name.endswith("_semantics")
+            if item.init and not item.name.endswith("_semantics")
         }
         shown.update(
             {
@@ -508,6 +526,7 @@ class NodeSkeleton:
     #: article then has no hash, since one over the rest would miss changes
     #: to the missing declaration.
     complete: bool = True
+    _cache: dict[str, str] = dataclass_field(default_factory=dict, init=False, repr=False, compare=False)
 
     def blind_text(self) -> str:
         """The article's declarations as one blind packet, for a faithfulness judge.
@@ -538,7 +557,9 @@ class NodeSkeleton:
     def evidence_hash(self) -> str:
         """Fingerprint the exact joint packet presented to a reviewer."""
 
-        return _sha256_id(self.blind_text().encode("utf-8"))
+        if "evidence_hash" not in self._cache:
+            self._cache["evidence_hash"] = _sha256_id(self.blind_text().encode("utf-8"))
+        return self._cache["evidence_hash"]
 
     @property
     def review_hash(self) -> str | None:
@@ -599,6 +620,8 @@ class SkeletonReport:
     unresolved: tuple[UnresolvedTarget, ...]
     schema: str = SKELETON_SCHEMA
     semantic_schema: str = SEMANTIC_SCHEMA
+    #: The shared tables, built once when the report is checked.
+    _tables: _Tables = dataclass_field(init=False, repr=False, compare=False)
 
     @property
     def clean(self) -> bool:
@@ -621,7 +644,7 @@ class SkeletonReport:
         issue = self._incoherence()
         if issue is not None:
             raise SkeletonError([f"skeleton report {issue}"])
-        self._shared_tables()
+        object.__setattr__(self, "_tables", self._shared_tables())
 
     def _incoherence(self) -> str | None:
         """Why the selection, articles, and unresolved targets disagree, if they do.
@@ -663,9 +686,7 @@ class SkeletonReport:
             return "contains mismatched unresolved declarations"
         return None
 
-    def _shared_tables(
-        self,
-    ) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]], dict[str, object]]:
+    def _shared_tables(self) -> _Tables:
         """The ``trusted``, ``semantics``, and ``boundary_modules`` tables.
 
         Each shared item is stated once and named by every declaration that
@@ -702,7 +723,11 @@ class SkeletonReport:
         return trusted, semantics, modules
 
     def as_dict(self) -> dict[str, object]:
-        trusted, semantics, modules = self._shared_tables()
+        # Fresh tables, so a caller's edit to the record cannot reach the report.
+        return self._record(self._shared_tables())
+
+    def _record(self, tables: _Tables) -> dict[str, object]:
+        trusted, semantics, modules = tables
         return {
             "blueprint_hash": self.blueprint_hash,
             "boundary_modules": modules,
@@ -725,7 +750,7 @@ class SkeletonReport:
         }
 
     def to_json(self) -> str:
-        return json.dumps(self.as_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return json.dumps(self._record(self._tables), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def _share(table: dict[str, object], name: str, value: object, *, table_name: str) -> None:

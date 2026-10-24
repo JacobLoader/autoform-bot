@@ -147,16 +147,16 @@ exists but cannot be read, or the build is missing or stale. Run it in the
 library's CI after the build, with the same `--lib` flags, and pin the
 Autoform revision: the bytes of an index depend on it.
 
-The generator is tested on Lean 4.34.1 and 4.35.0 only and is not supported on
-Windows. It exits 2, before it runs Lean, unless the package's `lean-toolchain`
-is `leanprover/lean4:v4.34.1`, `leanprover/lean4:v4.35.0`, or a spelling elan
-resolves to one of them, such as `v4.35.0`. The index's `package` is the name
-in the package's `lake-manifest.json`, else in its `lakefile.toml`, never the
-folder's; the command exits 2 when neither gives one. Module names must be
-ASCII identifiers. A Lean file under an indexed directory that no indexed
-library builds is refused, and so are two modules that declare the same public
-name in two ways, which Lean cannot import together. A theorem two modules
-state the same way is indexed once, under the first of its modules in name
-order, with a warning on standard error naming the modules; each module's copy
-of a wanted name is indexed, and a record is identified by its name and module
-together.
+The generator has been tested on Lean 4.34.1 and 4.35.0 only, CI runs its real
+tests on 4.35.0, and it is not supported on Windows. It exits 2, before it runs
+Lean, unless the package's `lean-toolchain` is `leanprover/lean4:v4.34.1`,
+`leanprover/lean4:v4.35.0`, or a spelling elan resolves to one of them, such as
+`v4.35.0`. The index's `package` is the name in the package's
+`lake-manifest.json`, else in its `lakefile.toml`, never the folder's; the
+command exits 2 when neither gives one. Module names must be ASCII identifiers.
+A Lean file under an indexed directory that no indexed library builds is
+refused, and so are two modules that declare the same public name in two ways,
+which Lean cannot import together. A theorem two modules state the same way is
+indexed once, under the first of its modules in name order, with a warning on
+standard error naming the modules; each module's copy of a wanted name is
+indexed, and a record is identified by its name and module together.
