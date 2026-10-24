@@ -20,13 +20,12 @@ from ..project._lake_metadata import (
     _canonical_toml_name,
     _decode_package_entry,
     _json_default,
-    _json_optional,
     _manifest_layout,
     _reject_json_constant,
     _validate_manifest_root,
 )
 from ..project._snapshot import _DecisionSnapshot, _MANIFEST, _OVERRIDES
-from ..project.inspect import _trim_elan_whitespace
+from ..project.inspect import ELAN_WHITESPACE
 from .index import relative_path, shorten
 
 _DEFAULT_PACKAGES_DIR = ".lake/packages"
@@ -103,7 +102,7 @@ def _workspace(root: Path, snapshot: _DecisionSnapshot) -> LakeWorkspace:
     try:
         _validate_manifest_root(payload)
         lake_dir = _json_default(payload, "lakeDir", ".lake", str)
-        packages_dir = _json_optional(payload, "packagesDir", str) or _DEFAULT_PACKAGES_DIR
+        packages_dir = _json_default(payload, "packagesDir", None, str) or _DEFAULT_PACKAGES_DIR
     except ValueError:
         raise WorkspaceError(f"{_MANIFEST} is not a Lake manifest Autoform reads") from None
     if lake_dir not in (".lake", "./.lake"):
@@ -172,7 +171,7 @@ def toolchain(snapshot: _DecisionSnapshot) -> str | None:
         text = file.content.decode("utf-8")
     except UnicodeError:
         return None
-    return _trim_elan_whitespace(text.split("\n", 1)[0]) or None
+    return text.split("\n", 1)[0].strip(ELAN_WHITESPACE) or None
 
 
 def canonical_name(library: str) -> str:
