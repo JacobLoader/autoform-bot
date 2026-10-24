@@ -1,10 +1,8 @@
 # Lean servers
 
-Autoform's four Lean tools (the REPL's `run_lean_code` and `get_repl_status`,
-and the LSP's `lean_diagnostic_messages` and `lean_hover`) require an absolute
-`project_dir`, so the plugin directory is never mistaken for the user's Lean
-project. Mathlib and community search are not server tools; use host-native
-tools for them.
+Autoform's four Lean tools require an absolute `project_dir`, so the plugin
+directory is never mistaken for the user's Lean project. Mathlib and community
+search are not server tools; use host-native tools for them.
 
 ## Shared runtime
 

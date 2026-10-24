@@ -41,13 +41,12 @@ These commands install release 0.6.0 ([changelog](CHANGELOG.md)).
 - To follow `main` instead, drop the `@v0.6.0` or `#v0.6.0` suffix, and give
   Codex `--ref main`.
 
-After installing, start a new session in the repository you want to inspect or
-set up.
+After installing, start a new session in the repository to inspect or set up.
 
 ## Quick start
 
-Use these skills from your agent window; you need not learn or run Autoform's
-commands:
+Use these skills from your agent window (in Muse Code, commands of the same
+names); you need not run Autoform's commands:
 
 | Task | Claude Code | Codex |
 | --- | --- | --- |
@@ -60,8 +59,7 @@ commands:
 Start with `setup`, then `roadmap`, then `formalize`; either review skill
 inspects the plan or the formalization.
 
-For example, invoke `roadmap` and ask (keep the source in your project or give
-an accessible path):
+For example, invoke `roadmap` (the source in the project or a readable path):
 
 > Build a complete roadmap for Sections 2–4 of `paper.pdf`.
 

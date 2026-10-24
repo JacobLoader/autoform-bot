@@ -107,7 +107,7 @@ result and for each intermediate result its proof proves or cites, as the
 - Search reads only the checkout it is given, so the owner of global consistency
   repeats it for what parallel agents added.
 
-### Coverage and milestones
+### Coverage, milestones and the DAG
 
 Enumerate the entire adopted boundary in `blueprint/coverage/README.md`, with
 the dispositions the

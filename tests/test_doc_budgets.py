@@ -11,7 +11,7 @@ from pathlib import Path
 BUDGETS = {
     "AGENTS.md": 56,
     "CONTRIBUTING.md": 82,
-    "README.md": 115,
+    "README.md": 113,
     "autoform_cli/README.md": 1131,
     "autoform_cli/project/README.md": 114,
     "autoform_cli/reference/claims-and-revisions.md": 157,
@@ -19,7 +19,7 @@ BUDGETS = {
     "autoform_cli/reference/runtime-and-publication.md": 117,
     "autoform_cli/reference/search.md": 162,
     "autoform_cli/reference/validation-and-audit.md": 227,
-    "servers/README.md": 119,
+    "servers/README.md": 117,
     "skills/agent-review/SKILL.md": 61,
     "skills/debrief-orchestrator/SKILL.md": 44,
     "skills/develop-plugin/SKILL.md": 32,
