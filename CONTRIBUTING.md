@@ -22,31 +22,24 @@ dependency explorer regressions` installs the `browser` extra and WebKit and
 runs `tests/test_dag_viewer_browser.py` with `AUTOFORM_REQUIRE_BROWSER_TESTS=1`,
 so a missing browser fails the job instead of skipping its tests; locally they
 skip without the extra, and `make test-browser` installs both and runs them as
-CI does. `MathJax read-back cards (Node)` downloads the npm tarball of MathJax
-3.2.2, checks its sha256, and runs `tests/test_site_mathjax_node.py` in Node
-with `AUTOFORM_REQUIRE_MATHJAX_TESTS=1`; locally those tests skip unless `node`
-is on `PATH` and `AUTOFORM_MATHJAX_DIR` names an unpacked MathJax 3.2.2
-package. The WebKit job unpacks the same checked tarball too, for the
-explorer's typesetting test, which serves MathJax from it in place of the CDN
-and skips the same way. `real Lean
-(fixture toolchain)` builds and audits a project from the bundled Mathlib
-release and runs
-the real-Lean suites other than the skeleton suite, which `real Lean skeleton
-suite` runs with one `tests/test_project_inspect.py` test. Another job runs the
-inspection, bounded-subprocess, and transactional-output tests on Windows, and
-the last builds
-`tests/fixtures/repl-smoke` and runs `tests/test_real_repl.py` against the
-pinned upstream REPL, also checking the header parser on the oldest Lean release
-Autoform supports. Locally, tests that need Lean skip when
-`lake` is not on `PATH`. Those in `tests/test_skeleton.py`, `test_impact.py`,
-`test_contract.py`, `test_lake_artifact_audit.py`, `test_lsp_protocol.py` and
-`test_batch_diagnostics.py` also skip when elan is installed but the
-toolchain pinned in `tests/fixtures/skeleton-project/lean-toolchain` is
-missing; only the real-Lake test in `tests/test_project_inspect.py` lets elan
-download it. The `tests/test_library_generate.py`
-ones that run Lean build a fixture that clones Batteries from GitHub, so they
-run only when `AUTOFORM_REQUIRE_REAL_LIBRARY_TESTS=1` is set, as their CI job
-does; a missing toolchain or a failed download then fails them. Run
+CI does. The `MathJax read-back cards (Node)` tests skip locally unless `node`
+is on `PATH` and `AUTOFORM_MATHJAX_DIR` names an unpacked MathJax 3.2.2 package;
+`AUTOFORM_REQUIRE_MATHJAX_TESTS=1`, which CI sets, makes that a failure. The
+WebKit job unpacks the same checked MathJax tarball for the explorer's
+typesetting test, which serves MathJax from it in place of the CDN and skips
+the same way without it. The other jobs, which build and audit a project from the bundled Mathlib release,
+run the real-Lean suites, run the inspection, subprocess, and publication tests
+on Windows, and run `tests/test_real_repl.py` against the pinned upstream REPL,
+are listed with the tests each runs in
+[`tests.yml`](.github/workflows/tests.yml). Locally, tests that need Lean skip
+when `lake` is not on `PATH`, and most also skip when elan is installed but the
+toolchain pinned in `tests/fixtures/skeleton-project/lean-toolchain` is missing;
+only the real-Lake test in `tests/test_project_inspect.py` lets elan download
+it. `AUTOFORM_REQUIRE_REAL_LEAN_TESTS=1`, which CI sets, makes a missing
+toolchain a failure instead. The `tests/test_library_generate.py` tests that run
+Lean clone Batteries from GitHub, so they run only with
+`AUTOFORM_REQUIRE_REAL_LIBRARY_TESTS=1`, and then a missing toolchain or a
+failed download fails them. Run
 `lake build` in `skills/setup/assets/cabannes-thesis-project` when you change
 the example's Lean sources or declarations.
 
