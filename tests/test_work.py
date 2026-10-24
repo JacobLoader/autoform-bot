@@ -12,7 +12,7 @@ import pytest
 from autoform_cli import __main__ as cli, work as work_module
 from autoform_cli.runtime import load_runtime_graph
 from autoform_cli.work import WORK_SCHEMA, WorkError, list_ready_work, work_context
-from tests.test_lake_artifact_audit import _load_helper
+from tests.audit_fixture import _load_helper
 
 
 def _article(

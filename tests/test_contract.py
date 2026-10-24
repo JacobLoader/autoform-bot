@@ -27,8 +27,7 @@ from autoform_cli.lean import declaration_names
 from autoform_cli.runtime import load_runtime_graph
 from autoform_cli.status import STATES, derive
 from autoform_cli.work import WorkError, assumption_contract, list_ready_work
-from tests.conftest import _lean_toolchain_available
-from tests.test_lake_artifact_audit import (
+from tests.audit_fixture import (
     _TEMPLATE,
     _ends_with_the_success_line,
     _load_helper,
@@ -36,6 +35,7 @@ from tests.test_lake_artifact_audit import (
     _run_probe,
     _write,
 )
+from tests.conftest import _lean_toolchain_available
 
 
 _SEEDS = range(30)
