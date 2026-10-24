@@ -216,7 +216,9 @@ def content(text: str) -> Content:
 
     Fenced code blocks, indented code blocks, and HTML comments are blanked.
     The result always has exactly as many lines as ``text``, so index ``i``
-    still describes line ``i + 1`` of the source document.
+    still describes line ``i + 1`` of the source document. Unlike
+    :func:`mask_fences_and_comments`, a fence that never closes stays open to
+    the end, so no table or link after it counts (#201).
     """
 
     lines = text.splitlines()

@@ -60,14 +60,14 @@ the same character, length and indent: on a chapter page an unclosed fence can
 pair with a later article's fence and hide what lies between, so `check` warns,
 the site shows that page as typed (see
 [Validation](reference/validation-and-audit.md#validation)), and the audit
-reports `unclosed-code-fence`. For the graph and the audit, an unclosed fence is
-plain text that hides no heading or link, and a later bare line of its character
-at least as long closes it. On the page, an unclosed backtick fence can pair
-with a later backtick run in its paragraph as inline code; a link there is still
-a dependency. An HTML comment that never closes, even one opened in inline code
-or an indented code block, hides every later heading and dependency link: the
-graph loses those edges, one opened in the statement puts the rest of the
-article in the theorem box, and nothing reports it.
+reports `unclosed-code-fence`. For headings, dependency and source links, an
+unclosed fence is plain text, even where the page pairs its backticks with a
+later run as inline code, and a later bare line of its character at least as
+long closes it. Coverage files and the unpublished-folder link check read it as
+open to the end of the file. An HTML comment that never closes, even one opened
+in inline code or an indented code block, hides every later heading and
+dependency link: the graph loses those edges, one opened in the statement puts
+the rest of the article in the theorem box, and nothing reports it.
 
 `## Depends on` lists what the article needs to be *stated*;
 `## Proof depends on` lists what only its *proof* needs. Links under them are
