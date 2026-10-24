@@ -25,9 +25,9 @@ notes and must not replace source inspection.
 
 ## Supporting formalization
 
-The [Full Supervision chapter](../roadmap/full-supervision/README.md) separates
-the Lean definition `CabannesThesis.supervision` and its elementary
-non-ambiguity lemma from the stronger source-level supervision-recovery target.
-These are implementation support nodes, not additional claims about the thesis
-source. Both are in
+The [Full Supervision chapter](../roadmap/full-supervision/README.md) holds the
+Lean definition `CabannesThesis.supervision`, and the Infimum Loss chapter its
+elementary non-ambiguity lemma, apart from the stronger source-level
+supervision-recovery target. These are implementation support nodes, not
+additional claims about the thesis source. Both are in
 [src/CabannesThesis/Basic.lean](../../src/CabannesThesis/Basic.lean#L20).
