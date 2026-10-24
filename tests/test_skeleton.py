@@ -85,7 +85,7 @@ from autoform_cli.skeleton import (
     write_packets,
     write_skeleton_report,
 )
-from tests.conftest import _lean_toolchain_available
+from tests.conftest import _check_lean_toolchain, _lean_toolchain_available
 from tests.undecodable_json import UNDECODABLE_JSON
 
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "skeleton-project"
@@ -3607,7 +3607,7 @@ def test_required_real_lean_tests_fail_closed(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(shutil, "which", lambda _name: None)
 
     with pytest.raises(RuntimeError, match="lake is not on PATH"):
-        _lean_toolchain_available()
+        _check_lean_toolchain()
 
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")

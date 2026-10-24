@@ -19,7 +19,7 @@ import psutil
 import pytest
 
 from servers.lsp import server as lsp
-from tests.test_impact import _SKELETON_FIXTURE, _lean_toolchain_available
+from tests.conftest import _SKELETON_FIXTURE, _lean_toolchain_available
 
 
 class _FakeStream:

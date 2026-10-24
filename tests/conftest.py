@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import functools
 import os
 import shutil
 import subprocess
@@ -16,7 +17,7 @@ import pytest
 _SKELETON_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "skeleton-project"
 
 
-def _lean_toolchain_available() -> bool:
+def _check_lean_toolchain() -> bool:
     """Whether a project pinned like the skeleton fixture builds here without a download."""
 
     def unavailable(reason: str) -> bool:
@@ -36,6 +37,11 @@ def _lean_toolchain_available() -> bool:
         return unavailable("elan toolchain discovery failed")
     available = any(line.split()[:1] == [pinned] for line in listed.stdout.splitlines())
     return available or unavailable(f"{pinned} is not installed")
+
+
+# For the skipif marks: `elan toolchain list` runs once per session, not once per mark.
+# A raised RuntimeError is not cached, so every mark still fails closed.
+_lean_toolchain_available = functools.cache(_check_lean_toolchain)
 
 
 @pytest.fixture

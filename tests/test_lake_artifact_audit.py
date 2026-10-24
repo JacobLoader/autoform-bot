@@ -16,15 +16,13 @@ import pytest
 
 from autoform_cli import status
 
-from tests.test_impact import _lean_toolchain_available
+from tests.conftest import _SKELETON_FIXTURE, _lean_toolchain_available
 
 
 _TEMPLATE = Path("autoform_cli/templates/github/autoform_audit.py")
 _PROBE_SOURCE = Path("autoform_cli/probes/audit_probe.lean")
 # The toolchain the real-Lean CI job installs.
-_TOOLCHAIN = (Path(__file__).parent / "fixtures" / "skeleton-project" / "lean-toolchain").read_text(
-    encoding="utf-8"
-).strip() + "\n"
+_TOOLCHAIN = (_SKELETON_FIXTURE / "lean-toolchain").read_text(encoding="utf-8").strip() + "\n"
 # Under AUTOFORM_REQUIRE_REAL_LEAN_TESTS=1 this raises instead of returning False.
 _REAL_LEAN = _lean_toolchain_available()
 
