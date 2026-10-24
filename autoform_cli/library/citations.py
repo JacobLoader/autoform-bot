@@ -32,9 +32,9 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .. import status
+from .._fs import resolved_path
 from ..graph import IMPLEMENTATION_NOTES_DIR, Graph
 from ..lean import _CONTINUATION_IDENTIFIER, resolve_lean_root, snapshot_project_sources
-from ..markdown import resolved_path
 from ..render import SOURCES_DIR
 from .index import INDEX_FILE, LibraryIndex, LibraryIndexError, parse_index
 from .listing import indexed_packages
