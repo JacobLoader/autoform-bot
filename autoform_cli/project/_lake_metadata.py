@@ -363,10 +363,6 @@ def _decimal_less_than(left: str, right: str) -> bool:
     return (len(left), left) < (len(right), right)
 
 
-def reject_json_constant(constant: str) -> None:
-    raise ValueError(f"Lake's JSON parser rejects {constant}")
-
-
 def is_stale(requirement: dict, locked: MathlibLock, locked_url: str | None) -> bool:
     """Whether lakefile.toml asks for a different Mathlib source than the lock records.
 

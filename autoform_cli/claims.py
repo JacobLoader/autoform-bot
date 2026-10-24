@@ -58,6 +58,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from ._strict_json import reject_json_constant, strict_json_object
+
 CLAIM_REF_PREFIX = "refs/autoform-claims/"
 CLAIM_SCHEMA = "autoform-claim/v1"
 CLAIM_TTL_S = 1500
@@ -315,19 +317,6 @@ def _validate_timeout(timeout: float) -> float:
     if not _is_finite_number(timeout) or timeout <= 0:
         raise ValueError("claim list timeout must be a finite positive number")
     return timeout
-
-
-def _reject_json_constant(value: str) -> None:
-    raise ValueError(f"non-finite JSON number {value!r}")
-
-
-def _strict_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    value: dict[str, Any] = {}
-    for key, item in pairs:
-        if key in value:
-            raise ValueError(f"duplicate JSON key {key!r}")
-        value[key] = item
-    return value
 
 
 def author_claim_key(node_id: str) -> str:
@@ -632,8 +621,8 @@ class ClaimBoard:
         try:
             lease = json.loads(
                 message,
-                object_pairs_hook=_strict_json_object,
-                parse_constant=_reject_json_constant,
+                object_pairs_hook=strict_json_object,
+                parse_constant=reject_json_constant,
             )
         except (ValueError, UnicodeDecodeError) as exc:
             raise MalformedLeaseError(f"claim {key!r} has invalid lease JSON") from exc

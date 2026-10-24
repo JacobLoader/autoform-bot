@@ -18,6 +18,7 @@ from pathlib import Path
 
 import tomli
 
+from .._strict_json import reject_json_constant
 from . import _snapshot
 from ._lake_metadata import (
     JsonInteger,
@@ -32,7 +33,6 @@ from ._lake_metadata import (
     is_stale,
     lakefile_problem,
     manifest_layout,
-    reject_json_constant,
     validate_manifest_root,
 )
 from .catalog import ReleaseCatalog, load_release_catalog

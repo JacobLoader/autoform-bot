@@ -14,6 +14,7 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from .._strict_json import reject_json_constant
 from ..project import _snapshot
 from ..project._lake_metadata import (
     JsonInteger,
@@ -21,7 +22,6 @@ from ..project._lake_metadata import (
     decode_package_entry,
     json_default,
     manifest_layout,
-    reject_json_constant,
     validate_manifest_root,
 )
 from ..project._snapshot import DecisionSnapshot, MANIFEST, OVERRIDES
