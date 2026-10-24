@@ -28,15 +28,14 @@ shut down, so a later `start` replaces the runtime cleanly.
 `run_lean_code` runs code in a fresh REPL child for each call, so no
 process-owned environment or proof-state handle survives the response. Before
 that child starts, Lean's own header parser, run by the selected Lake
-toolchain, reads the submitted source. Every
-import it reports must have one of the allowlisted roots `Mathlib`, `Aesop`,
-`Batteries`, or `LeanSearchClient` (a plain `Init` import is ignored); quoted or
-path-like module names are refused, and a rejected or unrecognized parser
-response fails closed. Code with other imports, such as the project's own
-modules, is checked as a saved file with `lean_diagnostic_messages` instead.
-The allowlist is a policy check, not a sandbox: each call runs with the runtime
-user's privileges, and `Init` alone provides file and process IO, for example
-`#eval IO.Process.run`.
+toolchain, reads the submitted source. Every import it reports must have one of
+the allowlisted roots `Mathlib`, `Aesop`, `Batteries`, or `LeanSearchClient` (a
+plain `Init` import is ignored); quoted or path-like module names are refused,
+and a rejected or unrecognized parser response fails closed. Code with other
+imports, such as the project's own modules, is checked as a saved file with
+`lean_diagnostic_messages` instead. The allowlist is a policy check, not a
+sandbox: each call runs with the runtime user's privileges, and `Init` alone
+provides file and process IO, for example `#eval IO.Process.run`.
 
 A REPL call whose header does not start with `module` or `prelude` imports
 Mathlib, so it takes at least as long as `import Mathlib` on the node. The REPL

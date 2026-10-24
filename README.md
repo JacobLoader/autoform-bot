@@ -45,8 +45,8 @@ After installing, start a new session in the repository to inspect or set up.
 
 ## Quick start
 
-Use these skills from your agent window (in Muse Code, commands of the same
-names); you need not run Autoform's commands:
+Use these skills from your agent window (in Muse Code, as commands of the same
+names); you need not learn or run Autoform's CLI:
 
 | Task | Claude Code | Codex |
 | --- | --- | --- |
@@ -59,7 +59,8 @@ names); you need not run Autoform's commands:
 Start with `setup`, then `roadmap`, then `formalize`; either review skill
 inspects the plan or the formalization.
 
-For example, invoke `roadmap` (the source in the project or a readable path):
+For example, invoke `roadmap` and ask (keep the source in your project or give
+an accessible path):
 
 > Build a complete roadmap for Sections 2–4 of `paper.pdf`.
 
