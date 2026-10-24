@@ -1,4 +1,24 @@
-"""Create a complete Autoform Lean project and publish it atomically."""
+"""Create a complete Autoform Lean project and publish it atomically.
+
+The project is built in a private sibling stage, validated, and published with
+an atomic no-replace rename. Each caller-supplied path component is opened
+without following links, creations in one parent are serialized with an
+advisory lock, and immediately before publication and after syncing it the
+requested parent is reopened without following links and its device, inode,
+and owner rechecked. A mismatch before publication preserves the stage; a later
+one reports where publication was observed. Platforms without descriptor
+traversal, advisory locking, directory sync, or atomic no-replace rename fail
+closed. A private creation bundle adds generated production-module roots, and
+its release identity is cross-checked with the public catalog and its complete
+Lake manifest before any filesystem state is created.
+
+Exactly one of several concurrent creators of the same target wins. The
+published tree has modes 0755 for directories and executables and 0644 for
+other files, whatever the umask. The generated ``lakefile.toml`` turns on Lake's
+artifact cache with ``restoreAllArtifacts`` so each module's ``.olean`` is
+restored into ``.lake/build``, where Autoform's probes load it. Workflow pins
+are inferred as ``scaffold.plugin_pin`` describes.
+"""
 
 from __future__ import annotations
 

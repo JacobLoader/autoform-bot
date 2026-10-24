@@ -3,7 +3,39 @@
 Each claim is stored under ``refs/autoform-claims/`` and points to an orphan
 commit whose message is the lease JSON. Mutations use an exact observed object
 ID as a compare-and-swap precondition, so concurrent claimants cannot silently
-overwrite one another.
+overwrite one another. The user-facing contract is the claim contract in
+``autoform_cli/reference/claims-and-revisions.md``.
+
+``claim list`` copies the whole board with one fetch and reads every lease at
+once, so its cost hardly grows with the number of claims. Git can read the refs
+it advertises one by one, which is why a listing is not a consistent snapshot.
+A peer's renewal during a listing changes nothing, except that a server
+speaking Git's older stateless HTTP protocol may refuse the fetch, which is then
+repeated up to three times. A case-insensitive scratch cannot store two claim
+keys, or two folders they name, that differ only in case under their names. Git
+refuses such a fetch, except that some versions, such as Apple's 2.50, store one
+key's name holding the other key's lease without a word. So on such a scratch a
+listing whose fetch wrote any ref also names the board's claims, with one more
+command that downloads the board's list of refs, and fetches the claims again
+by name when two of them collide. ``claim list TARGET...`` names
+the targets' refs and fetches only those, so changes to other claims never make
+it retry and no other claim's lease is copied, and a target released meanwhile
+has the targets named again, never the whole board; over a network its cost
+still grows with the board's list of refs.
+
+A listing, by ``claim list`` or the one ``claim cleanup`` starts with, runs Git
+in its own process group, without a controlling terminal on Linux and macOS so
+``ssh`` cannot prompt, and stops a Git command that runs out of time or is
+interrupted together with everything it started; only removing its own refs
+afterwards runs in the caller's group. That holds on the main thread, where
+``claim list`` and ``claim cleanup`` list. Off it, as in ``autoform dashboard``,
+a listing runs Git in the caller's process group and with its terminal: a
+signal sent to that group, such as a terminal's interrupt, reaches Git, but one
+sent only to the caller does not, ``ssh`` can prompt on that terminal, and a
+command that runs out of time is stopped without what it started. ``acquire``,
+``renew``, ``release`` and ``cleanup``'s pushes run Git in the caller's process
+group, so a terminal's interrupt reaches Git, which then removes the ref lock
+it holds.
 """
 
 from __future__ import annotations
