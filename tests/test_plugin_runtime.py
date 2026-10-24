@@ -34,7 +34,6 @@ def test_plugin_manifests_list_the_shipped_skills_and_servers(repo_root):
         "code-quality.md",
         "mathlib-style.md",
         "roadmap-quality.md",
-        "thesis-review-case.md",
     }
     assert {path.name for path in (review_dir / "references").glob("*.md")} == references
     skill_text = (review_dir / "SKILL.md").read_text()
