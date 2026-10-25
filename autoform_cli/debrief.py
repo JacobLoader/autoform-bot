@@ -12,17 +12,6 @@ runtime, not from the agent.
 This module also owns the store that :mod:`autoform_cli.debrief_orchestrator`
 shares for the per-run orchestrator debrief.
 
-Configuration (environment):
-
-``AUTOFORM_SUBAGENT_DEBRIEF``
-    ``1`` / ``true`` / ``yes`` makes ``form`` print the form; otherwise it says
-    subagent debriefs are disabled and the agent skips the step.
-``AUTOFORM_DEBRIEF_DIR``
-    Absolute store directory outside the working tree. Defaults to
-    ``autoform/debriefs`` inside the repository's Git common directory, which
-    every worktree of a checkout shares and Git never tracks, else to
-    ``$XDG_STATE_HOME/autoform/debriefs/<project>-<hash>``.
-
 Records are bounded and normalised to the form's schema, and created
 exclusively without following symbolic links, so a record is complete or
 absent and never overwritten.
