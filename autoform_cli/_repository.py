@@ -5,11 +5,12 @@ one commit its ref names (``render --ref``, else ``detect_ref``); a checkout
 that Git converts, such as an LFS file or a line-end attribute, still matches.
 ``verify_repository_snapshot`` resolves that ref and checks the files, and one
 file that does not match drops every code link. ``detect_repository_url`` and
-``detect_ref`` read GitHub Actions' variables when the root lies in
-``GITHUB_WORKSPACE``, and ask Git otherwise; ``repository_top_level`` places
-the root in its working tree. Every Git command here runs without the caller's
-``GIT_*`` variables, so the given directory alone selects the repository; the
-debrief store and ``autoform --version`` run ``git`` too.
+``detect_ref`` read GitHub Actions' ``GITHUB_REPOSITORY`` and ``GITHUB_SHA``
+when the root lies in ``GITHUB_WORKSPACE``, and ask Git when the root is
+outside it or the variable is empty; ``repository_top_level`` places the root
+in its working tree. Every Git command here runs without the caller's ``GIT_*``
+variables, so the given directory alone selects the repository; the debrief
+store and ``autoform --version`` run ``git`` too.
 """
 
 from __future__ import annotations
