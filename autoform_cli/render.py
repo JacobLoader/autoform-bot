@@ -133,6 +133,7 @@ from .markdown import (
     title_text,
     yaml_string,
 )
+from .markdown import HEADING as _HEADING
 from .markdown import content_lines as _content_lines
 from .markdown import outside_fences as _outside_fences
 from .mathjax import CARD_CLASS, CARD_FORMULA_CLASS, MATHJAX_SCRIPT, TEX_MACROS, mathjax_script, project_macros
@@ -151,7 +152,6 @@ from .skeleton import NodeSkeleton, SkeletonReport, _plural, source_passage
 from .status import is_definition
 from .testimony import formula_problems, split_testimony, typesetting_warnings
 
-_HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 # Links are matched in a line masked by _link_mask, where brackets in code such
 # as ``[0,1]^n`` and in math such as ``$(0,1]$`` are blanks. Any other bracket in
 # a label must be paired, so an earlier "[1]" or "[x]" on the line stays text.
