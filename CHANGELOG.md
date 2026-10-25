@@ -49,6 +49,12 @@ date when the release is tagged.
   explorer's own MathJax calls had typeset nothing on a generated site. Map
   cards, the Contents list, search and the explorer's head still show a title
   as typed (#455).
+- **Pages.** The generated `blueprint-pages.yml` runs
+  `autoform site check site --source site-src` after the MkDocs build. Its
+  warnings show in the log and never stop a deploy, and `continue-on-error`
+  keeps a check that cannot run from stopping one either. A scaffolded project
+  keeps its workflow: delete it and rerun `autoform init`, or add the step by
+  hand once its `AUTOFORM_REF` is from 0.6.0 or later (#389).
 
 ### Fixed
 

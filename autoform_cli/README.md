@@ -376,20 +376,21 @@ push to `main`, with code links rendered at that commit by `--ref`. A failed
 verification deploys nothing, so the last verified site stays up. Pull requests
 and manual runs build the site but never deploy, and cannot cancel a waiting
 deploy. To redeploy, re-run the Pages run that the newest successful verify run
-on `main` started; re-running an older one deploys the older commit. A project
-scaffolded before this rule deploys every push;
-[Upgrading](../CHANGELOG.md#upgrading-from-050) says how to switch. No pin has
-to move: every `AUTOFORM_REF` since 0.5.0 has `render --ref`.
+on `main` started; re-running an older one deploys the older commit. Deleting or
+renaming that workflow, or disabling it in the repository's Actions settings,
+stops every deploy, with no error. A project scaffolded before this rule deploys
+every push; [Upgrading](../CHANGELOG.md#upgrading-from-050) says how to switch.
+No pin has to move: every `AUTOFORM_REF` since 0.5.0 has `render --ref`.
 
-Pages gates on `check` and `render`, and runs `audit` after `check` only as a
-report, with `continue-on-error`: the log lists every finding, or
-`OK: roadmap audit passed`. An invalid coverage contract fails `render` before
-it writes anything, but `MAPPED` rows (each an audit `declared-coverage-gap`;
-a new project lists the template's row) and coverage-role issues, which
-`render` prints as warnings, still publish. A project scaffolded before the
-report step can add, after `check`, a `continue-on-error: true` step running
-`autoform audit blueprint --lean-root .` from the same `uvx --from` source. To
-block merges on findings, run `autoform audit` in CI without it.
+Pages gates on `check` and `render`, and runs `audit` after `check` and
+`site check` after the MkDocs build only as reports, with `continue-on-error`:
+`audit` logs every finding, or `OK: roadmap audit passed`. An invalid coverage
+contract fails `render` before it writes anything, but `MAPPED` rows (each an
+audit `declared-coverage-gap`; a new project lists the template's row) and
+coverage-role issues, which `render` prints as warnings, still publish. A
+project scaffolded before a report step can add it by hand, with
+`continue-on-error: true` and the same `uvx --from` source (for `site check`,
+from 0.6.0). To block merges on findings, run `autoform audit` in CI without it.
 
 ### check
 
