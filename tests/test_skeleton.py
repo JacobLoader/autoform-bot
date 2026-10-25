@@ -1901,6 +1901,8 @@ def test_statement_hash_and_packet_ignore_what_only_the_proof_reaches(tmp_path: 
         replace(declaration, statement_assumed=("Mathlib.Other",))
     with pytest.raises(SkeletonError, match="mismatched statement closure"):
         replace(declaration, statement_boundary_modules=())
+    with pytest.raises(SkeletonError, match="mismatched statement closure for Skel.observation_determined"):
+        replace(declaration, statement_boundary_modules=("Mathlib.Other",))
 
 
 def test_assumed_module_identity_is_path_independent_and_rejects_a_concurrent_edit(
@@ -3887,7 +3889,10 @@ def test_a_declaration_reads_as_its_own_root_module_prints_it(
         "Skel.PktWrapUser": ["Skel.PktWrap.needsTwo", "Skel.PktWrap.wrap"],
         "Skel.PktWrapUser2": ["Skel.PktWrap.needsTwo", "Skel.PktWrap.wrap"],
     }
-    assert write_skeleton_report(full, tmp_path / "skeleton.json").read_text(encoding="utf-8") == full.to_json() + "\n"
+    # The written report states each root module's own printing of the declaration they share.
+    written = json.loads(write_skeleton_report(full, tmp_path / "skeleton.json").read_text(encoding="utf-8"))
+    needs_two = {module: written["trusted"][module]["Skel.PktWrap.needsTwo"]["signature"] for module in data["trusted"]}
+    assert "Skel.PktWrap.wrap 2 = 2" in needs_two["Skel.PktWrapUser"] and "⟪2⟫ = 2" in needs_two["Skel.PktWrapUser2"]
 
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
@@ -4952,7 +4957,9 @@ def test_cli_does_not_publish_packets_for_unresolved_declarations(
 
     assert result == 1
     assert not packets.exists()
-    assert json.loads(report_path.read_text(encoding="utf-8"))["unresolved"]
+    assert json.loads(report_path.read_text(encoding="utf-8"))["unresolved"] == [
+        {"declaration": "Skel.absent", "node_id": "basics/missing", "reason": "declaration not found in the Lean sources"}
+    ]
     assert "refusing to publish review packets" in capsys.readouterr().err
 
 

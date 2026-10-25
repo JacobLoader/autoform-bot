@@ -56,9 +56,9 @@ each material's full text. Two probes that disagree about one module's files
 stop the command. The report identifies the blueprint by a hash of every
 article's bytes and of the passage each article cites; a report whose
 selection, articles, and unresolved declarations disagree cannot be built.
-Review evidence needs a report that selects every article and whose
-targets are the blueprint's ``lean:`` names. It quotes each trusted
-definition's source and records theorem dependencies by elaborated signature.
+Review evidence needs a report that selects every article and whose targets are
+the blueprint's ``lean:`` names. It quotes each trusted definition's source and
+records theorem dependencies by elaborated signature.
 
 Resources. Probes run one per CPU available to the process, at most eight; on
 Python 3.13 and later ``PYTHON_CPU_COUNT`` sets that count. Each probe's
