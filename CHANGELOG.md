@@ -68,11 +68,12 @@ theme. Each line names the pull requests to read for detail.
 ### Upgrading from 0.5.0
 
 - **Pin.** CI at an older `AUTOFORM_REF` rejects `area:`, `navigation:`,
-  `catalog:` and `statement: retracted` in `check` and `INVENTORIED` in
-  `render`, so move the pin before using them; until then, retract by removing
-  `statement` and `proof` and keeping `lean:`. Older refs assign no areas from
-  `blueprint/atlas.json` but publish it with every id it names, so a project
-  with unpublished folders moves the pin before adding it (#90).
+  `catalog:`, `open_statements:`, `published:` and `statement: retracted` in
+  `check` and `INVENTORIED` in `render`, so move the pin before using them;
+  until then, retract by removing `statement` and `proof` and keeping `lean:`.
+  Older refs assign no areas from `blueprint/atlas.json` but publish it with
+  every id it names, so a project with unpublished folders moves the pin before
+  adding it (#90).
 - **Site.** Render refuses to replace the `autoform-publication/v1` site 0.5.0
   wrote, and the dashboard reports it as stale: delete that output directory,
   such as a local `site-src`, once by hand (#165, #90). A v2 site is replaced
@@ -110,10 +111,16 @@ theme. Each line names the pull requests to read for detail.
   reaches only prose or `not_ready` leaves that declare nothing yet is a
   `decomposed-without-declaration` warning, which `render` also prints;
   neither fails (#90).
-- **JSON consumers.** Runtime nodes and every `autoform search --json` hit
-  carry a nullable `catalog` (`module` for a module catalog); search stays
-  `autoform-search/v1`, so a consumer that rejects unknown keys must accept it
-  (#90).
+- **JSON consumers.** Runtime nodes and every `autoform search --json` hit carry
+  a nullable `catalog` (`module` for a module catalog); search stays
+  `autoform-search/v1`, so a consumer that rejects unknown keys must accept it.
+  `audit --json` gains a top-level `warnings` list, which leaves `clean` and the
+  exit status alone (#90).
+- **Pages and files.** A page holding raw HTML is published as typed text, with
+  a warning that says how to write it in Markdown. The site copies a blueprint's
+  Markdown pages, raster images, PDFs and plain-text files such as `.lean`,
+  `.tex`, `.bib` and `.json`, and leaves out other files under `blueprint/`,
+  `.svg`, `.html`, scripts and stylesheets among them, with a warning (#215).
 - **TeX.** Formulas can no longer define notation: `\newcommand`, `\def`,
   `\DeclareMathOperator`, `\label`, `\color`, `\cancel`, `\href` and the like
   show in red, and `check` warns about a formula that defines a command. Put
@@ -174,11 +181,12 @@ theme. Each line names the pull requests to read for detail.
   `autoform dashboard` (#91), `autoform --version` (#397), hidden
   implementation notes (#172, #296), `published: false` folders (#381), open
   statements and conditional proofs (#138, #398), Agent Review's read-back
-  rubric (#53), `autoform debrief` (#195, #414, #425), and Muse Code installs
-  (#428).
+  rubric (#53), `autoform debrief` (#195, #414, #425), and README instructions
+  for installing the plugin in Muse Code (#428).
 - **CI audit.** The generated verify workflow checks `lean:` targets, non-root
   axioms and a kernel replay (#156, #190, #247, #395), and the Pages workflow
-  logs `autoform audit`'s findings without failing (#264, #437).
+  logs `autoform audit`'s findings without failing (#437), among them unbounded
+  and file-wide elaboration limits (#264).
 
 ### Changed
 
@@ -190,12 +198,13 @@ theme. Each line names the pull requests to read for detail.
   files by the spelling Git committed, and the homepage metric counts progress
   within the scoped roadmap (#45, #165, #196, #289, #301, #333, #339, #365).
 - **Checks.** Like render, `check` and `audit` treat hidden files and folders
-  under `roadmap/` as no part of the roadmap, only the article graph must be
-  acyclic, and `work` and `search` resolve Sources links as `check` does (#202,
-  #314, #321, #325, #328, #358, #361, #369, #372, #380).
+  under `roadmap/` as no part of the roadmap; only the article graph must be
+  acyclic; `work` and `search` resolve Sources links as `check` does; and
+  `audit` reports an unclosed code fence (#202, #314, #321, #325, #328, #358,
+  #361, #369, #372, #380).
 - **Vault dependency page.** `autoform-visualize` writes
-  `blueprint/dependencies.md` as a Markdown summary, not a Mermaid graph
-  (#378).
+  `blueprint/dependencies.md` as a Markdown summary, not a Mermaid graph, and
+  refuses to replace a hand-written one (#378).
 - **Skills.** Every skill that runs the CLI says how to launch it, a direct
   Roadmap run finishes one complete planning pass, Roadmap re-checks
   retraction before a revision lands, and Formalize and Agent Review run
@@ -221,8 +230,8 @@ theme. Each line names the pull requests to read for detail.
   #300, #318, #320, #326, #327, #337, #347, #355, #362, #406, #416).
 - **Init and skeleton** (#189, #244).
 - **Security:** credentials stripped from remote URLs, URL queries redacted,
-  nonlocal dashboard requests rejected, and untrusted page markup shown as
-  typed or left out (#98, #125, #215, #245).
+  nonlocal dashboard requests rejected, and every published page treated as
+  untrusted (see **Pages and files** above) (#98, #125, #215, #245).
 
 ### Contracts
 
