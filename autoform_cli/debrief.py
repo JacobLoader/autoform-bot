@@ -48,7 +48,7 @@ from pathlib import Path
 from typing import Any
 
 from . import debrief_store as store
-from .lean import _git
+from ._repository import git
 from .runtime import RuntimeNode, load_runtime_graph, resolve_runtime_paths
 
 SCHEMA_VERSION = 1
@@ -158,7 +158,7 @@ def enabled() -> bool:
 
 
 def _git_dir(project: Path, flag: str) -> Path | None:
-    output = _git(project, "rev-parse", "--path-format=absolute", flag)
+    output = git(project, "rev-parse", "--path-format=absolute", flag)
     path = Path(output) if output else None
     return path.resolve() if path is not None and path.is_absolute() and path.is_dir() else None
 
