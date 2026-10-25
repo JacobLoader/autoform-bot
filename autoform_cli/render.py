@@ -60,6 +60,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 from markdown.treeprocessors import Treeprocessor
 
 from . import dag_viewer, graph_pages, graph_views, status
+from ._repository import detect_ref, detect_repository_url, repository_top_level, verify_repository_snapshot
 from ._tree_snapshot import (
     TreeChangedError,
     TreeSelection,
@@ -98,13 +99,9 @@ from .lean import (
     SourceIndex,
     SourceLinker,
     declaration_names,
-    detect_ref,
-    detect_repository_url,
     index_failure_message,
-    repository_top_level,
     resolve_lean_root,
     snapshot_project_sources,
-    verify_repository_snapshot,
 )
 from .markdown import (
     _BRACKET_ESCAPE,

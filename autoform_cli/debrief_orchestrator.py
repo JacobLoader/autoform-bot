@@ -29,6 +29,7 @@ from typing import Any
 from urllib.parse import quote, urlencode
 
 from . import debrief_store as store
+from ._repository import git
 from .debrief import (
     MAX_ANSWER_BYTES,
     DebriefError,
@@ -42,7 +43,6 @@ from .debrief import (
     parse_answer,
     project_dir,
 )
-from .lean import _git
 
 SCHEMA_VERSION = 1
 DEBRIEF_ENV = "AUTOFORM_DEBRIEF"
@@ -124,7 +124,7 @@ def autoform_version() -> str:
         version = importlib.metadata.version("autoform")
     except importlib.metadata.PackageNotFoundError:
         version = "unknown"
-    commit = _git(Path(__file__).resolve().parent.parent, "rev-parse", "--short=12", "HEAD")
+    commit = git(Path(__file__).resolve().parent.parent, "rev-parse", "--short=12", "HEAD")
     return f"{version} ({commit})" if commit else version
 
 
