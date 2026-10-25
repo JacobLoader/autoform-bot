@@ -1,4 +1,4 @@
-"""Start a Lean child in a clean environment, and stop and reap its dedicated POSIX process group."""
+"""Give a Lean child a clean environment, and stop and reap its dedicated POSIX process group."""
 
 from __future__ import annotations
 
