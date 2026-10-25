@@ -59,6 +59,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import quote_from_bytes, urlsplit, urlunsplit
 
 from . import _directory_binding as directory_binding
+from ._fs import directory_path
 from ._tree_snapshot import (
     BoundDirectoryTree,
     OpaqueDirectoryMarker,
@@ -68,7 +69,6 @@ from ._tree_snapshot import (
     TreeSnapshot,
     TreeSnapshotError,
 )
-from .markdown import directory_path
 
 _NAMESPACE = re.compile(r"^\s*namespace\s+(.+)$")
 #: ``section`` in every form that opens one, e.g. ``@[expose] public section``.

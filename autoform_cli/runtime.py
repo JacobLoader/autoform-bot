@@ -43,9 +43,9 @@ from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote, urlsplit
 
+from ._fs import directory_path, resolved_path
 from .graph import Graph, load_graph, roadmap_symlink_issues
 from .lean import LeanSourceError, declaration_names, index_failure_message, index_project, resolve_lean_root
-from .markdown import directory_path, resolved_path
 from .status import derive, is_definition
 
 RUNTIME_SCHEMA = "autoform-runtime/v4"
