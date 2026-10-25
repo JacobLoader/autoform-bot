@@ -17,6 +17,9 @@ date when the release is tagged.
   only the rules users and agents act on; internals moved to module
   docstrings, and upgrade notes to this file. `tests/test_doc_budgets.py`
   fails when one of these docs grows past its line budget (#458).
+- **Listings.** The Codex and Muse listings name the plugin AutoformBot, and
+  Codex shows the Roadmap, Setup and Develop Plugin skills under those short
+  names (#463).
 - **Claims.** `claim list TARGET...` fetches and reads only those claims.
   `--timeout` (120 seconds by default) bounds a listing, a slow step is named on
   stderr, and a failure goes to stderr labelled `timeout:`, `contention:` or
