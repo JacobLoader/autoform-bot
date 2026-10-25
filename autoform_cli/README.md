@@ -19,7 +19,9 @@ The H1 is the article's title. Container prose is the exposition; a standalone
 list item linking to a formalizable leaf places the leaf there in the published
 chapter. Unplaced leaves appear under “Additional formalization targets”,
 unplaced module catalogs under “Module inventories”. Keep the root article a
-short preface and table of contents, not an inventory of every milestone.
+short preface and table of contents, not an inventory of every milestone: large
+inventories belong in coverage, and a detailed container introduces its
+mathematics in prose and places statements under meaningful section headings.
 
 Frontmatter records checked facts:
 
@@ -239,7 +241,10 @@ a debrief records the same string.
 ### init
 
 Create a new project's vault, site configuration, and CI. Existing files are
-left alone, so the same command repairs a project:
+left alone, so the same command repairs a project. `--force` instead overwrites
+every file `init` manages with its template, `blueprint/roadmap/README.md`,
+`blueprint/coverage/README.md`, `README.md` and `mkdocs.yml` included, and
+replaces a root `.gitignore` rather than adding to it:
 
 ```bash
 autoform init . --title "Finite Flat Group Schemes" \
@@ -421,7 +426,7 @@ full or by its last name component. Declarations citing a source only through
 their module docstring share one warning, silenced by naming the module, or in
 full a citing declaration; importing the module names it, importing only an
 umbrella module above it does not. A module catalog, or a container whose scope
-is all proved, reaches nothing; a bare number cites nothing; and a
+holds a target and is all proved, reaches nothing; a bare number cites nothing; and a
 last-component match counts any identifier, comments and strings included, so a
 generic one such as `symm` can hide the warning. Reuse such a declaration and
 name it in the note of each article using it; when it does not apply, name it,
@@ -1066,8 +1071,8 @@ schema and when render replaces an earlier site.
 copies, and writes `SUMMARY.md`, `structure.md`, `publication.json`,
 `dependencies.md`, `dependencies.json`, the `dependencies/` pages, and the
 chapter pages it consolidates; a vault copy of one of these is not published. A
-directory at any of these paths, or a file where one of their folders goes,
-stops `render` with its path before anything is written, and `check` warns about
+directory holding a file at any of these paths, or a file where one of their
+folders goes, stops `render` with its path before anything is written, and `check` warns about
 it. The stale root `dependencies.html`, `graph.html`, and `progress.md` are kept
 out of the site. A `tex-macros.json` directory that holds files leaves the site
 without project macros, with a warning.
