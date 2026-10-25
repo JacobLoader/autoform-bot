@@ -508,8 +508,8 @@ def prepare_readback(
         )
     if not text.strip():
         raise ValueError("a read-back requires nonempty testimony")
-    if problems := errors_in_testimony(text):
-        raise ValueError("unsafe read-back testimony: " + "; ".join(problems))
+    if testimony_errors := errors_in_testimony(text):
+        raise ValueError("unsafe read-back testimony: " + "; ".join(testimony_errors))
     if expected_card_hash is not None and _hash_or_none(expected_card_hash) is None:
         raise ValueError(f"invalid expected card hash: {expected_card_hash!r}")
     if _hash_or_none(statement_hash) is None:
