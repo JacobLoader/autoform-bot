@@ -6,7 +6,7 @@ card's text block, the site escaped. :func:`split_testimony` is the one
 reading of where the formulas are, and :func:`formula_problems` says whether
 each can be typeset: the site typesets those it accepts, with a TeX input of
 the card's own, and shows the others as typed. No formula makes testimony
-invalid; :func:`testimony_errors` says what does. ``\\$`` is a dollar sign
+invalid; :func:`errors_in_testimony` says what does. ``\\$`` is a dollar sign
 that opens nothing.
 
 :mod:`autoform_cli.readback` reads and writes the cards testimony is filed in.
@@ -268,7 +268,7 @@ def split_testimony(text: str) -> list[tuple[str, str]]:
     return [(kind, piece) for kind, piece in pieces if piece or kind != "text"]
 
 
-def testimony_errors(text: str, *, writing: bool = True) -> tuple[str, ...]:
+def errors_in_testimony(text: str, *, writing: bool = True) -> tuple[str, ...]:
     """Reject testimony that says more or other than a reader sees, or is too large to check.
 
     The text is shown as typed, so what a reader could be kept from seeing is
@@ -671,11 +671,11 @@ __all__ = [
     "TESTIMONY_MAX_BYTES",
     "TESTIMONY_MAX_LINES",
     "baseless_mark",
+    "errors_in_testimony",
     "formula_problems",
     "hidden_characters",
     "overstacked",
     "quoted",
     "split_testimony",
-    "testimony_errors",
     "typesetting_warnings",
 ]

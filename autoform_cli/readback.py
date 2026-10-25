@@ -75,7 +75,7 @@ except ImportError:  # pragma: no cover - Windows, which cannot publish cards
 from .graph import ARTICLE_ID_PATTERN
 from .markdown import blueprint_root
 from .skeleton import declaration_filename, evidence_hash_of
-from .testimony import MAX_NAMED, baseless_mark, hidden_characters, overstacked, quoted, testimony_errors
+from .testimony import MAX_NAMED, baseless_mark, errors_in_testimony, hidden_characters, overstacked, quoted
 
 READBACKS_DIR = "readbacks"
 READBACK_HEADING = "## Read-back"
@@ -315,7 +315,7 @@ def load_readbacks(blueprint: str | Path) -> dict[tuple[str, str], Readback]:
         else:
             shown_text, testimony = parts
             if testimony.strip():
-                errors.extend(testimony_errors(testimony, writing=False))
+                errors.extend(errors_in_testimony(testimony, writing=False))
             else:
                 errors.append("card contains no nonempty read-back testimony")
         shown_hash = evidence_hash_of(shown_text) if shown_text is not None else None
@@ -508,7 +508,7 @@ def prepare_readback(
         )
     if not text.strip():
         raise ValueError("a read-back requires nonempty testimony")
-    if problems := testimony_errors(text):
+    if problems := errors_in_testimony(text):
         raise ValueError("unsafe read-back testimony: " + "; ".join(problems))
     if expected_card_hash is not None and _hash_or_none(expected_card_hash) is None:
         raise ValueError(f"invalid expected card hash: {expected_card_hash!r}")
@@ -575,7 +575,7 @@ def _safe_model_label(value: str, *, writing: bool = True) -> bool:
     """Whether ``value`` may label a card's model: short printable text on one
     line, with none of the characters testimony may not hold: no invisible or
     reordering character, and no combining marks stacked or with nothing to
-    sit on. As in :func:`testimony_errors`, code points this Python's
+    sit on. As in :func:`errors_in_testimony`, code points this Python's
     Unicode data leaves unassigned are refused only when ``writing``."""
 
     return (
