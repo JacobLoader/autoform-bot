@@ -1,4 +1,4 @@
-"""Presentation roles must reveal mathematics without rewriting its evidence."""
+"""Presentation roles and scope projections must reveal mathematics without rewriting its evidence."""
 
 from __future__ import annotations
 

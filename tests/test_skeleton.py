@@ -3606,6 +3606,10 @@ def test_required_real_lean_tests_fail_closed(monkeypatch: pytest.MonkeyPatch) -
 
     with pytest.raises(RuntimeError, match="lake is not on PATH"):
         _check_lean_toolchain()
+    # The skipif marks call the cached gate, which must re-raise rather than cache a result.
+    _lean_toolchain_available.cache_clear()
+    with pytest.raises(RuntimeError, match="lake is not on PATH"):
+        _lean_toolchain_available()
 
 
 @pytest.mark.skipif(not _lean_toolchain_available(), reason="needs lake and the fixture's Lean toolchain")
