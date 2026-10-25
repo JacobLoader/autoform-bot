@@ -644,7 +644,7 @@ invisible or reordering characters, combining marks stacked over the lines
 around or with nothing to sit on, showing no letter or digit, or exceeding
 32 KiB or 500 lines; a write also refuses code points unassigned in its
 Python's Unicode data. A formula never invalidates testimony: one
-`readback.formula_problems` cannot typeset is shown as typed, and render warns
+`testimony.formula_problems` cannot typeset is shown as typed, and render warns
 without changing its exit status.
 
 A card file holds at most 4 MiB, and its frontmatter is read from its first 32
