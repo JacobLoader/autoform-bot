@@ -8,20 +8,20 @@ overwrite one another. The user-facing contract is the claim contract in
 
 ``claim list`` copies the whole board with one fetch and reads every lease at
 once, so its cost hardly grows with the number of claims. Git can read the refs
-it advertises one by one, which is why a listing is not a consistent snapshot.
-A peer's renewal during a listing changes nothing, except that a server
-speaking Git's older stateless HTTP protocol may refuse the fetch, which is then
-repeated up to three times. A case-insensitive scratch cannot store two claim
+it advertises one by one, which is why a listing is not a consistent snapshot. A
+peer's renewal during a listing changes nothing, except that a server speaking
+Git's older stateless HTTP protocol may refuse the fetch, which is then retried,
+for three fetches in all. A case-insensitive scratch cannot store two claim
 keys, or two folders they name, that differ only in case under their names. Git
 refuses such a fetch, except that some versions, such as Apple's 2.50, store one
 key's name holding the other key's lease without a word. So on such a scratch a
 listing whose fetch wrote any ref also names the board's claims, with one more
-command that downloads the board's list of refs, and fetches the claims again
-by name when two of them collide. ``claim list TARGET...`` names
-the targets' refs and fetches only those, so changes to other claims never make
-it retry and no other claim's lease is copied, and a target released meanwhile
-has the targets named again, never the whole board; over a network its cost
-still grows with the board's list of refs.
+command that downloads the board's list of refs, and fetches the claims again by
+name when two of them collide. ``claim list TARGET...`` names the targets' refs
+and fetches only those, so changes to other claims never make it retry and no
+other claim's lease is copied, and a target released meanwhile has the targets
+named again, never the whole board; over a network its cost still grows with the
+board's list of refs.
 
 A listing, by ``claim list`` or the one ``claim cleanup`` starts with, runs Git
 in its own process group, without a controlling terminal on Linux and macOS so
