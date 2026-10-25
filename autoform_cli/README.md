@@ -376,10 +376,11 @@ push to `main`, with code links rendered at that commit by `--ref`. A failed
 verification deploys nothing, so the last verified site stays up. Pull requests
 and manual runs build the site but never deploy, and cannot cancel a waiting
 deploy. To redeploy, re-run the Pages run that the newest successful verify run
-on `main` started; re-running an older one deploys the older commit. A project
-scaffolded before this rule deploys every push;
-[Upgrading](../CHANGELOG.md#upgrading-from-050) says how to switch. No pin has
-to move: every `AUTOFORM_REF` since 0.5.0 has `render --ref`.
+on `main` started; re-running an older one deploys the older commit. Deleting or
+renaming that workflow, or disabling it in the repository's Actions settings,
+stops every deploy, with no error. A project scaffolded before this rule deploys
+every push; [Upgrading](../CHANGELOG.md#upgrading-from-050) says how to switch.
+No pin has to move: every `AUTOFORM_REF` since 0.5.0 has `render --ref`.
 
 Pages gates on `check` and `render`, and runs `audit` after `check` and
 `site check` after the MkDocs build only as reports, with `continue-on-error`:
