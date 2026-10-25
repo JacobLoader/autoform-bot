@@ -3891,7 +3891,10 @@ def test_a_declaration_reads_as_its_own_root_module_prints_it(
     }
     # The written report states each root module's own printing of the declaration they share.
     written = json.loads(write_skeleton_report(full, tmp_path / "skeleton.json").read_text(encoding="utf-8"))
-    needs_two = {module: written["trusted"][module]["Skel.PktWrap.needsTwo"]["signature"] for module in data["trusted"]}
+    needs_two = {
+        module: written["trusted"][module]["Skel.PktWrap.needsTwo"]["signature"]
+        for module in ("Skel.PktWrapUser", "Skel.PktWrapUser2")
+    }
     assert "Skel.PktWrap.wrap 2 = 2" in needs_two["Skel.PktWrapUser"] and "⟪2⟫ = 2" in needs_two["Skel.PktWrapUser2"]
 
 
